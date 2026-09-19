@@ -1,0 +1,22 @@
+[package]
+name = "oxroute-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The oxroute terminal UI."
+
+[[bin]]
+name = "oxroute"
+path = "src/main.rs"
+
+[dependencies]
+oxroute-core = { path = "../oxroute-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }

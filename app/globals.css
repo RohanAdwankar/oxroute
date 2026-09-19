@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* The palette from the design canvas: warm paper, one green for what
+   worked, one purple for what merged, one amber for what is waiting.
+   Declared once here so nothing downstream invents a near-miss. */
+@theme {
+  --color-paper: #f7f4ef;
+  --color-card: #fffdfa;
+  --color-rule: #e3ddd3;
+  --color-hair: #efe9df;
+  --color-ink: #211d19;
+  --color-mid: #6b6259;
+  --color-faint: #9a9086;
+  --color-edge: #cec5b8;
+  --color-wash: #f2efe8;
+  --color-band: #f4f0e9;
+  --color-ok: #0f7a5c;
+  --color-merge: #8a4fc0;
+  --color-hold: #b06a10;
+  --color-drop: #2f6fb0;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-wordmark: var(--font-instrument-serif), Georgia, "Times New Roman", serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures everywhere a number sits in a column, so timestamps and
+   token counts do not shuffle as they tick. */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The scrollbars are inside dense panes; the default chrome is too loud
+   against paper this warm. */
+.quiet-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+.quiet-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.quiet-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.quiet-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes oxroute-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A working agent's dot breathes. It is the only motion in the interface,
+   which is what makes it readable at a glance. */
+.pulse {
+  animation: oxroute-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}

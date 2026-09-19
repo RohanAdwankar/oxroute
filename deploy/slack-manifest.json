@@ -1,0 +1,49 @@
+{
+  "display_information": {
+    "name": "oxroute",
+    "description": "An inbox for context, routed to agents that are already running."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "oxroute",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/nuke",
+        "description": "Stop every running turn",
+        "should_escape": false
+      },
+      {
+        "command": "/mode",
+        "description": "Switch between asking first and routing on its own",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "commands",
+        "files:read",
+        "files:write",
+        "im:history",
+        "im:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["message.im"]
+    },
+    "org_deploy_enabled": true,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

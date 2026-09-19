@@ -1,0 +1,23 @@
+[package]
+name = "oxroute-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Signals in, agents out. The shared core behind the oxroute daemon, TUI and web UI."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros"] }
+async-trait = "0.1.92"
+libc = "0.2.189"
+toml = "1.0.7"

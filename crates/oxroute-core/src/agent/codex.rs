@@ -1,0 +1,655 @@
+//! Codex, driven through its app-server.
+//!
+//! ```text
+//! codex app-server --stdio
+//! ```
+//!
+//! JSON-RPC on stdin and stdout, one long-lived process for the whole fleet.
+//! Threads are the sessions; every agent oxroute runs on Codex is one Codex
+//! thread, and the process holds all of them at once.
+//!
+//! This is the harness that can steer: `turn/steer` folds input into a turn
+//! that is already running, which is why a Codex agent reads differently from
+//! a Claude Code one in the UI.
+//!
+//! The process is supervised lazily. If it exits, every in-flight request
+//! fails at once with the reason, a `Down` event goes out so the hub can
+//! stall what it thought was running, and the next call starts a fresh one.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
+
+use super::{Capabilities, Harness, HarnessEvent, SessionSpec};
+use crate::model::{Backend, TurnInput};
+use crate::rpc::JsonChild;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const SHORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Codex will not run without an approval policy and a sandbox. oxroute is an
+/// unattended router: there is nobody at the keyboard to approve anything, so
+/// asking would just wedge the turn. The isolation that matters is the VM.
+const APPROVAL_POLICY: &str = "never";
+const SANDBOX: &str = "danger-full-access";
+
+/// Features a naming call has no use for. Turning them off is not an
+/// optimisation -- a title model with web search and sub-agents enabled will
+/// happily go and do the task instead of naming it.
+const TITLE_FEATURES: &[&str] = &[
+    "apps",
+    "code_mode",
+    "code_mode_only",
+    "current_time_reminder",
+    "deferred_executor",
+    "enable_fanout",
+    "goals",
+    "hooks",
+    "image_generation",
+    "memories",
+    "multi_agent",
+    "multi_agent_v2",
+    "plugins",
+    "request_permissions_tool",
+    "shell_snapshot",
+    "shell_tool",
+    "standalone_web_search",
+    "token_budget",
+    "tool_suggest",
+    "unified_exec",
+    "view_image",
+];
+
+pub struct CodexHarness {
+    binary: String,
+    args: Vec<String>,
+    default_cwd: String,
+    reasoning_effort: String,
+    title_model: String,
+    inner: AsyncMutex<Option<Arc<Connection>>>,
+    events: broadcast::Sender<HarnessEvent>,
+}
+
+/// One live app-server process and everything waiting on it.
+struct Connection {
+    child: AsyncMutex<JsonChild>,
+    next_id: AtomicU64,
+    pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
+    /// Set once, when the process is gone. Every later call fails with it
+    /// rather than hanging on a pipe nobody is reading.
+    failure: Mutex<Option<String>>,
+    /// Sessions opened purely to name something. Their traffic is noise to
+    /// the hub, so it never leaves this module.
+    private: Mutex<HashMap<String, oneshot::Sender<String>>>,
+    private_text: Mutex<HashMap<String, String>>,
+}
+
+impl Connection {
+    fn fail(&self, reason: &str) -> bool {
+        let mut failure = self.failure.lock().unwrap();
+        if failure.is_some() {
+            return false;
+        }
+        *failure = Some(reason.to_string());
+        drop(failure);
+        let waiting: Vec<_> = self.pending.lock().unwrap().drain().map(|(_, tx)| tx).collect();
+        for tx in waiting {
+            let _ = tx.send(json!({ "error": { "message": reason } }));
+        }
+        let private: Vec<_> = self.private.lock().unwrap().drain().map(|(_, tx)| tx).collect();
+        for tx in private {
+            let _ = tx.send(String::new());
+        }
+        true
+    }
+
+    fn failed(&self) -> Option<String> {
+        self.failure.lock().unwrap().clone()
+    }
+}
+
+impl CodexHarness {
+    pub fn new(config: &crate::config::Config) -> Self {
+        CodexHarness {
+            binary: config.codex_binary.clone(),
+            args: config.codex_args.clone(),
+            default_cwd: config.workspace_path().to_string_lossy().to_string(),
+            reasoning_effort: config.codex_effort.clone(),
+            title_model: config.title_model.clone(),
+            inner: AsyncMutex::new(None),
+            events: broadcast::channel(2048).0,
+        }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<HarnessEvent> {
+        self.events.subscribe()
+    }
+
+    /// The live connection, started if there is not one.
+    async fn connection(&self) -> Result<Arc<Connection>> {
+        let mut slot = self.inner.lock().await;
+        if let Some(existing) = slot.as_ref() {
+            if existing.failed().is_none() {
+                return Ok(existing.clone());
+            }
+        }
+
+        let mut argv = vec![self.binary.clone()];
+        argv.extend(self.args.iter().cloned());
+        let (child, mut lines) = JsonChild::spawn(&argv, Some(&self.default_cwd))
+            .context("starting the Codex app-server")?;
+
+        let connection = Arc::new(Connection {
+            child: AsyncMutex::new(child),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            failure: Mutex::new(None),
+            private: Mutex::new(HashMap::new()),
+            private_text: Mutex::new(HashMap::new()),
+        });
+
+        let reader = connection.clone();
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            while let Some(message) = lines.recv().await {
+                dispatch(&reader, &events, message);
+            }
+            if reader.fail("the Codex app-server exited") {
+                let _ = events.send(HarnessEvent::Down {
+                    message: "the Codex app-server exited".into(),
+                });
+            }
+        });
+
+        *slot = Some(connection.clone());
+        drop(slot);
+
+        connection
+            .request(
+                "initialize",
+                json!({
+                    "clientInfo": { "name": "oxroute", "title": "oxroute", "version": "0.1.0" },
+                    "capabilities": { "experimentalApi": true },
+                }),
+                SHORT_TIMEOUT,
+            )
+            .await
+            .context("initializing the Codex app-server")?;
+        connection.notify("initialized", json!({}))?;
+        Ok(connection)
+    }
+
+    async fn request(&self, method: &str, params: Value) -> Result<Value> {
+        self.request_within(method, params, REQUEST_TIMEOUT).await
+    }
+
+    async fn request_within(&self, method: &str, params: Value, within: Duration) -> Result<Value> {
+        let connection = self.connection().await?;
+        connection.request(method, params, within).await
+    }
+
+    /// The shared half of `thread/start` and `thread/resume`.
+    fn thread_options(&self, spec: &SessionSpec) -> Value {
+        json!({
+            "cwd": if spec.cwd.is_empty() { &self.default_cwd } else { &spec.cwd },
+            "approvalPolicy": APPROVAL_POLICY,
+            "sandbox": SANDBOX,
+            "model": spec.model,
+            "config": { "model_reasoning_effort": self.reasoning_effort },
+        })
+    }
+
+    /// Ask Codex what its effective config is, so a naming session can switch
+    /// off exactly the MCP servers this install actually has.
+    async fn title_config(&self, cwd: &str) -> Value {
+        let mut config = serde_json::Map::new();
+        for feature in TITLE_FEATURES {
+            config.insert(format!("features.{feature}"), json!(false));
+        }
+        for (key, value) in [
+            ("orchestrator.skills.enabled", json!(false)),
+            ("skills.include_instructions", json!(false)),
+            ("token_budget.use_history_notes_extension", json!(false)),
+            ("tools.experimental_request_user_input.enabled", json!(false)),
+            ("tools.update_plan.enabled", json!(false)),
+            ("web_search", json!("disabled")),
+        ] {
+            config.insert(key.into(), value);
+        }
+        let effective = self
+            .request_within(
+                "config/read",
+                json!({ "includeLayers": false, "cwd": cwd }),
+                SHORT_TIMEOUT,
+            )
+            .await
+            .ok();
+        let servers = effective
+            .as_ref()
+            .and_then(|v| v.pointer("/config/mcp_servers"))
+            .and_then(Value::as_object)
+            .map(|servers| {
+                servers
+                    .keys()
+                    .map(|name| (name.clone(), json!({ "enabled": false })))
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .unwrap_or_default();
+        config.insert("mcp_servers".into(), Value::Object(servers));
+        Value::Object(config)
+    }
+}
+
+impl Connection {
+    async fn request(&self, method: &str, params: Value, within: Duration) -> Result<Value> {
+        if let Some(reason) = self.failed() {
+            anyhow::bail!("{reason}");
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+
+        let sent = {
+            let child = self.child.lock().await;
+            child.send(&json!({ "id": id, "method": method, "params": params }))
+        };
+        if let Err(error) = sent {
+            self.pending.lock().unwrap().remove(&id);
+            self.fail(&error.to_string());
+            return Err(error);
+        }
+
+        let reply = match tokio::time::timeout(within, rx).await {
+            Err(_) => {
+                self.pending.lock().unwrap().remove(&id);
+                anyhow::bail!("Codex did not answer {method} within {}s", within.as_secs());
+            }
+            Ok(Err(_)) => anyhow::bail!("Codex dropped the reply to {method}"),
+            Ok(Ok(value)) => value,
+        };
+        if let Some(error) = reply.get("error") {
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error");
+            anyhow::bail!("{message}");
+        }
+        Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    fn notify(&self, method: &str, params: Value) -> Result<()> {
+        let child = self.child.try_lock();
+        match child {
+            Ok(child) => child.send(&json!({ "method": method, "params": params })),
+            Err(_) => Err(anyhow!("the Codex app-server is busy")),
+        }
+    }
+
+    fn respond_error(&self, id: &Value, message: &str) {
+        if let Ok(child) = self.child.try_lock() {
+            let _ = child.send(&json!({
+                "id": id,
+                "error": { "code": -32601, "message": message },
+            }));
+        }
+    }
+}
+
+/// Turn one line from the app-server into either a resolved request, a
+/// private naming result, or a `HarnessEvent`.
+fn dispatch(connection: &Arc<Connection>, events: &broadcast::Sender<HarnessEvent>, message: Value) {
+    let id = message.get("id");
+    let method = message.get("method").and_then(Value::as_str);
+
+    // A server->client request. oxroute runs unattended, so the honest answer
+    // to "may I?" is that there is nobody here to ask.
+    if let (Some(id), Some(method)) = (id, method) {
+        connection.respond_error(
+            id,
+            &format!("oxroute runs unattended and cannot answer {method}"),
+        );
+        return;
+    }
+
+    if let Some(id) = id.and_then(Value::as_u64) {
+        let waiting = connection.pending.lock().unwrap().remove(&id);
+        if let Some(tx) = waiting {
+            let _ = tx.send(message);
+        }
+        return;
+    }
+
+    let Some(method) = method else { return };
+    let params = message.get("params").cloned().unwrap_or(Value::Null);
+    let Some(session) = params.get("threadId").and_then(Value::as_str) else {
+        return;
+    };
+    let session = session.to_string();
+
+    // Naming sessions are ours. Collect their answer and tell nobody.
+    let is_private = connection.private.lock().unwrap().contains_key(&session);
+    if is_private {
+        match method {
+            "item/completed" => {
+                let item = params.get("item").cloned().unwrap_or(Value::Null);
+                if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
+                    if let Some(text) = item.get("text").and_then(Value::as_str) {
+                        connection
+                            .private_text
+                            .lock()
+                            .unwrap()
+                            .insert(session.clone(), text.to_string());
+                    }
+                }
+            }
+            "turn/completed" => {
+                let text = connection
+                    .private_text
+                    .lock()
+                    .unwrap()
+                    .remove(&session)
+                    .unwrap_or_default();
+                if let Some(tx) = connection.private.lock().unwrap().remove(&session) {
+                    let _ = tx.send(text);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    let event = match method {
+        "thread/name/updated" => params
+            .get("threadName")
+            .and_then(Value::as_str)
+            .map(|name| HarnessEvent::Named {
+                session,
+                name: name.to_string(),
+            }),
+        "thread/status/changed" => {
+            let status = params
+                .get("status")
+                .and_then(|s| s.get("type").and_then(Value::as_str).or_else(|| s.as_str()))
+                .unwrap_or_default();
+            (status == "systemError").then(|| HarnessEvent::SessionError {
+                session,
+                message: "system error".into(),
+            })
+        }
+        "turn/started" => Some(HarnessEvent::TurnStarted {
+            turn_id: params
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            session,
+        }),
+        "turn/completed" => Some(HarnessEvent::TurnFinished {
+            status: params
+                .pointer("/turn/status")
+                .and_then(Value::as_str)
+                .unwrap_or("completed")
+                .to_string(),
+            session,
+        }),
+        "item/started" | "item/completed" => {
+            let item = params.get("item").cloned().unwrap_or(Value::Null);
+            let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            if method == "item/completed" {
+                if kind == "imageGeneration" {
+                    if let Some(path) = item.get("savedPath").and_then(Value::as_str) {
+                        let _ = events.send(HarnessEvent::Artifact {
+                            session: session.clone(),
+                            path: path.to_string(),
+                        });
+                    }
+                }
+                if kind == "agentMessage" {
+                    if let Some(text) = item.get("text").and_then(Value::as_str) {
+                        let _ = events.send(HarnessEvent::Message {
+                            session: session.clone(),
+                            text: text.to_string(),
+                            final_answer: item.get("phase").and_then(Value::as_str)
+                                == Some("final_answer"),
+                        });
+                    }
+                }
+            }
+            Some(HarnessEvent::Item { session, item })
+        }
+        _ if method.starts_with("item/") && method.ends_with("/outputDelta") => {
+            Some(HarnessEvent::Item {
+                session,
+                item: json!({
+                    "type": method
+                        .trim_start_matches("item/")
+                        .trim_end_matches("/outputDelta"),
+                    "id": params.get("itemId").cloned().unwrap_or(Value::Null),
+                    "streamedOutput": params.get("delta").cloned().unwrap_or(Value::Null),
+                    "_delta": true,
+                }),
+            })
+        }
+        _ => None,
+    };
+
+    if let Some(event) = event {
+        let _ = events.send(event);
+    }
+}
+
+#[async_trait]
+impl Harness for CodexHarness {
+    fn events(&self) -> broadcast::Receiver<HarnessEvent> {
+        self.events.subscribe()
+    }
+
+    fn backend(&self) -> Backend {
+        Backend::Codex
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            steer: true,
+            fork: true,
+            inject: true,
+            resume: true,
+        }
+    }
+
+    async fn open(&self, spec: &SessionSpec) -> Result<String> {
+        let mut params = self.thread_options(spec);
+        if let Some(existing) = spec.resume.as_deref().filter(|s| !s.is_empty()) {
+            params["threadId"] = json!(existing);
+            // A resume that fails is not fatal: the thread may have been
+            // pruned out from under us, and a new one still answers the user.
+            match self.request("thread/resume", params.clone()).await {
+                Ok(_) => return Ok(existing.to_string()),
+                Err(error) => {
+                    tracing::warn!(session = existing, %error, "resume failed; starting fresh");
+                }
+            }
+            params = self.thread_options(spec);
+        }
+        params["serviceName"] = json!("oxroute");
+        if spec.ephemeral {
+            params["ephemeral"] = json!(true);
+        }
+        let result = self.request("thread/start", params).await?;
+        result
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .context("Codex opened a thread without an id")
+    }
+
+    async fn start(&self, session: &str, inputs: Vec<TurnInput>) -> Result<String> {
+        let result = self
+            .request(
+                "turn/start",
+                json!({ "threadId": session, "input": inputs }),
+            )
+            .await?;
+        Ok(result
+            .pointer("/turn/id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    async fn steer(
+        &self,
+        session: &str,
+        turn_id: &str,
+        message_id: &str,
+        inputs: Vec<TurnInput>,
+    ) -> Result<()> {
+        self.request(
+            "turn/steer",
+            json!({
+                "threadId": session,
+                "clientUserMessageId": message_id,
+                "input": inputs,
+                "expectedTurnId": turn_id,
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn interrupt(&self, session: &str, turn_id: &str) -> Result<()> {
+        self.request(
+            "turn/interrupt",
+            json!({ "threadId": session, "turnId": turn_id }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn fork(&self, session: &str, spec: &SessionSpec, exclude_turns: bool) -> Result<String> {
+        let mut params = self.thread_options(spec);
+        params["threadId"] = json!(session);
+        if spec.ephemeral {
+            params["ephemeral"] = json!(true);
+        }
+        if exclude_turns {
+            params["excludeTurns"] = json!(true);
+        }
+        let result = self.request("thread/fork", params).await?;
+        result
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .context("Codex forked a thread without an id")
+    }
+
+    async fn inject(&self, session: &str, exchanges: &[(String, String)]) -> Result<()> {
+        let mut items = Vec::new();
+        for (question, answer) in exchanges {
+            items.push(json!({
+                "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": question }],
+            }));
+            items.push(json!({
+                "type": "message", "role": "assistant",
+                "content": [{ "type": "output_text", "text": answer }],
+            }));
+        }
+        self.request(
+            "thread/inject_items",
+            json!({ "threadId": session, "items": items }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_name(&self, session: &str, name: &str) -> Result<()> {
+        self.request_within(
+            "thread/name/set",
+            json!({ "threadId": session, "name": name }),
+            SHORT_TIMEOUT,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn release(&self, session: &str) -> Result<()> {
+        self.request_within(
+            "thread/unsubscribe",
+            json!({ "threadId": session }),
+            SHORT_TIMEOUT,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn oneshot(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
+        let cwd = if cwd.is_empty() { &self.default_cwd } else { cwd };
+        let config = self.title_config(cwd).await;
+        let connection = self.connection().await?;
+        let result = connection
+            .request(
+                "thread/start",
+                json!({
+                    "model": self.title_model,
+                    "cwd": cwd,
+                    "approvalPolicy": APPROVAL_POLICY,
+                    "sandbox": "read-only",
+                    "runtimeWorkspaceRoots": [],
+                    "ephemeral": true,
+                    "threadSource": "system",
+                    "environments": [],
+                    "dynamicTools": [],
+                    "selectedCapabilityRoots": [],
+                    "config": config,
+                }),
+                SHORT_TIMEOUT,
+            )
+            .await?;
+        let session = result
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .context("Codex opened a naming thread without an id")?
+            .to_string();
+
+        let (tx, rx) = oneshot::channel();
+        connection.private.lock().unwrap().insert(session.clone(), tx);
+
+        let outcome = async {
+            connection
+                .request(
+                    "turn/start",
+                    json!({
+                        "threadId": session,
+                        "input": [{ "type": "text", "text": prompt }],
+                        "outputSchema": schema,
+                        "effort": "low",
+                    }),
+                    SHORT_TIMEOUT,
+                )
+                .await?;
+            tokio::time::timeout(SHORT_TIMEOUT, rx)
+                .await
+                .map_err(|_| anyhow!("the naming turn did not finish"))?
+                .map_err(|_| anyhow!("the naming turn was dropped"))
+        }
+        .await;
+
+        connection.private.lock().unwrap().remove(&session);
+        connection.private_text.lock().unwrap().remove(&session);
+        let _ = connection
+            .request(
+                "thread/unsubscribe",
+                json!({ "threadId": session }),
+                SHORT_TIMEOUT,
+            )
+            .await;
+        outcome
+    }
+}

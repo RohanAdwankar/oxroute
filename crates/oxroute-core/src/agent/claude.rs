@@ -1,0 +1,459 @@
+//! Claude Code, driven through its CLI.
+//!
+//! ```text
+//! claude -p --input-format stream-json --output-format stream-json --verbose
+//!        --session-id <uuid> --permission-mode bypassPermissions
+//! ```
+//!
+//! A persistent session on stdin and stdout: write user messages in, read
+//! assistant messages, tool calls and results out. One process per agent,
+//! unlike Codex's single server holding every thread.
+//!
+//! Two things about the CLI shape the code here, both learned by running it:
+//!
+//! * **It says nothing until it is spoken to.** The `system/init` frame that
+//!   carries the session id only arrives after the first user message, so
+//!   waiting for it before sending deadlocks. `--session-id` is the way out:
+//!   oxroute names the session itself and knows the id before the process
+//!   has drawn breath, which also makes `--resume` work across a restart.
+//! * **It asks permission by default.** There is nobody here to answer, so
+//!   an unattended turn would simply stop. `--permission-mode` is set to the
+//!   equivalent of the Codex harness's `approvalPolicy: never`, and is the
+//!   one thing here worth overriding deliberately.
+//!
+//! No steering. The CLI queues input rather than folding it into the turn
+//! that is already running, so `delivery()` reports `queue` for a busy agent
+//! and every surface says so before you send. That is the honest difference
+//! from Codex, and the reason capabilities are declared rather than assumed.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use tokio::sync::{broadcast, Mutex};
+
+use super::{Capabilities, Harness, HarnessEvent, SessionSpec};
+use crate::model::{Backend, TurnInput};
+use crate::rpc::JsonChild;
+
+pub struct ClaudeHarness {
+    binary: String,
+    default_cwd: String,
+    permission_mode: String,
+    sessions: Mutex<HashMap<String, Arc<Mutex<JsonChild>>>>,
+    events: broadcast::Sender<HarnessEvent>,
+}
+
+impl ClaudeHarness {
+    pub fn new(config: &crate::config::Config) -> Self {
+        ClaudeHarness {
+            binary: config.claude_binary.clone(),
+            default_cwd: config.workspace_path().to_string_lossy().to_string(),
+            permission_mode: config.claude_permission_mode.clone(),
+            sessions: Mutex::new(HashMap::new()),
+            events: broadcast::channel(2048).0,
+        }
+    }
+
+    /// For tests, which want a harness without a whole configuration.
+    #[cfg(test)]
+    fn bare(binary: &str, cwd: &str, permission_mode: &str) -> Self {
+        ClaudeHarness {
+            binary: binary.into(),
+            default_cwd: cwd.into(),
+            permission_mode: permission_mode.into(),
+            sessions: Mutex::new(HashMap::new()),
+            events: broadcast::channel(2048).0,
+        }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<HarnessEvent> {
+        self.events.subscribe()
+    }
+
+    fn argv(&self, session: &str, spec: &SessionSpec, resuming: bool) -> Vec<String> {
+        let mut argv = vec![
+            self.binary.clone(),
+            "-p".into(),
+            "--input-format".into(),
+            "stream-json".into(),
+            "--output-format".into(),
+            "stream-json".into(),
+            "--verbose".into(),
+            "--permission-mode".into(),
+            self.permission_mode.clone(),
+        ];
+        // `--resume` already names the session; passing both is contradictory.
+        if resuming {
+            argv.push("--resume".into());
+        } else {
+            argv.push("--session-id".into());
+        }
+        argv.push(session.to_string());
+        if !spec.model.is_empty() {
+            argv.push("--model".into());
+            argv.push(spec.model.clone());
+        }
+        argv
+    }
+}
+
+#[async_trait]
+impl Harness for ClaudeHarness {
+    fn events(&self) -> broadcast::Receiver<HarnessEvent> {
+        self.events.subscribe()
+    }
+
+    fn backend(&self) -> Backend {
+        Backend::ClaudeCode
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            // The CLI queues; it does not fold into a running turn.
+            steer: false,
+            // `--resume … --fork-session` exists and would work here, but it
+            // is untested, and claiming a capability we have not exercised is
+            // exactly what this struct is meant to prevent.
+            fork: false,
+            inject: false,
+            resume: true,
+        }
+    }
+
+    async fn open(&self, spec: &SessionSpec) -> Result<String> {
+        let resuming = spec.resume.as_deref().is_some_and(|s| !s.is_empty());
+        let session = match spec.resume.as_deref().filter(|s| !s.is_empty()) {
+            Some(existing) => existing.to_string(),
+            // The CLI wants a UUID, and naming the session ourselves is what
+            // lets this return before the process has said anything.
+            None => uuid::Uuid::new_v4().to_string(),
+        };
+
+        if self.sessions.lock().await.contains_key(&session) {
+            return Ok(session);
+        }
+
+        let cwd = if spec.cwd.is_empty() { &self.default_cwd } else { &spec.cwd };
+        let (child, mut lines) = JsonChild::spawn(&self.argv(&session, spec, resuming), Some(cwd))
+            .context("starting Claude Code")?;
+        self.sessions
+            .lock()
+            .await
+            .insert(session.clone(), Arc::new(Mutex::new(child)));
+
+        let events = self.events.clone();
+        let name = session.clone();
+        tokio::spawn(async move {
+            while let Some(message) = lines.recv().await {
+                translate(&events, &name, &message);
+            }
+            // The process ending is not itself a failure -- an interrupt
+            // closes it deliberately -- but the hub needs to know the session
+            // is no longer live.
+            let _ = events.send(HarnessEvent::TurnFinished {
+                session: name.clone(),
+                status: "exited".into(),
+            });
+        });
+
+        Ok(session)
+    }
+
+    async fn start(&self, session: &str, inputs: Vec<TurnInput>) -> Result<String> {
+        let child = self
+            .sessions
+            .lock()
+            .await
+            .get(session)
+            .cloned()
+            .with_context(|| format!("no live Claude Code session {session}"))?;
+
+        // The CLI takes one text body. Naming an image's path is the best we
+        // can do without the SDK, and saying where the file is beats
+        // dropping it on the floor.
+        let body = inputs
+            .iter()
+            .map(|input| match input {
+                TurnInput::Text { text } => text.clone(),
+                TurnInput::LocalImage { path } => format!("(image attached at {path})"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        child.lock().await.send(&json!({
+            "type": "user",
+            "message": { "role": "user", "content": body },
+        }))?;
+
+        // There is no turn id on the wire. One is minted so the hub has
+        // something to hold, and `interrupt` ends the process rather than
+        // naming a turn.
+        let turn = crate::model::new_id("turn");
+        let _ = self.events.send(HarnessEvent::TurnStarted {
+            session: session.to_string(),
+            turn_id: turn.clone(),
+        });
+        Ok(turn)
+    }
+
+    async fn steer(
+        &self,
+        _session: &str,
+        _turn_id: &str,
+        _message_id: &str,
+        _inputs: Vec<TurnInput>,
+    ) -> Result<()> {
+        anyhow::bail!("Claude Code queues input rather than steering a running turn")
+    }
+
+    async fn interrupt(&self, session: &str, _turn_id: &str) -> Result<()> {
+        // There is no interrupt on the wire. Ending the process stops the
+        // turn; the session id is ours, so the next send resumes it.
+        let child = self.sessions.lock().await.remove(session);
+        let Some(child) = child else {
+            anyhow::bail!("no live Claude Code session {session}")
+        };
+        child.lock().await.shutdown().await;
+        let _ = self.events.send(HarnessEvent::TurnFinished {
+            session: session.to_string(),
+            status: "interrupted".into(),
+        });
+        Ok(())
+    }
+
+    async fn release(&self, _session: &str) -> Result<()> {
+        // Unlike Codex, where releasing only unsubscribes, ending a Claude
+        // process ends the conversation's host. The session is resumable, so
+        // the process is kept until something actually stops it.
+        Ok(())
+    }
+}
+
+/// One frame from the CLI, in oxroute's vocabulary.
+fn translate(events: &broadcast::Sender<HarnessEvent>, session: &str, message: &Value) {
+    match message.get("type").and_then(Value::as_str) {
+        Some("assistant") => {
+            let blocks = message.pointer("/message/content").and_then(Value::as_array);
+            for block in blocks.into_iter().flatten() {
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        let text = block.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                        if !text.is_empty() {
+                            let _ = events.send(HarnessEvent::Message {
+                                session: session.to_string(),
+                                text: text.to_string(),
+                                // The CLI does not mark a final answer. The
+                                // `result` frame carries it instead, so this
+                                // is commentary until proven otherwise.
+                                final_answer: false,
+                            });
+                        }
+                    }
+                    Some("tool_use") => {
+                        let input = block.get("input").cloned().unwrap_or(Value::Null);
+                        let _ = events.send(HarnessEvent::Item {
+                            session: session.to_string(),
+                            item: json!({
+                                "type": "toolCall",
+                                "id": block.get("id").cloned().unwrap_or(Value::Null),
+                                "tool": block.get("name").cloned().unwrap_or(Value::Null),
+                                "status": "completed",
+                                "arguments": input,
+                            }),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // A tool's output comes back as a user frame. Without this the
+        // interface can say what an agent ran but never what it saw, which
+        // is the half a person actually wants.
+        Some("user") => {
+            let blocks = message.pointer("/message/content").and_then(Value::as_array);
+            for block in blocks.into_iter().flatten() {
+                if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                    continue;
+                }
+                let output = tool_result_text(block);
+                if output.trim().is_empty() {
+                    continue;
+                }
+                let _ = events.send(HarnessEvent::Item {
+                    session: session.to_string(),
+                    item: json!({
+                        "type": "toolResult",
+                        "id": block.get("tool_use_id").cloned().unwrap_or(Value::Null),
+                        "status": "completed",
+                        "aggregatedOutput": output,
+                    }),
+                });
+            }
+        }
+        Some("result") => {
+            // `result` carries the answer verbatim, which is the only frame
+            // the CLI marks as final.
+            if let Some(text) = message.get("result").and_then(Value::as_str) {
+                if !text.trim().is_empty() {
+                    let _ = events.send(HarnessEvent::Message {
+                        session: session.to_string(),
+                        text: text.trim().to_string(),
+                        final_answer: true,
+                    });
+                }
+            }
+            let status = match message.get("subtype").and_then(Value::as_str) {
+                Some("success") | None => "completed".to_string(),
+                Some(other) => other.to_string(),
+            };
+            let _ = events.send(HarnessEvent::TurnFinished {
+                session: session.to_string(),
+                status,
+            });
+        }
+        _ => {}
+    }
+}
+
+/// A tool result is either a string or a list of content blocks, depending
+/// on the tool. Both shapes turn into the text a person would read.
+fn tool_result_text(block: &Value) -> String {
+    match block.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(model: &str, resume: Option<&str>) -> SessionSpec {
+        SessionSpec {
+            model: model.into(),
+            cwd: String::new(),
+            resume: resume.map(str::to_string),
+            ephemeral: false,
+        }
+    }
+
+    #[test]
+    fn a_new_session_is_named_by_us_and_a_resumed_one_is_not_renamed() {
+        let harness = ClaudeHarness::bare("claude", "/work", "bypassPermissions");
+        let fresh = harness.argv("11111111-2222-3333-4444-555555555555", &spec("opus", None), false);
+        assert!(fresh.windows(2).any(|w| w[0] == "--session-id"));
+        assert!(!fresh.iter().any(|a| a == "--resume"));
+
+        let again = harness.argv(
+            "11111111-2222-3333-4444-555555555555",
+            &spec("opus", Some("11111111-2222-3333-4444-555555555555")),
+            true,
+        );
+        // Passing both would be contradictory; resume already names it.
+        assert!(again.iter().any(|a| a == "--resume"));
+        assert!(!again.iter().any(|a| a == "--session-id"));
+    }
+
+    #[test]
+    fn an_unattended_turn_never_stops_to_ask() {
+        let harness = ClaudeHarness::bare("claude", "/work", "bypassPermissions");
+        let argv = harness.argv("s", &spec("", None), false);
+        let mode = argv
+            .windows(2)
+            .find(|w| w[0] == "--permission-mode")
+            .map(|w| w[1].clone());
+        assert_eq!(mode.as_deref(), Some("bypassPermissions"));
+    }
+
+    #[test]
+    fn the_result_frame_is_the_final_answer() {
+        let events = broadcast::channel(16).0;
+        let mut received = events.subscribe();
+        translate(
+            &events,
+            "s1",
+            &json!({ "type": "result", "subtype": "success", "result": " all done " }),
+        );
+        match received.try_recv().unwrap() {
+            HarnessEvent::Message { text, final_answer, .. } => {
+                assert_eq!(text, "all done");
+                assert!(final_answer);
+            }
+            other => panic!("expected a final message, got {other:?}"),
+        }
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            HarnessEvent::TurnFinished { status, .. } if status == "completed"
+        ));
+    }
+
+    #[test]
+    fn a_tool_result_becomes_output_worth_showing() {
+        let events = broadcast::channel(16).0;
+        let mut received = events.subscribe();
+        translate(
+            &events,
+            "s1",
+            &json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": [{ "type": "text", "text": "e2e.txt\nnotes.md" }],
+                    }],
+                },
+            }),
+        );
+        match received.try_recv().unwrap() {
+            HarnessEvent::Item { item, .. } => {
+                assert_eq!(item["type"], "toolResult");
+                assert!(item["aggregatedOutput"].as_str().unwrap().contains("notes.md"));
+            }
+            other => panic!("expected an item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_plain_string_result_works_too() {
+        let events = broadcast::channel(16).0;
+        let mut received = events.subscribe();
+        translate(
+            &events,
+            "s1",
+            &json!({
+                "type": "user",
+                "message": {
+                    "content": [{ "type": "tool_result", "content": "42 files" }],
+                },
+            }),
+        );
+        assert!(matches!(received.try_recv().unwrap(), HarnessEvent::Item { .. }));
+    }
+
+    #[test]
+    fn mid_turn_text_is_commentary_not_the_answer() {
+        let events = broadcast::channel(16).0;
+        let mut received = events.subscribe();
+        translate(
+            &events,
+            "s1",
+            &json!({
+                "type": "assistant",
+                "message": { "content": [{ "type": "text", "text": "looking now" }] },
+            }),
+        );
+        match received.try_recv().unwrap() {
+            HarnessEvent::Message { final_answer, .. } => assert!(!final_answer),
+            other => panic!("expected a message, got {other:?}"),
+        }
+    }
+}

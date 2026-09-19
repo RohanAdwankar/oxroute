@@ -1,0 +1,20 @@
+[Unit]
+Description=oxroute -- signals in, agents out
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/oxroute/env
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=OXROUTE_DATABASE=%h/.local/state/oxroute/oxroute.sqlite3
+Environment=TMPDIR=%h/.local/share/oxroute/tmp
+ExecStart=%h/.local/bin/oxrouted
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=default.target

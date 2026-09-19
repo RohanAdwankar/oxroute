@@ -1,0 +1,101 @@
+# oxroute configuration.
+#
+# Copy to ~/.config/oxroute/config.toml and edit. Everything here has a
+# working default except `owner`, so the shortest useful file is two lines.
+#
+# Environment variables override this file, which is how a systemd unit or a
+# container passes secrets without writing them to disk. The Codex Slack
+# bot's own variables (SLACK_ALLOWED_USER_ID, SLACK_APP_TOKEN, CODEX_CLI, …)
+# are still read, so an existing env file keeps working on its own.
+
+# The account allowed to drive this. A Slack user id when Slack is wired up;
+# any string when it is not. There is no multi-user mode on purpose: this
+# runs commands on a machine you own.
+owner = "U00000000"
+
+# Where agents run. `~` is expanded.
+workspace = "~"
+
+# What a new agent gets when nobody picks a model. Name an alias from
+# [models] below, or a model id.
+default_model = "claude-opus-5"
+
+# The daemon has no authentication, because anything that can reach it can
+# run commands as you. Keep it on localhost and reach it over SSH.
+listen = "127.0.0.1:8787"
+
+# -- models -------------------------------------------------------------
+#
+# What a person can pick by typing its name, in Slack or in either UI. The
+# model decides the harness: `backend` is inferred from the id (anything
+# starting with `claude` runs on Claude Code, everything else on Codex) and
+# can be stated outright when that guess is wrong.
+#
+# Delete this whole section to get these four as the default set.
+
+[models.opus]
+id = "claude-opus-5"
+label = "Opus"
+
+[models.sonnet]
+id = "claude-sonnet-5"
+label = "Sonnet"
+
+[models.sol]
+id = "gpt-5.6-sol"
+label = "Sol"
+
+[models.astra]
+id = "gpt-6-astra"
+label = "Astra"
+
+# -- slack --------------------------------------------------------------
+#
+# From the app created with deploy/slack-manifest.json; the app token needs
+# connections:write. Leave both out to run with no sources at all, which is
+# how to try oxroute locally -- push signals in with POST /api/signal, or
+# type them into the inbox.
+
+# [slack]
+# app_token = "xapp-..."
+# bot_token = "xoxb-..."
+
+# -- where the binaries are ---------------------------------------------
+#
+# Both default to whatever the OS resolves, except that ~/.local/bin/codex
+# is preferred when it exists, because that is where the VM puts it.
+
+# [binaries]
+# codex = "codex"
+# claude = "claude"
+
+# -- harness settings ---------------------------------------------------
+
+# [codex]
+# What `codex` is started with. Change this if your build renames the flag.
+# args = ["app-server", "--stdio"]
+# reasoning_effort = "medium"
+# The small, cheap model that writes agent titles.
+# title_model = "gpt-5.6-luna"
+
+# [claude]
+# Claude Code's equivalent of Codex's `approvalPolicy: never`. There is
+# nobody here to answer a permission prompt, so asking would stop the turn.
+# Narrow it to "acceptEdits" if you would rather it could not run commands.
+# permission_mode = "bypassPermissions"
+
+# -- paths --------------------------------------------------------------
+
+# [paths]
+# database = "~/.local/state/oxroute/oxroute.sqlite3"
+# attachments = "~/.local/share/oxroute/attachments"
+# artifacts = "~/.local/share/oxroute/artifacts"
+
+# -- limits -------------------------------------------------------------
+
+# [limits]
+# Silence for this long means something is wrong. Seconds.
+# stall_timeout = 600
+# Refuse new work below this much free disk, rather than running out of
+# space halfway through a write.
+# min_free_bytes = 536870912
