@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
 import type { AgentView, Entry, EntryKind } from "../lib/types";
+import { Markdown } from "./Markdown";
 
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
   received: { label: "you", tone: "text-ok" },
@@ -192,14 +193,14 @@ export function AgentPanel({
                   {minute(entry.at)}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <span className="text-[13.5px] leading-[1.45] whitespace-pre-wrap break-words">
+                  <div className="flex min-w-0 items-start gap-2 text-[13.5px] leading-[1.45] break-words">
                     {tag && (
-                      <span className={`mr-2 text-[10.5px] ${tag.tone}`}>
+                      <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
                         {tag.label}
                       </span>
                     )}
-                    {entry.text}
-                  </span>
+                    <Markdown>{entry.text}</Markdown>
+                  </div>
                   {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
                   {(entry.kind === "forked" || entry.kind === "forkedFrom") && entry.detail ? (
                     <button
