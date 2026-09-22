@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
-// The browser only ever talks to this origin. Everything under /api is
-// forwarded to the daemon, which keeps the web UI free of CORS handling and
-// lets the daemon stay bound to localhost in production.
+// The browser only ever talks to this origin. The events route is handled in
+// app/api/events so its stream is not buffered by a rewrite; the remaining
+// API is forwarded to the daemon, which stays bound to localhost.
 const daemon = process.env.OXROUTE_DAEMON ?? "http://127.0.0.1:8787";
 
 const nextConfig: NextConfig = {
