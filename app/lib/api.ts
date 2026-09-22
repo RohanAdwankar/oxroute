@@ -2,8 +2,8 @@
 
 import type { AgentView, DaemonEvent, Mode, Snapshot } from "./types";
 
-// Everything goes through this origin; next.config.ts forwards /api to the
-// daemon, so the daemon can stay bound to localhost.
+// Everything goes through this origin. Next forwards regular calls while the
+// events route streams explicitly, so the daemon can stay bound to localhost.
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
