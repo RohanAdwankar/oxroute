@@ -396,6 +396,9 @@ pub enum EntryKind {
     You,
     /// This session branched into another agent.
     Forked,
+    /// This session was branched from another agent.
+    #[serde(rename = "forkedFrom")]
+    ForkedFrom,
     /// oxroute itself reporting.
     Notice,
 }
@@ -409,6 +412,7 @@ impl EntryKind {
             EntryKind::Asked => "asked",
             EntryKind::You => "you",
             EntryKind::Forked => "forked",
+            EntryKind::ForkedFrom => "forked-from",
             EntryKind::Notice => "notice",
         }
     }
@@ -421,6 +425,7 @@ impl EntryKind {
             "asked" => EntryKind::Asked,
             "you" => EntryKind::You,
             "forked" => EntryKind::Forked,
+            "forked-from" => EntryKind::ForkedFrom,
             _ => EntryKind::Notice,
         }
     }

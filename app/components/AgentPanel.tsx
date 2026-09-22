@@ -12,6 +12,7 @@ const TAG: Record<EntryKind, { label: string; tone: string }> = {
   asked: { label: "asked", tone: "text-hold border-hold" },
   you: { label: "you", tone: "text-merge border-merge" },
   forked: { label: "forked", tone: "text-merge border-merge" },
+  forkedFrom: { label: "parent", tone: "text-merge border-merge" },
   notice: { label: "note", tone: "text-faint border-rule" },
 };
 
@@ -160,13 +161,13 @@ export function AgentPanel({
                   {entry.origin && (
                     <span className="text-[12px] text-ok">← {entry.origin}</span>
                   )}
-                  {entry.kind === "forked" && entry.detail ? (
+                  {(entry.kind === "forked" || entry.kind === "forkedFrom") && entry.detail ? (
                     <button
                       type="button"
                       onClick={() => onOpenAgent(entry.detail)}
                       className="w-fit cursor-pointer text-[12px] text-merge hover:underline"
                     >
-                      Open forked session →
+                      {entry.kind === "forked" ? "Open forked session →" : "Open parent session ↑"}
                     </button>
                   ) : entry.detail ? (
                     <span className="text-[12px] text-faint">{entry.detail}</span>

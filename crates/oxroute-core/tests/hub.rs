@@ -711,11 +711,13 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
     assert!(!forked[0].1);
     // The branch lives in its own thread, wired to the new agent.
     let forked = w.hub.store.bound_agent("slack", "D1", "thread-1").unwrap().unwrap();
+    let mut forked_timeline = w.hub.timeline(&forked, 50).unwrap();
+    let parent = forked_timeline.pop().unwrap();
+    assert_eq!(parent.kind, EntryKind::ForkedFrom);
+    assert_eq!(parent.text, "Forked from session");
+    assert_eq!(parent.detail, original);
     assert_eq!(
-        w.hub
-            .timeline(&forked, 50)
-            .unwrap()
-            .iter()
+        forked_timeline.iter()
             .map(|entry| (&entry.kind, entry.text.as_str(), entry.detail.as_str()))
             .collect::<Vec<_>>(),
         original_timeline
