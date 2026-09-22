@@ -9,11 +9,10 @@ WorkingDirectory=%h/.local/share/oxroute/web
 EnvironmentFile=%h/.config/oxroute/env
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
-# Bind to localhost and reach it over an SSH tunnel. The daemon has no
-# authentication, and the UI is a direct line to it.
-Environment=HOSTNAME=127.0.0.1
 Environment=PORT=3939
-ExecStart=/usr/bin/env npm run start
+# The UI is a direct line to an unauthenticated command runner. Next.js does
+# not honor HOSTNAME here, so pass the loopback binding explicitly.
+ExecStart=/usr/bin/env npm run start -- --hostname 127.0.0.1
 Restart=on-failure
 RestartSec=5
 UMask=0077
