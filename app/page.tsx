@@ -59,10 +59,25 @@ export default function Home() {
 
   const reload = useCallback(() => setRevision((current) => current + 1), []);
 
+  const showAgent = useCallback((id: string | null) => {
+    setOpen(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("agent", id);
+    else url.searchParams.delete("agent");
+    window.history.pushState(null, "", url);
+  }, []);
+
   const complain = useCallback(
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
   );
+
+  useEffect(() => {
+    const restore = () => setOpen(new URL(window.location.href).searchParams.get("agent"));
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
 
   // The stream never reads; it only says that something changed.
   useEffect(
@@ -162,7 +177,7 @@ export default function Home() {
       const destination = item.agentIds[0];
       if (destination) {
         clearRouting();
-        setOpen(destination);
+        showAgent(destination);
       }
       return;
     }
@@ -180,7 +195,7 @@ export default function Home() {
 
   const openRouting = useCallback(
     (item: InboxItem) => {
-      setOpen(null);
+      showAgent(null);
       setRouting(item.signal.id);
       setTicked(new Set(item.suggested ? [item.suggested] : []));
       setFocus("fleet");
@@ -188,7 +203,7 @@ export default function Home() {
       const at = snapshot.agents.findIndex((a) => a.id === item.suggested);
       setFleetAt(at >= 0 ? at : 0);
     },
-    [snapshot.agents],
+    [snapshot.agents, showAgent],
   );
 
   const toggle = (id: string) =>
@@ -243,7 +258,7 @@ export default function Home() {
           return setFocus((at) => (at === "inbox" ? "fleet" : "inbox"));
         case "Escape":
           stop();
-          if (open) return setOpen(null);
+          if (open) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
         case "Enter": {
@@ -262,7 +277,7 @@ export default function Home() {
           const agent = fleet[fleetAt];
           if (agent) {
             clearRouting();
-            setOpen(agent.id);
+            showAgent(agent.id);
           }
           return;
         }
@@ -362,11 +377,11 @@ export default function Home() {
           <AgentPanel
             view={showing}
             busy={busy}
-            onBack={() => setOpen(null)}
+            onBack={() => showAgent(null)}
             onSay={(text) => void run(() => api.say(showing.agent.id, text))}
             onInterrupt={() => void run(() => api.interrupt(showing.agent.id))}
             onFork={() => void run(() => api.fork(showing.agent.id))}
-            onOpenAgent={setOpen}
+            onOpenAgent={showAgent}
             onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
           />
         ) : (
@@ -382,7 +397,7 @@ export default function Home() {
             onToggle={toggle}
             onOpen={(id) => {
               clearRouting();
-              setOpen(id);
+              showAgent(id);
             }}
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>
