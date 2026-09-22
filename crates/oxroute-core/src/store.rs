@@ -14,7 +14,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    Signal,
+    Signal, Target,
 };
 
 const SCHEMA: &str = r#"
@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 CREATE INDEX IF NOT EXISTS entries_agent ON entries (agent_id, id);
 
+CREATE TABLE IF NOT EXISTS active_turns (
+    agent_id     TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    turn_id      TEXT NOT NULL DEFAULT '',
+    artifact_dir TEXT NOT NULL,
+    target       TEXT NOT NULL DEFAULT 'null'
+);
+
 -- Answers produced by a side question, waiting to be folded into the main
 -- session before its next turn.
 CREATE TABLE IF NOT EXISTS pending_context (
@@ -94,6 +102,15 @@ CREATE TABLE IF NOT EXISTS kv (
 pub struct Store {
     conn: Mutex<Connection>,
     path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveTurn {
+    pub agent_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub artifact_dir: PathBuf,
+    pub target: Option<Target>,
 }
 
 impl Store {
@@ -322,17 +339,85 @@ impl Store {
     /// On startup nothing is really running, whatever the database says.
     pub fn recover(&self, at: f64) -> Result<Vec<Agent>> {
         self.with(|c| {
-            let mut stmt = c.prepare("SELECT * FROM agents WHERE status = 'working'")?;
+            let mut stmt = c.prepare(
+                "SELECT * FROM agents WHERE status = 'working'
+                 AND id NOT IN (SELECT agent_id FROM active_turns)",
+            )?;
             let mut out = Vec::new();
             for row in stmt.query_map([], read_agent)? {
                 out.push(row?);
             }
             c.execute(
                 "UPDATE agents SET status = 'stalled', stall_reason = 'oxroute restarted',
-                    updated_at = ?1, stall_alerted = 1 WHERE status = 'working'",
+                    updated_at = ?1, stall_alerted = 1 WHERE status = 'working'
+                    AND id NOT IN (SELECT agent_id FROM active_turns)",
                 params![at],
             )?;
             Ok(out)
+        })
+    }
+
+    pub fn save_active_turn(&self, turn: &ActiveTurn) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT OR REPLACE INTO active_turns
+                 (agent_id, session_id, turn_id, artifact_dir, target)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    turn.agent_id,
+                    turn.session_id,
+                    turn.turn_id,
+                    turn.artifact_dir.to_string_lossy(),
+                    serde_json::to_string(&turn.target)?,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn set_active_turn_id(&self, agent_id: &str, turn_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE active_turns SET turn_id = ?2 WHERE agent_id = ?1",
+                params![agent_id, turn_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn active_turns(&self) -> Result<Vec<ActiveTurn>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT agent_id, session_id, turn_id, artifact_dir, target FROM active_turns",
+            )?;
+            let mut turns = Vec::new();
+            for row in stmt.query_map([], |row| {
+                let target: String = row.get(4)?;
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    PathBuf::from(row.get::<_, String>(3)?),
+                    target,
+                ))
+            })? {
+                let (agent_id, session_id, turn_id, artifact_dir, target) = row?;
+                turns.push(ActiveTurn {
+                    agent_id,
+                    session_id,
+                    turn_id,
+                    artifact_dir,
+                    target: serde_json::from_str(&target)?,
+                });
+            }
+            Ok(turns)
+        })
+    }
+
+    pub fn clear_active_turn(&self, agent_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("DELETE FROM active_turns WHERE agent_id = ?1", params![agent_id])?;
+            Ok(())
         })
     }
 

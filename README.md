@@ -3,7 +3,7 @@
 Signals in, agents out.
 
 You already talk to a coding agent from your phone, through a Slack bot that
-owns a Codex app-server on a VM. That works, and it is also the ceiling: one
+connects to a Codex app-server on a VM. That works, and it is also the ceiling: one
 Slack thread is one Codex thread, Slack is the only way in, Codex is the only
 thing behind it, and the only place any of it exists is a chat log.
 
@@ -153,6 +153,11 @@ oxrouted                   # the daemon on its own: hub, Slack, HTTP + SSE
 oxroute                    # the terminal UI
 npm run dev                # the web UI, proxying /api to the daemon
 ```
+
+`deploy/oxroute-codex.service` owns the Codex app-server. `oxrouted` is a
+replaceable sidecar: it reconnects over loopback and restores any active turn
+from durable metadata plus `thread/resume`. `dev.sh` watches Rust sources,
+rebuilds, and replaces only the sidecar while Next.js reloads the browser UI.
 
 Configuration is `~/.config/oxroute/config.toml` — models, which harness runs
 them, where agents run, Slack, binaries, limits. `deploy/config.example.toml`

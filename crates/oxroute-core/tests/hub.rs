@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use oxroute_core::agent::{Capabilities, Harness, HarnessEvent, SessionSpec};
+use oxroute_core::agent::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
 use oxroute_core::config::{Choice, Config, Mode};
 use oxroute_core::hub::Routing;
 use oxroute_core::model::*;
 use oxroute_core::source::{Inbox, Posted, Source};
 use oxroute_core::{Hub, Store};
+use oxroute_core::store::ActiveTurn;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -53,6 +54,7 @@ struct FakeHarness {
     /// model implies, or the hub would look the harness up under the other
     /// one and find the real thing.
     backend: Backend,
+    recovery: Mutex<Option<RecoveredTurn>>,
 }
 
 impl FakeHarness {
@@ -66,6 +68,7 @@ impl FakeHarness {
             can_steer: true,
             delay: Duration::ZERO,
             backend: Backend::Codex,
+            recovery: Mutex::new(None),
         }
     }
 }
@@ -192,6 +195,10 @@ impl Harness for FakeHarness {
             .injected
             .push((session.into(), exchanges.len()));
         Ok(())
+    }
+
+    async fn recover(&self, _session: &str, _spec: &SessionSpec) -> Result<Option<RecoveredTurn>> {
+        Ok(self.recovery.lock().unwrap().clone())
     }
 
     async fn oneshot(&self, _prompt: &str, _schema: Value, _cwd: &str) -> Result<String> {
@@ -377,7 +384,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         workspace: scratch.to_string_lossy().to_string(),
         codex_binary: "codex".into(),
         claude_binary: "claude".into(),
-        codex_args: vec!["app-server".into()],
+        codex_url: "ws://127.0.0.1:8788".into(),
         codex_effort: "medium".into(),
         title_model: "title".into(),
         claude_permission_mode: "bypassPermissions".into(),
@@ -729,6 +736,83 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
     assert_eq!(notice.kind, EntryKind::Forked);
     assert_eq!(notice.text, "Session forked");
     assert_eq!(notice.detail, forked);
+}
+
+#[tokio::test]
+async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
+    let base = world(Mode::Auto, false).await;
+    let config = base.hub.config.clone();
+    let store = Store::in_memory().unwrap();
+    let agent = Agent {
+        id: "agent-recovered".into(),
+        name: "long task".into(),
+        backend: Backend::Codex,
+        model: "gpt-5.6-sol".into(),
+        session_id: "session-live".into(),
+        cwd: config.workspace.clone(),
+        status: AgentStatus::Working,
+        activity: "working".into(),
+        permalink: String::new(),
+        last_activity: now(),
+        updated_at: now(),
+        stall_reason: None,
+        stall_alerted: false,
+    };
+    store.save_agent(&agent).unwrap();
+    store.bind("slack", "D1", "100.0", &agent.id).unwrap();
+    store
+        .save_active_turn(&ActiveTurn {
+            agent_id: agent.id.clone(),
+            session_id: agent.session_id.clone(),
+            turn_id: "turn-live".into(),
+            artifact_dir: config.artifacts.join(&agent.id).join("turn-live"),
+            target: Some(Target::new("slack", "D1", "100.0")),
+        })
+        .unwrap();
+
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let harness = FakeHarness {
+        recovery: Mutex::new(Some(RecoveredTurn {
+            id: "turn-live".into(),
+            status: "inProgress".into(),
+            items: vec![],
+        })),
+        ..FakeHarness::new(calls.clone(), true)
+    };
+    let events = harness.events.clone();
+    let posts = Arc::new(Mutex::new(Posts::default()));
+    let mut hub = Hub::new(config, store);
+    hub.with_harness(Arc::new(harness));
+    hub.with_source(Arc::new(FakeSource {
+        posts: posts.clone(),
+        next_thread: Mutex::new(0),
+    }));
+    hub.start().await.unwrap();
+
+    let _ = events.send(HarnessEvent::Message {
+        session: agent.session_id.clone(),
+        text: "finished after reload".into(),
+        final_answer: true,
+    });
+    let _ = events.send(HarnessEvent::TurnFinished {
+        session: agent.session_id.clone(),
+        status: "completed".into(),
+    });
+
+    assert!(settle(|| hub.store.agent(&agent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    assert!(calls.lock().unwrap().started.is_empty(), "the turn was started twice");
+    assert!(hub.store.active_turns().unwrap().is_empty());
+    assert!(hub
+        .timeline(&agent.id, 10)
+        .unwrap()
+        .iter()
+        .any(|entry| entry.kind == EntryKind::Said && entry.text == "finished after reload"));
+    assert!(posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(thread, text)| thread == "100.0" && text == "finished after reload"));
 }
 
 #[tokio::test]

@@ -1,8 +1,7 @@
 //! Codex, driven through its app-server.
 //!
-//! ```text
-//! codex app-server --stdio
-//! ```
+//! The app-server is a separate durable service. oxroute reaches it over a
+//! loopback WebSocket, so replacing this daemon leaves Codex turns alone.
 //!
 //! JSON-RPC on stdin and stdout, one long-lived process for the whole fleet.
 //! Threads are the sessions; every agent oxroute runs on Codex is one Codex
@@ -26,9 +25,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 
-use super::{Capabilities, Harness, HarnessEvent, SessionSpec};
+use super::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
 use crate::model::{Backend, TurnInput};
-use crate::rpc::JsonChild;
+use crate::rpc::JsonSocket;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const SHORT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -67,8 +66,7 @@ const TITLE_FEATURES: &[&str] = &[
 ];
 
 pub struct CodexHarness {
-    binary: String,
-    args: Vec<String>,
+    url: String,
     default_cwd: String,
     reasoning_effort: String,
     title_model: String,
@@ -78,7 +76,7 @@ pub struct CodexHarness {
 
 /// One live app-server process and everything waiting on it.
 struct Connection {
-    child: AsyncMutex<JsonChild>,
+    socket: AsyncMutex<JsonSocket>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
     /// Set once, when the process is gone. Every later call fails with it
@@ -117,8 +115,7 @@ impl Connection {
 impl CodexHarness {
     pub fn new(config: &crate::config::Config) -> Self {
         CodexHarness {
-            binary: config.codex_binary.clone(),
-            args: config.codex_args.clone(),
+            url: config.codex_url.clone(),
             default_cwd: config.workspace_path().to_string_lossy().to_string(),
             reasoning_effort: config.codex_effort.clone(),
             title_model: config.title_model.clone(),
@@ -140,13 +137,10 @@ impl CodexHarness {
             }
         }
 
-        let mut argv = vec![self.binary.clone()];
-        argv.extend(self.args.iter().cloned());
-        let (child, mut lines) = JsonChild::spawn(&argv, Some(&self.default_cwd))
-            .context("starting the Codex app-server")?;
+        let (socket, mut lines) = JsonSocket::connect(&self.url).await?;
 
         let connection = Arc::new(Connection {
-            child: AsyncMutex::new(child),
+            socket: AsyncMutex::new(socket),
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             failure: Mutex::new(None),
@@ -256,8 +250,8 @@ impl Connection {
         self.pending.lock().unwrap().insert(id, tx);
 
         let sent = {
-            let child = self.child.lock().await;
-            child.send(&json!({ "id": id, "method": method, "params": params }))
+            let socket = self.socket.lock().await;
+            socket.send(&json!({ "id": id, "method": method, "params": params }))
         };
         if let Err(error) = sent {
             self.pending.lock().unwrap().remove(&id);
@@ -284,16 +278,16 @@ impl Connection {
     }
 
     fn notify(&self, method: &str, params: Value) -> Result<()> {
-        let child = self.child.try_lock();
-        match child {
-            Ok(child) => child.send(&json!({ "method": method, "params": params })),
+        let socket = self.socket.try_lock();
+        match socket {
+            Ok(socket) => socket.send(&json!({ "method": method, "params": params })),
             Err(_) => Err(anyhow!("the Codex app-server is busy")),
         }
     }
 
     fn respond_error(&self, id: &Value, message: &str) {
-        if let Ok(child) = self.child.try_lock() {
-            let _ = child.send(&json!({
+        if let Ok(socket) = self.socket.try_lock() {
+            let _ = socket.send(&json!({
                 "id": id,
                 "error": { "code": -32601, "message": message },
             }));
@@ -587,6 +581,32 @@ impl Harness for CodexHarness {
         )
         .await?;
         Ok(())
+    }
+
+    async fn recover(&self, session: &str, spec: &SessionSpec) -> Result<Option<RecoveredTurn>> {
+        let mut params = self.thread_options(spec);
+        params["threadId"] = json!(session);
+        let result = self.request("thread/resume", params).await?;
+        let Some(turn) = result
+            .pointer("/thread/turns")
+            .and_then(Value::as_array)
+            .and_then(|turns| turns.last())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(RecoveredTurn {
+            id: turn.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+            status: turn
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("failed")
+                .to_string(),
+            items: turn
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        }))
     }
 
     async fn oneshot(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {

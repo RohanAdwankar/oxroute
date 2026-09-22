@@ -8,10 +8,12 @@
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// Variables that tell a coding agent it is already inside one.
 ///
@@ -32,6 +34,65 @@ const WITHHELD: &[&str] = &[
 pub struct JsonChild {
     child: Child,
     writes: mpsc::UnboundedSender<String>,
+}
+
+/// A reconnectable newline-free JSON peer over WebSocket.
+///
+/// Unlike [`JsonChild`], this owns no process. The app-server can therefore
+/// outlive whichever oxroute daemon happens to be connected to it.
+pub struct JsonSocket {
+    writes: mpsc::UnboundedSender<String>,
+}
+
+impl JsonSocket {
+    pub async fn connect(url: &str) -> Result<(Self, mpsc::UnboundedReceiver<Value>)> {
+        let mut attempts = 0;
+        let socket = loop {
+            match connect_async(url).await {
+                Ok((socket, _)) => break socket,
+                Err(error) => {
+                    attempts += 1;
+                    if attempts >= 100 {
+                        return Err(error)
+                        .with_context(|| format!("connecting to Codex app-server at {url}"));
+                    }
+                }
+            }
+            // The sidecar and router start together. Bound the readiness wait
+            // without teaching normal request failures to retry themselves.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+        let (mut writer, mut reader) = socket.split();
+
+        let (writes, mut pending) = mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            while let Some(text) = pending.recv().await {
+                if writer.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
+            let _ = writer.close().await;
+        });
+
+        let (lines, rx) = mpsc::unbounded_channel::<Value>();
+        tokio::spawn(async move {
+            while let Some(Ok(message)) = reader.next().await {
+                let Ok(text) = message.into_text() else { continue };
+                if let Ok(value) = serde_json::from_str(&text) {
+                    if lines.send(value).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Ok((JsonSocket { writes }, rx))
+    }
+
+    pub fn send(&self, value: &Value) -> Result<()> {
+        self.writes
+            .send(serde_json::to_string(value)?)
+            .map_err(|_| anyhow::anyhow!("the Codex app-server connection has closed"))
+    }
 }
 
 impl JsonChild {

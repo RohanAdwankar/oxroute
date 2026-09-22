@@ -49,6 +49,13 @@ pub struct SessionSpec {
     pub ephemeral: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct RecoveredTurn {
+    pub id: String,
+    pub status: String,
+    pub items: Vec<Value>,
+}
+
 /// What a harness tells us, in oxroute's vocabulary rather than its own.
 #[derive(Debug, Clone)]
 pub enum HarnessEvent {
@@ -145,6 +152,11 @@ pub trait Harness: Send + Sync {
     async fn release(&self, session: &str) -> Result<()> {
         let _ = session;
         Ok(())
+    }
+
+    /// Reattach to a turn that outlived oxroute and return its current state.
+    async fn recover(&self, _session: &str, _spec: &SessionSpec) -> Result<Option<RecoveredTurn>> {
+        Ok(None)
     }
 
     /// Ask the harness to answer a one-shot prompt on a throwaway session.

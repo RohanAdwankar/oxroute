@@ -45,8 +45,12 @@ if [ ! -f "$config_dir/env" ]; then
   install -m 0600 "$source_dir/deploy/oxroute.env.example" "$config_dir/env"
   echo "   edit it before starting: OXROUTE_OWNER and the two Slack tokens"
 fi
+if [ ! -f "$config_dir/codex.env" ]; then
+  install -m 0600 "$source_dir/deploy/oxroute-codex.env.example" "$config_dir/codex.env"
+fi
 
 say "installing systemd units"
+install -m 0644 "$source_dir/deploy/oxroute-codex.service" "$unit_dir/oxroute-codex.service"
 install -m 0644 "$source_dir/deploy/oxroute.service" "$unit_dir/oxroute.service"
 if [ "$with_web" = true ]; then
   say "building the web UI"

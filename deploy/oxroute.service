@@ -1,7 +1,7 @@
 [Unit]
 Description=oxroute -- signals in, agents out
-After=network-online.target
-Wants=network-online.target
+After=network-online.target oxroute-codex.service
+Wants=network-online.target oxroute-codex.service
 
 [Service]
 Type=simple
