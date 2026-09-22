@@ -698,6 +698,9 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let original = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let original_timeline = w.hub.timeline(&original, 50).unwrap();
+    assert!(!original_timeline.is_empty());
 
     w.hub.accept(signal("100.0", "101.0", "fork")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap().len() == 2).await);
@@ -707,7 +710,19 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
     // A real fork keeps the history; only a side question excludes it.
     assert!(!forked[0].1);
     // The branch lives in its own thread, wired to the new agent.
-    assert!(w.hub.store.bound_agent("slack", "D1", "thread-1").unwrap().is_some());
+    let forked = w.hub.store.bound_agent("slack", "D1", "thread-1").unwrap().unwrap();
+    assert_eq!(
+        w.hub
+            .timeline(&forked, 50)
+            .unwrap()
+            .iter()
+            .map(|entry| (&entry.kind, entry.text.as_str(), entry.detail.as_str()))
+            .collect::<Vec<_>>(),
+        original_timeline
+            .iter()
+            .map(|entry| (&entry.kind, entry.text.as_str(), entry.detail.as_str()))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

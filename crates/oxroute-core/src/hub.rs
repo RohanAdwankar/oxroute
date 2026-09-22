@@ -850,6 +850,7 @@ impl Hub {
                 {
                     forked.permalink = permalink;
                     self.store.save_agent(&forked)?;
+                    self.store.copy_timeline(agent_id, &forked.id)?;
                     self.store.bind(
                         &binding.source,
                         &binding.conversation,
@@ -864,6 +865,7 @@ impl Hub {
         }
 
         self.store.save_agent(&forked)?;
+        self.store.copy_timeline(agent_id, &forked.id)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
         self.emit(Event::Sync);
         Ok(forked)

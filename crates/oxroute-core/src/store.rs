@@ -501,6 +501,18 @@ impl Store {
         })
     }
 
+    pub fn copy_timeline(&self, from: &str, to: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO entries (agent_id, at, kind, text, detail, origin)
+                 SELECT ?2, at, kind, text, detail, origin FROM entries
+                 WHERE agent_id = ?1 ORDER BY id",
+                params![from, to],
+            )?;
+            Ok(())
+        })
+    }
+
     /// The most recent line on an agent's timeline.
     pub fn last_entry(&self, agent_id: &str) -> Result<Option<Entry>> {
         Ok(self.timeline(agent_id, 1)?.pop())
