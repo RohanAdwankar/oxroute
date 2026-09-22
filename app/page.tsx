@@ -366,6 +366,7 @@ export default function Home() {
             onSay={(text) => void run(() => api.say(showing.agent.id, text))}
             onInterrupt={() => void run(() => api.interrupt(showing.agent.id))}
             onFork={() => void run(() => api.fork(showing.agent.id))}
+            onOpenAgent={setOpen}
             onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
           />
         ) : (

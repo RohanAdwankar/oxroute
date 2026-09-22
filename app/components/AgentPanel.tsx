@@ -11,6 +11,7 @@ const TAG: Record<EntryKind, { label: string; tone: string }> = {
   worked: { label: "worked", tone: "text-mid border-rule" },
   asked: { label: "asked", tone: "text-hold border-hold" },
   you: { label: "you", tone: "text-merge border-merge" },
+  forked: { label: "forked", tone: "text-merge border-merge" },
   notice: { label: "note", tone: "text-faint border-rule" },
 };
 
@@ -28,6 +29,7 @@ export function AgentPanel({
   onSay,
   onInterrupt,
   onFork,
+  onOpenAgent,
   onRename,
   busy,
 }: {
@@ -36,6 +38,7 @@ export function AgentPanel({
   onSay: (text: string) => void;
   onInterrupt: () => void;
   onFork: () => void;
+  onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
   busy: boolean;
 }) {
@@ -157,9 +160,17 @@ export function AgentPanel({
                   {entry.origin && (
                     <span className="text-[12px] text-ok">← {entry.origin}</span>
                   )}
-                  {entry.detail && (
+                  {entry.kind === "forked" && entry.detail ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAgent(entry.detail)}
+                      className="w-fit cursor-pointer text-[12px] text-merge hover:underline"
+                    >
+                      Open forked session →
+                    </button>
+                  ) : entry.detail ? (
                     <span className="text-[12px] text-faint">{entry.detail}</span>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );

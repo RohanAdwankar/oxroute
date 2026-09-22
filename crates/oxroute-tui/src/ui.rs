@@ -305,6 +305,7 @@ fn agent_detail(frame: &mut Frame, area: Rect, app: &App) {
             EntryKind::Worked => ("worked", theme::DIM),
             EntryKind::Asked => ("asked", theme::WARN),
             EntryKind::You => ("you", theme::ACCENT),
+            EntryKind::Forked => ("forked", theme::ACCENT),
             EntryKind::Notice => ("note", theme::FAINT),
         };
         lines.push(Line::from(vec![

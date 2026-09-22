@@ -858,6 +858,13 @@ impl Hub {
                         &forked.id,
                     )?;
                     self.sessions.lock().await.insert(session, forked.id.clone());
+                    self.record(
+                        agent_id,
+                        EntryKind::Forked,
+                        "Session forked",
+                        &forked.id,
+                        "",
+                    );
                     self.emit(Event::Sync);
                     return Ok(forked);
                 }
@@ -867,6 +874,13 @@ impl Hub {
         self.store.save_agent(&forked)?;
         self.store.copy_timeline(agent_id, &forked.id)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
+        self.record(
+            agent_id,
+            EntryKind::Forked,
+            "Session forked",
+            &forked.id,
+            "",
+        );
         self.emit(Event::Sync);
         Ok(forked)
     }

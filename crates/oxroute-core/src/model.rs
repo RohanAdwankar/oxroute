@@ -394,6 +394,8 @@ pub enum EntryKind {
     Asked,
     /// You said something directly.
     You,
+    /// This session branched into another agent.
+    Forked,
     /// oxroute itself reporting.
     Notice,
 }
@@ -406,6 +408,7 @@ impl EntryKind {
             EntryKind::Worked => "worked",
             EntryKind::Asked => "asked",
             EntryKind::You => "you",
+            EntryKind::Forked => "forked",
             EntryKind::Notice => "notice",
         }
     }
@@ -417,6 +420,7 @@ impl EntryKind {
             "worked" => EntryKind::Worked,
             "asked" => EntryKind::Asked,
             "you" => EntryKind::You,
+            "forked" => EntryKind::Forked,
             _ => EntryKind::Notice,
         }
     }

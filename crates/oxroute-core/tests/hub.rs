@@ -723,6 +723,10 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
             .map(|entry| (&entry.kind, entry.text.as_str(), entry.detail.as_str()))
             .collect::<Vec<_>>()
     );
+    let notice = w.hub.timeline(&original, 1).unwrap().pop().unwrap();
+    assert_eq!(notice.kind, EntryKind::Forked);
+    assert_eq!(notice.text, "Session forked");
+    assert_eq!(notice.detail, forked);
 }
 
 #[tokio::test]

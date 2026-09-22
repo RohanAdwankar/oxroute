@@ -7,7 +7,7 @@ export type Backend = "codex" | "claude-code";
 export type Delivery = "start" | "steer" | "queue";
 export type AgentStatus = "working" | "stalled" | "complete";
 export type InboxState = "waiting" | "done";
-export type EntryKind = "received" | "said" | "worked" | "asked" | "you" | "notice";
+export type EntryKind = "received" | "said" | "worked" | "asked" | "you" | "forked" | "notice";
 export type Mode = "ask" | "auto";
 
 export interface Attachment {
