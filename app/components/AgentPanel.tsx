@@ -127,12 +127,6 @@ export function AgentPanel({
         </button>
       </div>
 
-      {agent.activity && (
-        <div className="mx-7 mt-[22px] shrink-0 rounded-[3px] border border-rule border-l-[3px] border-l-ok bg-card px-[18px] py-[15px]">
-          <span className="text-[15px] leading-[1.5]">{agent.activity}</span>
-        </div>
-      )}
-
       <div ref={timeline} className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[18px]">
         {view.timeline.length === 0 ? (
           <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
