@@ -1,0 +1,20 @@
+[Unit]
+Description=Codex app-server for oxroute
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=OXROUTE_CODEX_CLI=codex
+Environment=OXROUTE_CODEX_URL=ws://127.0.0.1:8788
+EnvironmentFile=%h/.config/oxroute/codex.env
+ExecStart=/usr/bin/env ${OXROUTE_CODEX_CLI} app-server --listen ${OXROUTE_CODEX_URL}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=default.target

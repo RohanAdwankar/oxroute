@@ -123,7 +123,7 @@ struct FileLimits {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileCodex {
-    args: Option<Vec<String>>,
+    url: Option<String>,
     reasoning_effort: Option<String>,
     title_model: Option<String>,
 }
@@ -144,8 +144,8 @@ pub struct Config {
     pub workspace: String,
     pub codex_binary: String,
     pub claude_binary: String,
-    /// What `codex` is started with, in case a build renames the flag.
-    pub codex_args: Vec<String>,
+    /// The durable app-server owned outside oxrouted.
+    pub codex_url: String,
     pub codex_effort: String,
     /// The small, cheap model that writes agent titles.
     pub title_model: String,
@@ -327,10 +327,9 @@ impl Config {
             claude_binary: pick(&["OXROUTE_CLAUDE_CLI"], file.binaries.claude, || {
                 "claude".into()
             }),
-            codex_args: from_env(&["OXROUTE_CODEX_ARGS"])
-                .map(|raw| raw.split_whitespace().map(str::to_string).collect())
-                .or(file.codex.args)
-                .unwrap_or_else(|| vec!["app-server".into(), "--stdio".into()]),
+            codex_url: pick(&["OXROUTE_CODEX_URL"], file.codex.url, || {
+                "ws://127.0.0.1:8788".into()
+            }),
             codex_effort: pick(
                 &["OXROUTE_CODEX_EFFORT"],
                 file.codex.reasoning_effort,
@@ -478,6 +477,7 @@ mod tests {
             "OXROUTE_WORKSPACE",
             "CODEX_SLACK_WORKSPACE",
             "OXROUTE_LISTEN",
+            "OXROUTE_CODEX_URL",
             "OXROUTE_CLAUDE_PERMISSION_MODE",
             "OXROUTE_SLACK_APP_TOKEN",
             "SLACK_APP_TOKEN",
@@ -502,6 +502,7 @@ mod tests {
         let config = Config::load_from(Path::new("/nonexistent/oxroute.toml")).unwrap();
         assert_eq!(config.default_model, DEFAULT_MODEL);
         assert_eq!(config.default_backend, Backend::ClaudeCode);
+        assert_eq!(config.codex_url, "ws://127.0.0.1:8788");
         // Both harnesses are reachable without configuring anything.
         assert_eq!(config.backend_for("sol"), Backend::Codex);
         assert_eq!(config.backend_for("opus"), Backend::ClaudeCode);

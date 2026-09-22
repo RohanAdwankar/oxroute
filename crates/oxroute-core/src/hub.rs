@@ -32,7 +32,7 @@ use crate::model::*;
 use crate::naming;
 use crate::progress::{Progress, MAX_BYTES};
 use crate::source::{Posted, Source, SourceEvent};
-use crate::store::Store;
+use crate::store::{ActiveTurn, Store};
 
 const ERROR_REPLY: &str = "That request could not be completed.";
 const LOW_STORAGE_REPLY: &str = "Disk is critically low. This request was not started.";
@@ -271,15 +271,18 @@ impl Hub {
         tokio::fs::create_dir_all(&self.config.artifacts).await.ok();
         tokio::fs::create_dir_all(&self.config.attachments).await.ok();
 
-        // Nothing is really running after a restart, whatever the database
-        // remembers. Say so before anybody reads it.
+        for harness in self.harnesses.values() {
+            self.pump(harness.events());
+        }
+
+        // Codex lives outside this process. Rebuild the local watchers for
+        // turns that kept running while this daemon was replaced.
+        self.restore_turns().await;
+
+        // Anything without a durable live turn really was orphaned.
         let orphaned = self.store.recover(now())?;
         for agent in &orphaned {
             self.announce_stall(agent, "oxroute restarted").await;
-        }
-
-        for harness in self.harnesses.values() {
-            self.pump(harness.events());
         }
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -296,6 +299,87 @@ impl Hub {
         self.clone().watch_stalls();
         self.refresh_dashboard().await;
         Ok(())
+    }
+
+    async fn restore_turns(self: &Arc<Self>) {
+        let Ok(saved) = self.store.active_turns() else { return };
+        for saved in saved {
+            let Some(agent) = self.store.agent(&saved.agent_id).ok().flatten() else {
+                let _ = self.store.clear_active_turn(&saved.agent_id);
+                continue;
+            };
+            let harness = self.harness(agent.backend);
+            let turn = Arc::new(Live::new(
+                saved.session_id.clone(),
+                saved.artifact_dir,
+                saved.target,
+                false,
+            ));
+            if !saved.turn_id.is_empty() {
+                turn.mark_ready(saved.turn_id);
+            }
+            self.sessions
+                .lock()
+                .await
+                .insert(saved.session_id.clone(), agent.id.clone());
+            self.live.lock().await.insert(agent.id.clone(), turn.clone());
+
+            let spec = SessionSpec {
+                model: agent.model.clone(),
+                cwd: agent.cwd.clone(),
+                resume: Some(saved.session_id.clone()),
+                ephemeral: false,
+            };
+            match harness.recover(&saved.session_id, &spec).await {
+                Ok(Some(snapshot)) => {
+                    if !snapshot.id.is_empty() {
+                        turn.mark_ready(snapshot.id.clone());
+                        let _ = self.store.set_active_turn_id(&agent.id, &snapshot.id);
+                    }
+                    Self::hydrate(&turn, &snapshot.items);
+                    if snapshot.status != "inProgress" {
+                        turn.finish(snapshot.status);
+                    }
+                    let hub = self.clone();
+                    tokio::spawn(async move {
+                        let lock = hub.lock_for(&agent.id).await;
+                        let _held = lock.lock().await;
+                        if let Err(error) = hub.settle_turn(&agent, turn, harness).await {
+                            tracing::error!(agent = agent.id, %error, "recovered turn failed");
+                        }
+                    });
+                }
+                Ok(None) | Err(_) => {
+                    self.live.lock().await.remove(&agent.id);
+                    self.sessions.lock().await.remove(&saved.session_id);
+                    let _ = self.store.clear_active_turn(&agent.id);
+                }
+            }
+        }
+    }
+
+    fn hydrate(turn: &Live, items: &[serde_json::Value]) {
+        for item in items {
+            turn.progress.lock().unwrap().observe(item);
+            match item.get("type").and_then(serde_json::Value::as_str) {
+                Some("agentMessage") => {
+                    if let Some(text) = item.get("text").and_then(serde_json::Value::as_str) {
+                        let final_answer = item.get("phase").and_then(serde_json::Value::as_str)
+                            == Some("final_answer");
+                        let mut answer = turn.answer.lock().unwrap();
+                        if final_answer || answer.is_none() {
+                            *answer = Some(text.to_string());
+                        }
+                    }
+                }
+                Some("imageGeneration") => {
+                    if let Some(path) = item.get("savedPath").and_then(serde_json::Value::as_str) {
+                        turn.artifacts.lock().unwrap().insert(path.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Fold one harness's event stream into the hub's.
@@ -1091,30 +1175,50 @@ impl Hub {
             target.clone(),
             false,
         ));
+        self.store.save_active_turn(&ActiveTurn {
+            agent_id: agent.id.clone(),
+            session_id: session.clone(),
+            turn_id: String::new(),
+            artifact_dir,
+            target: target.clone(),
+        })?;
         self.live.lock().await.insert(agent.id.clone(), turn.clone());
         self.store.set_agent_status(&agent.id, AgentStatus::Working, now())?;
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
 
-        let reporter = self.clone().report(turn.clone());
+        match harness.start(&session, inputs).await {
+            Ok(turn_id) if !turn_id.is_empty() => {
+                turn.mark_ready(turn_id.clone());
+                self.store.set_active_turn_id(&agent.id, &turn_id)?;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(agent = agent.id, %error, "could not start turn");
+                turn.finish("failed".into());
+            }
+        }
+        self.settle_turn(agent, turn, harness).await
+    }
 
-        let outcome = async {
-            let turn_id = harness.start(&session, inputs).await?;
-            if !turn_id.is_empty() {
-                turn.mark_ready(turn_id);
-            }
-            turn.wait_done().await;
-            if turn.stopped.load(Ordering::SeqCst) {
-                return Ok::<Option<String>, anyhow::Error>(None);
-            }
+    async fn settle_turn(
+        self: &Arc<Self>,
+        agent: &Agent,
+        turn: Arc<Live>,
+        harness: Arc<dyn Harness>,
+    ) -> Result<()> {
+        let reporter = self.clone().report(turn.clone());
+        turn.wait_done().await;
+        let outcome = if turn.stopped.load(Ordering::SeqCst) {
+            Ok(None)
+        } else {
             let status = turn.status();
             let answer = turn.answer.lock().unwrap().clone();
             match (status.as_str(), answer) {
                 ("completed", Some(text)) if !text.is_empty() => Ok(Some(text)),
-                (other, _) => anyhow::bail!("the turn ended with {other}"),
+                (other, _) => Err(anyhow::anyhow!("the turn ended with {other}")),
             }
-        }
-        .await;
+        };
 
         // Whatever happened, stop reporting and let go of the turn. The
         // first status wins, so this only matters when the harness never
@@ -1123,11 +1227,12 @@ impl Hub {
         reporter.abort();
         self.clear_progress(&turn).await;
         self.live.lock().await.remove(&agent.id);
+        self.store.clear_active_turn(&agent.id)?;
 
         if !turn.stopped.load(Ordering::SeqCst) {
-            self.hand_back_artifacts(&turn, target.as_ref()).await;
+            self.hand_back_artifacts(&turn, turn.target.as_ref()).await;
         }
-        let _ = harness.release(&session).await;
+        let _ = harness.release(&turn.session).await;
 
         let answer = match outcome {
             Ok(None) => return Ok(()),
@@ -1136,7 +1241,7 @@ impl Hub {
                 self.store.stall_agent(&agent.id, "turn failed", now())?;
                 self.emit(Event::Sync);
                 self.refresh_dashboard().await;
-                if let Some(target) = &target {
+                if let Some(target) = &turn.target {
                     self.say(target, ERROR_REPLY).await;
                 }
                 return Err(error);
@@ -1154,7 +1259,7 @@ impl Hub {
         }
         self.store.set_agent_status(&agent.id, AgentStatus::Complete, now())?;
 
-        if let Some(target) = &target {
+        if let Some(target) = &turn.target {
             let permalink = self.say(target, &answer).await;
             if !permalink.is_empty() {
                 let _ = self.store.set_agent_permalink(&agent.id, &permalink);
@@ -1166,7 +1271,7 @@ impl Hub {
         });
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
-        self.clone().name_agent(agent.id.clone(), target, true);
+        self.clone().name_agent(agent.id.clone(), turn.target.clone(), true);
         Ok(())
     }
 

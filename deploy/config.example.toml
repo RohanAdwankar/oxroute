@@ -72,8 +72,8 @@ label = "Astra"
 # -- harness settings ---------------------------------------------------
 
 # [codex]
-# What `codex` is started with. Change this if your build renames the flag.
-# args = ["app-server", "--stdio"]
+# The separately supervised app-server. Keep it on loopback.
+# url = "ws://127.0.0.1:8788"
 # reasoning_effort = "medium"
 # The small, cheap model that writes agent titles.
 # title_model = "gpt-5.6-luna"

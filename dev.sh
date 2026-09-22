@@ -27,26 +27,65 @@ export OXROUTE_ARTIFACTS="$PWD/.oxroute/artifacts"
 export OXROUTE_ATTACHMENTS="$PWD/.oxroute/attachments"
 export OXROUTE_LISTEN="${OXROUTE_LISTEN:-127.0.0.1:8787}"
 export OXROUTE_LOG="${OXROUTE_LOG:-info}"
+export OXROUTE_CODEX_URL="${OXROUTE_CODEX_URL:-ws://127.0.0.1:18788}"
 # Left unset on purpose: with no Slack tokens the daemon runs with no
 # sources, and you drive it from the UI or with POST /api/signal.
 
-cargo build --release
-./target/release/oxrouted &
-daemon=$!
-# Stopping the script stops both, rather than leaving a daemon holding the
-# port and a pile of agent processes behind it.
-trap 'kill $daemon 2>/dev/null || true; kill 0 2>/dev/null || true' EXIT INT TERM
+codex_cli="${OXROUTE_CODEX_CLI:-$HOME/.local/bin/codex}"
+env -u SLACK_APP_TOKEN -u SLACK_BOT_TOKEN \
+  -u OXROUTE_SLACK_APP_TOKEN -u OXROUTE_SLACK_BOT_TOKEN \
+  "$codex_cli" app-server --listen "$OXROUTE_CODEX_URL" &
+app_server=$!
+
+watch_daemon() {
+  local daemon signature next
+  stop_daemon() {
+    trap - EXIT INT TERM
+    kill "$daemon" 2>/dev/null || true
+    wait "$daemon" 2>/dev/null || true
+    exit 0
+  }
+  cargo build --quiet
+  ./target/debug/oxrouted &
+  daemon=$!
+  trap stop_daemon EXIT INT TERM
+  signature=$(stat -c %y target/debug/oxrouted)
+  while true; do
+    if cargo build --quiet; then
+      next=$(stat -c %y target/debug/oxrouted)
+      if [ "$next" != "$signature" ]; then
+        kill "$daemon" 2>/dev/null || true
+        wait "$daemon" 2>/dev/null || true
+        ./target/debug/oxrouted &
+        daemon=$!
+        signature=$next
+        echo "reloaded oxrouted"
+      fi
+    fi
+    sleep 1
+  done
+}
+
+watch_daemon &
+watcher=$!
+cleanup() {
+  trap - EXIT INT TERM
+  kill "$watcher" "$app_server" 2>/dev/null || true
+  wait "$watcher" "$app_server" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 until curl -sf "http://$OXROUTE_LISTEN/api/health" >/dev/null 2>&1; do sleep 0.5; done
 
-./target/release/oxrouted doctor || true
+./target/debug/oxrouted doctor || true
 
 cat <<INFO
 
   oxroute is up.
 
     web    http://localhost:3000
-    tui    ./target/release/oxroute
+    tui    ./target/debug/oxroute
     api    http://$OXROUTE_LISTEN
 
   Type an idea into the inbox, then route it. Ctrl-C stops everything.

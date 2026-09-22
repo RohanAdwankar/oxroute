@@ -114,6 +114,6 @@ OXROUTE_LOG=debug oxrouted             # including every line to and from codex
 oxrouted migrate --force               # re-import over the top
 ```
 
-`codex app-server --stdio` is what oxroute runs. If your Codex build has
-dropped or renamed that flag, set `OXROUTE_CODEX_ARGS` rather than patching
-anything — `doctor` will not catch it, but the first turn will fail loudly.
+Codex runs as the separate `oxroute-codex.service` and oxroute connects over
+the loopback URL in `OXROUTE_CODEX_URL`. Restarting `oxroute.service` leaves
+the app-server and its active sessions running.

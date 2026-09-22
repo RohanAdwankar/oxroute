@@ -110,6 +110,7 @@ fn doctor() -> Result<()> {
     println!("workspace       {}", config.workspace_path().display());
     println!("database        {}", config.database.display());
     println!("codex           {}", report(&config.codex_binary));
+    println!("codex server    {}", config.codex_url);
     println!("claude          {}", report(&config.claude_binary));
     println!("owner           {}", config.owner);
     println!("listen          {}", config.listen);
