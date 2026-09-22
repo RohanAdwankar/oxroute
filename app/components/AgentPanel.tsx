@@ -3,18 +3,36 @@
 import { useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
-import type { AgentView, EntryKind } from "../lib/types";
+import type { AgentView, Entry, EntryKind } from "../lib/types";
 
-const TAG: Record<EntryKind, { label: string; tone: string }> = {
-  received: { label: "received", tone: "text-ok border-ok" },
-  said: { label: "said", tone: "text-ink border-rule" },
-  worked: { label: "worked", tone: "text-mid border-rule" },
+const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
+  received: { label: "you", tone: "text-ok" },
   asked: { label: "asked", tone: "text-hold border-hold" },
-  you: { label: "you", tone: "text-merge border-merge" },
+  you: { label: "you", tone: "text-merge" },
   forked: { label: "forked", tone: "text-merge border-merge" },
   forkedFrom: { label: "parent", tone: "text-merge border-merge" },
-  notice: { label: "note", tone: "text-faint border-rule" },
+  notice: { label: "note", tone: "text-faint" },
 };
+
+type TimelineItem = { entry: Entry } | { tools: Entry[] };
+
+function compactTimeline(entries: Entry[]): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "worked") {
+      items.push({ entry });
+      continue;
+    }
+    const last = items.at(-1);
+    if (last && "tools" in last) last.tools.push(entry);
+    else items.push({ tools: [entry] });
+  }
+  return items;
+}
+
+function minute(at: number) {
+  return clock(at).slice(0, 5);
+}
 
 /**
  * Inside one agent: what came in and what it did, on one timeline, with a
@@ -46,6 +64,7 @@ export function AgentPanel({
   const [draft, setDraft] = useState("");
   const timeline = useRef<HTMLDivElement>(null);
   const { agent } = view;
+  const items = compactTimeline(view.timeline);
 
   // Follow the tail as work arrives, which is what you want while watching,
   // and re-pin whenever you switch agents.
@@ -127,44 +146,71 @@ export function AgentPanel({
         </button>
       </div>
 
-      <div ref={timeline} className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[18px]">
+      <div ref={timeline} className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2">
         {view.timeline.length === 0 ? (
           <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
         ) : (
-          view.timeline.map((entry) => {
-            const tag = TAG[entry.kind] ?? TAG.notice;
+          items.map((item) => {
+            if ("tools" in item) {
+              const first = item.tools[0];
+              return (
+                <details key={`tools-${first.id}`} className="group border-b border-hair py-2">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
+                    <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
+                    <span className="w-2 text-center group-open:rotate-90">›</span>
+                    <span>
+                      {item.tools.length} tool {item.tools.length === 1 ? "call" : "calls"}
+                    </span>
+                  </summary>
+                  <div className="ml-[52px] mt-1 flex flex-col">
+                    {item.tools.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid"
+                      >
+                        {entry.text !== "Command" && (
+                          <span className="mr-2 text-faint">{entry.text}</span>
+                        )}
+                        <span className="break-words whitespace-pre-wrap">
+                          {entry.detail || entry.text}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            }
+
+            const { entry } = item;
+            const tag = TAG[entry.kind];
             return (
               <div
                 key={entry.id}
-                className="flex items-start gap-4 border-b border-hair py-3 last:border-b-0"
+                className="flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0"
               >
-                <span className="tnum w-[62px] shrink-0 pt-[2px] text-[12px] text-faint">
-                  {clock(entry.at)}
+                <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
+                  {minute(entry.at)}
                 </span>
-                <span className="w-[84px] shrink-0 pt-[1px]">
-                  <span
-                    className={`tnum rounded-[2px] border px-[7px] py-px text-[10.5px] ${tag.tone}`}
-                  >
-                    {tag.label}
-                  </span>
-                </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-[5px]">
-                  <span className="text-[13.5px] leading-[1.5] whitespace-pre-wrap break-words">
+                <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                  <span className="text-[13.5px] leading-[1.45] whitespace-pre-wrap break-words">
+                    {tag && (
+                      <span className={`mr-2 text-[10.5px] ${tag.tone}`}>
+                        {tag.label}
+                      </span>
+                    )}
                     {entry.text}
                   </span>
-                  {entry.origin && (
-                    <span className="text-[12px] text-ok">← {entry.origin}</span>
-                  )}
+                  {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
                   {(entry.kind === "forked" || entry.kind === "forkedFrom") && entry.detail ? (
                     <button
                       type="button"
                       onClick={() => onOpenAgent(entry.detail)}
-                      className="w-fit cursor-pointer text-[12px] text-merge hover:underline"
+                      className="w-fit cursor-pointer text-[11px] text-merge hover:underline"
                     >
                       {entry.kind === "forked" ? "Open forked session →" : "Open parent session ↑"}
                     </button>
                   ) : entry.detail ? (
-                    <span className="text-[12px] text-faint">{entry.detail}</span>
+                    <span className="text-[11px] text-faint">{entry.detail}</span>
                   ) : null}
                 </div>
               </div>
