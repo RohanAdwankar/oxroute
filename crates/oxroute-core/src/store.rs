@@ -229,6 +229,17 @@ impl Store {
         })
     }
 
+    pub fn agent_by_session(&self, backend: Backend, session_id: &str) -> Result<Option<Agent>> {
+        self.with(|c| {
+            Ok(c.query_row(
+                "SELECT * FROM agents WHERE backend = ?1 AND session_id = ?2 LIMIT 1",
+                params![backend.as_str(), session_id],
+                read_agent,
+            )
+            .optional()?)
+        })
+    }
+
     /// Everything unfinished, plus the most recent finished ones.
     ///
     /// The cap exists because the dashboard is a single message and a list

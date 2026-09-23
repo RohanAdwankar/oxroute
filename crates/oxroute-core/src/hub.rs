@@ -1803,6 +1803,93 @@ impl Hub {
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.store.timeline(agent_id, limit)
     }
+
+    pub async fn search(&self, query: &str, managed_limit: usize, native_limit: usize) -> Result<SearchResults> {
+        let managed = self.store.search(query, managed_limit)?;
+        let mut other = Vec::new();
+        for harness in self.harnesses.values() {
+            match harness.search_sessions(query, native_limit).await {
+                Ok(sessions) => {
+                    for session in sessions {
+                        if self
+                            .store
+                            .agent_by_session(session.backend, &session.session_id)?
+                            .is_none()
+                        {
+                            other.push(session);
+                        }
+                    }
+                }
+                Err(error) => tracing::debug!(backend = %harness.backend(), %error, "native session search failed"),
+            }
+        }
+        other.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
+        other.truncate(native_limit);
+        Ok(SearchResults { managed, other })
+    }
+
+    pub async fn import_session(&self, backend: Backend, session_id: &str) -> Result<Agent> {
+        anyhow::ensure!(
+            self.store.agent_by_session(backend, session_id)?.is_none(),
+            "that session is already in oxroute"
+        );
+        let native = self
+            .harness(backend)
+            .find_session(session_id)
+            .await?
+            .context("no such native session")?;
+        let model = if native.model.is_empty() {
+            self.config
+                .models
+                .values()
+                .find(|choice| choice.backend == backend)
+                .map(|choice| choice.id.clone())
+                .unwrap_or_else(|| self.config.default_model.clone())
+        } else {
+            native.model.clone()
+        };
+        let title = if native.name.trim().is_empty() {
+            &native.preview
+        } else {
+            &native.name
+        };
+        let at = if native.updated_at > 0.0 { native.updated_at } else { now() };
+        let agent = Agent {
+            id: new_id("agent"),
+            name: naming::provisional(title),
+            backend,
+            model,
+            session_id: native.session_id,
+            cwd: if native.cwd.is_empty() {
+                self.config.workspace.clone()
+            } else {
+                native.cwd
+            },
+            status: AgentStatus::Complete,
+            activity: String::new(),
+            permalink: String::new(),
+            last_activity: at,
+            updated_at: at,
+            stall_reason: None,
+            stall_alerted: false,
+        };
+        self.store.save_agent(&agent)?;
+        self.sessions
+            .lock()
+            .await
+            .insert(agent.session_id.clone(), agent.id.clone());
+        self.emit(Event::Sync);
+        Ok(agent)
+    }
+
+    pub async fn native_preview(
+        &self,
+        backend: Backend,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConversationLine>> {
+        self.harness(backend).session_preview(session_id, limit).await
+    }
 }
 
 /// Everything a surface needs to draw itself once.

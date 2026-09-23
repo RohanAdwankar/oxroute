@@ -27,6 +27,9 @@
 //! from Codex, and the reason capabilities are declared rather than assumed.
 
 use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -35,13 +38,14 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
 
 use super::{Capabilities, Harness, HarnessEvent, SessionSpec};
-use crate::model::{Backend, TurnInput};
+use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
 use crate::rpc::JsonChild;
 
 pub struct ClaudeHarness {
     binary: String,
     default_cwd: String,
     permission_mode: String,
+    history_root: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Mutex<JsonChild>>>>,
     events: broadcast::Sender<HarnessEvent>,
 }
@@ -52,6 +56,10 @@ impl ClaudeHarness {
             binary: config.claude_binary.clone(),
             default_cwd: config.workspace_path().to_string_lossy().to_string(),
             permission_mode: config.claude_permission_mode.clone(),
+            history_root: std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join(".claude/projects"),
             sessions: Mutex::new(HashMap::new()),
             events: broadcast::channel(2048).0,
         }
@@ -64,6 +72,7 @@ impl ClaudeHarness {
             binary: binary.into(),
             default_cwd: cwd.into(),
             permission_mode: permission_mode.into(),
+            history_root: PathBuf::new(),
             sessions: Mutex::new(HashMap::new()),
             events: broadcast::channel(2048).0,
         }
@@ -162,6 +171,29 @@ impl Harness for ClaudeHarness {
         Ok(session)
     }
 
+    async fn search_sessions(&self, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+        let root = self.history_root.clone();
+        let query = query.to_string();
+        Ok(tokio::task::spawn_blocking(move || scan_sessions(&root, Some(&query), limit)).await??)
+    }
+
+    async fn find_session(&self, session: &str) -> Result<Option<NativeSession>> {
+        let root = self.history_root.clone();
+        let session = session.to_string();
+        Ok(tokio::task::spawn_blocking(move || {
+            Ok::<_, anyhow::Error>(scan_sessions(&root, None, usize::MAX)?
+                .into_iter()
+                .find(|candidate| candidate.session_id == session))
+        })
+        .await??)
+    }
+
+    async fn session_preview(&self, session: &str, limit: usize) -> Result<Vec<ConversationLine>> {
+        let root = self.history_root.clone();
+        let session = session.to_string();
+        Ok(tokio::task::spawn_blocking(move || preview_session(&root, &session, limit)).await??)
+    }
+
     async fn start(&self, session: &str, inputs: Vec<TurnInput>) -> Result<String> {
         let child = self
             .sessions
@@ -230,6 +262,150 @@ impl Harness for ClaudeHarness {
         // the process is kept until something actually stops it.
         Ok(())
     }
+}
+
+fn scan_sessions(root: &Path, query: Option<&str>, limit: usize) -> Result<Vec<NativeSession>> {
+    if !root.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut files = Vec::new();
+    collect_histories(root, &mut files)?;
+    files.sort_by_key(|path| {
+        std::cmp::Reverse(path.metadata().and_then(|m| m.modified()).ok())
+    });
+    let query = query.map(str::to_lowercase);
+    let mut sessions = Vec::new();
+    for path in files {
+        if let Some(session) = read_session(&path, query.as_deref())? {
+            sessions.push(session);
+            if sessions.len() == limit {
+                break;
+            }
+        }
+    }
+    Ok(sessions)
+}
+
+fn collect_histories(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if entry.file_name() != "subagents" {
+                collect_histories(&path, files)?;
+            }
+        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn read_session(path: &Path, query: Option<&str>) -> Result<Option<NativeSession>> {
+    let file = File::open(path)?;
+    let mut session_id = String::new();
+    let mut cwd = String::new();
+    let mut model = String::new();
+    let mut preview = String::new();
+    let mut name = String::new();
+    let mut matches = query.is_none();
+    for line in BufReader::new(file).lines() {
+        let Ok(value) = serde_json::from_str::<Value>(&line?) else { continue };
+        if session_id.is_empty() {
+            session_id = value.get("sessionId").and_then(Value::as_str).unwrap_or("").to_string();
+        }
+        if cwd.is_empty() {
+            cwd = value.get("cwd").and_then(Value::as_str).unwrap_or("").to_string();
+        }
+        if value.get("type").and_then(Value::as_str) == Some("summary") {
+            name = value.get("summary").and_then(Value::as_str).unwrap_or("").to_string();
+        }
+        let message = value.get("message");
+        if let Some(candidate) = message
+            .and_then(|message| message.get("model"))
+            .and_then(Value::as_str)
+        {
+            model = candidate.to_string();
+        }
+        let text = message
+            .and_then(|message| message.get("content"))
+            .map(message_text)
+            .unwrap_or_default();
+        if preview.is_empty()
+            && value.get("type").and_then(Value::as_str) == Some("user")
+            && !text.trim().is_empty()
+        {
+            preview = text.trim().to_string();
+        }
+        if query.is_some_and(|query| text.to_lowercase().contains(query)) {
+            matches = true;
+        }
+    }
+    if session_id.is_empty() {
+        session_id = path.file_stem().and_then(|value| value.to_str()).unwrap_or("").to_string();
+    }
+    if session_id.is_empty() || !matches {
+        return Ok(None);
+    }
+    if name.is_empty() {
+        name = preview.clone();
+    }
+    let updated_at = path
+        .metadata()?
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    Ok(Some(NativeSession {
+        backend: Backend::ClaudeCode,
+        session_id,
+        name,
+        preview,
+        cwd,
+        model,
+        updated_at,
+    }))
+}
+
+fn message_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn preview_session(root: &Path, session: &str, limit: usize) -> Result<Vec<ConversationLine>> {
+    let mut files = Vec::new();
+    if root.is_dir() {
+        collect_histories(root, &mut files)?;
+    }
+    let Some(path) = files.into_iter().find(|path| {
+        path.file_stem().and_then(|value| value.to_str()) == Some(session)
+    }) else {
+        return Ok(vec![]);
+    };
+    let mut lines = Vec::new();
+    for line in BufReader::new(File::open(path)?).lines() {
+        let Ok(value) = serde_json::from_str::<Value>(&line?) else { continue };
+        let role = match value.get("type").and_then(Value::as_str) {
+            Some("user") => "you",
+            Some("assistant") => "agent",
+            _ => continue,
+        };
+        let text = value
+            .pointer("/message/content")
+            .map(message_text)
+            .unwrap_or_default();
+        if !text.trim().is_empty() {
+            lines.push(ConversationLine { role: role.into(), text });
+        }
+    }
+    Ok(lines.into_iter().rev().take(limit).collect::<Vec<_>>().into_iter().rev().collect())
 }
 
 /// One frame from the CLI, in oxroute's vocabulary.

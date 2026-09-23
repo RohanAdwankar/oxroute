@@ -16,6 +16,9 @@
 //! stall what it thought was running, and the next call starts a fresh one.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,7 +29,7 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 
 use super::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
-use crate::model::{Backend, TurnInput};
+use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
 use crate::rpc::JsonSocket;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -70,6 +73,7 @@ pub struct CodexHarness {
     default_cwd: String,
     reasoning_effort: String,
     title_model: String,
+    session_index: PathBuf,
     inner: AsyncMutex<Option<Arc<Connection>>>,
     events: broadcast::Sender<HarnessEvent>,
 }
@@ -119,6 +123,10 @@ impl CodexHarness {
             default_cwd: config.workspace_path().to_string_lossy().to_string(),
             reasoning_effort: config.codex_effort.clone(),
             title_model: config.title_model.clone(),
+            session_index: std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join(".codex/session_index.jsonl"),
             inner: AsyncMutex::new(None),
             events: broadcast::channel(2048).0,
         }
@@ -609,6 +617,91 @@ impl Harness for CodexHarness {
         }))
     }
 
+    async fn search_sessions(&self, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+        let mut sessions = Vec::new();
+        for archived in [false, true] {
+            let response = self
+                .request(
+                    "thread/list",
+                    json!({
+                        "searchTerm": query,
+                        "archived": archived,
+                        "limit": limit,
+                        "sortKey": "updated_at",
+                        "sortDirection": "desc",
+                        "useStateDbOnly": true
+                    }),
+                )
+                .await?;
+            sessions.extend(
+                response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(native_session),
+            );
+        }
+        let index = self.session_index.clone();
+        let query = query.to_string();
+        let indexed = tokio::task::spawn_blocking(move || search_index(&index, &query, limit)).await??;
+        let mut by_id: HashMap<String, NativeSession> = indexed
+            .into_iter()
+            .map(|session| (session.session_id.clone(), session))
+            .collect();
+        for session in sessions {
+            by_id.insert(session.session_id.clone(), session);
+        }
+        let mut sessions: Vec<_> = by_id.into_values().collect();
+        sessions.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
+        sessions.truncate(limit);
+        Ok(sessions)
+    }
+
+    async fn find_session(&self, session: &str) -> Result<Option<NativeSession>> {
+        let response = self
+            .request(
+                "thread/read",
+                json!({ "threadId": session, "includeTurns": false }),
+            )
+            .await?;
+        Ok(response.get("thread").and_then(native_session))
+    }
+
+    async fn session_preview(&self, session: &str, limit: usize) -> Result<Vec<ConversationLine>> {
+        let response = self
+            .request(
+                "thread/read",
+                json!({ "threadId": session, "includeTurns": true }),
+            )
+            .await?;
+        let mut lines = Vec::new();
+        for item in response
+            .pointer("/thread/turns")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|turn| turn.get("items").and_then(Value::as_array).into_iter().flatten())
+        {
+            let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+            let role = match kind {
+                "userMessage" => "you",
+                "agentMessage" => "agent",
+                _ => continue,
+            };
+            let text = item
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| item.get("content").map(content_text))
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                lines.push(ConversationLine { role: role.into(), text });
+            }
+        }
+        Ok(lines.into_iter().rev().take(limit).collect::<Vec<_>>().into_iter().rev().collect())
+    }
+
     async fn oneshot(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
         let cwd = if cwd.is_empty() { &self.default_cwd } else { cwd };
         let config = self.title_config(cwd).await;
@@ -671,5 +764,81 @@ impl Harness for CodexHarness {
             )
             .await;
         outcome
+    }
+}
+
+fn search_index(path: &Path, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+    let mut latest = HashMap::new();
+    for line in BufReader::new(File::open(path)?).lines() {
+        let Ok(value) = serde_json::from_str::<Value>(&line?) else { continue };
+        let Some(session_id) = value.get("id").and_then(Value::as_str) else { continue };
+        let name = value
+            .get("thread_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let updated_at = value
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .and_then(|value| {
+                time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
+            .map(|value| value.unix_timestamp_nanos() as f64 / 1_000_000_000.0)
+            .unwrap_or(0.0);
+        latest.insert(
+            session_id.to_string(),
+            NativeSession {
+                backend: Backend::Codex,
+                session_id: session_id.to_string(),
+                name: name.clone(),
+                preview: name,
+                cwd: String::new(),
+                model: String::new(),
+                updated_at,
+            },
+        );
+    }
+    let query = query.to_lowercase();
+    let mut sessions: Vec<_> = latest
+        .into_values()
+        .filter(|session| session.name.to_lowercase().contains(&query))
+        .collect();
+    sessions.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
+    sessions.truncate(limit);
+    Ok(sessions)
+}
+
+fn native_session(thread: &Value) -> Option<NativeSession> {
+    let session_id = thread.get("id")?.as_str()?.to_string();
+    let preview = thread.get("preview").and_then(Value::as_str).unwrap_or("").to_string();
+    Some(NativeSession {
+        backend: Backend::Codex,
+        session_id,
+        name: thread
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&preview)
+            .to_string(),
+        preview,
+        cwd: thread.get("cwd").and_then(Value::as_str).unwrap_or("").to_string(),
+        model: thread.get("model").and_then(Value::as_str).unwrap_or("").to_string(),
+        updated_at: thread.get("updatedAt").and_then(Value::as_i64).unwrap_or(0) as f64,
+    })
+}
+
+fn content_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
     }
 }

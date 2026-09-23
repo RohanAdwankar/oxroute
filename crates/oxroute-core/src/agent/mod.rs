@@ -21,7 +21,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::model::{Backend, TurnInput};
+use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
 
 /// What a harness can actually do. Declared, not discovered: the UI says how
 /// a send will land *before* you press it, so a busy agent that cannot be
@@ -157,6 +157,21 @@ pub trait Harness: Send + Sync {
     /// Reattach to a turn that outlived oxroute and return its current state.
     async fn recover(&self, _session: &str, _spec: &SessionSpec) -> Result<Option<RecoveredTurn>> {
         Ok(None)
+    }
+
+    /// Search sessions that exist in the harness's native history.
+    async fn search_sessions(&self, _query: &str, _limit: usize) -> Result<Vec<NativeSession>> {
+        Ok(vec![])
+    }
+
+    /// Resolve one native session again at import time rather than trusting
+    /// metadata supplied by a browser.
+    async fn find_session(&self, _session: &str) -> Result<Option<NativeSession>> {
+        Ok(None)
+    }
+
+    async fn session_preview(&self, _session: &str, _limit: usize) -> Result<Vec<ConversationLine>> {
+        Ok(vec![])
     }
 
     /// Ask the harness to answer a one-shot prompt on a throwaway session.

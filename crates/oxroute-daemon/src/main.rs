@@ -178,6 +178,8 @@ async fn serve() -> Result<()> {
         .route("/api/events", get(events))
         .route("/api/agents/{id}", get(agent))
         .route("/api/search", get(search))
+        .route("/api/import", post(import_session))
+        .route("/api/native-preview", get(native_preview))
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
@@ -262,8 +264,36 @@ struct SearchQuery {
 async fn search(
     State(hub): Hubs,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<Vec<oxroute_core::SearchGroup>>, Failed> {
-    Ok(Json(hub.store.search(&query.q, SEARCH_LIMIT)?))
+) -> Result<Json<oxroute_core::SearchResults>, Failed> {
+    Ok(Json(hub.search(&query.q, SEARCH_LIMIT, SEARCH_LIMIT).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportBody {
+    backend: oxroute_core::Backend,
+    session_id: String,
+}
+
+async fn import_session(
+    State(hub): Hubs,
+    Json(body): Json<ImportBody>,
+) -> Result<Json<oxroute_core::Agent>, Failed> {
+    Ok(Json(hub.import_session(body.backend, &body.session_id).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePreviewQuery {
+    backend: oxroute_core::Backend,
+    session_id: String,
+}
+
+async fn native_preview(
+    State(hub): Hubs,
+    Query(query): Query<NativePreviewQuery>,
+) -> Result<Json<Vec<oxroute_core::ConversationLine>>, Failed> {
+    Ok(Json(hub.native_preview(query.backend, &query.session_id, 16).await?))
 }
 
 /// Everything the hub emits, as it happens.

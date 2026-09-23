@@ -90,6 +90,26 @@ export interface SearchGroup {
   destinations: SearchDestination[];
 }
 
+export interface NativeSession {
+  backend: Backend;
+  sessionId: string;
+  name: string;
+  preview: string;
+  cwd: string;
+  model: string;
+  updatedAt: number;
+}
+
+export interface SearchResults {
+  managed: SearchGroup[];
+  other: NativeSession[];
+}
+
+export interface ConversationLine {
+  role: string;
+  text: string;
+}
+
 export interface ModelInfo {
   alias: string;
   id: string;

@@ -421,6 +421,10 @@ export default function Home() {
         vim={vim}
         onVim={toggleVim}
         onSearchOpen={showAgent}
+        onSearchImport={(agent) => {
+          reload();
+          showAgent(agent);
+        }}
       />
 
       <div className="relative flex min-h-0 flex-1">

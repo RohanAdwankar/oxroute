@@ -55,6 +55,7 @@ struct FakeHarness {
     /// one and find the real thing.
     backend: Backend,
     recovery: Mutex<Option<RecoveredTurn>>,
+    native: Arc<Mutex<Vec<NativeSession>>>,
 }
 
 impl FakeHarness {
@@ -69,6 +70,7 @@ impl FakeHarness {
             delay: Duration::ZERO,
             backend: Backend::Codex,
             recovery: Mutex::new(None),
+            native: Arc::new(Mutex::new(vec![])),
         }
     }
 }
@@ -201,6 +203,32 @@ impl Harness for FakeHarness {
         Ok(self.recovery.lock().unwrap().clone())
     }
 
+    async fn search_sessions(&self, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+        let query = query.to_lowercase();
+        Ok(self
+            .native
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|session| {
+                session.name.to_lowercase().contains(&query)
+                    || session.preview.to_lowercase().contains(&query)
+            })
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn find_session(&self, session: &str) -> Result<Option<NativeSession>> {
+        Ok(self
+            .native
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate.session_id == session)
+            .cloned())
+    }
+
     async fn oneshot(&self, _prompt: &str, _schema: Value, _cwd: &str) -> Result<String> {
         // Naming is a nicety. A harness that cannot name leaves the
         // provisional title standing, which the tests assert on.
@@ -300,6 +328,7 @@ struct World {
     /// The harness's own event channel, so a test can play the part of an
     /// agent reporting what it is doing mid-turn.
     harness: broadcast::Sender<HarnessEvent>,
+    native: Arc<Mutex<Vec<NativeSession>>>,
 }
 
 impl World {
@@ -426,6 +455,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         ..FakeHarness::new(calls.clone(), options.hang)
     };
     let harness_events = harness.events.clone();
+    let native = harness.native.clone();
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
     hub.with_harness(Arc::new(harness));
@@ -441,6 +471,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         calls,
         posts,
         harness: harness_events,
+        native,
     }
 }
 
@@ -763,6 +794,52 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
     assert_eq!(notice.kind, EntryKind::Forked);
     assert_eq!(notice.text, "Session forked");
     assert_eq!(notice.detail, forked);
+}
+
+#[tokio::test]
+async fn native_sessions_are_separate_until_imported() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "work on fwgenie in oxroute")).await.unwrap();
+    assert!(settle(|| !w.hub.store.search("fwgenie", 20).unwrap().is_empty()).await);
+    w.native.lock().unwrap().push(NativeSession {
+        backend: Backend::Codex,
+        session_id: "native-fwgenie".into(),
+        name: "Finish fwgenie".into(),
+        preview: "work through the remaining generator issue".into(),
+        cwd: "/work/fwgenie".into(),
+        model: "gpt-6-astra".into(),
+        updated_at: 42.0,
+    });
+
+    let before = w.hub.search("fwgenie", 20, 20).await.unwrap();
+    assert_eq!(before.managed.len(), 1);
+    assert_eq!(before.other.len(), 1);
+
+    let imported = w.hub.import_session(Backend::Codex, "native-fwgenie").await.unwrap();
+    assert_eq!(imported.session_id, "native-fwgenie");
+    assert_eq!(imported.cwd, "/work/fwgenie");
+    assert_eq!(imported.model, "gpt-6-astra");
+    assert_eq!(imported.status, AgentStatus::Complete);
+    assert!(w.hub.search("fwgenie", 20, 20).await.unwrap().other.is_empty());
+    assert!(w
+        .hub
+        .import_session(Backend::Codex, "native-fwgenie")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("already"));
+}
+
+#[tokio::test]
+async fn an_unknown_native_session_cannot_be_imported() {
+    let w = world(Mode::Auto, false).await;
+    assert!(w
+        .hub
+        .import_session(Backend::Codex, "missing")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("no such"));
 }
 
 #[tokio::test]

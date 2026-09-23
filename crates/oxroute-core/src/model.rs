@@ -471,6 +471,33 @@ pub struct SearchGroup {
     pub destinations: Vec<SearchDestination>,
 }
 
+/// A conversation owned by a native harness but not yet managed by oxroute.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSession {
+    pub backend: Backend,
+    pub session_id: String,
+    pub name: String,
+    pub preview: String,
+    pub cwd: String,
+    pub model: String,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub managed: Vec<SearchGroup>,
+    pub other: Vec<NativeSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationLine {
+    pub role: String,
+    pub text: String,
+}
+
 /// What state a signal is in once it has reached the inbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
