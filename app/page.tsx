@@ -18,7 +18,7 @@ import {
 import type { AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
 
 const EMPTY: Snapshot = {
-  mode: "auto",
+  mode: "ask",
   defaultModel: "",
   agents: [],
   inbox: [],

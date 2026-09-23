@@ -66,13 +66,14 @@ browser redraws; answer in the browser and it lands in the Slack thread.
 
 There is one setting, and it is in the top bar.
 
-| mode | a new thread |
+| mode | a new non-Slack signal |
 |---|---|
-| **auto** | starts an agent immediately. What the Slack bot has always done. |
+| **auto** | starts an agent immediately. |
 | **ask** | waits in the inbox until you say where it goes. |
 
-Replies to a thread that is already bound never wait, in either mode: a
-continuation is not a routing decision. Mode is deliberately global and
+Slack is deterministic in either mode: a new Slack thread starts one session
+immediately, and replies reuse that session. Replies to any bound thread never
+wait because a continuation is not a routing decision. Mode is global and
 deliberately the only knob — relevance scoring, fan-out rules and dedup are
 the interesting version of this problem and are not built yet, so there is
 nothing here pretending to be smart.

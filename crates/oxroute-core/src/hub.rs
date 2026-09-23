@@ -254,7 +254,7 @@ impl Hub {
             .ok()
             .flatten()
             .map(|v| Mode::parse(&v))
-            .unwrap_or(Mode::Auto)
+            .unwrap_or(Mode::Ask)
     }
 
     pub fn set_mode(&self, mode: Mode) -> Result<()> {
@@ -759,6 +759,18 @@ impl Hub {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let inputs = vec![TurnInput::text(text)];
         self.record(&agent.id, EntryKind::You, text, "", "");
+        let target = self.home_target(&agent.id).await;
+
+        // A question submitted from the web or TUI is part of the Slack
+        // conversation too. Mirror it before the answer so the thread keeps
+        // the complete exchange instead of showing an unexplained response.
+        if let Some(target) = target
+            .as_ref()
+            .filter(|target| target.source == crate::source::slack::SOURCE)
+        {
+            self.say(target, &format!("Question from Oxroute UI:\n{text}"))
+                .await;
+        }
 
         let pseudo = Signal {
             id: new_id("sig"),
@@ -776,9 +788,6 @@ impl Hub {
         if self.steer(&agent, &pseudo, inputs.clone()).await? {
             return Ok(());
         }
-        // Keep answering wherever this agent already lives, so a message
-        // typed in the TUI still shows up in the Slack thread.
-        let target = self.home_target(&agent.id).await;
         self.clone().deliver_to(agent, inputs, None, target).await;
         Ok(())
     }
@@ -993,8 +1002,8 @@ impl Hub {
                 let next = if self.mode() == Mode::Auto { Mode::Ask } else { Mode::Auto };
                 let _ = self.set_mode(next);
                 match next {
-                    Mode::Ask => "New threads now wait in the inbox.".into(),
-                    Mode::Auto => "New threads now start an agent on their own.".into(),
+                    Mode::Ask => "New non-Slack signals now wait in the inbox.".into(),
+                    Mode::Auto => "New non-Slack signals now start an agent on their own.".into(),
                 }
             }
             other => format!("unknown command /{other}"),

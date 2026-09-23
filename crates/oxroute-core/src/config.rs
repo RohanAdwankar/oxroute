@@ -36,9 +36,9 @@ pub struct Choice {
 /// What happens to a signal that opens a new thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Spin up an agent and get going. What the Slack bot has always done.
+    /// Spin up an agent and get going for non-Slack signals.
     Auto,
-    /// Hold it in the inbox until someone says where it goes.
+    /// Hold non-Slack signals in the inbox until someone chooses a route.
     Ask,
 }
 
@@ -52,8 +52,8 @@ impl Mode {
 
     pub fn parse(value: &str) -> Self {
         match value {
-            "ask" => Mode::Ask,
-            _ => Mode::Auto,
+            "auto" => Mode::Auto,
+            _ => Mode::Ask,
         }
     }
 }
@@ -455,6 +455,12 @@ pub fn free_bytes(_path: &std::path::Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routing_defaults_to_human_choice() {
+        assert_eq!(Mode::parse(""), Mode::Ask);
+        assert_eq!(Mode::parse("unexpected"), Mode::Ask);
+    }
 
     /// Environment variables are process-wide, and the test harness runs
     /// these in parallel, so anything that touches them takes this first.
