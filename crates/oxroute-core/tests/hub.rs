@@ -990,7 +990,12 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
         .any(|(_, text)| text == "Question from Oxroute UI:\none more thing"));
 
     let timeline = w.hub.timeline(&agent, 50).unwrap();
-    assert!(timeline.iter().any(|e| e.kind == EntryKind::You));
+    let direct: Vec<_> = timeline
+        .iter()
+        .filter(|entry| entry.text == "one more thing")
+        .collect();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].kind, EntryKind::You);
 }
 
 #[tokio::test]

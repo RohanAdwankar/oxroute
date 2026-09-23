@@ -621,6 +621,12 @@ impl Hub {
             // Sources redeliver. That is normal, not an error.
             return Ok(());
         }
+        // Slack messages never need a routing decision: a root starts an
+        // agent and a reply follows its binding. Mark them settled before
+        // surfaces hear about them so they never flash under "Waiting".
+        if signal.source == crate::source::slack::SOURCE {
+            self.store.resolve_signal(&signal.id, "routing", &[])?;
+        }
         self.emit(Event::SignalReceived {
             signal: Box::new(signal.clone()),
         });
@@ -679,7 +685,7 @@ impl Hub {
 
         // Steering only makes sense when something is actually running and the
         // user did not explicitly ask to queue.
-        if !parsed.queued && self.steer(&agent, &signal, inputs.clone()).await? {
+        if !parsed.queued && self.steer(&agent, &signal, inputs.clone(), true).await? {
             self.resolve(&signal, &format!("steered {}", agent.name), &[agent.id.clone()])
                 .await;
             return Ok(());
@@ -845,7 +851,7 @@ impl Hub {
             at: now(),
             root: false,
         };
-        if self.steer(&agent, &pseudo, inputs.clone()).await? {
+        if self.steer(&agent, &pseudo, inputs.clone(), false).await? {
             return Ok(());
         }
         self.clone().deliver_to(agent, inputs, None, target).await;
@@ -1125,7 +1131,13 @@ impl Hub {
         Ok(inputs)
     }
 
-    async fn steer(&self, agent: &Agent, signal: &Signal, inputs: Vec<TurnInput>) -> Result<bool> {
+    async fn steer(
+        &self,
+        agent: &Agent,
+        signal: &Signal,
+        inputs: Vec<TurnInput>,
+        record: bool,
+    ) -> Result<bool> {
         // Ask the harness, not the enum. A capability declared in two places
         // is a capability that will eventually disagree with itself, and the
         // harness is the half that actually has to do the work.
@@ -1145,13 +1157,15 @@ impl Hub {
             .await
         {
             Ok(()) => {
-                self.record(
-                    &agent.id,
-                    EntryKind::Received,
-                    &signal.text,
-                    "steered into the running turn",
-                    &origin_of(signal),
-                );
+                if record {
+                    self.record(
+                        &agent.id,
+                        EntryKind::Received,
+                        &signal.text,
+                        "steered into the running turn",
+                        &origin_of(signal),
+                    );
+                }
                 self.emit(Event::Sync);
                 Ok(true)
             }
