@@ -552,6 +552,11 @@ impl Harness for CodexHarness {
     }
 
     async fn inject(&self, session: &str, exchanges: &[(String, String)]) -> Result<()> {
+        // A persisted thread need not still be resident in the app-server.
+        // Reattach before mutating it so merges also work after unsubscribe or
+        // an app-server restart.
+        self.request("thread/resume", json!({ "threadId": session }))
+            .await?;
         let mut items = Vec::new();
         for (question, answer) in exchanges {
             items.push(json!({
