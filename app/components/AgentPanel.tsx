@@ -12,6 +12,8 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
   you: { label: "you", tone: "text-merge" },
   forked: { label: "forked", tone: "text-merge border-merge" },
   forkedFrom: { label: "parent", tone: "text-merge border-merge" },
+  merged: { label: "merged", tone: "text-merge border-merge" },
+  mergedInto: { label: "merged", tone: "text-merge border-merge" },
   notice: { label: "note", tone: "text-faint" },
 };
 
@@ -49,7 +51,9 @@ export function AgentPanel({
   onBack,
   onSay,
   onInterrupt,
-  onFork,
+  onForkSlack,
+  onForkLocal,
+  onMerge,
   onOpenAgent,
   onRename,
   archived,
@@ -61,7 +65,9 @@ export function AgentPanel({
   onBack: () => void;
   onSay: (text: string, images: File[]) => void;
   onInterrupt: () => void;
-  onFork: () => void;
+  onForkSlack: () => void;
+  onForkLocal: () => void;
+  onMerge: (() => void) | null;
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
   archived: boolean;
@@ -135,7 +141,7 @@ export function AgentPanel({
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-[63px] shrink-0 items-center gap-[14px] border-b border-rule px-7">
+      <div className="flex min-h-[63px] shrink-0 flex-wrap items-center gap-x-[14px] gap-y-1 border-b border-rule px-5 py-2">
         <button
           type="button"
           onClick={onBack}
@@ -191,7 +197,7 @@ export function AgentPanel({
             {agent.name}
           </button>
         )}
-        <span className="text-[12.5px] text-faint">
+        <span className="min-w-0 truncate text-[12.5px] text-faint">
           {agent.status} {since(agent.updatedAt)} · {agent.backend} · {agent.model} ·{" "}
           {view.delivery}
         </span>
@@ -216,15 +222,35 @@ export function AgentPanel({
           className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           {archived ? "Restore" : "Archive"}
+        <button
+          type="button"
+          onClick={onForkLocal}
+          disabled={busy || agent.backend !== "codex"}
+          title={agent.backend === "codex" ? "open a branch beside this pane" : "only Codex can fork"}
+          className="tnum cursor-pointer rounded-[3px] border border-rule px-[13px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Fork here
         </button>
         <button
           type="button"
-          onClick={onFork}
+          onClick={onForkSlack}
           disabled={busy || agent.backend !== "codex"}
-          title={agent.backend === "codex" ? "branch this history" : "only Codex can fork"}
-          className="tnum cursor-pointer rounded-[3px] border border-rule px-[13px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          title={agent.backend === "codex" ? "branch this history into a Slack thread" : "only Codex can fork"}
+          className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Fork
+          Slack fork
+        </button>
+        {onMerge && (
+          <button
+            type="button"
+            onClick={onMerge}
+            disabled={busy || agent.status === "working"}
+            title={agent.status === "working" ? "stop the active turn first" : "merge this fork into its parent"}
+            className="tnum cursor-pointer rounded-[3px] border border-merge px-[13px] py-[7px] text-[12px] text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Merge
+          </button>
+        )}
         </button>
         <button
           type="button"
@@ -304,13 +330,15 @@ export function AgentPanel({
                     <Markdown>{entry.text}</Markdown>
                   </div>
                   {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
-                  {(entry.kind === "forked" || entry.kind === "forkedFrom") && entry.detail ? (
+                  {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
                     <button
                       type="button"
                       onClick={() => onOpenAgent(entry.detail)}
                       className="w-fit cursor-pointer text-[11px] text-merge hover:underline"
                     >
-                      {entry.kind === "forked" ? "Open forked session →" : "Open parent session ↑"}
+                      {entry.kind === "forked" || entry.kind === "merged"
+                        ? "Open child session →"
+                        : "Open parent session ↑"}
                     </button>
                   ) : entry.detail ? (
                     <span className="text-[11px] text-faint">{entry.detail}</span>

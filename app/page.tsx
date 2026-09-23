@@ -41,8 +41,10 @@ export default function Home() {
   const [routing, setRouting] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
+  const [panes, setPanes] = useState<string[]>([]);
+  const [paneWidths, setPaneWidths] = useState<number[]>([]);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
-  const [detail, setDetail] = useState<AgentView | null>(null);
+  const [details, setDetails] = useState<Record<string, AgentView>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -57,6 +59,8 @@ export default function Home() {
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
+  const paneArea = useRef<HTMLDivElement>(null);
+  const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -107,6 +111,8 @@ export default function Home() {
 
   const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
+    setPanes(id ? [id] : []);
+    setPaneWidths(id ? [1] : []);
     setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("agent", id);
@@ -124,7 +130,10 @@ export default function Home() {
   useEffect(() => {
     const restore = () => {
       const url = new URL(window.location.href);
-      setOpen(url.searchParams.get("agent"));
+      const agent = url.searchParams.get("agent");
+      setOpen(agent);
+      setPanes(agent ? [agent] : []);
+      setPaneWidths(agent ? [1] : []);
       const entry = Number(url.searchParams.get("entry"));
       setFocusEntry(entry > 0 ? entry : null);
     };
@@ -147,22 +156,31 @@ export default function Home() {
                 agent.id === event.agentId ? { ...agent, activity: event.text } : agent,
               ),
             }));
+            setDetails((current) => {
+              const view = current[event.agentId];
+              return view
+                ? { ...current, [event.agentId]: { ...view, agent: { ...view.agent, activity: event.text } } }
+                : current;
+            });
             break;
           case "timeline":
             // Append in place. A full refetch per tool call would make the
             // timeline stutter exactly when there is most to watch.
-            setDetail((current) =>
-              current && current.agent.id === event.entry.agentId
-                ? {
-                    ...current,
-                    timeline: current.timeline.some((entry) => entry.id === event.entry.id)
-                      ? current.timeline.map((entry) =>
-                          entry.id === event.entry.id ? event.entry : entry,
-                        )
-                      : [...current.timeline, event.entry],
-                  }
-                : current,
-            );
+            setDetails((current) => {
+              const view = current[event.entry.agentId];
+              if (!view) return current;
+              return {
+                ...current,
+                [event.entry.agentId]: {
+                  ...view,
+                  timeline: view.timeline.some((entry) => entry.id === event.entry.id)
+                    ? view.timeline.map((entry) =>
+                        entry.id === event.entry.id ? event.entry : entry,
+                      )
+                    : [...view.timeline, event.entry],
+                },
+              };
+            });
             break;
           case "notice":
             say(event.text);
@@ -190,16 +208,22 @@ export default function Home() {
   }, [revision, complain]);
 
   useEffect(() => {
-    if (!open) return;
+    if (panes.length === 0) return;
     let live = true;
-    api.agent(open).then(
-      (view) => live && setDetail(view),
+    Promise.all(panes.map((id) => api.agent(id))).then(
+      (views) => {
+        if (!live) return;
+        setDetails((current) => ({
+          ...current,
+          ...Object.fromEntries(views.map((view) => [view.agent.id, view])),
+        }));
+      },
       (error: unknown) => live && complain(error),
     );
     return () => {
       live = false;
     };
-  }, [open, revision, complain]);
+  }, [panes, revision, complain]);
 
   /** Every mutation runs through here, so failures always reach the top bar. */
   const run = useCallback(
@@ -220,11 +244,81 @@ export default function Home() {
 
   const toggleVim = useCallback(() => setVimMode(!getVimMode()), []);
 
-  const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
-  // Only trust the detail we have if it is for the agent that is open; a
-  // stale one would flash the wrong timeline while the next fetch lands.
-  const showing = open && detail?.agent.id === open ? detail : null;
+  const setUrlAgent = (id: string | null) => {
+    setOpen(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("agent", id);
+    else url.searchParams.delete("agent");
+    url.searchParams.delete("entry");
+    window.history.pushState(null, "", url);
+  };
 
+  const closePane = (index: number) => {
+    const next = panes.filter((_, at) => at !== index);
+    setPanes(next);
+    setPaneWidths((current) => {
+      const widths = [...current];
+      const removed = widths.splice(index, 1)[0] ?? 0;
+      if (widths.length > 0) widths[Math.min(index, widths.length - 1)] += removed;
+      return widths;
+    });
+    setUrlAgent(next[0] ?? null);
+  };
+
+  const forkHere = (index: number, agent: string) =>
+    run(async () => {
+      const { agent: child } = await api.forkLocal(agent);
+      setPanes((current) => [
+        ...current.slice(0, index + 1),
+        child.id,
+        ...current.slice(index + 1),
+      ]);
+      setPaneWidths((current) => {
+        const widths = [...current];
+        const split = (widths[index] ?? 1) / 2;
+        widths[index] = split;
+        widths.splice(index + 1, 0, split);
+        return widths;
+      });
+    });
+
+  const mergePane = (index: number, agent: string) =>
+    run(async () => {
+      const { agent: parent } = await api.merge(agent);
+      setPanes((current) => {
+        const parentAt = current.indexOf(parent.id);
+        if (parentAt >= 0) return current.filter((_, at) => at !== index);
+        return current.map((id, at) => (at === index ? parent.id : id));
+      });
+      setPaneWidths((current) => {
+        const widths = [...current];
+        const parentAt = panes.indexOf(parent.id);
+        if (parentAt >= 0) {
+          const removed = widths.splice(index, 1)[0] ?? 0;
+          const adjustedParent = parentAt > index ? parentAt - 1 : parentAt;
+          widths[adjustedParent] += removed;
+        }
+        return widths;
+      });
+      if (open === agent) setUrlAgent(parent.id);
+    });
+
+  const resizePanes = (clientX: number) => {
+    const drag = paneDrag.current;
+    const width = paneArea.current?.clientWidth ?? 0;
+    if (!drag || width === 0) return;
+    const total = drag.widths.reduce((sum, value) => sum + value, 0);
+    const delta = ((clientX - drag.x) / width) * total;
+    const combined = drag.widths[drag.index] + drag.widths[drag.index + 1];
+    const minimum = Math.min(0.18, combined / 3);
+    const left = Math.min(Math.max(drag.widths[drag.index] + delta, minimum), combined - minimum);
+    const next = [...drag.widths];
+    next[drag.index] = left;
+    next[drag.index + 1] = combined - left;
+    setPaneWidths(next);
+  };
+
+  const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
     setRouting(null);
     setTicked(new Set());
@@ -485,23 +579,67 @@ export default function Home() {
           </button>
         )}
 
-        {showing ? (
-          <AgentPanel
-            view={showing}
-            busy={busy}
-            onBack={() => showAgent(null)}
-            onSay={(text, images) => void run(() => api.say(showing.agent.id, text, images))}
-            onInterrupt={() => void run(() => api.interrupt(showing.agent.id))}
-            onFork={() => void run(() => api.fork(showing.agent.id))}
-            onOpenAgent={showAgent}
-            onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
-            archived={snapshot.archived.some((agent) => agent.id === showing.agent.id)}
-            onArchive={(archived) => {
-              if (archived) showAgent(null);
-              void run(() => api.archive(showing.agent.id, archived));
-            }}
-            focusEntry={focusEntry}
-          />
+        {open ? (
+          <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
+            {panes.map((id, index) => {
+              const view = details[id];
+              return (
+                <div
+                  key={id}
+                  className="flex min-w-0 overflow-hidden"
+                  style={{ flexGrow: paneWidths[index] ?? 1, flexBasis: 0 }}
+                >
+                  {view ? (
+                    <AgentPanel
+                      view={view}
+                      busy={busy}
+                      onBack={() => closePane(index)}
+                      onSay={(text, images) => void run(() => api.say(id, text, images))}
+                      onInterrupt={() => void run(() => api.interrupt(id))}
+                      onForkSlack={() => void run(() => api.fork(id))}
+                      onForkLocal={() => void forkHere(index, id)}
+                      onMerge={
+                        view.timeline.some((entry) => entry.kind === "forkedFrom")
+                          ? () => void mergePane(index, id)
+                          : null
+                      }
+                      onOpenAgent={showAgent}
+                      onRename={(name) => void run(() => api.rename(id, name))}
+                      archived={snapshot.archived.some((agent) => agent.id === id)}
+                      onArchive={(archived) => {
+                        if (archived) closePane(index);
+                        void run(() => api.archive(id, archived));
+                      }}
+                      focusEntry={panes.length === 1 ? focusEntry : null}
+                    />
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center text-[12px] text-faint">
+                      Loading session…
+                    </div>
+                  )}
+                  {index < panes.length - 1 && (
+                    <div
+                      role="separator"
+                      aria-label="resize chat panes"
+                      aria-orientation="vertical"
+                      onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        paneDrag.current = { index, x: event.clientX, widths: [...paneWidths] };
+                      }}
+                      onPointerMove={(event) => resizePanes(event.clientX)}
+                      onPointerUp={(event) => {
+                        event.currentTarget.releasePointerCapture(event.pointerId);
+                        paneDrag.current = null;
+                      }}
+                      className="group relative w-[5px] shrink-0 cursor-col-resize border-l border-rule"
+                    >
+                      <span className="absolute inset-y-0 left-[-2px] w-[5px] bg-edge opacity-0 group-hover:opacity-45" />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <Fleet
             agents={showArchived ? snapshot.archived : snapshot.agents}

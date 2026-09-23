@@ -15,6 +15,8 @@ export type EntryKind =
   | "you"
   | "forked"
   | "forkedFrom"
+  | "merged"
+  | "mergedInto"
   | "notice";
 export type Mode = "ask" | "auto";
 

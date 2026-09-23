@@ -56,7 +56,9 @@ export const api = {
     return call<unknown>("/api/say-images", { method: "POST", body: form });
   },
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
-  fork: (agent: string) => post<unknown>("/api/fork", { agent }),
+  fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),
+  forkLocal: (agent: string) => post<{ agent: Agent }>("/api/fork-local", { agent }),
+  merge: (agent: string) => post<{ agent: Agent }>("/api/merge", { agent }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),
