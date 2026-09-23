@@ -1969,13 +1969,28 @@ impl Hub {
             .find_session(session_id)
             .await?
             .context("no such native session")?;
-        let model = if native.model.is_empty() {
-            self.config
+        let model = if native.model.is_empty()
+            || !self
+                .config
                 .models
                 .values()
-                .find(|choice| choice.backend == backend)
-                .map(|choice| choice.id.clone())
-                .unwrap_or_else(|| self.config.default_model.clone())
+                .any(|choice| choice.backend == backend && choice.id == native.model)
+        {
+            if self
+                .config
+                .models
+                .values()
+                .any(|choice| choice.backend == backend && choice.id == self.config.default_model)
+            {
+                self.config.default_model.clone()
+            } else {
+                self.config
+                    .models
+                    .values()
+                    .find(|choice| choice.backend == backend)
+                    .map(|choice| choice.id.clone())
+                    .unwrap_or_else(|| self.config.default_model.clone())
+            }
         } else {
             native.model.clone()
         };

@@ -956,6 +956,28 @@ async fn importing_without_a_current_source_conversation_stays_available_in_oxro
 }
 
 #[tokio::test]
+async fn importing_an_unconfigured_native_model_uses_the_configured_backend_default() {
+    let w = world(Mode::Auto, false).await;
+    w.native.lock().unwrap().push(NativeSession {
+        backend: Backend::Codex,
+        session_id: "native-invalid-model".into(),
+        name: "Release work".into(),
+        preview: String::new(),
+        cwd: "/work/release".into(),
+        model: "gpt-6-sol".into(),
+        updated_at: 42.0,
+    });
+
+    let imported = w
+        .hub
+        .import_session(Backend::Codex, "native-invalid-model")
+        .await
+        .unwrap();
+
+    assert_eq!(imported.model, "gpt-5.6-sol");
+}
+
+#[tokio::test]
 async fn an_unknown_native_session_cannot_be_imported() {
     let w = world(Mode::Auto, false).await;
     assert!(w

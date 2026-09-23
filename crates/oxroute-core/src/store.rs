@@ -137,6 +137,14 @@ fn migrate(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS entries_item ON entries (agent_id, item_id)",
         [],
     )?;
+    conn.execute(
+        "UPDATE agents SET model = 'gpt-5.6-sol',
+                           status = CASE WHEN status = 'stalled' THEN 'complete' ELSE status END,
+                           stall_reason = CASE WHEN status = 'stalled' THEN NULL ELSE stall_reason END,
+                           stall_alerted = CASE WHEN status = 'stalled' THEN 0 ELSE stall_alerted END
+         WHERE model = 'gpt-6-sol'",
+        [],
+    )?;
     Ok(())
 }
 
@@ -1169,6 +1177,31 @@ mod tests {
         assert!(store.agent("a1").unwrap().unwrap().pinned);
         store.set_agent_archived("a1", true).unwrap();
         assert_eq!(store.archived_agents().unwrap()[0].id, "a1");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn an_invalid_sol_model_is_repaired_on_open() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(SCHEMA).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO agents
+                 (id, name, backend, model, status, stall_reason, stall_alerted)
+                 VALUES ('a1', 'old', 'codex', 'gpt-6-sol', 'stalled', 'system error', 1)",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        let repaired = store.agent("a1").unwrap().unwrap();
+        assert_eq!(repaired.model, "gpt-5.6-sol");
+        assert_eq!(repaired.status, AgentStatus::Complete);
+        assert_eq!(repaired.stall_reason, None);
+        assert!(!repaired.stall_alerted);
         drop(store);
         std::fs::remove_file(path).unwrap();
     }
