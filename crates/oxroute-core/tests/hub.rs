@@ -1232,15 +1232,14 @@ async fn an_agent_started_in_the_ui_also_lives_in_slack() {
 }
 
 #[tokio::test]
-async fn an_existing_ui_only_agent_gets_a_slack_home_on_its_next_message() {
+async fn an_agent_with_an_old_slack_binding_gets_a_current_home_on_its_next_ui_message() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let agent = w.hub.store.agents(10).unwrap().remove(0);
-    w.hub.store.unbind("slack", "D1", "100.0").unwrap();
     w.hub
         .store
-        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .set("dashboard", "slack\u{1f}D2\u{1f}status")
         .unwrap();
 
     w.hub.say_to(&agent.id, "finish the release").await.unwrap();
@@ -1263,13 +1262,11 @@ async fn an_existing_ui_only_agent_gets_a_slack_home_on_its_next_message() {
         .replies
         .iter()
         .any(|(_, text)| text.starts_with("Question from Oxroute UI:")));
-    assert!(w
-        .hub
-        .store
-        .bindings_for(&agent.id)
-        .unwrap()
-        .iter()
-        .any(|binding| binding.source == "slack" && binding.thread_key == "thread-1"));
+    let bindings = w.hub.store.bindings_for(&agent.id).unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].source, "slack");
+    assert_eq!(bindings[0].conversation, "D2");
+    assert_eq!(bindings[0].thread_key, "thread-1");
 }
 
 #[tokio::test]

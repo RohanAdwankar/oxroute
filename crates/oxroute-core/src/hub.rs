@@ -826,6 +826,16 @@ impl Hub {
             Some(target) => (Some(target), false),
             None => {
                 let (target, permalink) = self.open_current_thread(&shown).await?;
+                for binding in self.store.bindings_for(&agent.id)? {
+                    if binding.source == target.source && binding.conversation != target.conversation
+                    {
+                        self.store.unbind(
+                            &binding.source,
+                            &binding.conversation,
+                            &binding.thread_key,
+                        )?;
+                    }
+                }
                 self.store.bind(
                     &target.source,
                     &target.conversation,
@@ -1052,11 +1062,7 @@ impl Hub {
             ..agent.clone()
         };
 
-        let binding = self
-            .store
-            .bindings_for(agent_id)?
-            .into_iter()
-            .find(|binding| self.sources.contains_key(&binding.source));
+        let binding = self.home_binding(agent_id);
         let (source_name, conversation) = match binding {
             Some(binding) => (binding.source, binding.conversation),
             None => {
@@ -1781,12 +1787,30 @@ impl Hub {
     /// Where this agent normally answers, when a message did not come with a
     /// thread of its own.
     async fn home_target(&self, agent_id: &str) -> Option<Target> {
-        self.store
+        self.home_binding(agent_id)
+            .map(|b| Target::new(b.source, b.conversation, b.thread_key))
+    }
+
+    fn home_binding(&self, agent_id: &str) -> Option<Binding> {
+        let bindings = self
+            .store
             .bindings_for(agent_id)
             .ok()?
             .into_iter()
-            .find(|b| self.sources.contains_key(&b.source))
-            .map(|b| Target::new(b.source, b.conversation, b.thread_key))
+            .filter(|b| self.sources.contains_key(&b.source))
+            .collect::<Vec<_>>();
+        if let Some((source, conversation, _)) = self.dashboard_location() {
+            if let Some(binding) = bindings
+                .iter()
+                .find(|binding| binding.source == source && binding.conversation == conversation)
+            {
+                return Some(binding.clone());
+            }
+            if bindings.iter().any(|binding| binding.source == source) {
+                return None;
+            }
+        }
+        bindings.into_iter().next()
     }
 
     /// Say something in a thread, and return the permalink if there is one.
