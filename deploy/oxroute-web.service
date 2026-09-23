@@ -12,9 +12,10 @@ Environment=NODE_ENV=production
 Environment=PORT=3939
 # The UI is a direct line to an unauthenticated command runner. Next.js does
 # not honor HOSTNAME here, so pass the loopback binding explicitly.
-ExecStart=/usr/bin/env npm run start -- --hostname 127.0.0.1
+ExecStart=/usr/bin/env node %h/.local/share/oxroute/web/node_modules/next/dist/bin/next start --hostname 127.0.0.1
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=10
 UMask=0077
 
 [Install]
