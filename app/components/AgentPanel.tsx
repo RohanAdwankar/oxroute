@@ -222,6 +222,7 @@ export function AgentPanel({
           className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           {archived ? "Restore" : "Archive"}
+        </button>
         <button
           type="button"
           onClick={onForkLocal}
@@ -251,7 +252,6 @@ export function AgentPanel({
             Merge
           </button>
         )}
-        </button>
         <button
           type="button"
           onClick={onInterrupt}
