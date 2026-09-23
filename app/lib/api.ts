@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentView, DaemonEvent, Mode, Snapshot } from "./types";
+import type { AgentView, DaemonEvent, Mode, SearchGroup, Snapshot } from "./types";
 
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
@@ -30,6 +30,7 @@ const post = <T,>(path: string, payload: unknown) =>
 
 export const api = {
   snapshot: () => call<Snapshot>("/api/state"),
+  search: (query: string) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`),
 
   /** Put a thought of your own into the inbox, beside everything else. */
   note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),

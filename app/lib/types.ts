@@ -74,6 +74,21 @@ export interface Entry {
   origin: string;
 }
 
+export interface SearchDestination {
+  agentId: string;
+  agentName: string;
+  entryId: number;
+}
+
+export interface SearchGroup {
+  at: number;
+  kind: EntryKind;
+  text: string;
+  detail: string;
+  origin: string;
+  destinations: SearchDestination[];
+}
+
 export interface ModelInfo {
   alias: string;
   id: string;
