@@ -74,22 +74,31 @@ export function AgentPanel({
   const [attachmentError, setAttachmentError] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const { agent } = view;
   const timeline = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const previousAgent = useRef(agent.id);
   const picker = useRef<HTMLInputElement>(null);
   const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
-  const { agent } = view;
   const items = compactTimeline(view.timeline);
 
-  // Follow the tail as work arrives, which is what you want while watching,
-  // and re-pin whenever you switch agents.
+  const tail = view.timeline.at(-1);
+  const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
+
+  // Follow streamed updates while the reader is at the tail. Scrolling up
+  // opts out until they return to the bottom; switching agents starts fresh.
   useEffect(() => {
+    if (previousAgent.current !== agent.id) {
+      previousAgent.current = agent.id;
+      following.current = true;
+    }
     const target = focusEntry
       ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${focusEntry}"]`)
       : null;
     if (target) target.scrollIntoView({ block: "center" });
-    else timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
-  }, [view.timeline.length, agent.id, focusEntry]);
+    else if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
+  }, [tailRevision, agent.id, focusEntry]);
 
   const addFiles = useCallback((files: File[]) => {
     const images = files.filter((file) => file.type.startsWith("image/"));
@@ -227,7 +236,14 @@ export function AgentPanel({
         </button>
       </div>
 
-      <div ref={timeline} className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2">
+      <div
+        ref={timeline}
+        onScroll={(event) => {
+          const node = event.currentTarget;
+          following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+        }}
+        className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2"
+      >
         {view.timeline.length === 0 ? (
           <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
         ) : (

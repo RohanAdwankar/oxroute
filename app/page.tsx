@@ -496,11 +496,10 @@ export default function Home() {
             onOpenAgent={showAgent}
             onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
             archived={snapshot.archived.some((agent) => agent.id === showing.agent.id)}
-            onArchive={(archived) =>
-              void run(() => api.archive(showing.agent.id, archived), () => {
-                if (archived) showAgent(null);
-              })
-            }
+            onArchive={(archived) => {
+              if (archived) showAgent(null);
+              void run(() => api.archive(showing.agent.id, archived));
+            }}
             focusEntry={focusEntry}
           />
         ) : (
