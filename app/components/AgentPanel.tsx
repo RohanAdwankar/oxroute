@@ -63,7 +63,10 @@ export function AgentPanel({
   busy: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
   const timeline = useRef<HTMLDivElement>(null);
+  const renameCancelled = useRef(false);
   const { agent } = view;
   const items = compactTimeline(view.timeline);
 
@@ -78,6 +81,12 @@ export function AgentPanel({
     if (!text || busy) return;
     setDraft("");
     onSay(text);
+  };
+
+  const finishRename = () => {
+    const name = nameDraft.trim();
+    setRenaming(false);
+    if (name && name !== agent.name) onRename(name);
   };
 
   return (
@@ -100,17 +109,44 @@ export function AgentPanel({
                 : "bg-[#c9c1b5]"
           }`}
         />
-        <button
-          type="button"
-          onClick={() => {
-            const next = window.prompt("Rename this agent", agent.name);
-            if (next && next.trim()) onRename(next.trim());
-          }}
-          className="cursor-pointer text-[15px] font-semibold hover:underline"
-          title="rename"
-        >
-          {agent.name}
-        </button>
+        {renaming ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onFocus={(event) => event.currentTarget.select()}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onBlur={() => {
+              if (renameCancelled.current) {
+                renameCancelled.current = false;
+                setRenaming(false);
+              } else {
+                finishRename();
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") finishRename();
+              if (event.key === "Escape") {
+                renameCancelled.current = true;
+                event.currentTarget.blur();
+              }
+            }}
+            aria-label="session title"
+            className="min-w-32 border-b border-edge bg-transparent px-0 py-1 text-[15px] font-semibold outline-none focus:border-ink"
+            style={{ width: `${Math.min(Math.max(nameDraft.length + 1, 12), 42)}ch` }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setNameDraft(agent.name);
+              setRenaming(true);
+            }}
+            className="cursor-text text-[15px] font-semibold hover:underline"
+            title="rename"
+          >
+            {agent.name}
+          </button>
+        )}
         <span className="text-[12.5px] text-faint">
           {agent.status} {since(agent.updatedAt)} · {agent.backend} · {agent.model} ·{" "}
           {view.delivery}
