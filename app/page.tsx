@@ -99,7 +99,14 @@ export default function Home() {
             // timeline stutter exactly when there is most to watch.
             setDetail((current) =>
               current && current.agent.id === event.entry.agentId
-                ? { ...current, timeline: [...current.timeline, event.entry] }
+                ? {
+                    ...current,
+                    timeline: current.timeline.some((entry) => entry.id === event.entry.id)
+                      ? current.timeline.map((entry) =>
+                          entry.id === event.entry.id ? event.entry : entry,
+                        )
+                      : [...current.timeline, event.entry],
+                  }
                 : current,
             );
             break;

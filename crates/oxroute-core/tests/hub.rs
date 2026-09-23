@@ -1050,6 +1050,7 @@ async fn tool_activity_reaches_the_timeline_rather_than_only_flashing_past() {
         serde_json::json!({
             "id": "i1", "type": "commandExecution", "status": "completed",
             "command": "kubectl get pods -n staging",
+            "aggregatedOutput": "api-0 Running\nworker-0 Running",
         }),
     )
     .await;
@@ -1060,10 +1061,57 @@ async fn tool_activity_reaches_the_timeline_rather_than_only_flashing_past() {
             .timeline(&agent, 50)
             .unwrap()
             .iter()
-            .any(|e| e.kind == EntryKind::Worked && e.detail.contains("kubectl")))
+            .any(|e| e.kind == EntryKind::Worked
+                && e.detail.contains("kubectl")
+                && e.output.contains("worker-0 Running")))
             .await,
-        "the command never reached the timeline"
+        "the command and its output never reached the timeline"
     );
+}
+
+#[tokio::test]
+async fn a_separate_tool_result_updates_the_matching_timeline_entry() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "inspect two things")).await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    for (id, command) in [("first", "inspect alpha"), ("second", "inspect beta")] {
+        w.harness_item(
+            &agent,
+            serde_json::json!({
+                "id": id, "type": "toolCall", "status": "completed",
+                "tool": "Shell", "arguments": { "command": command },
+            }),
+        )
+        .await;
+    }
+    assert!(settle(|| {
+        w.hub
+            .timeline(&agent, 50)
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.kind == EntryKind::Worked)
+            .count()
+            == 2
+    })
+    .await);
+
+    w.harness_item(
+        &agent,
+        serde_json::json!({
+            "id": "first", "type": "toolResult", "status": "completed",
+            "aggregatedOutput": "alpha output",
+        }),
+    )
+    .await;
+
+    assert!(settle(|| {
+        let entries = w.hub.timeline(&agent, 50).unwrap();
+        entries.iter().any(|entry| entry.detail == "inspect alpha" && entry.output == "alpha output")
+            && entries.iter().any(|entry| entry.detail == "inspect beta" && entry.output.is_empty())
+    })
+    .await);
 }
 
 #[tokio::test]

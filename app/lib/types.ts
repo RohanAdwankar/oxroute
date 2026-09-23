@@ -71,6 +71,7 @@ export interface Entry {
   kind: EntryKind;
   text: string;
   detail: string;
+  output: string;
   origin: string;
 }
 

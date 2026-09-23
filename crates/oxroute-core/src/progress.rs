@@ -44,7 +44,14 @@ fn label_for(kind: &str) -> String {
 ///
 /// Returns `None` for anything not worth a timeline row -- a half-finished
 /// item, a streamed chunk, the model's own prose.
-pub fn summarize(item: &Value) -> Option<(String, String)> {
+pub struct Summary {
+    pub label: String,
+    pub detail: String,
+    pub output: String,
+    pub item_id: String,
+}
+
+pub fn summarize(item: &Value) -> Option<Summary> {
     let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
     if matches!(kind, "agentMessage" | "userMessage" | "reasoning" | "toolResult" | "") {
         return None;
@@ -101,7 +108,21 @@ pub fn summarize(item: &Value) -> Option<(String, String)> {
             .unwrap_or_else(|| label_for(kind)),
         _ => label_for(kind),
     };
-    Some((label, one_line(&detail, 200)))
+    Some(Summary {
+        label,
+        detail: one_line(&detail, 200),
+        output: item_output(item),
+        item_id: item.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+    })
+}
+
+pub fn item_output(item: &Value) -> String {
+    for field in ["aggregatedOutput", "streamedOutput", "result", "error"] {
+        if let Some(value) = item.get(field).filter(|value| !value.is_null()) {
+            return value.as_str().map(str::to_string).unwrap_or_else(|| pretty(value));
+        }
+    }
+    String::new()
 }
 
 /// Everything seen so far in one turn.
@@ -631,5 +652,17 @@ mod tests {
             "type": "toolResult", "status": "completed", "aggregatedOutput": "ok",
         }))
         .is_none());
+    }
+
+    #[test]
+    fn completed_tool_output_is_kept_for_the_timeline() {
+        let summary = summarize(&json!({
+            "id": "anything", "type": "commandExecution", "status": "completed",
+            "command": "printf hello", "aggregatedOutput": "hello\nworld\n",
+        }))
+        .unwrap();
+        assert_eq!(summary.detail, "printf hello");
+        assert_eq!(summary.output, "hello\nworld\n");
+        assert_eq!(summary.item_id, "anything");
     }
 }

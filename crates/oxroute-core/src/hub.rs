@@ -491,8 +491,19 @@ impl Hub {
                 let _ = self.store.touch_agent(&agent_id, Some(&activity), now());
                 // A finished piece of work is worth keeping; the rest is
                 // just the status line moving.
-                if let Some((label, detail)) = crate::progress::summarize(&item) {
-                    self.record(&agent_id, EntryKind::Worked, &label, &detail, "");
+                if item.get("type").and_then(serde_json::Value::as_str) == Some("toolResult") {
+                    let item_id = item.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+                    let output = crate::progress::item_output(&item);
+                    if !item_id.is_empty() && !output.is_empty() {
+                        if let Ok(Some(entry)) =
+                            self.store.set_work_output(&agent_id, item_id, &output)
+                        {
+                            self.emit(Event::Timeline { entry: Box::new(entry) });
+                        }
+                    }
+                }
+                if let Some(summary) = crate::progress::summarize(&item) {
+                    self.record_work(&agent_id, summary);
                 }
                 self.emit(Event::Progress {
                     agent_id,
@@ -566,6 +577,26 @@ impl Hub {
             }
             Err(error) => {
                 tracing::error!(%error, "could not record a timeline entry");
+                None
+            }
+        }
+    }
+
+    fn record_work(&self, agent_id: &str, summary: crate::progress::Summary) -> Option<Entry> {
+        match self.store.add_work_entry(
+            agent_id,
+            now(),
+            &summary.label,
+            &summary.detail,
+            &summary.output,
+            &summary.item_id,
+        ) {
+            Ok(entry) => {
+                self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
+                Some(entry)
+            }
+            Err(error) => {
+                tracing::error!(%error, "could not record tool activity");
                 None
             }
         }

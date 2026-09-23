@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS entries (
     kind     TEXT NOT NULL,
     text     TEXT NOT NULL DEFAULT '',
     detail   TEXT NOT NULL DEFAULT '',
+    output   TEXT NOT NULL DEFAULT '',
+    item_id  TEXT NOT NULL DEFAULT '',
     origin   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS entries_agent ON entries (agent_id, id);
@@ -104,6 +106,25 @@ pub struct Store {
     path: PathBuf,
 }
 
+fn migrate(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(entries)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "output") {
+        conn.execute("ALTER TABLE entries ADD COLUMN output TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    if !columns.iter().any(|column| column == "item_id") {
+        conn.execute("ALTER TABLE entries ADD COLUMN item_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS entries_item ON entries (agent_id, item_id)",
+        [],
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct ActiveTurn {
     pub agent_id: String,
@@ -126,6 +147,7 @@ impl Store {
         conn.pragma_update(None, "busy_timeout", 30_000)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
             path,
@@ -135,6 +157,7 @@ impl Store {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
             path: PathBuf::from(":memory:"),
@@ -568,11 +591,47 @@ impl Store {
         detail: &str,
         origin: &str,
     ) -> Result<Entry> {
+        self.add_entry_full(agent_id, at, kind, text, detail, "", "", origin)
+    }
+
+    pub fn add_work_entry(
+        &self,
+        agent_id: &str,
+        at: f64,
+        text: &str,
+        detail: &str,
+        output: &str,
+        item_id: &str,
+    ) -> Result<Entry> {
+        self.add_entry_full(
+            agent_id,
+            at,
+            EntryKind::Worked,
+            text,
+            detail,
+            output,
+            item_id,
+            "",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_entry_full(
+        &self,
+        agent_id: &str,
+        at: f64,
+        kind: EntryKind,
+        text: &str,
+        detail: &str,
+        output: &str,
+        item_id: &str,
+        origin: &str,
+    ) -> Result<Entry> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO entries (agent_id, at, kind, text, detail, origin)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![agent_id, at, kind.as_str(), text, detail, origin],
+                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![agent_id, at, kind.as_str(), text, detail, output, item_id, origin],
             )?;
             Ok(Entry {
                 id: c.last_insert_rowid(),
@@ -581,16 +640,46 @@ impl Store {
                 kind,
                 text: text.to_string(),
                 detail: detail.to_string(),
+                output: output.to_string(),
                 origin: origin.to_string(),
             })
+        })
+    }
+
+    pub fn set_work_output(
+        &self,
+        agent_id: &str,
+        item_id: &str,
+        output: &str,
+    ) -> Result<Option<Entry>> {
+        self.with(|c| {
+            let id = c
+                .query_row(
+                    "SELECT id FROM entries
+                     WHERE agent_id = ?1 AND item_id = ?2 AND kind = 'worked'
+                     ORDER BY id DESC LIMIT 1",
+                    params![agent_id, item_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(id) = id else { return Ok(None) };
+            c.execute("UPDATE entries SET output = ?2 WHERE id = ?1", params![id, output])?;
+            Ok(c
+                .query_row(
+                    "SELECT id, agent_id, at, kind, text, detail, output, origin
+                     FROM entries WHERE id = ?1",
+                    params![id],
+                    read_entry,
+                )
+                .optional()?)
         })
     }
 
     pub fn copy_timeline(&self, from: &str, to: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO entries (agent_id, at, kind, text, detail, origin)
-                 SELECT ?2, at, kind, text, detail, origin FROM entries
+                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin)
+                 SELECT ?2, at, kind, text, detail, output, item_id, origin FROM entries
                  WHERE agent_id = ?1 ORDER BY id",
                 params![from, to],
             )?;
@@ -606,21 +695,11 @@ impl Store {
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, agent_id, at, kind, text, detail, origin FROM entries
+                "SELECT id, agent_id, at, kind, text, detail, output, origin FROM entries
                  WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
-            for row in stmt.query_map(params![agent_id, limit as i64], |r| {
-                Ok(Entry {
-                    id: r.get(0)?,
-                    agent_id: r.get(1)?,
-                    at: r.get(2)?,
-                    kind: EntryKind::parse(&r.get::<_, String>(3)?),
-                    text: r.get(4)?,
-                    detail: r.get(5)?,
-                    origin: r.get(6)?,
-                })
-            })? {
+            for row in stmt.query_map(params![agent_id, limit as i64], read_entry)? {
                 out.push(row?);
             }
             out.reverse();
@@ -737,6 +816,19 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
     })
 }
 
+fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
+    Ok(Entry {
+        id: row.get(0)?,
+        agent_id: row.get(1)?,
+        at: row.get(2)?,
+        kind: EntryKind::parse(&row.get::<_, String>(3)?),
+        text: row.get(4)?,
+        detail: row.get(5)?,
+        output: row.get(6)?,
+        origin: row.get(7)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +859,34 @@ mod tests {
         let back = store.agent("a1").unwrap().unwrap();
         assert_eq!(back.backend, Backend::Codex);
         assert_eq!(back.status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn an_existing_timeline_gains_tool_output_columns() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id TEXT NOT NULL,
+                    at REAL NOT NULL,
+                    kind TEXT NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT ''
+                );",
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        let entry = store
+            .add_work_entry("a1", now(), "Command", "printf ok", "ok", "item-1")
+            .unwrap();
+        assert_eq!(entry.output, "ok");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

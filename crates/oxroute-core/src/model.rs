@@ -443,6 +443,9 @@ pub struct Entry {
     /// The command, the path, the tool name.
     #[serde(default)]
     pub detail: String,
+    /// What the tool returned after running.
+    #[serde(default)]
+    pub output: String,
     /// Where it came from: `slack #infra @dana`.
     #[serde(default)]
     pub origin: String,

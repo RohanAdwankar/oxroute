@@ -208,9 +208,14 @@ export function AgentPanel({
                         {entry.text !== "Command" && (
                           <span className="mr-2 text-faint">{entry.text}</span>
                         )}
-                        <span className="break-words whitespace-pre-wrap">
+                        <div className="break-words whitespace-pre-wrap">
                           {entry.detail || entry.text}
-                        </span>
+                        </div>
+                        {entry.output && (
+                          <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
+                            {entry.output}
+                          </pre>
+                        )}
                       </div>
                     ))}
                   </div>
