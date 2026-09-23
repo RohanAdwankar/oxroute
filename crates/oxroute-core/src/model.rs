@@ -451,6 +451,26 @@ pub struct Entry {
     pub origin: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchDestination {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub entry_id: i64,
+}
+
+/// One matching timeline row, shared by every fork that inherited it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchGroup {
+    pub at: f64,
+    pub kind: EntryKind,
+    pub text: String,
+    pub detail: String,
+    pub origin: String,
+    pub destinations: Vec<SearchDestination>,
+}
+
 /// What state a signal is in once it has reached the inbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

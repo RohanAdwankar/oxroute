@@ -40,6 +40,7 @@ export default function Home() {
   const [routing, setRouting] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
+  const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [detail, setDetail] = useState<AgentView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,11 +103,14 @@ export default function Home() {
 
   const reload = useCallback(() => setRevision((current) => current + 1), []);
 
-  const showAgent = useCallback((id: string | null) => {
+  const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
+    setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("agent", id);
     else url.searchParams.delete("agent");
+    if (id && entry !== undefined) url.searchParams.set("entry", String(entry));
+    else url.searchParams.delete("entry");
     window.history.pushState(null, "", url);
   }, []);
 
@@ -116,7 +120,12 @@ export default function Home() {
   );
 
   useEffect(() => {
-    const restore = () => setOpen(new URL(window.location.href).searchParams.get("agent"));
+    const restore = () => {
+      const url = new URL(window.location.href);
+      setOpen(url.searchParams.get("agent"));
+      const entry = Number(url.searchParams.get("entry"));
+      setFocusEntry(entry > 0 ? entry : null);
+    };
     restore();
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -409,6 +418,7 @@ export default function Home() {
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
         vim={vim}
         onVim={toggleVim}
+        onSearchOpen={showAgent}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -479,6 +489,7 @@ export default function Home() {
             onFork={() => void run(() => api.fork(showing.agent.id))}
             onOpenAgent={showAgent}
             onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
+            focusEntry={focusEntry}
           />
         ) : (
           <Fleet

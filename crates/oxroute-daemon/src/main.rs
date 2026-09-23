@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -33,6 +33,7 @@ use oxroute_core::{Config, Hub, Store};
 
 const INBOX_LIMIT: usize = 200;
 const TIMELINE_LIMIT: usize = 500;
+const SEARCH_LIMIT: usize = 200;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -176,6 +177,7 @@ async fn serve() -> Result<()> {
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/agents/{id}", get(agent))
+        .route("/api/search", get(search))
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
@@ -246,6 +248,19 @@ async fn agent(
         "timeline": hub.timeline(&id, TIMELINE_LIMIT)?,
         "delivery": agent.delivery(),
     })))
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    #[serde(default)]
+    q: String,
+}
+
+async fn search(
+    State(hub): Hubs,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Vec<oxroute_core::SearchGroup>>, Failed> {
+    Ok(Json(hub.store.search(&query.q, SEARCH_LIMIT)?))
 }
 
 /// Everything the hub emits, as it happens.

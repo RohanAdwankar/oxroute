@@ -6,6 +6,7 @@
 //! critical section is cheaper than the machinery to avoid one, so the hub
 //! holds the connection behind a plain mutex rather than a worker pool.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -14,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    Signal, Target,
+    SearchDestination, SearchGroup, Signal, Target,
 };
 
 const SCHEMA: &str = r#"
@@ -707,6 +708,104 @@ impl Store {
         })
     }
 
+    /// Search every timeline, collapsing rows copied through a fork into one
+    /// result with a destination for each branch that contains it.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchGroup>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+        self.with(|c| {
+            let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+            let mut links = c.prepare(
+                "SELECT agent_id, detail FROM entries WHERE kind = 'forked-from'",
+            )?;
+            for link in links.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })? {
+                let (child, parent) = link?;
+                graph.entry(child.clone()).or_default().insert(parent.clone());
+                graph.entry(parent).or_default().insert(child);
+            }
+
+            let mut family = HashMap::new();
+            for start in graph.keys() {
+                if family.contains_key(start) {
+                    continue;
+                }
+                let mut stack = vec![start.clone()];
+                let mut members = HashSet::new();
+                while let Some(agent) = stack.pop() {
+                    if !members.insert(agent.clone()) {
+                        continue;
+                    }
+                    stack.extend(graph.get(&agent).into_iter().flatten().cloned());
+                }
+                let id = members.iter().min().cloned().unwrap_or_default();
+                for member in members {
+                    family.insert(member, id.clone());
+                }
+            }
+
+            let mut stmt = c.prepare(
+                "SELECT e.id, e.agent_id, a.name, e.at, e.kind, e.text, e.detail, e.origin
+                 FROM entries e JOIN agents a ON a.id = e.agent_id
+                 WHERE instr(lower(e.text), lower(?1)) > 0
+                    OR instr(lower(e.detail), lower(?1)) > 0
+                    OR instr(lower(e.origin), lower(?1)) > 0
+                 ORDER BY e.at DESC, e.id DESC",
+            )?;
+            let rows = stmt.query_map(params![query], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, f64>(3)?,
+                    EntryKind::parse(&row.get::<_, String>(4)?),
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })?;
+
+            let mut groups: Vec<SearchGroup> = vec![];
+            let mut grouped: HashMap<_, usize> = HashMap::new();
+            for row in rows {
+                let (entry_id, agent_id, agent_name, at, kind, text, detail, origin) = row?;
+                let key = (
+                    family.get(&agent_id).unwrap_or(&agent_id).clone(),
+                    at.to_bits(),
+                    kind.as_str(),
+                    text.clone(),
+                    detail.clone(),
+                    origin.clone(),
+                );
+                if let Some(index) = grouped.get(&key).copied() {
+                    groups[index].destinations.push(SearchDestination {
+                        agent_id,
+                        agent_name,
+                        entry_id,
+                    });
+                } else if groups.len() < limit {
+                    grouped.insert(key, groups.len());
+                    groups.push(SearchGroup {
+                        at,
+                        kind,
+                        text,
+                        detail,
+                        origin,
+                        destinations: vec![SearchDestination {
+                            agent_id,
+                            agent_name,
+                            entry_id,
+                        }],
+                    });
+                }
+            }
+            Ok(groups)
+        })
+    }
+
     // -- side answers waiting to be folded in ----------------------------
 
     pub fn queue_context(
@@ -961,5 +1060,68 @@ mod tests {
         let listed = store.agents(2).unwrap();
         assert_eq!(listed.len(), 6);
         assert!(listed[..4].iter().all(|a| a.status == AgentStatus::Working));
+    }
+
+    #[test]
+    fn search_stacks_inherited_fork_history_without_merging_other_sessions() {
+        let store = Store::in_memory().unwrap();
+        for id in ["parent", "child", "grandchild", "unrelated"] {
+            store.save_agent(&agent(id)).unwrap();
+        }
+
+        store
+            .add_entry("parent", 1.0, EntryKind::Received, "shared needle", "", "")
+            .unwrap();
+        store.copy_timeline("parent", "child").unwrap();
+        store
+            .add_entry(
+                "child",
+                2.0,
+                EntryKind::ForkedFrom,
+                "Forked from session",
+                "parent",
+                "",
+            )
+            .unwrap();
+        store
+            .add_entry("child", 3.0, EntryKind::Said, "branch needle", "", "")
+            .unwrap();
+        store.copy_timeline("child", "grandchild").unwrap();
+        store
+            .add_entry(
+                "grandchild",
+                4.0,
+                EntryKind::ForkedFrom,
+                "Forked from session",
+                "child",
+                "",
+            )
+            .unwrap();
+        store
+            .add_entry("unrelated", 1.0, EntryKind::Received, "shared needle", "", "")
+            .unwrap();
+
+        let results = store.search("NEEDLE", 20).unwrap();
+        assert_eq!(results.len(), 3);
+        let shared = results
+            .iter()
+            .find(|result| result.text == "shared needle" && result.destinations.len() == 3)
+            .unwrap();
+        assert_eq!(
+            shared
+                .destinations
+                .iter()
+                .map(|destination| destination.agent_id.as_str())
+                .collect::<HashSet<_>>(),
+            HashSet::from(["parent", "child", "grandchild"])
+        );
+        assert!(results
+            .iter()
+            .any(|result| result.text == "branch needle" && result.destinations.len() == 2));
+        assert!(results.iter().any(|result| {
+            result.text == "shared needle"
+                && result.destinations.len() == 1
+                && result.destinations[0].agent_id == "unrelated"
+        }));
     }
 }

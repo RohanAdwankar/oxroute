@@ -1,6 +1,7 @@
 "use client";
 
 import type { Mode, Snapshot } from "../lib/types";
+import { Search } from "./Search";
 
 /**
  * The top bar: the wordmark, the one global switch, and the counters.
@@ -15,6 +16,7 @@ export function Chrome({
   onMode,
   vim,
   onVim,
+  onSearchOpen,
 }: {
   snapshot: Snapshot;
   waiting: number;
@@ -22,6 +24,7 @@ export function Chrome({
   onMode: (mode: Mode) => void;
   vim: boolean;
   onVim: () => void;
+  onSearchOpen: (agent: string, entry: number) => void;
 }) {
   const count = (status: string) =>
     snapshot.agents.filter((agent) => agent.status === status).length;
@@ -62,6 +65,8 @@ export function Chrome({
       >
         vim
       </button>
+
+      <Search onOpen={onSearchOpen} />
 
       <div className="flex-1" />
 

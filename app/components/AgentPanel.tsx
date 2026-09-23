@@ -52,6 +52,7 @@ export function AgentPanel({
   onOpenAgent,
   onRename,
   busy,
+  focusEntry,
 }: {
   view: AgentView;
   onBack: () => void;
@@ -61,6 +62,7 @@ export function AgentPanel({
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
   busy: boolean;
+  focusEntry: number | null;
 }) {
   const [draft, setDraft] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -73,8 +75,12 @@ export function AgentPanel({
   // Follow the tail as work arrives, which is what you want while watching,
   // and re-pin whenever you switch agents.
   useEffect(() => {
-    timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
-  }, [view.timeline.length, agent.id]);
+    const target = focusEntry
+      ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${focusEntry}"]`)
+      : null;
+    if (target) target.scrollIntoView({ block: "center" });
+    else timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
+  }, [view.timeline.length, agent.id, focusEntry]);
 
   const send = () => {
     const text = draft.trim();
@@ -228,7 +234,8 @@ export function AgentPanel({
             return (
               <div
                 key={entry.id}
-                className="flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0"
+                data-entry={entry.id}
+                className={`flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0 ${entry.id === focusEntry ? "bg-band" : ""}`}
               >
                 <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
                   {minute(entry.at)}

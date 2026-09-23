@@ -36,5 +36,7 @@ pub mod store;
 
 pub use config::{Config, Mode};
 pub use hub::{Hub, Routing, Snapshot};
-pub use model::{Agent, Backend, Delivery, Event, InboxItem, Signal, Target};
+pub use model::{
+    Agent, Backend, Delivery, Event, InboxItem, SearchDestination, SearchGroup, Signal, Target,
+};
 pub use store::Store;
