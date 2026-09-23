@@ -74,6 +74,7 @@ pub struct CodexHarness {
     default_cwd: String,
     reasoning_effort: String,
     title_model: String,
+    search_binary: PathBuf,
     session_index: PathBuf,
     inner: AsyncMutex<Option<Arc<Connection>>>,
     events: broadcast::Sender<HarnessEvent>,
@@ -119,11 +120,17 @@ impl Connection {
 
 impl CodexHarness {
     pub fn new(config: &crate::config::Config) -> Self {
+        let search_binary = std::fs::canonicalize(&config.codex_binary)
+            .ok()
+            .and_then(|binary| binary.parent()?.parent().map(|root| root.join("codex-path/rg")))
+            .filter(|binary| binary.is_file())
+            .unwrap_or_else(|| PathBuf::from("rg"));
         CodexHarness {
             url: config.codex_url.clone(),
             default_cwd: config.workspace_path().to_string_lossy().to_string(),
             reasoning_effort: config.codex_effort.clone(),
             title_model: config.title_model.clone(),
+            search_binary,
             session_index: std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_default()
@@ -649,8 +656,12 @@ impl Harness for CodexHarness {
             );
         }
         let index = self.session_index.clone();
+        let search_binary = self.search_binary.clone();
         let query = query.to_string();
-        let indexed = tokio::task::spawn_blocking(move || search_index(&index, &query, limit)).await??;
+        let indexed = tokio::task::spawn_blocking(move || {
+            search_index(&index, &search_binary, &query, limit)
+        })
+        .await??;
         let mut by_id: HashMap<String, NativeSession> = indexed
             .into_iter()
             .map(|session| (session.session_id.clone(), session))
@@ -773,7 +784,12 @@ impl Harness for CodexHarness {
     }
 }
 
-fn search_index(path: &Path, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+fn search_index(
+    path: &Path,
+    search_binary: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<NativeSession>> {
     if !path.is_file() {
         return Ok(vec![]);
     }
@@ -808,7 +824,7 @@ fn search_index(path: &Path, query: &str, limit: usize) -> Result<Vec<NativeSess
             },
         );
     }
-    let content = search_rollouts(path, query)?;
+    let content = search_rollouts(path, search_binary, query)?;
     for (session_id, cwd, updated_at) in &content {
         latest
             .entry(session_id.clone())
@@ -842,7 +858,11 @@ fn search_index(path: &Path, query: &str, limit: usize) -> Result<Vec<NativeSess
 /// Codex's list API searches thread metadata, not the conversation. Ripgrep
 /// cheaply narrows the native rollouts, then JSON parsing keeps only human
 /// and agent messages so a command containing the query is not a false hit.
-fn search_rollouts(index: &Path, query: &str) -> Result<Vec<(String, String, f64)>> {
+fn search_rollouts(
+    index: &Path,
+    search_binary: &Path,
+    query: &str,
+) -> Result<Vec<(String, String, f64)>> {
     if query.chars().count() < 3 {
         return Ok(vec![]);
     }
@@ -850,7 +870,7 @@ fn search_rollouts(index: &Path, query: &str) -> Result<Vec<(String, String, f64
     if !root.is_dir() {
         return Ok(vec![]);
     }
-    let output = Command::new("rg")
+    let output = Command::new(search_binary)
         .args([
             "--files-with-matches",
             "--ignore-case",
@@ -997,6 +1017,7 @@ mod tests {
 
         let found = search_index(
             &root.join("session_index.jsonl"),
+            Path::new("rg"),
             "github currently has a tag named",
             20,
         )
@@ -1027,6 +1048,7 @@ mod tests {
 
         let found = search_index(
             &root.join("session_index.jsonl"),
+            Path::new("rg"),
             "unique diagnostic phrase",
             20,
         )
