@@ -245,10 +245,10 @@ export function AgentPanel({
           type="button"
           onClick={onForkSlack}
           disabled={busy || agent.backend !== "codex"}
-          title={agent.backend === "codex" ? "branch this history into a Slack thread" : "only Codex can fork"}
+          title={agent.backend === "codex" ? "branch this history into a new Slack thread" : "only Codex can fork"}
           className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Slack fork
+          Fork to thread
         </button>
         {onMerge && (
           <button
