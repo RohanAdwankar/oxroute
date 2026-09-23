@@ -51,6 +51,8 @@ export function AgentPanel({
   onFork,
   onOpenAgent,
   onRename,
+  archived,
+  onArchive,
   busy,
   focusEntry,
 }: {
@@ -61,6 +63,8 @@ export function AgentPanel({
   onFork: () => void;
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
+  archived: boolean;
+  onArchive: (archived: boolean) => void;
   busy: boolean;
   focusEntry: number | null;
 }) {
@@ -170,6 +174,15 @@ export function AgentPanel({
             Open in Slack
           </a>
         )}
+        <button
+          type="button"
+          onClick={() => onArchive(!archived)}
+          disabled={busy || (!archived && agent.status === "working")}
+          title={!archived && agent.status === "working" ? "stop the active turn first" : undefined}
+          className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {archived ? "Restore" : "Archive"}
+        </button>
         <button
           type="button"
           onClick={onFork}

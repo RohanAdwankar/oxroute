@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS agents (
     last_activity REAL NOT NULL DEFAULT 0,
     updated_at    REAL NOT NULL DEFAULT 0,
     stall_reason  TEXT,
-    stall_alerted INTEGER NOT NULL DEFAULT 0
+    stall_alerted INTEGER NOT NULL DEFAULT 0,
+    archived      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bindings (
@@ -108,6 +109,15 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(agents)")?;
+    let agent_columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if !agent_columns.iter().any(|column| column == "archived") {
+        conn.execute("ALTER TABLE agents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+
     let mut statement = conn.prepare("PRAGMA table_info(entries)")?;
     let columns = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -226,12 +236,13 @@ impl Store {
     pub fn agents(&self, completed_limit: usize) -> Result<Vec<Agent>> {
         self.with(|c| {
             let mut out = Vec::new();
-            let mut live = c.prepare("SELECT * FROM agents WHERE status != 'complete'")?;
+            let mut live =
+                c.prepare("SELECT * FROM agents WHERE archived = 0 AND status != 'complete'")?;
             for row in live.query_map([], read_agent)? {
                 out.push(row?);
             }
             let mut done = c.prepare(
-                "SELECT * FROM agents WHERE status = 'complete'
+                "SELECT * FROM agents WHERE archived = 0 AND status = 'complete'
                  ORDER BY updated_at DESC LIMIT ?1",
             )?;
             for row in done.query_map(params![completed_limit as i64], read_agent)? {
@@ -244,6 +255,29 @@ impl Store {
                     .then(b.updated_at.total_cmp(&a.updated_at))
             });
             Ok(out)
+        })
+    }
+
+    pub fn archived_agents(&self) -> Result<Vec<Agent>> {
+        self.with(|c| {
+            let mut statement =
+                c.prepare("SELECT * FROM agents WHERE archived = 1 ORDER BY updated_at DESC")?;
+            let mut agents = Vec::new();
+            for row in statement.query_map([], read_agent)? {
+                agents.push(row?);
+            }
+            Ok(agents)
+        })
+    }
+
+    pub fn set_agent_archived(&self, id: &str, archived: bool) -> Result<()> {
+        self.with(|c| {
+            let changed = c.execute(
+                "UPDATE agents SET archived = ?2 WHERE id = ?1",
+                params![id, archived as i64],
+            )?;
+            anyhow::ensure!(changed == 1, "no such agent");
+            Ok(())
         })
     }
 
@@ -961,6 +995,23 @@ mod tests {
     }
 
     #[test]
+    fn archiving_hides_a_session_without_deleting_it() {
+        let store = Store::in_memory().unwrap();
+        let mut archived = agent("archived");
+        archived.status = AgentStatus::Complete;
+        store.save_agent(&archived).unwrap();
+
+        store.set_agent_archived(&archived.id, true).unwrap();
+        assert!(store.agents(20).unwrap().is_empty());
+        assert_eq!(store.archived_agents().unwrap()[0].id, archived.id);
+        assert!(store.agent(&archived.id).unwrap().is_some());
+
+        store.set_agent_archived(&archived.id, false).unwrap();
+        assert_eq!(store.agents(20).unwrap()[0].id, archived.id);
+        assert!(store.archived_agents().unwrap().is_empty());
+    }
+
+    #[test]
     fn an_existing_timeline_gains_tool_output_columns() {
         let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
         let legacy = Connection::open(&path).unwrap();
@@ -984,6 +1035,33 @@ mod tests {
             .add_work_entry("a1", now(), "Command", "printf ok", "ok", "item-1")
             .unwrap();
         assert_eq!(entry.output, "ok");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn an_existing_agent_database_gains_archive_state() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE agents (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, backend TEXT NOT NULL,
+                    model TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '',
+                    cwd TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'complete',
+                    activity TEXT NOT NULL DEFAULT '', permalink TEXT NOT NULL DEFAULT '',
+                    last_activity REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0,
+                    stall_reason TEXT, stall_alerted INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO agents (id, name, backend, model) VALUES ('a1', 'old', 'codex', 'sol');",
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.agents(20).unwrap()[0].id, "a1");
+        store.set_agent_archived("a1", true).unwrap();
+        assert_eq!(store.archived_agents().unwrap()[0].id, "a1");
         drop(store);
         std::fs::remove_file(path).unwrap();
     }

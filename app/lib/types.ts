@@ -102,6 +102,7 @@ export interface Snapshot {
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
   agents: Agent[];
+  archived: Agent[];
   inbox: InboxItem[];
   sources: string[];
   models: ModelInfo[];

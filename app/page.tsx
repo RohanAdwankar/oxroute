@@ -21,6 +21,7 @@ const EMPTY: Snapshot = {
   mode: "ask",
   defaultModel: "",
   agents: [],
+  archived: [],
   inbox: [],
   sources: [],
   models: [],
@@ -44,6 +45,7 @@ export default function Home() {
   const [detail, setDetail] = useState<AgentView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxWidth, setInboxWidth] = useState(340);
@@ -282,7 +284,7 @@ export default function Home() {
       }
 
       const inbox = snapshot.inbox;
-      const fleet = snapshot.agents;
+      const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here = focus === "inbox" ? inbox.length : fleet.length;
       const move = (delta: number) => {
         const setAt = focus === "inbox" ? setInboxAt : setFleetAt;
@@ -489,11 +491,23 @@ export default function Home() {
             onFork={() => void run(() => api.fork(showing.agent.id))}
             onOpenAgent={showAgent}
             onRename={(name) => void run(() => api.rename(showing.agent.id, name))}
+            archived={snapshot.archived.some((agent) => agent.id === showing.agent.id)}
+            onArchive={(archived) =>
+              void run(() => api.archive(showing.agent.id, archived), () => {
+                if (archived) showAgent(null);
+              })
+            }
             focusEntry={focusEntry}
           />
         ) : (
           <Fleet
-            agents={snapshot.agents}
+            agents={showArchived ? snapshot.archived : snapshot.agents}
+            archivedCount={snapshot.archived.length}
+            showArchived={showArchived}
+            onShowArchived={() => {
+              setShowArchived((current) => !current);
+              setFleetAt(0);
+            }}
             models={snapshot.models}
             defaultModel={snapshot.defaultModel}
             routing={selected}

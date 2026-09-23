@@ -945,6 +945,16 @@ impl Hub {
         Ok(())
     }
 
+    pub fn archive(&self, agent_id: &str, archived: bool) -> Result<()> {
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        if archived && agent.status == AgentStatus::Working {
+            anyhow::bail!("stop the active turn before archiving this session");
+        }
+        self.store.set_agent_archived(agent_id, archived)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     /// Branch an agent's history into a new agent, with a new thread to live
     /// in, so the original keeps going undisturbed.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
@@ -1727,6 +1737,7 @@ impl Hub {
 
     pub fn snapshot(&self, inbox_limit: usize) -> Result<Snapshot> {
         let agents = self.store.agents(dashboard::COMPLETED_SHOWN)?;
+        let archived = self.store.archived_agents()?;
         let mut inbox = self.store.inbox(inbox_limit)?;
         for item in &mut inbox {
             item.suggested = self
@@ -1743,6 +1754,7 @@ impl Hub {
             mode: self.mode().as_str().to_string(),
             default_model: self.config.default_model.clone(),
             agents,
+            archived,
             inbox,
             sources: self.sources.keys().cloned().collect(),
             models: self
@@ -1773,6 +1785,7 @@ pub struct Snapshot {
     /// of `models[].id`.
     pub default_model: String,
     pub agents: Vec<Agent>,
+    pub archived: Vec<Agent>,
     pub inbox: Vec<InboxItem>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,

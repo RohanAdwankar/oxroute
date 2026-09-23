@@ -184,6 +184,7 @@ async fn serve() -> Result<()> {
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
         .route("/api/rename", post(rename))
+        .route("/api/archive", post(archive))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
@@ -402,6 +403,20 @@ async fn rename(
     }
     hub.rename(&body.agent, name).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ArchiveBody {
+    agent: String,
+    archived: bool,
+}
+
+async fn archive(
+    State(hub): Hubs,
+    Json(body): Json<ArchiveBody>,
+) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    hub.archive(&body.agent, body.archived)?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
 #[derive(Deserialize)]

@@ -33,6 +33,9 @@ const DELIVERY_NOTE: Record<Delivery, string> = {
  */
 export function Fleet({
   agents,
+  archivedCount,
+  showArchived,
+  onShowArchived,
   models,
   defaultModel,
   routing,
@@ -47,6 +50,9 @@ export function Fleet({
   vim,
 }: {
   agents: Agent[];
+  archivedCount: number;
+  showArchived: boolean;
+  onShowArchived: () => void;
   models: ModelInfo[];
   defaultModel: string;
   routing: InboxItem | null;
@@ -81,10 +87,18 @@ export function Fleet({
           </>
         ) : (
           <>
-            <span className="text-[15px] font-semibold">Fleet</span>
+            <span className="text-[15px] font-semibold">{showArchived ? "Archived" : "Fleet"}</span>
             <span className="text-[12.5px] text-faint">
               {agents.length === 0 ? "nothing running" : `${agents.length} agents`}
             </span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={onShowArchived}
+              className="cursor-pointer text-[12px] text-mid hover:text-ink"
+            >
+              {showArchived ? "Back to fleet" : `Archived ${archivedCount}`}
+            </button>
           </>
         )}
       </div>
@@ -92,8 +106,9 @@ export function Fleet({
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {agents.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">
-            No agents yet. Message the Slack app, or pick something in the inbox and
-            start an agent for it.
+            {showArchived
+              ? "No archived sessions."
+              : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
           </p>
         ) : (
           <div className="flex flex-wrap content-start gap-5">

@@ -46,6 +46,8 @@ export const api = {
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
   fork: (agent: string) => post<unknown>("/api/fork", { agent }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
+  archive: (agent: string, archived: boolean) =>
+    post<Snapshot>("/api/archive", { agent, archived }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
 };
 
