@@ -1232,6 +1232,47 @@ async fn an_agent_started_in_the_ui_also_lives_in_slack() {
 }
 
 #[tokio::test]
+async fn an_existing_ui_only_agent_gets_a_slack_home_on_its_next_message() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap().remove(0);
+    w.hub.store.unbind("slack", "D1", "100.0").unwrap();
+    w.hub
+        .store
+        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .unwrap();
+
+    w.hub.say_to(&agent.id, "finish the release").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert!(settle(|| {
+        w.posts
+            .lock()
+            .unwrap()
+            .replies
+            .iter()
+            .any(|(thread, text)| thread == "thread-1" && text == "done")
+    })
+    .await);
+
+    assert_eq!(w.posts.lock().unwrap().threads, vec!["finish the release"]);
+    assert!(!w
+        .posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(_, text)| text.starts_with("Question from Oxroute UI:")));
+    assert!(w
+        .hub
+        .store
+        .bindings_for(&agent.id)
+        .unwrap()
+        .iter()
+        .any(|binding| binding.source == "slack" && binding.thread_key == "thread-1"));
+}
+
+#[tokio::test]
 async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the task")).await.unwrap();

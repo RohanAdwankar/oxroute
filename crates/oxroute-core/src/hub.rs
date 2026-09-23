@@ -822,14 +822,29 @@ impl Hub {
         }
         inputs.extend(images.iter().cloned().map(|path| TurnInput::LocalImage { path }));
         self.record(&agent.id, EntryKind::You, &shown, "", "");
-        let target = self.home_target(&agent.id).await;
+        let (target, opened) = match self.home_target(&agent.id).await {
+            Some(target) => (Some(target), false),
+            None => {
+                let (target, permalink) = self.open_current_thread(&shown).await?;
+                self.store.bind(
+                    &target.source,
+                    &target.conversation,
+                    &target.thread_key,
+                    &agent.id,
+                )?;
+                if !permalink.is_empty() {
+                    self.store.set_agent_permalink(&agent.id, &permalink)?;
+                }
+                (Some(target), true)
+            }
+        };
 
         // A question submitted from the web or TUI is part of the Slack
         // conversation too. Mirror it before the answer so the thread keeps
         // the complete exchange instead of showing an unexplained response.
         if let Some(target) = target
             .as_ref()
-            .filter(|target| target.source == crate::source::slack::SOURCE)
+            .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
         {
             self.say(target, &format!("Question from Oxroute UI:\n{shown}"))
                 .await;
