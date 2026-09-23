@@ -307,6 +307,7 @@ fn agent_detail(frame: &mut Frame, area: Rect, app: &App) {
             EntryKind::You => ("you", theme::ACCENT),
             EntryKind::Forked => ("forked", theme::ACCENT),
             EntryKind::ForkedFrom => ("parent", theme::ACCENT),
+            EntryKind::Merged | EntryKind::MergedInto => ("merged", theme::ACCENT),
             EntryKind::Notice => ("note", theme::FAINT),
         };
         lines.push(Line::from(vec![

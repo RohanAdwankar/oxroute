@@ -996,9 +996,18 @@ impl Hub {
         Ok(())
     }
 
-    /// Branch an agent's history into a new agent, with a new thread to live
-    /// in, so the original keeps going undisturbed.
+    /// Branch an agent's history into a new agent and give it a source thread.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+        self.fork_agent(agent_id, true).await
+    }
+
+    /// Branch an agent beside its parent in the web UI without creating a
+    /// source thread. Local forks can be nested and later merged upward.
+    pub async fn fork_local(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+        self.fork_agent(agent_id, false).await
+    }
+
+    async fn fork_agent(self: &Arc<Self>, agent_id: &str, open_thread: bool) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1028,26 +1037,28 @@ impl Hub {
             ..agent.clone()
         };
 
-        // A fork needs somewhere to be talked to. Where the original lives in
-        // a source that can open threads, open one next to it.
-        if let Some(binding) = self.store.bindings_for(agent_id)?.into_iter().next() {
-            if let Some(source) = self.source(&binding.source) {
-                if let Ok((thread_key, permalink)) =
-                    source.open_thread(&binding.conversation, &title).await
-                {
-                    forked.permalink = permalink;
-                    self.store.save_agent(&forked)?;
-                    self.store.copy_timeline(agent_id, &forked.id)?;
-                    self.store.bind(
-                        &binding.source,
-                        &binding.conversation,
-                        &thread_key,
-                        &forked.id,
-                    )?;
-                    self.sessions.lock().await.insert(session, forked.id.clone());
-                    self.record_fork(agent_id, &forked.id);
-                    self.emit(Event::Sync);
-                    return Ok(forked);
+        // A source fork gets a neighboring thread. A local fork deliberately
+        // has no binding: its pane is its home.
+        if open_thread {
+            if let Some(binding) = self.store.bindings_for(agent_id)?.into_iter().next() {
+                if let Some(source) = self.source(&binding.source) {
+                    if let Ok((thread_key, permalink)) =
+                        source.open_thread(&binding.conversation, &title).await
+                    {
+                        forked.permalink = permalink;
+                        self.store.save_agent(&forked)?;
+                        self.store.copy_timeline(agent_id, &forked.id)?;
+                        self.store.bind(
+                            &binding.source,
+                            &binding.conversation,
+                            &thread_key,
+                            &forked.id,
+                        )?;
+                        self.sessions.lock().await.insert(session, forked.id.clone());
+                        self.record_fork(agent_id, &forked.id);
+                        self.emit(Event::Sync);
+                        return Ok(forked);
+                    }
                 }
             }
         }
@@ -1058,6 +1069,72 @@ impl Hub {
         self.record_fork(agent_id, &forked.id);
         self.emit(Event::Sync);
         Ok(forked)
+    }
+
+    /// Fold a completed leaf fork into its direct parent and retire the child.
+    pub async fn merge(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+        let child = self.store.agent(agent_id)?.context("no such agent")?;
+        if child.status == AgentStatus::Working {
+            anyhow::bail!("stop the fork's active turn before merging it");
+        }
+        if !self.store.fork_children(agent_id)?.is_empty() {
+            anyhow::bail!("merge or archive this fork's child panes first");
+        }
+        let parent_id = self
+            .store
+            .fork_parent(agent_id)?
+            .context("this session is not a fork")?;
+        let parent = self
+            .store
+            .agent(&parent_id)?
+            .context("the parent session no longer exists")?;
+        if parent.status == AgentStatus::Working {
+            anyhow::bail!("stop the parent's active turn before merging into it");
+        }
+        if parent.backend != child.backend {
+            anyhow::bail!("a fork can only merge into the same backend");
+        }
+
+        let timeline = self.store.timeline(agent_id, usize::MAX)?;
+        let fork_at = timeline
+            .iter()
+            .rposition(|entry| entry.kind == EntryKind::ForkedFrom && entry.detail == parent_id)
+            .context("the direct fork point is missing")?;
+        let mut pending = None;
+        let mut exchanges = Vec::new();
+        for entry in &timeline[fork_at + 1..] {
+            match entry.kind {
+                EntryKind::Received | EntryKind::You => pending = Some(entry.text.clone()),
+                EntryKind::Said => {
+                    if let Some(question) = pending.take() {
+                        exchanges.push((question, entry.text.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !exchanges.is_empty() {
+            self.harness(parent.backend)
+                .inject(&parent.session_id, &exchanges)
+                .await?;
+        }
+        self.record(
+            &parent.id,
+            EntryKind::Merged,
+            "Fork merged",
+            &child.id,
+            "",
+        );
+        self.record(
+            &child.id,
+            EntryKind::MergedInto,
+            "Merged into parent",
+            &parent.id,
+            "",
+        );
+        self.store.set_agent_archived(&child.id, true)?;
+        self.emit(Event::Sync);
+        Ok(parent)
     }
 
     async fn command(self: &Arc<Self>, name: &str, user: &str) -> String {

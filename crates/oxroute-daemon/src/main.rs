@@ -186,6 +186,8 @@ async fn serve() -> Result<()> {
         .route("/api/say-images", post(say_images))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
+        .route("/api/fork-local", post(fork_local))
+        .route("/api/merge", post(merge))
         .route("/api/rename", post(rename))
         .route("/api/archive", post(archive))
         .route("/api/pin", post(pin))
@@ -456,6 +458,22 @@ async fn fork(
 ) -> Result<Json<serde_json::Value>, Failed> {
     let forked = hub.fork(&body.agent).await?;
     Ok(Json(json!({ "agent": forked })))
+}
+
+async fn fork_local(
+    State(hub): Hubs,
+    Json(body): Json<AgentBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let forked = hub.fork_local(&body.agent).await?;
+    Ok(Json(json!({ "agent": forked })))
+}
+
+async fn merge(
+    State(hub): Hubs,
+    Json(body): Json<AgentBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let parent = hub.merge(&body.agent).await?;
+    Ok(Json(json!({ "agent": parent })))
 }
 
 #[derive(Deserialize)]

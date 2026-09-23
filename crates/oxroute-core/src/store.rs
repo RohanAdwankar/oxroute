@@ -581,6 +581,34 @@ impl Store {
         })
     }
 
+    pub fn fork_parent(&self, agent_id: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            Ok(c.query_row(
+                "SELECT detail FROM entries
+                 WHERE agent_id = ?1 AND kind = 'forked-from'
+                 ORDER BY id DESC LIMIT 1",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+        })
+    }
+
+    pub fn fork_children(&self, agent_id: &str) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut statement = c.prepare(
+                "SELECT e.agent_id FROM entries e JOIN agents a ON a.id = e.agent_id
+                 WHERE e.kind = 'forked-from' AND e.detail = ?1 AND a.archived = 0
+                   AND e.id = (SELECT MAX(last.id) FROM entries last
+                               WHERE last.agent_id = e.agent_id AND last.kind = 'forked-from')",
+            )?;
+            let children = statement
+                .query_map(params![agent_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(children)
+        })
+    }
+
     // -- signals / inbox -------------------------------------------------
 
     /// Record an arriving signal. `false` means we have seen it before, which

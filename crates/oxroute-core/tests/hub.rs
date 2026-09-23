@@ -797,6 +797,82 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
 }
 
 #[tokio::test]
+async fn local_forks_nest_without_opening_source_threads() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let original = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    let child = w.hub.fork_local(&original).await.unwrap();
+    let grandchild = w.hub.fork_local(&child.id).await.unwrap();
+
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+    assert!(w.hub.store.bindings_for(&grandchild.id).unwrap().is_empty());
+    assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(original.as_str()));
+    assert_eq!(
+        w.hub.store.fork_parent(&grandchild.id).unwrap().as_deref(),
+        Some(child.id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let child = w.hub.fork_local(&parent.id).await.unwrap();
+    w.hub
+        .store
+        .add_entry(&child.id, now(), EntryKind::You, "try another design", "", "")
+        .unwrap();
+    w.hub
+        .store
+        .add_entry(&child.id, now(), EntryKind::Said, "the alternate works", "", "")
+        .unwrap();
+
+    let merged = w.hub.merge(&child.id).await.unwrap();
+
+    assert_eq!(merged.id, parent.id);
+    assert_eq!(
+        w.calls.lock().unwrap().injected,
+        vec![(parent.session_id.clone(), 1)]
+    );
+    assert!(w
+        .hub
+        .store
+        .archived_agents()
+        .unwrap()
+        .iter()
+        .any(|agent| agent.id == child.id));
+    let parent_notice = w.hub.timeline(&parent.id, 1).unwrap().pop().unwrap();
+    assert_eq!(parent_notice.kind, EntryKind::Merged);
+    assert_eq!(parent_notice.detail, child.id);
+    let child_notice = w.hub.timeline(&child.id, 1).unwrap().pop().unwrap();
+    assert_eq!(child_notice.kind, EntryKind::MergedInto);
+    assert_eq!(child_notice.detail, parent.id);
+}
+
+#[tokio::test]
+async fn a_fork_with_an_open_child_cannot_merge() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let original = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let child = w.hub.fork_local(&original).await.unwrap();
+    w.hub.fork_local(&child.id).await.unwrap();
+
+    assert!(w
+        .hub
+        .merge(&child.id)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("child panes"));
+}
+
+#[tokio::test]
 async fn native_sessions_are_separate_until_imported() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "work on fwgenie in oxroute")).await.unwrap();
