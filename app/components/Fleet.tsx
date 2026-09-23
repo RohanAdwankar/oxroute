@@ -89,7 +89,9 @@ export function Fleet({
           <>
             <span className="text-[15px] font-semibold">{showArchived ? "Archived" : "Fleet"}</span>
             <span className="text-[12.5px] text-faint">
-              {agents.length === 0 ? "nothing running" : `${agents.length} agents`}
+              {agents.length === 0
+                ? showArchived ? "empty" : "nothing running"
+                : `${agents.length} agent${agents.length === 1 ? "" : "s"}`}
             </span>
             <span className="flex-1" />
             <button

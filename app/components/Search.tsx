@@ -95,7 +95,7 @@ export function Search({
                     }
                     className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left hover:bg-wash"
                   >
-                    <span className="tnum w-[42px] shrink-0 pt-px text-[11px] text-faint">
+                    <span className="tnum w-[58px] shrink-0 pt-px text-[11px] text-faint">
                       {clock(result.at)}
                     </span>
                     <span className="min-w-0 flex-1">
