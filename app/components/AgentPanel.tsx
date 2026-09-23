@@ -85,6 +85,7 @@ export function AgentPanel({
   const following = useRef(true);
   const previousAgent = useRef(agent.id);
   const picker = useRef<HTMLInputElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
   const items = compactTimeline(view.timeline);
@@ -118,6 +119,14 @@ export function AgentPanel({
   useEffect(() => {
     uploadsRef.current = uploads;
   }, [uploads]);
+
+  useEffect(() => {
+    const input = composer.current;
+    if (!input) return;
+    input.style.height = "0px";
+    input.style.height = `${Math.max(42, Math.min(input.scrollHeight, 160))}px`;
+    input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
+  }, [draft]);
 
   useEffect(() => () => {
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
@@ -397,6 +406,7 @@ export function AgentPanel({
             +
           </button>
           <textarea
+            ref={composer}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onPaste={(event) => {
@@ -415,14 +425,8 @@ export function AgentPanel({
               }
             }}
             rows={1}
-            placeholder={
-              view.delivery === "steer"
-                ? "Say something — it folds into the turn it is running"
-                : view.delivery === "queue"
-                  ? "Say something — it waits for the current turn to end"
-                  : "Say something — it starts a new turn"
-            }
-            className="max-h-32 min-h-[42px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
+            placeholder="Message"
+            className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
           />
           <button
             type="button"
