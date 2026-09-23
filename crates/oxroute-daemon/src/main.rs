@@ -178,7 +178,7 @@ async fn serve() -> Result<()> {
         .route("/api/events", get(events))
         .route("/api/agents/{id}", get(agent))
         .route("/api/search", get(search))
-        .route("/api/import", post(import_session))
+        .route("/api/continue", post(continue_session))
         .route("/api/native-preview", get(native_preview))
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
@@ -273,16 +273,16 @@ async fn search(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImportBody {
+struct ContinueBody {
     backend: oxroute_core::Backend,
     session_id: String,
 }
 
-async fn import_session(
+async fn continue_session(
     State(hub): Hubs,
-    Json(body): Json<ImportBody>,
+    Json(body): Json<ContinueBody>,
 ) -> Result<Json<oxroute_core::Agent>, Failed> {
-    Ok(Json(hub.import_session(body.backend, &body.session_id).await?))
+    Ok(Json(hub.continue_session(body.backend, &body.session_id).await?))
 }
 
 #[derive(Deserialize)]

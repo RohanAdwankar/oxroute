@@ -617,31 +617,6 @@ impl Store {
         })
     }
 
-    /// Move an agent's home on one source without disturbing bindings from
-    /// other surfaces. An imported session may still point at the retired
-    /// Slack bot's DM, which the current bot cannot post into.
-    pub fn replace_source_binding(
-        &self,
-        source: &str,
-        conversation: &str,
-        thread_key: &str,
-        agent_id: &str,
-    ) -> Result<()> {
-        self.with(|c| {
-            let transaction = c.unchecked_transaction()?;
-            transaction.execute(
-                "DELETE FROM bindings WHERE source = ?1 AND agent_id = ?2",
-                params![source, agent_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO bindings VALUES (?1, ?2, ?3, ?4)",
-                params![source, conversation, thread_key, agent_id],
-            )?;
-            transaction.commit()?;
-            Ok(())
-        })
-    }
-
     // -- signals / inbox -------------------------------------------------
 
     /// Record an arriving signal. `false` means we have seen it before, which

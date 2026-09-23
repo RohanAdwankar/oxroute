@@ -17,7 +17,7 @@ export function Chrome({
   vim,
   onVim,
   onSearchOpen,
-  onSearchImport,
+  onSearchContinue,
 }: {
   snapshot: Snapshot;
   waiting: number;
@@ -26,7 +26,7 @@ export function Chrome({
   vim: boolean;
   onVim: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
-  onSearchImport: (agent: string) => void;
+  onSearchContinue: (agent: string) => void;
 }) {
   const count = (status: string) =>
     snapshot.agents.filter((agent) => agent.status === status).length;
@@ -68,7 +68,7 @@ export function Chrome({
         vim
       </button>
 
-      <Search onOpen={onSearchOpen} onImport={onSearchImport} />
+      <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
       <div className="flex-1" />
 

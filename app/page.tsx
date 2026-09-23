@@ -515,7 +515,7 @@ export default function Home() {
         vim={vim}
         onVim={toggleVim}
         onSearchOpen={showAgent}
-        onSearchImport={(agent) => {
+        onSearchContinue={(agent) => {
           reload();
           showAgent(agent);
         }}

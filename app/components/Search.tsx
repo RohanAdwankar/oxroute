@@ -12,9 +12,9 @@ type Choice =
   | { key: string; type: "managed"; result: SearchGroup }
   | { key: string; type: "native"; session: NativeSession };
 
-export function Search({ onOpen, onImport }: {
+export function Search({ onOpen, onContinue }: {
   onOpen: (agent: string, entry: number) => void;
-  onImport: (agent: string) => void;
+  onContinue: (agent: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults>(EMPTY);
@@ -22,7 +22,7 @@ export function Search({ onOpen, onImport }: {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(0);
   const [preview, setPreview] = useState<{ key: string; lines: ConversationLine[] }>({ key: "", lines: [] });
-  const [importing, setImporting] = useState<string | null>(null);
+  const [continuing, setContinuing] = useState<string | null>(null);
   const [error, setError] = useState("");
   const request = useRef(0);
   const previewRequest = useRef(0);
@@ -86,16 +86,16 @@ export function Search({ onOpen, onImport }: {
       onOpen(destination.agentId, destination.entryId);
       return;
     }
-    setImporting(target.session.sessionId);
+    setContinuing(target.session.sessionId);
     setError("");
     try {
-      const agent = await api.importSession(target.session.backend, target.session.sessionId);
+      const agent = await api.continueSession(target.session.backend, target.session.sessionId);
       setOpen(false);
-      onImport(agent.id);
+      onContinue(agent.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setImporting(null);
+      setContinuing(null);
     }
   };
 
@@ -165,8 +165,8 @@ export function Search({ onOpen, onImport }: {
                     time={session.updatedAt}
                     title={session.name || session.preview || "Untitled session"}
                     detail={`${session.backend} · ${session.cwd || "folder unavailable"}`}
-                    action={importing === session.sessionId ? "Importing…" : "Import"}
-                    disabled={importing !== null}
+                    action={continuing === session.sessionId ? "Starting…" : "Continue"}
+                    disabled={continuing !== null}
                     onSelect={() => setSelected(index)}
                     onActivate={() => void activate(choices[index])}
                   />;

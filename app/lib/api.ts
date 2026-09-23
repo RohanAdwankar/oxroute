@@ -32,8 +32,8 @@ const post = <T,>(path: string, payload: unknown) =>
 export const api = {
   snapshot: () => call<Snapshot>("/api/state"),
   search: (query: string) => call<SearchResults>(`/api/search?q=${encodeURIComponent(query)}`),
-  importSession: (backend: Backend, sessionId: string) =>
-    post<Agent>("/api/import", { backend, sessionId }),
+  continueSession: (backend: Backend, sessionId: string) =>
+    post<Agent>("/api/continue", { backend, sessionId }),
   nativePreview: (backend: Backend, sessionId: string) =>
     call<ConversationLine[]>(`/api/native-preview?backend=${encodeURIComponent(backend)}&sessionId=${encodeURIComponent(sessionId)}`),
 

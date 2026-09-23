@@ -1826,26 +1826,18 @@ impl Hub {
         ))
     }
 
-    async fn open_current_thread(&self, agent: &Agent) -> Result<Option<(Target, String)>> {
-        let Some((source_name, conversation, _)) = self.dashboard_location() else {
-            return Ok(None);
-        };
-        if self
-            .store
-            .bindings_for(&agent.id)?
-            .iter()
-            .any(|binding| binding.source == source_name && binding.conversation == conversation)
-        {
-            return Ok(None);
-        }
-        let Some(source) = self.source(&source_name) else {
-            return Ok(None);
-        };
-        let (thread_key, permalink) = source.open_thread(&conversation, &agent.name).await?;
-        Ok(Some((
+    async fn open_current_thread(&self, text: &str) -> Result<(Target, String)> {
+        let (source_name, conversation, _) = self
+            .dashboard_location()
+            .context("no current source conversation")?;
+        let source = self
+            .source(&source_name)
+            .with_context(|| format!("source {source_name} is not configured"))?;
+        let (thread_key, permalink) = source.open_thread(&conversation, text).await?;
+        Ok((
             Target::new(source_name, conversation, thread_key),
             permalink,
-        )))
+        ))
     }
 
     /// Keep the one dashboard message current. Posted on first use into
@@ -1941,21 +1933,11 @@ impl Hub {
         Ok(SearchResults { managed, other })
     }
 
-    pub async fn import_session(&self, backend: Backend, session_id: &str) -> Result<Agent> {
-        if let Some(mut agent) = self.store.agent_by_session(backend, session_id)? {
-            if let Some((target, permalink)) = self.open_current_thread(&agent).await? {
-                self.store.replace_source_binding(
-                    &target.source,
-                    &target.conversation,
-                    &target.thread_key,
-                    &agent.id,
-                )?;
-                self.store.set_agent_permalink(&agent.id, &permalink)?;
-                agent.permalink = permalink;
-                self.emit(Event::Sync);
-            }
-            return Ok(agent);
-        }
+    pub async fn continue_session(
+        self: &Arc<Self>,
+        backend: Backend,
+        session_id: &str,
+    ) -> Result<Agent> {
         let native = self
             .harness(backend)
             .find_session(session_id)
@@ -1986,50 +1968,44 @@ impl Hub {
         } else {
             native.model.clone()
         };
-        let title = if native.name.trim().is_empty() {
-            &native.preview
+        let location = match backend {
+            Backend::Codex => "~/.codex/sessions",
+            Backend::ClaudeCode => "~/.claude/projects",
+        };
+        let prompt = format!(
+            "Read the local {backend} session {session_id} directly from {location}, recover its \
+             context, and continue the work from there. Do not use web search to find the session. \
+             Do not modify the old session."
+        );
+        let cwd = if native.cwd.is_empty() {
+            self.config.workspace.clone()
         } else {
-            &native.name
+            native.cwd
         };
-        let at = if native.updated_at > 0.0 { native.updated_at } else { now() };
-        let mut agent = Agent {
-            id: new_id("agent"),
-            name: naming::provisional(title),
-            backend,
-            model,
-            session_id: native.session_id,
-            cwd: if native.cwd.is_empty() {
-                self.config.workspace.clone()
-            } else {
-                native.cwd
-            },
-            status: AgentStatus::Complete,
-            activity: String::new(),
-            permalink: String::new(),
-            last_activity: at,
-            updated_at: at,
-            stall_reason: None,
-            stall_alerted: false,
-            pinned: false,
+        let (target, permalink) = self.open_current_thread(&prompt).await?;
+        let signal = Signal {
+            id: new_id("sig"),
+            source: target.source.clone(),
+            conversation: target.conversation.clone(),
+            thread_key: target.thread_key.clone(),
+            external_id: target.thread_key.clone(),
+            author: self.config.owner.clone(),
+            label: "continued session".into(),
+            text: prompt.clone(),
+            attachments: vec![],
+            at: now(),
+            root: true,
         };
-        let thread = self.open_current_thread(&agent).await?;
-        if let Some((_, permalink)) = &thread {
+        let mut agent = self
+            .spawn(&signal, Some(backend.as_str()), Some(&model), Some(&cwd))
+            .await?;
+        if !permalink.is_empty() {
+            self.store.set_agent_permalink(&agent.id, &permalink)?;
             agent.permalink = permalink.clone();
         }
-        self.store.save_agent(&agent)?;
-        if let Some((target, _)) = thread {
-            self.store.replace_source_binding(
-                &target.source,
-                &target.conversation,
-                &target.thread_key,
-                &agent.id,
-            )?;
-        }
-        self.sessions
-            .lock()
-            .await
-            .insert(agent.session_id.clone(), agent.id.clone());
-        self.emit(Event::Sync);
+        self.clone()
+            .deliver(agent.clone(), vec![TurnInput::text(&prompt)], Some(signal))
+            .await;
         Ok(agent)
     }
 
