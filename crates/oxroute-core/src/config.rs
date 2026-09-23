@@ -20,7 +20,7 @@ use serde::Deserialize;
 use crate::model::Backend;
 
 /// What a new agent gets when nothing says otherwise.
-pub const DEFAULT_MODEL: &str = "claude-opus-5";
+pub const DEFAULT_MODEL: &str = "gpt-6-sol";
 
 /// A model a person can pick by name.
 #[derive(Debug, Clone)]
@@ -247,7 +247,7 @@ impl Config {
         if file.models.is_empty() {
             let spec = from_env(&["OXROUTE_MODELS"]).unwrap_or_else(|| {
                 "opus=claude-opus-5:Opus,sonnet=claude-sonnet-5:Sonnet,\
-                 sol=gpt-5.6-sol:Sol,astra=gpt-6-astra:Astra"
+                 sol=gpt-6-sol:Sol,astra=gpt-6-astra:Astra"
                     .into()
             });
             for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
@@ -502,12 +502,12 @@ mod tests {
     }
 
     #[test]
-    fn the_default_is_claude() {
+    fn the_default_is_sol() {
         let _guard = exclusive();
         std::env::set_var("OXROUTE_OWNER", "me");
         let config = Config::load_from(Path::new("/nonexistent/oxroute.toml")).unwrap();
         assert_eq!(config.default_model, DEFAULT_MODEL);
-        assert_eq!(config.default_backend, Backend::ClaudeCode);
+        assert_eq!(config.default_backend, Backend::Codex);
         assert_eq!(config.codex_url, "ws://127.0.0.1:8788");
         // Both harnesses are reachable without configuring anything.
         assert_eq!(config.backend_for("sol"), Backend::Codex);
