@@ -156,7 +156,7 @@ export function Search({ onOpen, onContinue }: {
                     onActivate={() => void activate(choices[index])}
                   />
                 ))}
-                {results.other.length > 0 && <Band>Other sessions on this VM</Band>}
+                {results.other.length > 0 && <Band>Other sessions</Band>}
                 {results.other.map((session, offset) => {
                   const index = results.managed.length + offset;
                   return <ResultRow
