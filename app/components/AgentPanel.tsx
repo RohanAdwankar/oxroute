@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
 import type { AgentView, Entry, EntryKind } from "../lib/types";
@@ -16,6 +16,7 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
 };
 
 type TimelineItem = { entry: Entry } | { tools: Entry[] };
+type Upload = { file: File; preview: string };
 
 function compactTimeline(entries: Entry[]): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -58,7 +59,7 @@ export function AgentPanel({
 }: {
   view: AgentView;
   onBack: () => void;
-  onSay: (text: string) => void;
+  onSay: (text: string, images: File[]) => void;
   onInterrupt: () => void;
   onFork: () => void;
   onOpenAgent: (id: string) => void;
@@ -69,9 +70,13 @@ export function AgentPanel({
   focusEntry: number | null;
 }) {
   const [draft, setDraft] = useState("");
+  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const timeline = useRef<HTMLDivElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
   const { agent } = view;
   const items = compactTimeline(view.timeline);
@@ -86,11 +91,31 @@ export function AgentPanel({
     else timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
   }, [view.timeline.length, agent.id, focusEntry]);
 
+  const addFiles = useCallback((files: File[]) => {
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    setAttachmentError(images.length === files.length ? "" : "Only image files are supported.");
+    setUploads((current) => [
+      ...current,
+      ...images.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    uploadsRef.current = uploads;
+  }, [uploads]);
+
+  useEffect(() => () => {
+    uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
+  }, []);
+
   const send = () => {
     const text = draft.trim();
-    if (!text || busy) return;
+    if ((!text && uploads.length === 0) || busy) return;
     setDraft("");
-    onSay(text);
+    onSay(text, uploads.map((upload) => upload.file));
+    uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
+    setUploads([]);
+    setAttachmentError("");
   };
 
   const finishRename = () => {
@@ -281,36 +306,89 @@ export function AgentPanel({
         )}
       </div>
 
-      <footer className="flex shrink-0 items-end gap-3 border-t border-rule bg-card px-7 py-4">
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            // Enter sends; a newline needs a modifier. This is a chat box,
-            // and the common case is one line.
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              send();
+      <footer className="flex shrink-0 flex-col gap-2 border-t border-rule bg-card px-7 py-4">
+        {uploads.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {uploads.map((upload) => (
+              <span key={upload.preview} className="flex items-center gap-2 bg-band p-2 text-[11px] text-mid">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={upload.preview} alt="" className="h-10 w-10 object-cover" />
+                <span className="max-w-48 truncate">{upload.file.name}</span>
+                <button
+                  type="button"
+                  aria-label={`remove ${upload.file.name}`}
+                  onClick={() => {
+                    URL.revokeObjectURL(upload.preview);
+                    setUploads((current) => current.filter((item) => item !== upload));
+                  }}
+                  className="cursor-pointer px-1 text-faint hover:text-ink"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {attachmentError && <p className="text-[11px] text-hold">{attachmentError}</p>}
+        <div className="flex items-end gap-3">
+          <input
+            ref={picker}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              addFiles(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => picker.current?.click()}
+            disabled={busy}
+            aria-label="attach images"
+            title="attach images"
+            className="cursor-pointer px-2 py-[11px] text-[18px] text-mid hover:text-ink disabled:opacity-40"
+          >
+            +
+          </button>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (files.length > 0) {
+                event.preventDefault();
+                addFiles(files);
+              }
+            }}
+            onKeyDown={(event) => {
+              // Enter sends; a newline needs a modifier. This is a chat box,
+              // and the common case is one line.
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
+            placeholder={
+              view.delivery === "steer"
+                ? "Say something — it folds into the turn it is running"
+                : view.delivery === "queue"
+                  ? "Say something — it waits for the current turn to end"
+                  : "Say something — it starts a new turn"
             }
-          }}
-          rows={1}
-          placeholder={
-            view.delivery === "steer"
-              ? "Say something — it folds into the turn it is running"
-              : view.delivery === "queue"
-                ? "Say something — it waits for the current turn to end"
-                : "Say something — it starts a new turn"
-          }
-          className="max-h-32 min-h-[42px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
-        />
-        <button
-          type="button"
-          onClick={send}
-          disabled={busy || draft.trim().length === 0}
-          className="cursor-pointer rounded-[3px] bg-ink px-5 py-[11px] text-[14px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Send
-        </button>
+            className="max-h-32 min-h-[42px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
+          />
+          <button
+            type="button"
+            onClick={send}
+            disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
+            className="cursor-pointer rounded-[3px] bg-ink px-5 py-[11px] text-[14px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
       </footer>
     </section>
   );

@@ -787,9 +787,35 @@ impl Hub {
 
     /// Type straight at an agent, from any surface, bypassing the inbox.
     pub async fn say_to(self: &Arc<Self>, agent_id: &str, text: &str) -> Result<()> {
+        self.say_to_with_images(agent_id, text, vec![]).await
+    }
+
+    pub async fn say_to_with_images(
+        self: &Arc<Self>,
+        agent_id: &str,
+        text: &str,
+        images: Vec<String>,
+    ) -> Result<()> {
+        anyhow::ensure!(!text.trim().is_empty() || !images.is_empty(), "nothing to say");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
-        let inputs = vec![TurnInput::text(text)];
-        self.record(&agent.id, EntryKind::You, text, "", "");
+        let image_names = images
+            .iter()
+            .filter_map(|path| std::path::Path::new(path).file_name())
+            .map(|name| name.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let shown = match (text.trim().is_empty(), images.is_empty()) {
+            (false, true) => text.to_string(),
+            (false, false) => format!("{text}\n\nAttached: {image_names}"),
+            (true, false) => format!("Attached: {image_names}"),
+            (true, true) => unreachable!(),
+        };
+        let mut inputs = Vec::with_capacity(images.len() + 1);
+        if !text.trim().is_empty() {
+            inputs.push(TurnInput::text(text));
+        }
+        inputs.extend(images.iter().cloned().map(|path| TurnInput::LocalImage { path }));
+        self.record(&agent.id, EntryKind::You, &shown, "", "");
         let target = self.home_target(&agent.id).await;
 
         // A question submitted from the web or TUI is part of the Slack
@@ -799,8 +825,11 @@ impl Hub {
             .as_ref()
             .filter(|target| target.source == crate::source::slack::SOURCE)
         {
-            self.say(target, &format!("Question from Oxroute UI:\n{text}"))
+            self.say(target, &format!("Question from Oxroute UI:\n{shown}"))
                 .await;
+            if let Some(source) = self.source(&target.source) {
+                let _ = source.upload(target, &images).await;
+            }
         }
 
         let pseudo = Signal {
@@ -811,7 +840,7 @@ impl Hub {
             external_id: new_id("msg"),
             author: self.config.owner.clone(),
             label: "you".into(),
-            text: text.to_string(),
+            text: shown,
             attachments: vec![],
             at: now(),
             root: false,

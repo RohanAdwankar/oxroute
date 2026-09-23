@@ -486,7 +486,7 @@ export default function Home() {
             view={showing}
             busy={busy}
             onBack={() => showAgent(null)}
-            onSay={(text) => void run(() => api.say(showing.agent.id, text))}
+            onSay={(text, images) => void run(() => api.say(showing.agent.id, text, images))}
             onInterrupt={() => void run(() => api.interrupt(showing.agent.id))}
             onFork={() => void run(() => api.fork(showing.agent.id))}
             onOpenAgent={showAgent}

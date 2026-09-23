@@ -5,9 +5,10 @@ import type { AgentView, DaemonEvent, Mode, SearchGroup, Snapshot } from "./type
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const multipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: { ...(multipart ? {} : { "content-type": "application/json" }), ...(init?.headers ?? {}) },
     cache: "no-store",
   });
   const body = await response.text();
@@ -42,7 +43,14 @@ export const api = {
     post<Snapshot>("/api/route", { signal, action: "spawn", model }),
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
-  say: (agent: string, text: string) => post<unknown>("/api/say", { agent, text }),
+  say: (agent: string, text: string, images: File[] = []) => {
+    if (images.length === 0) return post<unknown>("/api/say", { agent, text });
+    const form = new FormData();
+    form.append("agent", agent);
+    form.append("text", text);
+    images.forEach((image) => form.append("images", image));
+    return call<unknown>("/api/say-images", { method: "POST", body: form });
+  },
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
   fork: (agent: string) => post<unknown>("/api/fork", { agent }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),

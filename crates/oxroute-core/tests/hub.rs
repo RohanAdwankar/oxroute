@@ -916,6 +916,39 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
 }
 
 #[tokio::test]
+async fn ui_images_reach_the_agent_and_its_slack_thread() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the task")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub
+        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()])
+        .await
+        .unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+
+    let calls = w.calls.lock().unwrap();
+    assert!(calls.started[1]
+        .1
+        .iter()
+        .any(|input| matches!(input, TurnInput::LocalImage { path } if path == "/tmp/chart.png")));
+    drop(calls);
+    assert!(w.posts
+        .lock()
+        .unwrap()
+        .uploads
+        .iter()
+        .any(|paths| paths == &["/tmp/chart.png"]));
+    assert!(w.posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(_, text)| text.contains("Question from Oxroute UI:\ninspect this")));
+}
+
+#[tokio::test]
 async fn a_redelivered_message_is_not_run_twice() {
     let w = world(Mode::Auto, false).await;
     let once = signal("100.0", "100.0", "do the thing");

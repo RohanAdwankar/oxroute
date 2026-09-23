@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -181,6 +181,7 @@ async fn serve() -> Result<()> {
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
+        .route("/api/say-images", post(say_images))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
         .route("/api/rename", post(rename))
@@ -188,6 +189,7 @@ async fn serve() -> Result<()> {
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
+        .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(hub);
 
@@ -363,6 +365,44 @@ async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_j
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
     hub.say_to(&body.agent, &body.text).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn say_images(
+    State(hub): Hubs,
+    mut form: Multipart,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let mut agent = String::new();
+    let mut text = String::new();
+    let mut images = Vec::new();
+    while let Some(field) = form.next_field().await? {
+        match field.name() {
+            Some("agent") => agent = field.text().await?,
+            Some("text") => text = field.text().await?,
+            Some("images") => {
+                let mimetype = field.content_type().unwrap_or_default().to_string();
+                if !mimetype.starts_with("image/") {
+                    return Err(Failed(anyhow::anyhow!("only image files are supported")));
+                }
+                let name = std::path::Path::new(field.file_name().unwrap_or("image"))
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("image");
+                let path = hub
+                    .config
+                    .attachments
+                    .join(format!("{}-{name}", oxroute_core::model::new_id("web")));
+                tokio::fs::write(&path, field.bytes().await?).await?;
+                images.push(path.to_string_lossy().to_string());
+            }
+            _ => {}
+        }
+    }
+    if agent.is_empty() {
+        return Err(Failed(anyhow::anyhow!("an agent is required")));
+    }
+    hub.say_to_with_images(&agent, &text, images).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
