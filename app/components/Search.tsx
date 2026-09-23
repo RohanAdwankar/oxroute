@@ -100,7 +100,7 @@ export function Search({ onOpen, onContinue }: {
   };
 
   return (
-    <div className="relative w-[min(32vw,390px)]">
+    <div className="relative min-w-[180px] max-w-[520px] flex-1 basis-[260px]">
       <input
         type="search"
         value={query}

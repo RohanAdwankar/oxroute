@@ -11,7 +11,6 @@ import { Search } from "./Search";
  */
 export function Chrome({
   snapshot,
-  waiting,
   notice,
   onMode,
   vim,
@@ -20,7 +19,6 @@ export function Chrome({
   onSearchContinue,
 }: {
   snapshot: Snapshot;
-  waiting: number;
   notice: string | null;
   onMode: (mode: Mode) => void;
   vim: boolean;
@@ -28,18 +26,8 @@ export function Chrome({
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
 }) {
-  const count = (status: string) =>
-    snapshot.agents.filter((agent) => agent.status === status).length;
-
   return (
-    <header className="flex h-[63px] shrink-0 items-center gap-4 border-b border-rule bg-card px-7">
-      <span
-        className="text-[25px] tracking-[-0.01em]"
-        style={{ fontFamily: "var(--font-wordmark)" }}
-      >
-        oxroute
-      </span>
-
+    <header className="flex min-h-[63px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule bg-card px-5 py-2">
       <div className="flex" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
@@ -48,7 +36,7 @@ export function Chrome({
           onClick={() => onMode("ask")}
         />
         <ModeButton
-          label="Route on its own"
+          label="Auto route"
           active={snapshot.mode === "auto"}
           side="right"
           onClick={() => onMode("auto")}
@@ -73,18 +61,10 @@ export function Chrome({
       <div className="flex-1" />
 
       {notice && (
-        <span className="max-w-[46ch] truncate text-[12.5px] text-merge" role="status">
+        <span className="min-w-0 flex-1 basis-[180px] truncate text-[12.5px] text-merge" role="status">
           {notice}
         </span>
       )}
-
-      <div className="flex items-center gap-6">
-        <Counter value={waiting} label="waiting" tone="text-hold" />
-        <Counter value={count("working")} label="working" tone="text-ok" />
-        <Counter value={count("stalled")} label="stalled" tone="text-hold" />
-        <span className="h-[26px] w-px bg-rule" />
-        <Counter value={snapshot.agents.length} label="agents" tone="text-ink" />
-      </div>
     </header>
   );
 }
@@ -106,7 +86,7 @@ function ModeButton({
       onClick={onClick}
       aria-pressed={active}
       className={[
-        "tnum cursor-pointer px-[15px] py-[6px] text-[12px] transition-colors",
+        "tnum cursor-pointer whitespace-nowrap px-[15px] py-[6px] text-[12px] transition-colors",
         side === "left" ? "rounded-l-[3px] border" : "rounded-r-[3px] border border-l-0",
         active
           ? "border-edge bg-wash text-ink"
@@ -115,14 +95,5 @@ function ModeButton({
     >
       {label}
     </button>
-  );
-}
-
-function Counter({ value, label, tone }: { value: number; label: string; tone: string }) {
-  return (
-    <span className="flex flex-col items-end leading-tight">
-      <span className={`tnum text-[15px] ${tone}`}>{value}</span>
-      <span className="text-[9.5px] text-faint uppercase tracking-wide">{label}</span>
-    </span>
   );
 }

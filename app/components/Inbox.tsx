@@ -46,9 +46,9 @@ export function Inbox({
   return (
     <aside className="flex h-full w-full flex-col bg-card">
       <div className="flex h-[63px] shrink-0 items-center border-b border-rule px-[18px]">
-        <span className="text-[15px] font-semibold">Inbox</span>
+        <span className="text-[14px] font-semibold">Inbox</span>
         <span className="flex-1" />
-        <span className="text-[12.5px] text-faint">
+        <span className="text-[11.5px] text-faint">
           {waiting.length === 0 ? "all clear" : `${waiting.length} waiting`}
         </span>
         <button
@@ -66,7 +66,7 @@ export function Inbox({
 
       <div className="quiet-scroll flex-1 overflow-y-auto">
         {items.length === 0 && (
-          <p className="px-[18px] py-6 text-[13px] text-faint">
+          <p className="px-[18px] py-6 text-[11.5px] text-faint">
             Nothing has arrived yet. Send yourself a Slack message.
           </p>
         )}
@@ -138,7 +138,7 @@ function Compose({
         }}
         rows={1}
         placeholder="Something you thought of…"
-        className="max-h-24 min-h-[34px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-[9px] py-[7px] text-[13px] outline-none placeholder:text-faint focus:border-edge"
+        className="max-h-24 min-h-[34px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-[9px] py-[7px] text-[11.5px] outline-none placeholder:text-faint focus:border-edge"
       />
       <button
         type="button"
@@ -156,7 +156,7 @@ function Compose({
 function Band({ label, strong }: { label: string; strong?: boolean }) {
   return (
     <div className="border-y border-rule bg-band px-[18px] py-2 first:border-t-0">
-      <span className={`text-[12px] ${strong ? "text-ink" : "text-faint"}`}>{label}</span>
+      <span className={`text-[11px] ${strong ? "text-ink" : "text-faint"}`}>{label}</span>
     </div>
   );
 }
@@ -215,20 +215,20 @@ function Row({
       ].join(" ")}
     >
       <span className="flex items-center gap-[7px]">
-        <span className="tnum text-[11px] text-faint">{clock(signal.at)}</span>
-        <span className="tnum rounded-[2px] border border-rule px-[5px] text-[10.5px] text-mid">
+        <span className="tnum text-[9.5px] text-faint">{clock(signal.at)}</span>
+        <span className="tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
           {signal.source}
         </span>
         {signal.label && (
-          <span className="tnum truncate text-[11px] text-faint">{signal.label}</span>
+          <span className="tnum truncate text-[9.5px] text-faint">{signal.label}</span>
         )}
       </span>
 
-      <span className={`text-[13px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
+      <span className={`text-[11.5px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
         {signal.text ? clip(signal.text, 130) : `${signal.attachments.length} attachment(s)`}
       </span>
 
-      <span className={`tnum text-[11px] ${footerTone}`}>{footer}</span>
+      <span className={`tnum text-[10px] ${footerTone}`}>{footer}</span>
     </button>
   );
 }

@@ -509,7 +509,6 @@ export default function Home() {
     <main className="flex h-full flex-col">
       <Chrome
         snapshot={snapshot}
-        waiting={snapshot.inbox.filter((item) => item.state === "waiting").length}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
         vim={vim}

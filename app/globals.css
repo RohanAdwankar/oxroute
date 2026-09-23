@@ -21,7 +21,6 @@
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-wordmark: var(--font-instrument-serif), Georgia, "Times New Roman", serif;
 }
 
 html,

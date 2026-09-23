@@ -213,7 +213,7 @@ export function AgentPanel({
               setNameDraft(agent.name);
               setRenaming(true);
             }}
-            className="cursor-text text-[15px] font-semibold hover:underline"
+            className="cursor-text text-[16px] font-semibold hover:underline"
             title="rename"
           >
             {agent.name}
@@ -354,7 +354,7 @@ export function AgentPanel({
                   {minute(entry.at)}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <div className="flex min-w-0 items-start gap-2 text-[15px] leading-[1.5] break-words">
+                  <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
                     {tag && (
                       <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
                         {tag.label}
@@ -464,7 +464,7 @@ export function AgentPanel({
             }}
             rows={1}
             placeholder="Message"
-            className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
+            className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />
           <button
             type="button"
