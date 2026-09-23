@@ -15,10 +15,11 @@
 //! fails at once with the reason, a `Down` event goes out so the hub can
 //! stall what it thought was running, and the next call starts a fresh one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -807,14 +808,124 @@ fn search_index(path: &Path, query: &str, limit: usize) -> Result<Vec<NativeSess
             },
         );
     }
+    let content = search_rollouts(path, query)?;
+    for (session_id, cwd, updated_at) in &content {
+        latest
+            .entry(session_id.clone())
+            .and_modify(|session| {
+                session.cwd = cwd.clone();
+                session.updated_at = session.updated_at.max(*updated_at);
+            })
+            .or_insert_with(|| NativeSession {
+                backend: Backend::Codex,
+                session_id: session_id.clone(),
+                name: String::new(),
+                preview: String::new(),
+                cwd: cwd.clone(),
+                model: String::new(),
+                updated_at: *updated_at,
+            });
+    }
+    let content: HashSet<_> = content.into_iter().map(|(id, _, _)| id).collect();
     let query = query.to_lowercase();
     let mut sessions: Vec<_> = latest
         .into_values()
-        .filter(|session| session.name.to_lowercase().contains(&query))
+        .filter(|session| {
+            session.name.to_lowercase().contains(&query) || content.contains(&session.session_id)
+        })
         .collect();
     sessions.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
     sessions.truncate(limit);
     Ok(sessions)
+}
+
+/// Codex's list API searches thread metadata, not the conversation. Ripgrep
+/// cheaply narrows the native rollouts, then JSON parsing keeps only human
+/// and agent messages so a command containing the query is not a false hit.
+fn search_rollouts(index: &Path, query: &str) -> Result<Vec<(String, String, f64)>> {
+    if query.chars().count() < 3 {
+        return Ok(vec![]);
+    }
+    let root = index.parent().unwrap_or(Path::new("")).join("sessions");
+    if !root.is_dir() {
+        return Ok(vec![]);
+    }
+    let output = Command::new("rg")
+        .args([
+            "--files-with-matches",
+            "--ignore-case",
+            "--fixed-strings",
+            "--glob",
+            "*.jsonl",
+            "--",
+        ])
+        .arg(query)
+        .arg(root)
+        .output()
+        .context("searching Codex conversation history with rg")?;
+    anyhow::ensure!(
+        output.status.success() || output.status.code() == Some(1),
+        "rg could not search Codex conversation history"
+    );
+    let query = query.to_lowercase();
+    let mut matches = Vec::new();
+    for path in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(found) = matching_rollout(Path::new(path), &query)? {
+            matches.push(found);
+        }
+    }
+    Ok(matches)
+}
+
+fn matching_rollout(path: &Path, query: &str) -> Result<Option<(String, String, f64)>> {
+    let file = File::open(path)?;
+    let updated_at = file
+        .metadata()?
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let mut session_id = String::new();
+    let mut cwd = String::new();
+    let mut matched = false;
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        if session_id.is_empty() || line.to_lowercase().contains(query) {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+                session_id = value
+                    .pointer("/payload/id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                cwd = value
+                    .pointer("/payload/cwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+            }
+            let payload = value.get("payload");
+            if value.get("type").and_then(Value::as_str) == Some("response_item")
+                && payload
+                    .and_then(|item| item.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("message")
+                && matches!(
+                    payload.and_then(|item| item.get("role")).and_then(Value::as_str),
+                    Some("user" | "assistant")
+                )
+                && payload
+                    .and_then(|item| item.get("content"))
+                    .map(content_text)
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(query)
+            {
+                matched = true;
+            }
+        }
+    }
+    Ok((matched && !session_id.is_empty()).then_some((session_id, cwd, updated_at)))
 }
 
 fn native_session(thread: &Value) -> Option<NativeSession> {
@@ -845,5 +956,83 @@ fn content_text(content: &Value) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "oxroute-codex-search-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn search_index_finds_conversation_text_outside_the_title_index() {
+        let root = scratch();
+        let sessions = root.join("sessions/2026/09/23");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(
+            root.join("session_index.jsonl"),
+            r#"{"id":"old-session","thread_name":"release work","updated_at":"2026-09-23T12:00:00Z"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            sessions.join("rollout.jsonl"),
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"old-session","cwd":"/work/project"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"GitHub currently has a tag named 0.0.1"}]}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let found = search_index(
+            &root.join("session_index.jsonl"),
+            "github currently has a tag named",
+            20,
+        )
+        .unwrap();
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session_id, "old-session");
+        assert_eq!(found[0].cwd, "/work/project");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollout_search_ignores_query_text_inside_tool_calls() {
+        let root = scratch();
+        let sessions = root.join("sessions/2026/09/23");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(root.join("session_index.jsonl"), "").unwrap();
+        std::fs::write(
+            sessions.join("rollout.jsonl"),
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"diagnostic-session","cwd":"/work/project"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"search for unique diagnostic phrase"}}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let found = search_index(
+            &root.join("session_index.jsonl"),
+            "unique diagnostic phrase",
+            20,
+        )
+        .unwrap();
+
+        assert!(found.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

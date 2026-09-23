@@ -1931,15 +1931,7 @@ impl Hub {
         for harness in self.harnesses.values() {
             match harness.search_sessions(query, native_limit).await {
                 Ok(sessions) => {
-                    for session in sessions {
-                        if self
-                            .store
-                            .agent_by_session(session.backend, &session.session_id)?
-                            .is_none()
-                        {
-                            other.push(session);
-                        }
-                    }
+                    other.extend(sessions);
                 }
                 Err(error) => tracing::debug!(backend = %harness.backend(), %error, "native session search failed"),
             }

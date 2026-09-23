@@ -873,7 +873,7 @@ async fn a_fork_with_an_open_child_cannot_merge() {
 }
 
 #[tokio::test]
-async fn native_sessions_are_separate_until_imported() {
+async fn native_sessions_remain_searchable_after_they_are_added_to_oxroute() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "work on fwgenie in oxroute")).await.unwrap();
     assert!(settle(|| !w.hub.store.search("fwgenie", 20).unwrap().is_empty()).await);
@@ -900,7 +900,7 @@ async fn native_sessions_are_separate_until_imported() {
     let binding = w.hub.store.bindings_for(&imported.id).unwrap().pop().unwrap();
     assert_eq!(binding.conversation, "D1");
     assert_eq!(binding.thread_key, "thread-1");
-    assert!(w.hub.search("fwgenie", 20, 20).await.unwrap().other.is_empty());
+    assert_eq!(w.hub.search("fwgenie", 20, 20).await.unwrap().other.len(), 1);
     let again = w.hub.import_session(Backend::Codex, "native-fwgenie").await.unwrap();
     assert_eq!(again.id, imported.id);
     assert_eq!(w.posts.lock().unwrap().threads.len(), 1);
