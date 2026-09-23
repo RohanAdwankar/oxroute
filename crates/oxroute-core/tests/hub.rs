@@ -445,9 +445,13 @@ async fn build(mode: Mode, options: Harnessed) -> World {
 }
 
 fn signal(thread: &str, ts: &str, text: &str) -> Signal {
+    signal_from("slack", thread, ts, text)
+}
+
+fn signal_from(source: &str, thread: &str, ts: &str, text: &str) -> Signal {
     Signal {
         id: new_id("sig"),
-        source: "slack".into(),
+        source: source.into(),
         conversation: "D1".into(),
         thread_key: thread.into(),
         external_id: ts.into(),
@@ -519,6 +523,21 @@ async fn a_reply_resumes_the_same_agent_rather_than_starting_another() {
 }
 
 #[tokio::test]
+async fn slack_threads_route_immediately_even_when_the_inbox_mode_is_ask() {
+    let w = world(Mode::Ask, false).await;
+    w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+
+    w.hub.accept(signal("100.0", "101.0", "second")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+
+    let started = w.calls.lock().unwrap().started.clone();
+    assert_eq!(started[0].0, started[1].0);
+    assert_eq!(w.hub.store.agents(10).unwrap().len(), 1);
+    assert!(w.hub.store.inbox(10).unwrap().iter().all(|item| item.state == InboxState::Done));
+}
+
+#[tokio::test]
 async fn an_independent_thread_gets_its_own_agent() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "one")).await.unwrap();
@@ -538,11 +557,13 @@ async fn an_independent_thread_gets_its_own_agent() {
 }
 
 #[tokio::test]
-async fn ask_mode_holds_a_new_thread_until_someone_says_where_it_goes() {
+async fn ask_mode_holds_a_non_slack_signal_until_someone_says_where_it_goes() {
     let w = world(Mode::Ask, false).await;
-    w.hub.accept(signal("100.0", "100.0", "is this worth doing")).await.unwrap();
+    w.hub
+        .accept(signal_from("webhook", "100.0", "100.0", "is this worth doing"))
+        .await
+        .unwrap();
 
-    assert!(settle(|| !w.posts.lock().unwrap().replies.is_empty()).await);
     assert!(w.hub.store.agents(10).unwrap().is_empty(), "nothing should have started");
 
     let inbox = w.hub.store.inbox(10).unwrap();
@@ -568,7 +589,10 @@ async fn ask_mode_holds_a_new_thread_until_someone_says_where_it_goes() {
 #[tokio::test]
 async fn a_signal_can_be_discarded_without_reaching_anything() {
     let w = world(Mode::Ask, false).await;
-    w.hub.accept(signal("100.0", "100.0", "anyone want coffee")).await.unwrap();
+    w.hub
+        .accept(signal_from("webhook", "100.0", "100.0", "anyone want coffee"))
+        .await
+        .unwrap();
     let id = w.hub.store.inbox(10).unwrap()[0].signal.id.clone();
 
     w.hub.route(&id, Routing::Discard).await.unwrap();
@@ -588,7 +612,10 @@ async fn a_waiting_signal_can_be_routed_to_an_agent_that_already_exists() {
     let existing = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub.set_mode(Mode::Ask).unwrap();
-    w.hub.accept(signal("200.0", "200.0", "related news")).await.unwrap();
+    w.hub
+        .accept(signal_from("webhook", "200.0", "200.0", "related news"))
+        .await
+        .unwrap();
     let waiting = w
         .hub
         .store
@@ -612,7 +639,7 @@ async fn a_waiting_signal_can_be_routed_to_an_agent_that_already_exists() {
     // No new agent, and the second thread now answers into the first one.
     assert_eq!(w.hub.store.agents(10).unwrap().len(), 1);
     assert_eq!(
-        w.hub.store.bound_agent("slack", "D1", "200.0").unwrap(),
+        w.hub.store.bound_agent("webhook", "D1", "200.0").unwrap(),
         Some(existing)
     );
 }

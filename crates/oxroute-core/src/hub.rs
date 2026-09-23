@@ -662,7 +662,7 @@ impl Hub {
 
     /// A signal with nowhere to go yet.
     async fn route_new(self: &Arc<Self>, signal: Signal, _parsed: Parsed) -> Result<()> {
-        if self.mode() == Mode::Ask {
+        if self.mode() == Mode::Ask && signal.source != crate::source::slack::SOURCE {
             // Hold it. Somebody will say where it goes, from whichever
             // surface they happen to be looking at.
             self.emit(Event::Sync);
