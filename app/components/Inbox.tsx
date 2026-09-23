@@ -22,6 +22,7 @@ export function Inbox({
   cursor,
   active,
   composeRef,
+  onCollapse,
 }: {
   items: InboxItem[];
   agents: Agent[];
@@ -35,6 +36,7 @@ export function Inbox({
   active: boolean;
   /// So a shortcut elsewhere can put the caret in the compose box.
   composeRef: RefObject<HTMLTextAreaElement | null>;
+  onCollapse: () => void;
 }) {
   const waiting = items.filter((item) => item.state === "waiting");
   const done = items.filter((item) => item.state !== "waiting");
@@ -42,13 +44,22 @@ export function Inbox({
   const at = items[cursor]?.signal.id ?? null;
 
   return (
-    <aside className="flex w-[340px] shrink-0 flex-col border-r border-rule bg-card">
+    <aside className="flex h-full w-full flex-col bg-card">
       <div className="flex h-[63px] shrink-0 items-center border-b border-rule px-[18px]">
         <span className="text-[15px] font-semibold">Inbox</span>
         <span className="flex-1" />
         <span className="text-[12.5px] text-faint">
           {waiting.length === 0 ? "all clear" : `${waiting.length} waiting`}
         </span>
+        <button
+          type="button"
+          onClick={onCollapse}
+          aria-label="collapse inbox"
+          title="collapse inbox"
+          className="ml-3 cursor-pointer text-[18px] leading-none text-faint hover:text-ink"
+        >
+          ‹
+        </button>
       </div>
 
       <Compose onNote={onNote} busy={busy} inputRef={composeRef} />

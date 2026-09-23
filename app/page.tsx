@@ -44,12 +44,55 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxWidth, setInboxWidth] = useState(340);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
+  const inboxWidthRef = useRef(340);
+  const lastInboxWidth = useRef(340);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const saved = Number(window.localStorage.getItem("oxroute.inboxWidth"));
+      if (saved >= 220 && saved <= 600) {
+        setInboxWidth(saved);
+        inboxWidthRef.current = saved;
+        lastInboxWidth.current = saved;
+      }
+      setInboxOpen(window.localStorage.getItem("oxroute.inboxOpen") !== "false");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const setInboxVisible = useCallback((open: boolean) => {
+    setInboxOpen(open);
+    window.localStorage.setItem("oxroute.inboxOpen", String(open));
+    if (open) {
+      setInboxWidth(lastInboxWidth.current);
+      inboxWidthRef.current = lastInboxWidth.current;
+    }
+  }, []);
+
+  const resizeInbox = (width: number) => {
+    const next = Math.min(Math.max(width, 0), 600);
+    inboxWidthRef.current = next;
+    setInboxWidth(next);
+    if (next >= 220) lastInboxWidth.current = next;
+  };
+
+  const finishInboxResize = () => {
+    if (inboxWidthRef.current < 120) {
+      setInboxVisible(false);
+      return;
+    }
+    const width = Math.max(inboxWidthRef.current, 220);
+    resizeInbox(width);
+    window.localStorage.setItem("oxroute.inboxWidth", String(width));
+  };
 
   const say = useCallback((text: string) => {
     setNotice(text);
@@ -256,6 +299,7 @@ export default function Home() {
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
         case "h":
           stop();
+          setInboxVisible(true);
           return setFocus("inbox");
         case "l":
           stop();
@@ -367,18 +411,63 @@ export default function Home() {
         onVim={toggleVim}
       />
 
-      <div className="flex min-h-0 flex-1">
-        <Inbox
-          items={snapshot.inbox}
-          agents={snapshot.agents}
-          selected={routing}
-          onSelect={pick}
-          busy={busy}
-          cursor={inboxAt}
-          active={focus === "inbox"}
-          composeRef={compose}
-          onNote={(text) => void run(() => api.note(text))}
-        />
+      <div className="relative flex min-h-0 flex-1">
+        {inboxOpen ? (
+          <>
+            <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
+              <Inbox
+                items={snapshot.inbox}
+                agents={snapshot.agents}
+                selected={routing}
+                onSelect={pick}
+                busy={busy}
+                cursor={inboxAt}
+                active={focus === "inbox"}
+                composeRef={compose}
+                onNote={(text) => void run(() => api.note(text))}
+                onCollapse={() => setInboxVisible(false)}
+              />
+            </div>
+            <div
+              role="separator"
+              aria-label="resize inbox"
+              aria-orientation="vertical"
+              tabIndex={0}
+              onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  resizeInbox(event.clientX);
+                }
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                finishInboxResize();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                  event.preventDefault();
+                  const change = event.key === "ArrowLeft" ? -20 : 20;
+                  const width = Math.min(Math.max(inboxWidth + change, 220), 600);
+                  resizeInbox(width);
+                  window.localStorage.setItem("oxroute.inboxWidth", String(width));
+                }
+              }}
+              className="group relative w-[5px] shrink-0 cursor-col-resize border-l border-rule outline-none focus:bg-band"
+            >
+              <span className="absolute inset-y-0 left-[-2px] w-[5px] bg-edge opacity-0 group-hover:opacity-45" />
+            </div>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setInboxVisible(true)}
+            aria-label="open inbox"
+            title="open inbox"
+            className="absolute top-1/2 left-0 z-10 -translate-y-1/2 cursor-pointer border border-l-0 border-rule bg-card px-2 py-2 text-[18px] leading-none text-faint hover:text-ink"
+          >
+            ›
+          </button>
+        )}
 
         {showing ? (
           <AgentPanel

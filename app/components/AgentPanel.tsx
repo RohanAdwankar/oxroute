@@ -234,7 +234,7 @@ export function AgentPanel({
                   {minute(entry.at)}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <div className="flex min-w-0 items-start gap-2 text-[13.5px] leading-[1.45] break-words">
+                  <div className="flex min-w-0 items-start gap-2 text-[15px] leading-[1.5] break-words">
                     {tag && (
                       <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
                         {tag.label}
@@ -281,13 +281,13 @@ export function AgentPanel({
                 ? "Say something — it waits for the current turn to end"
                 : "Say something — it starts a new turn"
           }
-          className="max-h-32 min-h-[42px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[13.5px] outline-none placeholder:text-faint focus:border-edge"
+          className="max-h-32 min-h-[42px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[14.5px] outline-none placeholder:text-faint focus:border-edge"
         />
         <button
           type="button"
           onClick={send}
           disabled={busy || draft.trim().length === 0}
-          className="cursor-pointer rounded-[3px] bg-ink px-5 py-[11px] text-[13.5px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
+          className="cursor-pointer rounded-[3px] bg-ink px-5 py-[11px] text-[14px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
         >
           Send
         </button>
