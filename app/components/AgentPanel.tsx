@@ -79,6 +79,7 @@ export function AgentPanel({
   const [draft, setDraft] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
+  const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<QuoteMenu | null>(null);
@@ -162,7 +163,26 @@ export function AgentPanel({
   };
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section
+      className="flex min-w-0 flex-1 flex-col"
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDraggingImages(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setDraggingImages(false);
+        }
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setDraggingImages(false);
+        addFiles(Array.from(event.dataTransfer.files));
+      }}
+    >
       <div className="flex min-h-[63px] shrink-0 flex-wrap items-center gap-x-[14px] gap-y-1 border-b border-rule px-5 py-2">
         <button
           type="button"
@@ -397,7 +417,12 @@ export function AgentPanel({
         </button>
       )}
 
-      <footer className="flex shrink-0 flex-col gap-2 border-t border-rule bg-card px-7 py-4">
+      <footer
+        className={`flex shrink-0 flex-col gap-2 border-t px-7 py-4 ${
+          draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
+        }`}
+      >
+        {draggingImages && <p className="text-[11px] text-drop">Drop images to attach</p>}
         {uploads.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {uploads.map((upload) => (
