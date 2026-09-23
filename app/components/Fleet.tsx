@@ -42,6 +42,7 @@ export function Fleet({
   ticked,
   onToggle,
   onOpen,
+  onPin,
   onSend,
   onSpawn,
   onDiscard,
@@ -59,6 +60,7 @@ export function Fleet({
   ticked: Set<string>;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
+  onPin: (id: string, pinned: boolean) => void;
   onSend: () => void;
   onSpawn: (model: string) => void;
   onDiscard: () => void;
@@ -125,6 +127,7 @@ export function Fleet({
                 hint={vim ? hintFor(index) : null}
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}
+                onPin={() => onPin(agent.id, !agent.pinned)}
               />
             ))}
           </div>
@@ -189,6 +192,7 @@ function Card({
   hint,
   onToggle,
   onOpen,
+  onPin,
 }: {
   agent: Agent;
   routing: boolean;
@@ -198,6 +202,7 @@ function Card({
   hint: string | null;
   onToggle: () => void;
   onOpen: () => void;
+  onPin: () => void;
 }) {
   const delivery = deliveryOf(agent);
   // While routing, the agents this could go to stay bright and the rest
@@ -237,6 +242,16 @@ function Card({
           {agent.name}
         </button>
         <span className="flex-1" />
+        {!routing && (
+          <button
+            type="button"
+            onClick={onPin}
+            aria-pressed={agent.pinned}
+            className={`cursor-pointer px-1 text-[11px] ${agent.pinned ? "text-ink" : "text-faint hover:text-mid"}`}
+          >
+            {agent.pinned ? "Unpin" : "Pin"}
+          </button>
+        )}
         {routing && (
           <button
             type="button"

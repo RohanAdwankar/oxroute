@@ -861,6 +861,7 @@ async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
         updated_at: now(),
         stall_reason: None,
         stall_alerted: false,
+        pinned: false,
     };
     store.save_agent(&agent).unwrap();
     store.bind("slack", "D1", "100.0", &agent.id).unwrap();

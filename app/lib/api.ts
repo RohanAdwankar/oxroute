@@ -60,6 +60,7 @@ export const api = {
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),
+  pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
 };
 

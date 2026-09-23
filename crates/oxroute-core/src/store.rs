@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at    REAL NOT NULL DEFAULT 0,
     stall_reason  TEXT,
     stall_alerted INTEGER NOT NULL DEFAULT 0,
-    archived      INTEGER NOT NULL DEFAULT 0
+    archived      INTEGER NOT NULL DEFAULT 0,
+    pinned        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bindings (
@@ -117,6 +118,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !agent_columns.iter().any(|column| column == "archived") {
         conn.execute("ALTER TABLE agents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", [])?;
     }
+    if !agent_columns.iter().any(|column| column == "pinned") {
+        conn.execute("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0", [])?;
+    }
 
     let mut statement = conn.prepare("PRAGMA table_info(entries)")?;
     let columns = statement
@@ -191,8 +195,8 @@ impl Store {
             c.execute(
                 "INSERT INTO agents (id, name, backend, model, session_id, cwd, status,
                                      activity, permalink, last_activity, updated_at,
-                                     stall_reason, stall_alerted)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                     stall_reason, stall_alerted, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT (id) DO UPDATE SET
                     name = excluded.name, backend = excluded.backend,
                     model = excluded.model, session_id = excluded.session_id,
@@ -201,7 +205,8 @@ impl Store {
                     last_activity = excluded.last_activity,
                     updated_at = excluded.updated_at,
                     stall_reason = excluded.stall_reason,
-                    stall_alerted = excluded.stall_alerted",
+                    stall_alerted = excluded.stall_alerted,
+                    pinned = excluded.pinned",
                 params![
                     agent.id,
                     agent.name,
@@ -216,6 +221,7 @@ impl Store {
                     agent.updated_at,
                     agent.stall_reason,
                     agent.stall_alerted as i64,
+                    agent.pinned as i64,
                 ],
             )?;
             Ok(())
@@ -254,15 +260,17 @@ impl Store {
             }
             let mut done = c.prepare(
                 "SELECT * FROM agents WHERE archived = 0 AND status = 'complete'
-                 ORDER BY updated_at DESC LIMIT ?1",
+                 ORDER BY pinned DESC, updated_at DESC LIMIT ?1",
             )?;
             for row in done.query_map(params![completed_limit as i64], read_agent)? {
                 out.push(row?);
             }
             out.sort_by(|a, b| {
-                a.status
+                b.pinned
+                    .cmp(&a.pinned)
+                    .then(a.status
                     .rank()
-                    .cmp(&b.status.rank())
+                    .cmp(&b.status.rank()))
                     .then(b.updated_at.total_cmp(&a.updated_at))
             });
             Ok(out)
@@ -286,6 +294,17 @@ impl Store {
             let changed = c.execute(
                 "UPDATE agents SET archived = ?2 WHERE id = ?1",
                 params![id, archived as i64],
+            )?;
+            anyhow::ensure!(changed == 1, "no such agent");
+            Ok(())
+        })
+    }
+
+    pub fn set_agent_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.with(|c| {
+            let changed = c.execute(
+                "UPDATE agents SET pinned = ?2 WHERE id = ?1",
+                params![id, pinned as i64],
             )?;
             anyhow::ensure!(changed == 1, "no such agent");
             Ok(())
@@ -931,6 +950,7 @@ fn read_agent(row: &Row<'_>) -> rusqlite::Result<Agent> {
         updated_at: row.get("updated_at")?,
         stall_reason: row.get("stall_reason")?,
         stall_alerted: row.get::<_, i64>("stall_alerted")? != 0,
+        pinned: row.get::<_, i64>("pinned")? != 0,
     })
 }
 
@@ -993,6 +1013,7 @@ mod tests {
             updated_at: now(),
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         }
     }
 
@@ -1020,6 +1041,26 @@ mod tests {
         store.set_agent_archived(&archived.id, false).unwrap();
         assert_eq!(store.agents(20).unwrap()[0].id, archived.id);
         assert!(store.archived_agents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pinned_sessions_sort_before_every_other_card() {
+        let store = Store::in_memory().unwrap();
+        let mut working = agent("working");
+        working.updated_at = 20.0;
+        let mut pinned = agent("pinned");
+        pinned.status = AgentStatus::Complete;
+        pinned.updated_at = 10.0;
+        store.save_agent(&working).unwrap();
+        store.save_agent(&pinned).unwrap();
+
+        store.set_agent_pinned(&pinned.id, true).unwrap();
+        let agents = store.agents(20).unwrap();
+        assert_eq!(agents[0].id, pinned.id);
+        assert!(agents[0].pinned);
+
+        store.set_agent_pinned(&pinned.id, false).unwrap();
+        assert_eq!(store.agents(20).unwrap()[0].id, working.id);
     }
 
     #[test]
@@ -1051,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_agent_database_gains_archive_state() {
+    fn an_existing_agent_database_gains_archive_and_pin_state() {
         let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
         let legacy = Connection::open(&path).unwrap();
         legacy
@@ -1071,6 +1112,8 @@ mod tests {
 
         let store = Store::open(&path).unwrap();
         assert_eq!(store.agents(20).unwrap()[0].id, "a1");
+        store.set_agent_pinned("a1", true).unwrap();
+        assert!(store.agent("a1").unwrap().unwrap().pinned);
         store.set_agent_archived("a1", true).unwrap();
         assert_eq!(store.archived_agents().unwrap()[0].id, "a1");
         drop(store);

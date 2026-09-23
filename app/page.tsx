@@ -524,6 +524,7 @@ export default function Home() {
               clearRouting();
               showAgent(id);
             }}
+            onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>
               selected &&

@@ -158,6 +158,7 @@ pub fn import(store: &Store, legacy: &Path, default_cwd: &str, force: bool) -> R
                         _ => Some(reason.unwrap_or_else(|| "migrated from codex-slack".into())),
                     },
                     stall_alerted: true,
+                    pinned: false,
                 };
                 store.save_agent(&agent)?;
                 by_session.insert(session_id.clone(), agent.id.clone());

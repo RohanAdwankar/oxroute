@@ -984,6 +984,12 @@ impl Hub {
         Ok(())
     }
 
+    pub fn pin(&self, agent_id: &str, pinned: bool) -> Result<()> {
+        self.store.set_agent_pinned(agent_id, pinned)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     /// Branch an agent's history into a new agent, with a new thread to live
     /// in, so the original keeps going undisturbed.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
@@ -1012,6 +1018,7 @@ impl Hub {
             updated_at: now(),
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
             ..agent.clone()
         };
 
@@ -1569,6 +1576,7 @@ impl Hub {
             updated_at: now(),
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         };
         self.store.save_agent(&agent)?;
         self.store.bind(
@@ -1872,6 +1880,7 @@ impl Hub {
             updated_at: at,
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         };
         self.store.save_agent(&agent)?;
         self.sessions

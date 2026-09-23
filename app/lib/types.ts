@@ -53,6 +53,7 @@ export interface Agent {
   updatedAt: number;
   stallReason: string | null;
   stallAlerted: boolean;
+  pinned: boolean;
 }
 
 export interface InboxItem {

@@ -357,6 +357,8 @@ pub struct Agent {
     pub stall_reason: Option<String>,
     #[serde(default)]
     pub stall_alerted: bool,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl Agent {
@@ -657,6 +659,7 @@ mod tests {
             updated_at: 0.0,
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         };
         let encoded = serde_json::to_value(&agent).unwrap();
         for key in ["sessionId", "lastActivity", "updatedAt", "stallReason", "stallAlerted"] {
@@ -702,6 +705,7 @@ mod tests {
             updated_at: 0.0,
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         };
         assert_eq!(agent.delivery(), Delivery::Steer);
         agent.backend = Backend::ClaudeCode;

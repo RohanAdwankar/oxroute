@@ -128,6 +128,7 @@ mod tests {
             updated_at: updated,
             stall_reason: None,
             stall_alerted: false,
+            pinned: false,
         }
     }
 
