@@ -19,6 +19,7 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
 
 type TimelineItem = { entry: Entry } | { tools: Entry[] };
 type Upload = { file: File; preview: string };
+type QuoteMenu = { text: string; x: number; y: number };
 
 function compactTimeline(entries: Entry[]): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -80,6 +81,7 @@ export function AgentPanel({
   const [attachmentError, setAttachmentError] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [quoteMenu, setQuoteMenu] = useState<QuoteMenu | null>(null);
   const { agent } = view;
   const timeline = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -146,6 +148,17 @@ export function AgentPanel({
     const name = nameDraft.trim();
     setRenaming(false);
     if (name && name !== agent.name) onRename(name);
+  };
+
+  const quoteSelection = () => {
+    if (!quoteMenu) return;
+    const quote = quoteMenu.text
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    setDraft((current) => `${current}${current ? "\n\n" : ""}${quote}\n\n`);
+    setQuoteMenu(null);
+    window.requestAnimationFrame(() => composer.current?.focus());
   };
 
   return (
@@ -273,9 +286,20 @@ export function AgentPanel({
 
       <div
         ref={timeline}
+        onContextMenu={(event) => {
+          const selection = window.getSelection();
+          const text = selection?.toString().trim() ?? "";
+          const selectedNode = selection?.rangeCount
+            ? selection.getRangeAt(0).commonAncestorContainer
+            : null;
+          if (!text || !selectedNode || !timeline.current?.contains(selectedNode)) return;
+          event.preventDefault();
+          setQuoteMenu({ text, x: event.clientX, y: event.clientY });
+        }}
         onScroll={(event) => {
           const node = event.currentTarget;
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+          setQuoteMenu(null);
         }}
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2"
       >
@@ -358,6 +382,20 @@ export function AgentPanel({
           })
         )}
       </div>
+
+      {quoteMenu && (
+        <button
+          type="button"
+          autoFocus
+          onBlur={() => setQuoteMenu(null)}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={quoteSelection}
+          style={{ left: quoteMenu.x, top: quoteMenu.y }}
+          className="fixed z-40 cursor-pointer border border-edge bg-card px-3 py-2 text-[12px] text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] hover:bg-wash"
+        >
+          Quote reply
+        </button>
+      )}
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-rule bg-card px-7 py-4">
         {uploads.length > 0 && (
