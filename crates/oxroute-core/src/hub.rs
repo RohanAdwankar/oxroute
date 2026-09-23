@@ -998,16 +998,16 @@ impl Hub {
 
     /// Branch an agent's history into a new agent and give it a source thread.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id, true).await
+        self.fork_agent(agent_id).await
     }
 
-    /// Branch an agent beside its parent in the web UI without creating a
-    /// source thread. Local forks can be nested and later merged upward.
+    /// Branch an agent beside its parent in the web UI. It still gets a
+    /// source thread so the same conversation exists on both surfaces.
     pub async fn fork_local(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id, false).await
+        self.fork_agent(agent_id).await
     }
 
-    async fn fork_agent(self: &Arc<Self>, agent_id: &str, open_thread: bool) -> Result<Agent> {
+    async fn fork_agent(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1037,34 +1037,29 @@ impl Hub {
             ..agent.clone()
         };
 
-        // A source fork gets a neighboring thread. A local fork deliberately
-        // has no binding: its pane is its home.
-        if open_thread {
-            if let Some(binding) = self.store.bindings_for(agent_id)?.into_iter().next() {
-                if let Some(source) = self.source(&binding.source) {
-                    if let Ok((thread_key, permalink)) =
-                        source.open_thread(&binding.conversation, &title).await
-                    {
-                        forked.permalink = permalink;
-                        self.store.save_agent(&forked)?;
-                        self.store.copy_timeline(agent_id, &forked.id)?;
-                        self.store.bind(
-                            &binding.source,
-                            &binding.conversation,
-                            &thread_key,
-                            &forked.id,
-                        )?;
-                        self.sessions.lock().await.insert(session, forked.id.clone());
-                        self.record_fork(agent_id, &forked.id);
-                        self.emit(Event::Sync);
-                        return Ok(forked);
-                    }
-                }
+        let binding = self
+            .store
+            .bindings_for(agent_id)?
+            .into_iter()
+            .find(|binding| self.sources.contains_key(&binding.source));
+        let (source_name, conversation) = match binding {
+            Some(binding) => (binding.source, binding.conversation),
+            None => {
+                let (source, conversation, _) = self
+                    .dashboard_location()
+                    .context("no current source conversation")?;
+                (source, conversation)
             }
-        }
-
+        };
+        let source = self
+            .source(&source_name)
+            .with_context(|| format!("source {source_name} is not configured"))?;
+        let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
+        forked.permalink = permalink;
         self.store.save_agent(&forked)?;
         self.store.copy_timeline(agent_id, &forked.id)?;
+        self.store
+            .bind(&source_name, &conversation, &thread_key, &forked.id)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
         self.record_fork(agent_id, &forked.id);
         self.emit(Event::Sync);
@@ -1256,8 +1251,8 @@ impl Hub {
     /// Run a turn and deal with everything that comes out of it.
     async fn deliver(self: Arc<Self>, agent: Agent, inputs: Vec<TurnInput>, signal: Option<Signal>) {
         let target = match &signal {
-            Some(s) => Some(s.target()),
-            None => self.home_target(&agent.id).await,
+            Some(s) if self.source(&s.source).is_some() => Some(s.target()),
+            _ => self.home_target(&agent.id).await,
         };
         self.deliver_to(agent, inputs, signal, target).await;
     }
@@ -1645,12 +1640,20 @@ impl Hub {
             .and_then(Backend::parse)
             .unwrap_or_else(|| self.config.backend_for(&model));
 
-        let permalink = match self.source(&signal.source) {
-            Some(source) => source
-                .permalink(&signal.conversation, &signal.thread_key)
-                .await
-                .unwrap_or_default(),
-            None => String::new(),
+        let slack_home = if signal.source == "you" {
+            Some(self.open_current_thread(&signal.text).await?)
+        } else {
+            None
+        };
+        let permalink = match &slack_home {
+            Some((_, permalink)) => permalink.clone(),
+            None => match self.source(&signal.source) {
+                Some(source) => source
+                    .permalink(&signal.conversation, &signal.thread_key)
+                    .await
+                    .unwrap_or_default(),
+                None => String::new(),
+            },
         };
 
         let agent = Agent {
@@ -1676,6 +1679,14 @@ impl Hub {
             &signal.thread_key,
             &agent.id,
         )?;
+        if let Some((target, _)) = slack_home {
+            self.store.bind(
+                &target.source,
+                &target.conversation,
+                &target.thread_key,
+                &agent.id,
+            )?;
+        }
         self.emit(Event::AgentChanged {
             agent: Box::new(agent.clone()),
         });

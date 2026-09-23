@@ -797,7 +797,7 @@ async fn fork_branches_into_a_new_agent_and_a_new_thread() {
 }
 
 #[tokio::test]
-async fn local_forks_nest_without_opening_source_threads() {
+async fn local_forks_nest_and_open_source_threads() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
@@ -806,9 +806,12 @@ async fn local_forks_nest_without_opening_source_threads() {
     let child = w.hub.fork_local(&original).await.unwrap();
     let grandchild = w.hub.fork_local(&child.id).await.unwrap();
 
-    assert!(w.posts.lock().unwrap().threads.is_empty());
-    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
-    assert!(w.hub.store.bindings_for(&grandchild.id).unwrap().is_empty());
+    assert_eq!(
+        w.posts.lock().unwrap().threads,
+        vec!["the original fork", "the original fork fork"]
+    );
+    assert_eq!(w.hub.store.bindings_for(&child.id).unwrap().len(), 1);
+    assert_eq!(w.hub.store.bindings_for(&grandchild.id).unwrap().len(), 1);
     assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(original.as_str()));
     assert_eq!(
         w.hub.store.fork_parent(&grandchild.id).unwrap().as_deref(),
@@ -1196,6 +1199,39 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
 }
 
 #[tokio::test]
+async fn an_agent_started_in_the_ui_also_lives_in_slack() {
+    let w = world(Mode::Auto, false).await;
+    w.hub
+        .store
+        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .unwrap();
+
+    w.hub
+        .accept(signal_from("you", "local", "local", "publish the release"))
+        .await
+        .unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+
+    let agent = w.hub.store.agents(10).unwrap().remove(0);
+    assert_eq!(agent.permalink, "https://example/thread-1");
+    assert_eq!(w.posts.lock().unwrap().threads, vec!["publish the release"]);
+    assert!(w
+        .posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(thread, text)| thread == "thread-1" && text == "done"));
+    assert!(w
+        .hub
+        .store
+        .bindings_for(&agent.id)
+        .unwrap()
+        .iter()
+        .any(|binding| binding.source == "slack" && binding.thread_key == "thread-1"));
+}
+
+#[tokio::test]
 async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the task")).await.unwrap();
@@ -1430,6 +1466,10 @@ async fn a_separate_tool_result_updates_the_matching_timeline_entry() {
 #[tokio::test]
 async fn something_you_typed_carries_no_provenance_label() {
     let w = world(Mode::Auto, false).await;
+    w.hub
+        .store
+        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .unwrap();
     let mut typed = signal("100.0", "100.0", "an idea of my own");
     typed.source = "you".into();
     typed.author = "local".into();
