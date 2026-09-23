@@ -293,7 +293,10 @@ impl Source for SlackSource {
                 last = ts.to_string();
             }
         }
-        self.permalink(&target.conversation, &last).await
+        Ok(self
+            .permalink(&target.conversation, &last)
+            .await
+            .unwrap_or_default())
     }
 
     async fn post_status(&self, target: &Target, text: &str) -> Result<Posted> {
