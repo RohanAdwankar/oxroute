@@ -1826,6 +1826,28 @@ impl Hub {
         ))
     }
 
+    async fn open_current_thread(&self, agent: &Agent) -> Result<Option<(Target, String)>> {
+        let Some((source_name, conversation, _)) = self.dashboard_location() else {
+            return Ok(None);
+        };
+        if self
+            .store
+            .bindings_for(&agent.id)?
+            .iter()
+            .any(|binding| binding.source == source_name && binding.conversation == conversation)
+        {
+            return Ok(None);
+        }
+        let Some(source) = self.source(&source_name) else {
+            return Ok(None);
+        };
+        let (thread_key, permalink) = source.open_thread(&conversation, &agent.name).await?;
+        Ok(Some((
+            Target::new(source_name, conversation, thread_key),
+            permalink,
+        )))
+    }
+
     /// Keep the one dashboard message current. Posted on first use into
     /// whichever conversation is actually in play.
     pub async fn refresh_dashboard(&self) {
@@ -1928,10 +1950,20 @@ impl Hub {
     }
 
     pub async fn import_session(&self, backend: Backend, session_id: &str) -> Result<Agent> {
-        anyhow::ensure!(
-            self.store.agent_by_session(backend, session_id)?.is_none(),
-            "that session is already in oxroute"
-        );
+        if let Some(mut agent) = self.store.agent_by_session(backend, session_id)? {
+            if let Some((target, permalink)) = self.open_current_thread(&agent).await? {
+                self.store.replace_source_binding(
+                    &target.source,
+                    &target.conversation,
+                    &target.thread_key,
+                    &agent.id,
+                )?;
+                self.store.set_agent_permalink(&agent.id, &permalink)?;
+                agent.permalink = permalink;
+                self.emit(Event::Sync);
+            }
+            return Ok(agent);
+        }
         let native = self
             .harness(backend)
             .find_session(session_id)
@@ -1953,7 +1985,7 @@ impl Hub {
             &native.name
         };
         let at = if native.updated_at > 0.0 { native.updated_at } else { now() };
-        let agent = Agent {
+        let mut agent = Agent {
             id: new_id("agent"),
             name: naming::provisional(title),
             backend,
@@ -1973,7 +2005,19 @@ impl Hub {
             stall_alerted: false,
             pinned: false,
         };
+        let thread = self.open_current_thread(&agent).await?;
+        if let Some((_, permalink)) = &thread {
+            agent.permalink = permalink.clone();
+        }
         self.store.save_agent(&agent)?;
+        if let Some((target, _)) = thread {
+            self.store.replace_source_binding(
+                &target.source,
+                &target.conversation,
+                &target.thread_key,
+                &agent.id,
+            )?;
+        }
         self.sessions
             .lock()
             .await

@@ -896,14 +896,63 @@ async fn native_sessions_are_separate_until_imported() {
     assert_eq!(imported.cwd, "/work/fwgenie");
     assert_eq!(imported.model, "gpt-6-astra");
     assert_eq!(imported.status, AgentStatus::Complete);
+    assert_eq!(imported.permalink, "https://example/thread-1");
+    let binding = w.hub.store.bindings_for(&imported.id).unwrap().pop().unwrap();
+    assert_eq!(binding.conversation, "D1");
+    assert_eq!(binding.thread_key, "thread-1");
     assert!(w.hub.search("fwgenie", 20, 20).await.unwrap().other.is_empty());
-    assert!(w
-        .hub
-        .import_session(Backend::Codex, "native-fwgenie")
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("already"));
+    let again = w.hub.import_session(Backend::Codex, "native-fwgenie").await.unwrap();
+    assert_eq!(again.id, imported.id);
+    assert_eq!(w.posts.lock().unwrap().threads.len(), 1);
+}
+
+#[tokio::test]
+async fn importing_again_repairs_a_legacy_slack_home() {
+    let w = world(Mode::Auto, false).await;
+    w.native.lock().unwrap().push(NativeSession {
+        backend: Backend::Codex,
+        session_id: "native-fwgenie".into(),
+        name: "Finish fwgenie".into(),
+        preview: String::new(),
+        cwd: "/work/fwgenie".into(),
+        model: "gpt-6-astra".into(),
+        updated_at: 42.0,
+    });
+    let imported = w.hub.import_session(Backend::Codex, "native-fwgenie").await.unwrap();
+    w.hub
+        .store
+        .bind("slack", "D-legacy", "old-thread", &imported.id)
+        .unwrap();
+    w.hub.accept(signal("100.0", "100.0", "establish the current bot dm")).await.unwrap();
+    assert!(settle(|| w.hub.store.get("dashboard").unwrap().is_some()).await);
+
+    let attached = w.hub.import_session(Backend::Codex, "native-fwgenie").await.unwrap();
+
+    assert_eq!(attached.id, imported.id);
+    assert_eq!(attached.permalink, "https://example/thread-1");
+    let bindings = w.hub.store.bindings_for(&imported.id).unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].conversation, "D1");
+    assert_eq!(bindings[0].thread_key, "thread-1");
+}
+
+#[tokio::test]
+async fn importing_without_a_current_source_conversation_stays_available_in_oxroute() {
+    let w = world(Mode::Auto, false).await;
+    w.native.lock().unwrap().push(NativeSession {
+        backend: Backend::Codex,
+        session_id: "native-local".into(),
+        name: "Local only".into(),
+        preview: String::new(),
+        cwd: "/work/local".into(),
+        model: "gpt-5.6-sol".into(),
+        updated_at: 42.0,
+    });
+
+    let imported = w.hub.import_session(Backend::Codex, "native-local").await.unwrap();
+
+    assert!(imported.permalink.is_empty());
+    assert!(w.hub.store.bindings_for(&imported.id).unwrap().is_empty());
 }
 
 #[tokio::test]
