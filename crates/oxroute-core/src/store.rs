@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    SearchDestination, SearchGroup, Signal, Target,
+    SearchDestination, SearchGroup, Signal, Target, TaskItem,
 };
 
 const SCHEMA: &str = r#"
@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS pending_context (
     answer   TEXT NOT NULL,
     UNIQUE (agent_id, ordinal)
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id         TEXT PRIMARY KEY,
+    text       TEXT NOT NULL,
+    done       INTEGER NOT NULL DEFAULT 0,
+    agent_id   TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_agent ON tasks (agent_id, done, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
@@ -376,6 +386,48 @@ impl Store {
                 "UPDATE agents SET permalink = ?2 WHERE id = ?1",
                 params![id, permalink],
             )?;
+            Ok(())
+        })
+    }
+
+    pub fn tasks(&self) -> Result<Vec<TaskItem>> {
+        self.with(|c| {
+            let mut statement = c.prepare(
+                "SELECT id, text, done, agent_id, created_at, updated_at
+                 FROM tasks ORDER BY done, updated_at DESC",
+            )?;
+            let tasks = statement
+                .query_map([], |row| {
+                    Ok(TaskItem {
+                        id: row.get(0)?,
+                        text: row.get(1)?,
+                        done: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(tasks)
+        })
+    }
+
+    pub fn save_task(&self, task: &TaskItem) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO tasks (id, text, done, agent_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET text = excluded.text, done = excluded.done,
+                     agent_id = excluded.agent_id, updated_at = excluded.updated_at",
+                params![task.id, task.text, task.done, task.agent_id, task.created_at, task.updated_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            anyhow::ensure!(c.execute("DELETE FROM tasks WHERE id = ?1", params![id])? == 1, "no such task");
             Ok(())
         })
     }
@@ -1100,6 +1152,34 @@ mod tests {
             store.agents(2).unwrap().iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>(),
             vec!["middle"]
         );
+    }
+
+    #[test]
+    fn shared_tasks_can_be_created_edited_assigned_and_deleted() {
+        let store = Store::in_memory().unwrap();
+        let mut task = TaskItem {
+            id: "task-1".into(),
+            text: "draft release notes".into(),
+            done: false,
+            agent_id: String::new(),
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+        store.save_task(&task).unwrap();
+        assert_eq!(store.tasks().unwrap()[0].text, "draft release notes");
+
+        task.text = "publish release notes".into();
+        task.done = true;
+        task.agent_id = "agent-1".into();
+        task.updated_at = 2.0;
+        store.save_task(&task).unwrap();
+        let saved = store.tasks().unwrap().pop().unwrap();
+        assert_eq!(saved.text, "publish release notes");
+        assert!(saved.done);
+        assert_eq!(saved.agent_id, "agent-1");
+
+        store.delete_task(&task.id).unwrap();
+        assert!(store.tasks().unwrap().is_empty());
     }
 
     #[test]

@@ -1348,8 +1348,15 @@ impl Hub {
         tokio::fs::create_dir_all(&artifact_dir).await?;
         inputs.push(TurnInput::text(format!(
             "Place every image, video, or other file you want returned to the user in \
-             {}",
-            artifact_dir.display()
+             {}\n\nOxroute has a shared task list. When the user asks you to read or change it, \
+             use GET/POST http://{}/api/tasks and PUT/DELETE \
+             http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"done\": bool, \
+             \"agentId\": string}}. This session's agent id is {}. Do not change tasks unless the \
+             user asks you to.",
+            artifact_dir.display(),
+            self.config.listen,
+            self.config.listen,
+            agent.id,
         )));
 
         if let Some(signal) = &signal {
@@ -1948,6 +1955,7 @@ impl Hub {
             agents,
             archived,
             inbox,
+            tasks: self.store.tasks()?,
             sources: self.sources.keys().cloned().collect(),
             models: self
                 .config
@@ -1961,6 +1969,62 @@ impl Hub {
                 })
                 .collect(),
         })
+    }
+
+    pub fn tasks(&self) -> Result<Vec<TaskItem>> {
+        self.store.tasks()
+    }
+
+    pub fn create_task(&self, text: &str, agent_id: &str) -> Result<TaskItem> {
+        let text = text.trim();
+        anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
+        if !agent_id.is_empty() {
+            anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
+        }
+        let at = now();
+        let task = TaskItem {
+            id: new_id("task"),
+            text: text.into(),
+            done: false,
+            agent_id: agent_id.into(),
+            created_at: at,
+            updated_at: at,
+        };
+        self.store.save_task(&task)?;
+        self.emit(Event::Sync);
+        Ok(task)
+    }
+
+    pub fn update_task(&self, id: &str, text: &str, done: bool, agent_id: &str) -> Result<TaskItem> {
+        let text = text.trim();
+        anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
+        if !agent_id.is_empty() {
+            anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
+        }
+        let created_at = self
+            .store
+            .tasks()?
+            .into_iter()
+            .find(|task| task.id == id)
+            .context("no such task")?
+            .created_at;
+        let task = TaskItem {
+            id: id.into(),
+            text: text.into(),
+            done,
+            agent_id: agent_id.into(),
+            created_at,
+            updated_at: now(),
+        };
+        self.store.save_task(&task)?;
+        self.emit(Event::Sync);
+        Ok(task)
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<()> {
+        self.store.delete_task(id)?;
+        self.emit(Event::Sync);
+        Ok(())
     }
 
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
@@ -2080,6 +2144,7 @@ pub struct Snapshot {
     pub agents: Vec<Agent>,
     pub archived: Vec<Agent>,
     pub inbox: Vec<InboxItem>,
+    pub tasks: Vec<TaskItem>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
 }

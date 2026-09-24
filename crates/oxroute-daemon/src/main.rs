@@ -191,6 +191,8 @@ async fn serve() -> Result<()> {
         .route("/api/rename", post(rename))
         .route("/api/archive", post(archive))
         .route("/api/pin", post(pin))
+        .route("/api/tasks", get(tasks).post(create_task))
+        .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
@@ -520,6 +522,50 @@ async fn pin(
 ) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.pin(&body.agent, body.pinned)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+async fn tasks(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskItem>>, Failed> {
+    Ok(Json(hub.tasks()?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTaskBody {
+    text: String,
+    #[serde(default)]
+    agent_id: String,
+}
+
+async fn create_task(
+    State(hub): Hubs,
+    Json(body): Json<CreateTaskBody>,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    Ok(Json(hub.create_task(&body.text, &body.agent_id)?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTaskBody {
+    text: String,
+    done: bool,
+    #[serde(default)]
+    agent_id: String,
+}
+
+async fn update_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateTaskBody>,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    Ok(Json(hub.update_task(&id, &body.text, body.done, &body.agent_id)?))
+}
+
+async fn delete_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    hub.delete_task(&id)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]

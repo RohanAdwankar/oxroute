@@ -361,6 +361,18 @@ pub struct Agent {
     pub pinned: bool,
 }
 
+/// One item in the shared task list. An empty `agent_id` is unassigned.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskItem {
+    pub id: String,
+    pub text: String,
+    pub done: bool,
+    pub agent_id: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
 impl Agent {
     pub fn delivery(&self) -> Delivery {
         if self.status != AgentStatus::Working {
@@ -674,6 +686,19 @@ mod tests {
         }
         assert_eq!(encoded["backend"], "claude-code");
         assert_eq!(encoded["status"], "working");
+
+        let task = TaskItem {
+            id: "t".into(),
+            text: "ship".into(),
+            done: false,
+            agent_id: "a".into(),
+            created_at: 1.0,
+            updated_at: 2.0,
+        };
+        let encoded = serde_json::to_value(&task).unwrap();
+        for key in ["agentId", "createdAt", "updatedAt"] {
+            assert!(encoded.get(key).is_some(), "TaskItem lost {key}");
+        }
 
         let event = Event::Progress {
             agent_id: "a".into(),
