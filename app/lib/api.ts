@@ -1,6 +1,6 @@
 "use client";
 
-import type { Agent, AgentView, Backend, ConversationLine, DaemonEvent, Mode, SearchResults, Snapshot } from "./types";
+import type { Agent, AgentView, Backend, ConversationLine, DaemonEvent, Mode, SearchResults, Snapshot, TaskItem } from "./types";
 
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
@@ -63,6 +63,15 @@ export const api = {
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
+  createTask: (text: string, agentId = "") =>
+    post<TaskItem>("/api/tasks", { text, agentId }),
+  updateTask: (task: TaskItem) =>
+    call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ text: task.text, done: task.done, agentId: task.agentId }),
+    }),
+  deleteTask: (id: string) =>
+    call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
 };
 

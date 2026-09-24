@@ -16,6 +16,8 @@ export function Chrome({
   onMode,
   vim,
   onVim,
+  tasksOpen,
+  onTasks,
   onSearchOpen,
   onSearchContinue,
 }: {
@@ -24,6 +26,8 @@ export function Chrome({
   onMode: (mode: Mode) => void;
   vim: boolean;
   onVim: () => void;
+  tasksOpen: boolean;
+  onTasks: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
 }) {
@@ -58,6 +62,20 @@ export function Chrome({
         ].join(" ")}
       >
         <Icon name="keyboard" />
+      </button>
+
+      <button
+        type="button"
+        onClick={onTasks}
+        aria-pressed={tasksOpen}
+        aria-label="toggle tasks"
+        title="Tasks"
+        className={[
+          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
+          tasksOpen ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
+        ].join(" ")}
+      >
+        <Icon name="tasks" />
       </button>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />

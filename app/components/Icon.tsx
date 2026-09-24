@@ -21,6 +21,7 @@ export type IconName =
   | "restore"
   | "send"
   | "stop"
+  | "tasks"
   | "thread";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
@@ -47,6 +48,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,
+    tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
     thread: <><path d="M2 3h9v7H6l-3 3v-3H2z" /><path d="M8 6h6v6h-2v2l-2-2H8" /></>,
   };
 

@@ -7,6 +7,7 @@ import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Icon } from "./components/Icon";
 import { Inbox } from "./components/Inbox";
+import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
 import {
   HINTS,
@@ -24,6 +25,7 @@ const EMPTY: Snapshot = {
   agents: [],
   archived: [],
   inbox: [],
+  tasks: [],
   sources: [],
   models: [],
 };
@@ -52,6 +54,7 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxWidth, setInboxWidth] = useState(340);
+  const [tasksOpen, setTasksOpen] = useState(false);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
   const [inboxAt, setInboxAt] = useState(0);
@@ -514,6 +517,8 @@ export default function Home() {
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
         vim={vim}
         onVim={toggleVim}
+        tasksOpen={tasksOpen}
+        onTasks={() => setTasksOpen((current) => !current)}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -670,6 +675,21 @@ export default function Home() {
             onDiscard={() =>
               selected && void run(() => api.discard(selected.signal.id), clearRouting)
             }
+          />
+        )}
+
+        {tasksOpen && (
+          <TaskPanel
+            tasks={snapshot.tasks}
+            agents={[...snapshot.agents, ...snapshot.archived].filter(
+              (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
+            )}
+            currentAgent={panes.at(-1) ?? null}
+            busy={busy}
+            onClose={() => setTasksOpen(false)}
+            onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
+            onUpdate={(task) => void run(() => api.updateTask(task))}
+            onDelete={(id) => void run(() => api.deleteTask(id))}
           />
         )}
       </div>

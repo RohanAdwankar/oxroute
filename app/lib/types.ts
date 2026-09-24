@@ -58,6 +58,15 @@ export interface Agent {
   pinned: boolean;
 }
 
+export interface TaskItem {
+  id: string;
+  text: string;
+  done: boolean;
+  agentId: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface InboxItem {
   signal: Signal;
   state: InboxState;
@@ -127,6 +136,7 @@ export interface Snapshot {
   agents: Agent[];
   archived: Agent[];
   inbox: InboxItem[];
+  tasks: TaskItem[];
   sources: string[];
   models: ModelInfo[];
 }
