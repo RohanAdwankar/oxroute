@@ -24,6 +24,7 @@ const EMPTY: Snapshot = {
   defaultModel: "",
   agents: [],
   archived: [],
+  messages: {},
   inbox: [],
   tasks: [],
   sources: [],
@@ -55,6 +56,7 @@ export default function Home() {
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [watch, setWatch] = useState(false);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
   const [inboxAt, setInboxAt] = useState(0);
@@ -75,6 +77,7 @@ export default function Home() {
         lastInboxWidth.current = saved;
       }
       setInboxOpen(window.localStorage.getItem("oxroute.inboxOpen") !== "false");
+      setWatch(window.localStorage.getItem("oxroute.watch") === "true");
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -168,6 +171,12 @@ export default function Home() {
             });
             break;
           case "timeline":
+            if (["received", "said", "asked", "you"].includes(event.entry.kind)) {
+              setSnapshot((current) => ({
+                ...current,
+                messages: { ...current.messages, [event.entry.agentId]: event.entry.text },
+              }));
+            }
             // Append in place. A full refetch per tool call would make the
             // timeline stutter exactly when there is most to watch.
             setDetails((current) => {
@@ -517,6 +526,13 @@ export default function Home() {
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
         vim={vim}
         onVim={toggleVim}
+        watch={watch}
+        onWatch={() =>
+          setWatch((current) => {
+            window.localStorage.setItem("oxroute.watch", String(!current));
+            return !current;
+          })
+        }
         tasksOpen={tasksOpen}
         onTasks={() => setTasksOpen((current) => !current)}
         onSearchOpen={showAgent}
@@ -656,6 +672,8 @@ export default function Home() {
             }}
             models={snapshot.models}
             defaultModel={snapshot.defaultModel}
+            messages={snapshot.messages}
+            watch={watch && !showArchived && selected === null}
             routing={selected}
             ticked={ticked}
             busy={busy}

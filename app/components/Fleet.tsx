@@ -39,6 +39,8 @@ export function Fleet({
   onShowArchived,
   models,
   defaultModel,
+  messages,
+  watch,
   routing,
   ticked,
   onToggle,
@@ -57,6 +59,8 @@ export function Fleet({
   onShowArchived: () => void;
   models: ModelInfo[];
   defaultModel: string;
+  messages: Record<string, string>;
+  watch: boolean;
   routing: InboxItem | null;
   ticked: Set<string>;
   onToggle: (id: string) => void;
@@ -75,6 +79,7 @@ export function Fleet({
   // belongs to exactly one.
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
+  const shown = watch ? agents.filter((agent) => agent.status === "working") : agents;
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
@@ -90,11 +95,11 @@ export function Fleet({
           </>
         ) : (
           <>
-            <span className="text-[15px] font-semibold">{showArchived ? "Archived" : "Fleet"}</span>
+            <span className="text-[15px] font-semibold">{showArchived ? "Archived" : watch ? "Watch" : "Fleet"}</span>
             <span className="text-[12.5px] text-faint">
-              {agents.length === 0
+              {shown.length === 0
                 ? showArchived ? "empty" : "nothing running"
-                : `${agents.length} agent${agents.length === 1 ? "" : "s"}`}
+                : `${shown.length} agent${shown.length === 1 ? "" : "s"}`}
             </span>
             <span className="flex-1" />
             <button
@@ -111,12 +116,35 @@ export function Fleet({
       </div>
 
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
-        {agents.length === 0 ? (
+        {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">
             {showArchived
               ? "No archived sessions."
-              : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
+              : watch
+                ? "No agents are working."
+                : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
           </p>
+        ) : watch ? (
+          <div className="min-h-full bg-[#1f1d1a] px-5 py-2 font-mono text-[#ded8cf]">
+            {shown.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                onClick={() => onOpen(agent.id)}
+                className="block w-full cursor-pointer border-b border-[#403b35] py-4 text-left last:border-b-0 hover:bg-[#292621]"
+              >
+                <span className="flex items-center gap-2 text-[12px]">
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-[#68b89b] pulse" />
+                  <span className="font-semibold text-[#f5f0e8]">{agent.name}</span>
+                  <span className="text-[#888077]">{since(agent.updatedAt)} · {agent.model}</span>
+                </span>
+                <span className="mt-2 block whitespace-pre-wrap break-words text-[12px] leading-[1.6] text-[#bdb5aa]">
+                  <span className="mr-2 text-[#68b89b]">$</span>
+                  {agent.activity || "waiting for activity…"}
+                </span>
+              </button>
+            ))}
+          </div>
         ) : (
           <div
             className="grid content-start gap-5"
@@ -124,10 +152,11 @@ export function Fleet({
               gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 334px), 1fr))",
             }}
           >
-            {agents.map((agent, index) => (
+            {shown.map((agent, index) => (
               <Card
                 key={agent.id}
                 agent={agent}
+                preview={messages[agent.id]}
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id}
@@ -197,6 +226,7 @@ export function Fleet({
 
 function Card({
   agent,
+  preview,
   routing,
   ticked,
   suggested,
@@ -207,6 +237,7 @@ function Card({
   onPin,
 }: {
   agent: Agent;
+  preview?: string;
   routing: boolean;
   ticked: boolean;
   suggested: boolean;
@@ -299,7 +330,7 @@ function Card({
       </div>
 
       <p className="mt-[14px] line-clamp-4 text-[13px] leading-[1.55] text-mid">
-        {agent.activity || agent.stallReason || agent.model}
+        {preview || agent.stallReason || agent.model}
       </p>
 
       <div className="flex-1" />

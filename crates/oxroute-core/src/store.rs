@@ -862,6 +862,26 @@ impl Store {
         })
     }
 
+    /// The newest human-facing line for each agent. Tool work is deliberately
+    /// excluded so fleet cards stay about the conversation.
+    pub fn message_previews(&self) -> Result<HashMap<String, String>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT agent_id, text FROM entries
+                 WHERE kind IN ('received', 'said', 'asked', 'you') AND text != ''
+                 ORDER BY id DESC",
+            )?;
+            let mut previews = HashMap::new();
+            for row in stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })? {
+                let (agent, text) = row?;
+                previews.entry(agent).or_insert(text);
+            }
+            Ok(previews)
+        })
+    }
+
     /// Search every timeline, collapsing rows copied through a fork into one
     /// result with a destination for each branch that contains it.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchGroup>> {
@@ -1356,6 +1376,23 @@ mod tests {
         let listed = store.agents(2).unwrap();
         assert_eq!(listed.len(), 6);
         assert!(listed[..4].iter().all(|a| a.status == AgentStatus::Working));
+    }
+
+    #[test]
+    fn message_previews_ignore_tool_work() {
+        let store = Store::in_memory().unwrap();
+        store.save_agent(&agent("a1")).unwrap();
+        store
+            .add_entry("a1", 1.0, EntryKind::Received, "check the deploy", "", "")
+            .unwrap();
+        store
+            .add_entry("a1", 2.0, EntryKind::Worked, "Bash", "kubectl get pods", "")
+            .unwrap();
+
+        assert_eq!(
+            store.message_previews().unwrap().get("a1").map(String::as_str),
+            Some("check the deploy")
+        );
     }
 
     #[test]

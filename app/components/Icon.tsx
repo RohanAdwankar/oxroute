@@ -22,6 +22,7 @@ export type IconName =
   | "send"
   | "stop"
   | "tasks"
+  | "terminal"
   | "thread";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
@@ -49,6 +50,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,
     tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
+    terminal: <><path d="m3 4 4 4-4 4M9 12h4" /></>,
     thread: <><path d="M2 3h9v7H6l-3 3v-3H2z" /><path d="M8 6h6v6h-2v2l-2-2H8" /></>,
   };
 

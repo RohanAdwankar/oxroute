@@ -16,6 +16,8 @@ export function Chrome({
   onMode,
   vim,
   onVim,
+  watch,
+  onWatch,
   tasksOpen,
   onTasks,
   onSearchOpen,
@@ -26,6 +28,8 @@ export function Chrome({
   onMode: (mode: Mode) => void;
   vim: boolean;
   onVim: () => void;
+  watch: boolean;
+  onWatch: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
@@ -76,6 +80,20 @@ export function Chrome({
         ].join(" ")}
       >
         <Icon name="tasks" />
+      </button>
+
+      <button
+        type="button"
+        onClick={onWatch}
+        aria-pressed={watch}
+        aria-label="toggle watch mode"
+        title="Watch live agent commands"
+        className={[
+          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
+          watch ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
+        ].join(" ")}
+      >
+        <Icon name="terminal" />
       </button>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />

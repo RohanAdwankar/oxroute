@@ -135,6 +135,7 @@ export interface Snapshot {
   defaultModel: string;
   agents: Agent[];
   archived: Agent[];
+  messages: Record<string, string>;
   inbox: InboxItem[];
   tasks: TaskItem[];
   sources: string[];

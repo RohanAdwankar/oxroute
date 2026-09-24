@@ -1957,6 +1957,7 @@ impl Hub {
             default_model: self.config.default_model.clone(),
             agents,
             archived,
+            messages: self.store.message_previews()?,
             inbox,
             tasks: self.store.tasks()?,
             sources: self.sources.keys().cloned().collect(),
@@ -2146,6 +2147,9 @@ pub struct Snapshot {
     pub default_model: String,
     pub agents: Vec<Agent>,
     pub archived: Vec<Agent>,
+    /// Latest human or agent text by agent id. Tool activity stays in
+    /// `Agent::activity` for watch surfaces.
+    pub messages: HashMap<String, String>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
     pub sources: Vec<String>,
