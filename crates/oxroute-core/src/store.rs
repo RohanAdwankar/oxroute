@@ -148,11 +148,8 @@ fn migrate(conn: &Connection) -> Result<()> {
         [],
     )?;
     conn.execute(
-        "UPDATE agents SET model = 'gpt-5.6-sol',
-                           status = CASE WHEN status = 'stalled' THEN 'complete' ELSE status END,
-                           stall_reason = CASE WHEN status = 'stalled' THEN NULL ELSE stall_reason END,
-                           stall_alerted = CASE WHEN status = 'stalled' THEN 0 ELSE stall_alerted END
-         WHERE model = 'gpt-6-sol'",
+        "UPDATE agents SET model = 'gpt-6-sol'
+         WHERE model = 'gpt-5.6-sol' AND archived = 0",
         [],
     )?;
     Ok(())
@@ -1280,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_sol_model_is_repaired_on_open() {
+    fn active_sol_sessions_upgrade_on_open() {
         let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
         let legacy = Connection::open(&path).unwrap();
         legacy.execute_batch(SCHEMA).unwrap();
@@ -1288,7 +1285,7 @@ mod tests {
             .execute(
                 "INSERT INTO agents
                  (id, name, backend, model, status, stall_reason, stall_alerted)
-                 VALUES ('a1', 'old', 'codex', 'gpt-6-sol', 'stalled', 'system error', 1)",
+                 VALUES ('a1', 'old', 'codex', 'gpt-5.6-sol', 'complete', NULL, 0)",
                 [],
             )
             .unwrap();
@@ -1296,7 +1293,7 @@ mod tests {
 
         let store = Store::open(&path).unwrap();
         let repaired = store.agent("a1").unwrap().unwrap();
-        assert_eq!(repaired.model, "gpt-5.6-sol");
+        assert_eq!(repaired.model, "gpt-6-sol");
         assert_eq!(repaired.status, AgentStatus::Complete);
         assert_eq!(repaired.stall_reason, None);
         assert!(!repaired.stall_alerted);
