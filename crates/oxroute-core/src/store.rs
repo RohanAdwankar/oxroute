@@ -166,11 +166,6 @@ fn migrate(conn: &Connection) -> Result<()> {
         "CREATE INDEX tasks_agent ON tasks (agent_id, status, updated_at DESC)",
         [],
     )?;
-    conn.execute(
-        "UPDATE agents SET model = 'gpt-6-sol'
-         WHERE model = 'gpt-5.6-sol' AND archived = 0",
-        [],
-    )?;
     Ok(())
 }
 
@@ -1369,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn active_sol_sessions_upgrade_on_open() {
+    fn a_stored_model_survives_open() {
         let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
         let legacy = Connection::open(&path).unwrap();
         legacy.execute_batch(SCHEMA).unwrap();
@@ -1377,18 +1372,18 @@ mod tests {
             .execute(
                 "INSERT INTO agents
                  (id, name, backend, model, status, stall_reason, stall_alerted)
-                 VALUES ('a1', 'old', 'codex', 'gpt-5.6-sol', 'complete', NULL, 0)",
+                 VALUES ('a1', 'old', 'codex', 'chosen-model', 'complete', NULL, 0)",
                 [],
             )
             .unwrap();
         drop(legacy);
 
         let store = Store::open(&path).unwrap();
-        let repaired = store.agent("a1").unwrap().unwrap();
-        assert_eq!(repaired.model, "gpt-6-sol");
-        assert_eq!(repaired.status, AgentStatus::Complete);
-        assert_eq!(repaired.stall_reason, None);
-        assert!(!repaired.stall_alerted);
+        let stored = store.agent("a1").unwrap().unwrap();
+        assert_eq!(stored.model, "chosen-model");
+        assert_eq!(stored.status, AgentStatus::Complete);
+        assert_eq!(stored.stall_reason, None);
+        assert!(!stored.stall_alerted);
         drop(store);
         std::fs::remove_file(path).unwrap();
     }
