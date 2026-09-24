@@ -4,6 +4,7 @@ export type IconName =
   | "attach"
   | "auto"
   | "back"
+  | "chevronDown"
   | "collapse"
   | "discard"
   | "expand"
@@ -28,6 +29,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     attach: <path d="M6 8.5 10.5 4a2.1 2.1 0 0 1 3 3L7 13.5a3.2 3.2 0 0 1-4.5-4.5L9 2.5" />,
     auto: <><path d="m8 1 1.2 3.8L13 6l-3.8 1.2L8 11 6.8 7.2 3 6l3.8-1.2Z" /><path d="m13 11 .6 1.8 1.4.7-1.4.7L13 16l-.6-1.8-1.4-.7 1.4-.7Z" /></>,
     back: <path d="m10.5 3-5 5 5 5M5.5 8H15" />,
+    chevronDown: <path d="m3 6 5 5 5-5" />,
     collapse: <path d="m10 3-5 5 5 5" />,
     discard: <><path d="M3 5h10M6 5V3h4v2M5 5l.6 9h4.8l.6-9" /></>,
     expand: <path d="m6 3 5 5-5 5" />,

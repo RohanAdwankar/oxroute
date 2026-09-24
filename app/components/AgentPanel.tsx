@@ -6,6 +6,7 @@ import { clock, since } from "../lib/format";
 import type { AgentView, Entry, EntryKind } from "../lib/types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
+import { SplitAction } from "./SplitAction";
 
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
   received: { label: "you", tone: "text-ok" },
@@ -270,26 +271,13 @@ export function AgentPanel({
         >
           <Icon name={archived ? "restore" : "archive"} />
         </button>
-        <button
-          type="button"
+        <SplitAction
+          label={agent.backend === "codex" ? "Fork in conversation" : "Only Codex can fork"}
+          icon="fork"
           onClick={onForkLocal}
           disabled={busy || agent.backend !== "codex"}
-          aria-label="fork here"
-          title={agent.backend === "codex" ? "Fork here" : "Only Codex can fork"}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Icon name="fork" />
-        </button>
-        <button
-          type="button"
-          onClick={onForkSlack}
-          disabled={busy || agent.backend !== "codex"}
-          aria-label="fork to thread"
-          title={agent.backend === "codex" ? "Fork to a new Slack thread" : "Only Codex can fork"}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Icon name="thread" />
-        </button>
+          menu={[{ label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack }]}
+        />
         {onMerge && (
           <button
             type="button"
