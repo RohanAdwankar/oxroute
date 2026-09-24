@@ -118,7 +118,12 @@ export function Fleet({
               : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
           </p>
         ) : (
-          <div className="flex flex-wrap content-start gap-5">
+          <div
+            className="grid content-start gap-5"
+            style={{
+              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 334px), 1fr))",
+            }}
+          >
             {agents.map((agent, index) => (
               <Card
                 key={agent.id}
@@ -219,7 +224,7 @@ function Card({
   return (
     <article
       className={[
-        "group relative flex h-[212px] w-[334px] flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
+        "group relative flex h-[212px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
