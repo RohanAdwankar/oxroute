@@ -361,13 +361,44 @@ pub struct Agent {
     pub pinned: bool,
 }
 
-/// One item in the shared task list. An empty `agent_id` is unassigned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Incomplete,
+    Complete,
+    WaitingForHuman,
+    Blocked,
+}
+
+impl TaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Incomplete => "incomplete",
+            Self::Complete => "complete",
+            Self::WaitingForHuman => "waiting_for_human",
+            Self::Blocked => "blocked",
+        }
+    }
+
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "incomplete" => Ok(Self::Incomplete),
+            "complete" => Ok(Self::Complete),
+            "waiting_for_human" => Ok(Self::WaitingForHuman),
+            "blocked" => Ok(Self::Blocked),
+            _ => anyhow::bail!("unknown task status {value}"),
+        }
+    }
+}
+
+/// One item in the shared task list. Empty agent and blocker IDs mean none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskItem {
     pub id: String,
     pub text: String,
-    pub done: bool,
+    pub status: TaskStatus,
+    pub blocked_by_task_id: String,
     pub agent_id: String,
     pub created_at: f64,
     pub updated_at: f64,
@@ -690,15 +721,17 @@ mod tests {
         let task = TaskItem {
             id: "t".into(),
             text: "ship".into(),
-            done: false,
+            status: TaskStatus::WaitingForHuman,
+            blocked_by_task_id: String::new(),
             agent_id: "a".into(),
             created_at: 1.0,
             updated_at: 2.0,
         };
         let encoded = serde_json::to_value(&task).unwrap();
-        for key in ["agentId", "createdAt", "updatedAt"] {
+        for key in ["status", "blockedByTaskId", "agentId", "createdAt", "updatedAt"] {
             assert!(encoded.get(key).is_some(), "TaskItem lost {key}");
         }
+        assert_eq!(encoded["status"], "waiting_for_human");
 
         let event = Event::Progress {
             agent_id: "a".into(),

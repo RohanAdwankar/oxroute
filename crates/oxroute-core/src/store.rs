@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    SearchDestination, SearchGroup, Signal, Target, TaskItem,
+    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskStatus,
 };
 
 const SCHEMA: &str = r#"
@@ -99,15 +99,14 @@ CREATE TABLE IF NOT EXISTS pending_context (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-    id         TEXT PRIMARY KEY,
-    text       TEXT NOT NULL,
-    done       INTEGER NOT NULL DEFAULT 0,
-    agent_id   TEXT NOT NULL DEFAULT '',
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    id                 TEXT PRIMARY KEY,
+    text               TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'incomplete',
+    blocked_by_task_id TEXT NOT NULL DEFAULT '',
+    agent_id           TEXT NOT NULL DEFAULT '',
+    created_at         REAL NOT NULL,
+    updated_at         REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS tasks_agent ON tasks (agent_id, done, updated_at DESC);
-
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -145,6 +144,26 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS entries_item ON entries (agent_id, item_id)",
+        [],
+    )?;
+
+    let mut statement = conn.prepare("PRAGMA table_info(tasks)")?;
+    let task_columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    if !task_columns.iter().any(|column| column == "status") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'incomplete'", [])?;
+        if task_columns.iter().any(|column| column == "done") {
+            conn.execute("UPDATE tasks SET status = CASE done WHEN 1 THEN 'complete' ELSE 'incomplete' END", [])?;
+        }
+    }
+    if !task_columns.iter().any(|column| column == "blocked_by_task_id") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN blocked_by_task_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    conn.execute("DROP INDEX IF EXISTS tasks_agent", [])?;
+    conn.execute(
+        "CREATE INDEX tasks_agent ON tasks (agent_id, status, updated_at DESC)",
         [],
     )?;
     conn.execute(
@@ -390,18 +409,26 @@ impl Store {
     pub fn tasks(&self) -> Result<Vec<TaskItem>> {
         self.with(|c| {
             let mut statement = c.prepare(
-                "SELECT id, text, done, agent_id, created_at, updated_at
-                 FROM tasks ORDER BY done, updated_at DESC",
+                "SELECT id, text, status, blocked_by_task_id, agent_id, created_at, updated_at
+                 FROM tasks ORDER BY status = 'complete', updated_at DESC",
             )?;
             let tasks = statement
                 .query_map([], |row| {
+                    let status: String = row.get(2)?;
                     Ok(TaskItem {
                         id: row.get(0)?,
                         text: row.get(1)?,
-                        done: row.get(2)?,
-                        agent_id: row.get(3)?,
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
+                        status: TaskStatus::parse(&status).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                error.into(),
+                            )
+                        })?,
+                        blocked_by_task_id: row.get(3)?,
+                        agent_id: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -412,11 +439,20 @@ impl Store {
     pub fn save_task(&self, task: &TaskItem) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO tasks (id, text, done, agent_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(id) DO UPDATE SET text = excluded.text, done = excluded.done,
+                "INSERT INTO tasks (id, text, status, blocked_by_task_id, agent_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET text = excluded.text, status = excluded.status,
+                     blocked_by_task_id = excluded.blocked_by_task_id,
                      agent_id = excluded.agent_id, updated_at = excluded.updated_at",
-                params![task.id, task.text, task.done, task.agent_id, task.created_at, task.updated_at],
+                params![
+                    task.id,
+                    task.text,
+                    task.status.as_str(),
+                    task.blocked_by_task_id,
+                    task.agent_id,
+                    task.created_at,
+                    task.updated_at,
+                ],
             )?;
             Ok(())
         })
@@ -424,7 +460,17 @@ impl Store {
 
     pub fn delete_task(&self, id: &str) -> Result<()> {
         self.with(|c| {
-            anyhow::ensure!(c.execute("DELETE FROM tasks WHERE id = ?1", params![id])? == 1, "no such task");
+            let transaction = c.unchecked_transaction()?;
+            transaction.execute(
+                "UPDATE tasks SET status = 'incomplete', blocked_by_task_id = '', updated_at = ?2
+                 WHERE blocked_by_task_id = ?1",
+                params![id, crate::model::now()],
+            )?;
+            anyhow::ensure!(
+                transaction.execute("DELETE FROM tasks WHERE id = ?1", params![id])? == 1,
+                "no such task"
+            );
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -1177,7 +1223,8 @@ mod tests {
         let mut task = TaskItem {
             id: "task-1".into(),
             text: "draft release notes".into(),
-            done: false,
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
             agent_id: String::new(),
             created_at: 1.0,
             updated_at: 1.0,
@@ -1186,17 +1233,62 @@ mod tests {
         assert_eq!(store.tasks().unwrap()[0].text, "draft release notes");
 
         task.text = "publish release notes".into();
-        task.done = true;
+        task.status = TaskStatus::Complete;
         task.agent_id = "agent-1".into();
         task.updated_at = 2.0;
         store.save_task(&task).unwrap();
         let saved = store.tasks().unwrap().pop().unwrap();
         assert_eq!(saved.text, "publish release notes");
-        assert!(saved.done);
+        assert_eq!(saved.status, TaskStatus::Complete);
         assert_eq!(saved.agent_id, "agent-1");
 
         store.delete_task(&task.id).unwrap();
         assert!(store.tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_blocker_releases_its_dependents() {
+        let store = Store::in_memory().unwrap();
+        let task = |id: &str, status, blocker: &str| TaskItem {
+            id: id.into(),
+            text: id.into(),
+            status,
+            blocked_by_task_id: blocker.into(),
+            agent_id: String::new(),
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+        store.save_task(&task("first", TaskStatus::Incomplete, "")).unwrap();
+        store.save_task(&task("second", TaskStatus::Blocked, "first")).unwrap();
+
+        store.delete_task("first").unwrap();
+        let second = store.tasks().unwrap().pop().unwrap();
+        assert_eq!(second.status, TaskStatus::Incomplete);
+        assert!(second.blocked_by_task_id.is_empty());
+    }
+
+    #[test]
+    fn existing_boolean_tasks_migrate_to_statuses() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, text TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+                agent_id TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL
+            );
+            INSERT INTO tasks VALUES ('open', 'open', 0, '', 1, 1);
+            INSERT INTO tasks VALUES ('done', 'done', 1, '', 1, 1);",
+        ).unwrap();
+        drop(legacy);
+
+        let store = Store::open(&path).unwrap();
+        let statuses: HashMap<_, _> = store.tasks().unwrap().into_iter()
+            .map(|task| (task.id, task.status))
+            .collect();
+        assert_eq!(statuses["open"], TaskStatus::Incomplete);
+        assert_eq!(statuses["done"], TaskStatus::Complete);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

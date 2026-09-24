@@ -1354,8 +1354,10 @@ impl Hub {
         inputs.push(TurnInput::text(format!(
             "Oxroute has a shared task list. When the user asks you to read or change it, \
              use GET/POST http://{}/api/tasks and PUT/DELETE \
-             http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"done\": bool, \
-             \"agentId\": string}}. This session's agent id is {}. Do not change tasks unless the \
+             http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
+             \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \
+             \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
+             another task. This session's agent id is {}. Do not change tasks unless the \
              user asks you to.",
             self.config.listen,
             self.config.listen,
@@ -1989,7 +1991,8 @@ impl Hub {
         let task = TaskItem {
             id: new_id("task"),
             text: text.into(),
-            done: false,
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
             agent_id: agent_id.into(),
             created_at: at,
             updated_at: at,
@@ -1999,23 +2002,28 @@ impl Hub {
         Ok(task)
     }
 
-    pub fn update_task(&self, id: &str, text: &str, done: bool, agent_id: &str) -> Result<TaskItem> {
+    pub fn update_task(
+        &self,
+        id: &str,
+        text: &str,
+        status: TaskStatus,
+        blocked_by_task_id: &str,
+        agent_id: &str,
+    ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
         if !agent_id.is_empty() {
             anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
         }
-        let created_at = self
-            .store
-            .tasks()?
-            .into_iter()
-            .find(|task| task.id == id)
-            .context("no such task")?
-            .created_at;
+        let tasks = self.store.tasks()?;
+        let current = tasks.iter().find(|task| task.id == id).context("no such task")?;
+        let created_at = current.created_at;
+        validate_task_dependency(&tasks, id, status, blocked_by_task_id)?;
         let task = TaskItem {
             id: id.into(),
             text: text.into(),
-            done,
+            status,
+            blocked_by_task_id: blocked_by_task_id.into(),
             agent_id: agent_id.into(),
             created_at,
             updated_at: now(),
@@ -2134,6 +2142,68 @@ impl Hub {
         limit: usize,
     ) -> Result<Vec<ConversationLine>> {
         self.harness(backend).session_preview(session_id, limit).await
+    }
+}
+
+fn validate_task_dependency(
+    tasks: &[TaskItem],
+    id: &str,
+    status: TaskStatus,
+    blocked_by_task_id: &str,
+) -> Result<()> {
+    if status != TaskStatus::Blocked {
+        anyhow::ensure!(blocked_by_task_id.is_empty(), "only blocked tasks can name a blocker");
+        return Ok(());
+    }
+
+    anyhow::ensure!(!blocked_by_task_id.is_empty(), "a blocked task needs a blocker");
+    anyhow::ensure!(blocked_by_task_id != id, "a task cannot block itself");
+    anyhow::ensure!(tasks.iter().any(|task| task.id == blocked_by_task_id), "no such blocking task");
+    let blockers: HashMap<&str, &str> = tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task.blocked_by_task_id.as_str()))
+        .collect();
+    let mut seen = HashSet::from([id]);
+    let mut cursor = blocked_by_task_id;
+    while !cursor.is_empty() {
+        anyhow::ensure!(seen.insert(cursor), "task blockers cannot form a cycle");
+        cursor = blockers.get(cursor).copied().unwrap_or_default();
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+
+    fn task(id: &str, status: TaskStatus, blocker: &str) -> TaskItem {
+        TaskItem {
+            id: id.into(),
+            text: id.into(),
+            status,
+            blocked_by_task_id: blocker.into(),
+            agent_id: String::new(),
+            created_at: 1.0,
+            updated_at: 1.0,
+        }
+    }
+
+    #[test]
+    fn blocked_tasks_require_an_existing_other_task() {
+        let tasks = [task("a", TaskStatus::Incomplete, "")];
+        assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "").is_err());
+        assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "a").is_err());
+        assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "missing").is_err());
+    }
+
+    #[test]
+    fn blocker_cycles_are_rejected() {
+        let tasks = [
+            task("a", TaskStatus::Blocked, "b"),
+            task("b", TaskStatus::Incomplete, ""),
+        ];
+        assert!(validate_task_dependency(&tasks, "b", TaskStatus::Blocked, "a").is_err());
+        assert!(validate_task_dependency(&tasks, "b", TaskStatus::WaitingForHuman, "").is_ok());
     }
 }
 

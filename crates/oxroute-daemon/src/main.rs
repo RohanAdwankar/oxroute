@@ -547,7 +547,9 @@ async fn create_task(
 #[serde(rename_all = "camelCase")]
 struct UpdateTaskBody {
     text: String,
-    done: bool,
+    status: oxroute_core::TaskStatus,
+    #[serde(default)]
+    blocked_by_task_id: String,
     #[serde(default)]
     agent_id: String,
 }
@@ -557,7 +559,13 @@ async fn update_task(
     Path(id): Path<String>,
     Json(body): Json<UpdateTaskBody>,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.update_task(&id, &body.text, body.done, &body.agent_id)?))
+    Ok(Json(hub.update_task(
+        &id,
+        &body.text,
+        body.status,
+        &body.blocked_by_task_id,
+        &body.agent_id,
+    )?))
 }
 
 async fn delete_task(
