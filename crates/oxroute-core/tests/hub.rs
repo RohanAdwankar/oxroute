@@ -424,11 +424,11 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         // The default model has to name the backend under test, or the hub
         // reaches for the harness this test did not replace.
         default_model: match options.backend {
-            Backend::Codex => "gpt-6-sol".into(),
+            Backend::Codex => "gpt-5.6-sol".into(),
             Backend::ClaudeCode => "claude-opus-5".into(),
         },
         models: BTreeMap::from([
-            ("sol".to_string(), choice("gpt-6-sol", "Sol")),
+            ("sol".to_string(), choice("gpt-5.6-sol", "Sol")),
             ("astra".to_string(), choice("gpt-6-astra", "Astra")),
             (
                 "opus".to_string(),
@@ -956,7 +956,7 @@ async fn the_same_native_session_can_be_continued_more_than_once() {
         name: "Repeatable".into(),
         preview: String::new(),
         cwd: "/work/repeatable".into(),
-        model: "gpt-6-sol".into(),
+        model: "gpt-5.6-sol".into(),
         updated_at: 42.0,
     });
 
@@ -990,7 +990,7 @@ async fn continuing_without_a_current_source_conversation_fails_before_creating_
         name: "Local only".into(),
         preview: String::new(),
         cwd: "/work/local".into(),
-        model: "gpt-6-sol".into(),
+        model: "gpt-5.6-sol".into(),
         updated_at: 42.0,
     });
 
@@ -1017,7 +1017,7 @@ async fn continuing_an_unconfigured_native_model_uses_the_configured_backend_def
         name: "Release work".into(),
         preview: String::new(),
         cwd: "/work/release".into(),
-        model: "gpt-5.6-sol".into(),
+        model: "gpt-6-sol".into(),
         updated_at: 42.0,
     });
 
@@ -1027,7 +1027,7 @@ async fn continuing_an_unconfigured_native_model_uses_the_configured_backend_def
         .await
         .unwrap();
 
-    assert_eq!(continued.model, "gpt-6-sol");
+    assert_eq!(continued.model, "gpt-5.6-sol");
 }
 
 #[tokio::test]
@@ -1051,7 +1051,7 @@ async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
         id: "agent-recovered".into(),
         name: "long task".into(),
         backend: Backend::Codex,
-        model: "gpt-6-sol".into(),
+        model: "gpt-5.6-sol".into(),
         session_id: "session-live".into(),
         cwd: config.workspace.clone(),
         status: AgentStatus::Working,

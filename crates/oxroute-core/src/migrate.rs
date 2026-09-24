@@ -140,7 +140,7 @@ pub fn import(store: &Store, legacy: &Path, default_cwd: &str, force: bool) -> R
                     },
                     // Everything the old bot ran, it ran on Codex.
                     backend: Backend::Codex,
-                    model: model.clone().unwrap_or_else(|| "gpt-6-sol".into()),
+                    model: model.clone().unwrap_or_else(|| "gpt-5.6-sol".into()),
                     session_id: session_id.clone(),
                     cwd: default_cwd.to_string(),
                     // Nothing is running on the other side of a migration,
