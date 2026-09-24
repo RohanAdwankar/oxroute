@@ -17,6 +17,7 @@ export type IconName =
   | "play"
   | "plus"
   | "quote"
+  | "queue"
   | "restore"
   | "send"
   | "stop"
@@ -42,6 +43,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     play: <path d="m5 3 8 5-8 5Z" />,
     plus: <path d="M8 2v12M2 8h12" />,
     quote: <path d="M3 4h4v4H5a3 3 0 0 1-3 3M10 4h4v4h-2a3 3 0 0 1-3 3" />,
+    queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,

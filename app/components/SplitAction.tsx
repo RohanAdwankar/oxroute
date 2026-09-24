@@ -10,12 +10,14 @@ export function SplitAction({
   onClick,
   disabled,
   menu,
+  variant = "toolbar",
 }: {
   label: string;
   icon: IconName;
   onClick: () => void;
   disabled?: boolean;
   menu: { label: string; icon: IconName; onClick: () => void }[];
+  variant?: "toolbar" | "composer";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -47,7 +49,9 @@ export function SplitAction({
         disabled={disabled}
         aria-label={label}
         title={label}
-        className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        className={variant === "composer"
+          ? "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
+          : "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"}
       >
         <Icon name={icon} />
       </button>
@@ -59,7 +63,9 @@ export function SplitAction({
         aria-haspopup="menu"
         aria-expanded={open}
         title={`${label} options`}
-        className="flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        className={variant === "composer"
+          ? "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
+          : "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"}
       >
         <Icon name="chevronDown" size={11} />
       </button>

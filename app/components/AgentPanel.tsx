@@ -137,11 +137,11 @@ export function AgentPanel({
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
   }, []);
 
-  const send = () => {
+  const send = (queued = agent.status === "working") => {
     const text = draft.trim();
     if ((!text && uploads.length === 0) || busy) return;
     setDraft("");
-    onSay(text, uploads.map((upload) => upload.file));
+    onSay(queued ? `& ${text}`.trimEnd() : text, uploads.map((upload) => upload.file));
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");
@@ -492,16 +492,27 @@ export function AgentPanel({
             placeholder="Message"
             className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />
-          <button
-            type="button"
-            onClick={send}
-            disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-            aria-label="send message"
-            title="Send message"
-            className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Icon name="send" />
-          </button>
+          {agent.status === "working" ? (
+            <SplitAction
+              label="Queue message"
+              icon="queue"
+              onClick={() => send(true)}
+              disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
+              menu={[{ label: "Send now", icon: "send", onClick: () => send(false) }]}
+              variant="composer"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => send(false)}
+              disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
+              aria-label="send message"
+              title="Send message"
+              className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="send" />
+            </button>
+          )}
         </div>
       </footer>
     </section>
