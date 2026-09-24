@@ -20,7 +20,7 @@ use serde::Deserialize;
 use crate::model::Backend;
 
 /// What a new agent gets when nothing says otherwise.
-pub const DEFAULT_MODEL: &str = "gpt-5.6-sol";
+pub const DEFAULT_MODEL: &str = "gpt-6-sol";
 
 /// A model a person can pick by name.
 #[derive(Debug, Clone)]
@@ -247,7 +247,7 @@ impl Config {
         if file.models.is_empty() {
             let spec = from_env(&["OXROUTE_MODELS"]).unwrap_or_else(|| {
                 "opus=claude-opus-5:Opus,sonnet=claude-sonnet-5:Sonnet,\
-                 sol=gpt-5.6-sol:Sol,astra=gpt-6-astra:Astra"
+                 sol=gpt-6-sol:Sol,astra=gpt-6-astra:Astra"
                     .into()
             });
             for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
@@ -530,7 +530,7 @@ id = "claude-sonnet-5"
 label = "Sonnet"
 
 [models.sol]
-id = "gpt-5.6-sol"
+id = "gpt-6-sol"
 
 [binaries]
 claude = "/opt/claude"
