@@ -583,9 +583,9 @@ export default function Home() {
                   window.localStorage.setItem("oxroute.inboxWidth", String(width));
                 }
               }}
-              className="group relative w-[5px] shrink-0 cursor-col-resize border-l border-rule outline-none focus:bg-band"
+              className="group relative w-px shrink-0 cursor-col-resize border-l border-rule outline-none focus:bg-band"
             >
-              <span className="absolute inset-y-0 left-[-2px] w-[5px] bg-edge opacity-0 group-hover:opacity-45" />
+              <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
             </div>
           </>
         ) : (
