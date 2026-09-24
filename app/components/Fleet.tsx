@@ -219,7 +219,7 @@ function Card({
   return (
     <article
       className={[
-        "relative flex h-[212px] w-[334px] flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
+        "group relative flex h-[212px] w-[334px] flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
@@ -256,9 +256,9 @@ function Card({
             aria-pressed={agent.pinned}
             aria-label={agent.pinned ? `unpin ${agent.name}` : `pin ${agent.name}`}
             title={agent.pinned ? "Unpin" : "Pin"}
-            className={`flex h-7 w-7 cursor-pointer items-center justify-center ${agent.pinned ? "text-ink" : "text-faint hover:text-mid"}`}
+            className={`flex h-7 w-7 cursor-pointer items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 ${agent.pinned ? "text-ink" : "text-faint hover:text-mid"}`}
           >
-            <Icon name={agent.pinned ? "unpin" : "pin"} size={14} />
+            <Icon name="pin" size={14} />
           </button>
         )}
         {routing && (
