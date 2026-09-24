@@ -1348,12 +1348,15 @@ impl Hub {
         tokio::fs::create_dir_all(&artifact_dir).await?;
         inputs.push(TurnInput::text(format!(
             "Place every image, video, or other file you want returned to the user in \
-             {}\n\nOxroute has a shared task list. When the user asks you to read or change it, \
+             {}",
+            artifact_dir.display(),
+        )));
+        inputs.push(TurnInput::text(format!(
+            "Oxroute has a shared task list. When the user asks you to read or change it, \
              use GET/POST http://{}/api/tasks and PUT/DELETE \
              http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"done\": bool, \
              \"agentId\": string}}. This session's agent id is {}. Do not change tasks unless the \
              user asks you to.",
-            artifact_dir.display(),
             self.config.listen,
             self.config.listen,
             agent.id,
