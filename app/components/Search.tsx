@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { clock } from "../lib/format";
 import type { ConversationLine, NativeSession, SearchGroup, SearchResults } from "../lib/types";
+import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 const EMPTY: SearchResults = { managed: [], other: [] };
@@ -237,13 +238,15 @@ function ResultRow({ selected, time, title, detail, action, disabled, onSelect, 
       <button
         type="button"
         disabled={disabled}
+        aria-label={action}
+        title={action}
         onClick={(event) => {
           event.stopPropagation();
           onActivate();
         }}
-        className="cursor-pointer px-2 py-1 text-[11px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {action}
+        <Icon name={action === "Open" ? "open" : "play"} size={14} />
       </button>
     </div>
   );

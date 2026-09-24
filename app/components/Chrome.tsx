@@ -1,6 +1,7 @@
 "use client";
 
 import type { Mode, Snapshot } from "../lib/types";
+import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
 
 /**
@@ -31,12 +32,14 @@ export function Chrome({
       <div className="flex" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
+          icon="ask"
           active={snapshot.mode === "ask"}
           side="left"
           onClick={() => onMode("ask")}
         />
         <ModeButton
           label="Auto route"
+          icon="auto"
           active={snapshot.mode === "auto"}
           side="right"
           onClick={() => onMode("auto")}
@@ -47,13 +50,14 @@ export function Chrome({
         type="button"
         onClick={onVim}
         aria-pressed={vim}
+        aria-label="toggle Vim navigation"
         title="one-key hints on the agent cards (v)"
         className={[
-          "tnum cursor-pointer rounded-[3px] border px-[11px] py-[5px] text-[11.5px]",
+          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
           vim ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
         ].join(" ")}
       >
-        vim
+        <Icon name="keyboard" />
       </button>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
@@ -71,11 +75,13 @@ export function Chrome({
 
 function ModeButton({
   label,
+  icon,
   active,
   side,
   onClick,
 }: {
   label: string;
+  icon: IconName;
   active: boolean;
   side: "left" | "right";
   onClick: () => void;
@@ -85,15 +91,17 @@ function ModeButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      aria-label={label}
+      title={label}
       className={[
-        "tnum cursor-pointer whitespace-nowrap px-[15px] py-[6px] text-[12px] transition-colors",
+        "flex h-8 w-9 cursor-pointer items-center justify-center transition-colors",
         side === "left" ? "rounded-l-[3px] border" : "rounded-r-[3px] border border-l-0",
         active
           ? "border-edge bg-wash text-ink"
           : "border-rule bg-transparent text-mid hover:text-ink",
       ].join(" ")}
     >
-      {label}
+      <Icon name={icon} />
     </button>
   );
 }

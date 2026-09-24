@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { clip, clock } from "../lib/format";
 import type { Agent, InboxItem } from "../lib/types";
+import { Icon } from "./Icon";
 
 /**
  * The sidebar, and the whole point of the interface.
@@ -58,7 +59,7 @@ export function Inbox({
           title="collapse inbox"
           className="ml-3 cursor-pointer text-[18px] leading-none text-faint hover:text-ink"
         >
-          ‹
+          <Icon name="collapse" size={18} />
         </button>
       </div>
 
@@ -145,9 +146,10 @@ function Compose({
         onClick={send}
         disabled={busy || draft.trim().length === 0}
         aria-label="add to the inbox"
-        className="tnum cursor-pointer rounded-[3px] border border-edge px-[11px] py-[7px] text-[12px] text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        title="Add to inbox"
+        className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Add
+        <Icon name="plus" size={15} />
       </button>
     </div>
   );

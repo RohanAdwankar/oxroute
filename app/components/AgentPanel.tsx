@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
 import type { AgentView, Entry, EntryKind } from "../lib/types";
+import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
@@ -189,8 +190,9 @@ export function AgentPanel({
           onClick={onBack}
           className="cursor-pointer text-[13px] text-mid hover:text-ink"
           aria-label="back to the fleet"
+          title="Back to fleet"
         >
-          ←
+          <Icon name="back" />
         </button>
         <span
           className={`h-2 w-2 rounded-full ${
@@ -251,56 +253,64 @@ export function AgentPanel({
             href={agent.permalink}
             target="_blank"
             rel="noreferrer"
-            className="tnum rounded-[3px] border border-rule px-[13px] py-[7px] text-[12px] text-mid hover:text-ink"
+            aria-label="open in Slack"
+            title="Open in Slack"
+            className="flex h-8 w-8 items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink"
           >
-            Open in Slack
+            <Icon name="external" />
           </a>
         )}
         <button
           type="button"
           onClick={() => onArchive(!archived)}
           disabled={busy || (!archived && agent.status === "working")}
-          title={!archived && agent.status === "working" ? "stop the active turn first" : undefined}
-          className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={archived ? "restore session" : "archive session"}
+          title={!archived && agent.status === "working" ? "Stop the active turn first" : archived ? "Restore session" : "Archive session"}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {archived ? "Restore" : "Archive"}
+          <Icon name={archived ? "restore" : "archive"} />
         </button>
         <button
           type="button"
           onClick={onForkLocal}
           disabled={busy || agent.backend !== "codex"}
-          title={agent.backend === "codex" ? "open a branch beside this pane" : "only Codex can fork"}
-          className="tnum cursor-pointer rounded-[3px] border border-rule px-[13px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="fork here"
+          title={agent.backend === "codex" ? "Fork here" : "Only Codex can fork"}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Fork here
+          <Icon name="fork" />
         </button>
         <button
           type="button"
           onClick={onForkSlack}
           disabled={busy || agent.backend !== "codex"}
-          title={agent.backend === "codex" ? "branch this history into a new Slack thread" : "only Codex can fork"}
-          className="tnum cursor-pointer px-[8px] py-[7px] text-[12px] text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="fork to thread"
+          title={agent.backend === "codex" ? "Fork to a new Slack thread" : "Only Codex can fork"}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Fork to thread
+          <Icon name="thread" />
         </button>
         {onMerge && (
           <button
             type="button"
             onClick={onMerge}
             disabled={busy || agent.status === "working"}
-            title={agent.status === "working" ? "stop the active turn first" : "merge this fork into its parent"}
-            className="tnum cursor-pointer rounded-[3px] border border-merge px-[13px] py-[7px] text-[12px] text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="merge into parent"
+            title={agent.status === "working" ? "Stop the active turn first" : "Merge into parent"}
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Merge
+            <Icon name="merge" />
           </button>
         )}
         <button
           type="button"
           onClick={onInterrupt}
           disabled={busy || agent.status !== "working"}
-          className="tnum cursor-pointer rounded-[3px] border border-edge px-[13px] py-[7px] text-[12px] text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="stop the turn"
+          title="Stop the turn"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Stop the turn
+          <Icon name="stop" />
         </button>
       </div>
 
@@ -387,11 +397,11 @@ export function AgentPanel({
                     <button
                       type="button"
                       onClick={() => onOpenAgent(entry.detail)}
-                      className="w-fit cursor-pointer text-[11px] text-merge hover:underline"
+                      aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
+                      title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
+                      className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
                     >
-                      {entry.kind === "forked" || entry.kind === "merged"
-                        ? "Open child session →"
-                        : "Open parent session ↑"}
+                      <Icon name="open" size={13} />
                     </button>
                   ) : entry.detail ? (
                     <span className="text-[11px] text-faint">{entry.detail}</span>
@@ -410,10 +420,12 @@ export function AgentPanel({
           onBlur={() => setQuoteMenu(null)}
           onPointerDown={(event) => event.preventDefault()}
           onClick={quoteSelection}
+          aria-label="quote reply"
+          title="Quote reply"
           style={{ left: quoteMenu.x, top: quoteMenu.y }}
-          className="fixed z-40 cursor-pointer border border-edge bg-card px-3 py-2 text-[12px] text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] hover:bg-wash"
+          className="fixed z-40 flex h-9 w-9 cursor-pointer items-center justify-center border border-edge bg-card text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] hover:bg-wash"
         >
-          Quote reply
+          <Icon name="quote" />
         </button>
       )}
 
@@ -433,6 +445,7 @@ export function AgentPanel({
                 <button
                   type="button"
                   aria-label={`remove ${upload.file.name}`}
+                  title={`Remove ${upload.file.name}`}
                   onClick={() => {
                     URL.revokeObjectURL(upload.preview);
                     setUploads((current) => current.filter((item) => item !== upload));
@@ -464,9 +477,9 @@ export function AgentPanel({
             disabled={busy}
             aria-label="attach images"
             title="attach images"
-            className="cursor-pointer px-2 py-[11px] text-[18px] text-mid hover:text-ink disabled:opacity-40"
+            className="flex h-[42px] w-[34px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:opacity-40"
           >
-            +
+            <Icon name="attach" />
           </button>
           <textarea
             ref={composer}
@@ -495,9 +508,11 @@ export function AgentPanel({
             type="button"
             onClick={send}
             disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-            className="cursor-pointer rounded-[3px] bg-ink px-5 py-[11px] text-[14px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="send message"
+            title="Send message"
+            className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Send
+            <Icon name="send" />
           </button>
         </div>
       </footer>

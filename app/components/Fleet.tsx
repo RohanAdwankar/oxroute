@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { clip, since } from "../lib/format";
 import { hintFor } from "../lib/keys";
+import { Icon } from "./Icon";
 import {
   deliveryOf,
   type Agent,
@@ -99,9 +100,11 @@ export function Fleet({
             <button
               type="button"
               onClick={onShowArchived}
-              className="cursor-pointer text-[12px] text-mid hover:text-ink"
+              aria-label={showArchived ? "back to fleet" : `show ${archivedCount} archived sessions`}
+              title={showArchived ? "Back to fleet" : `Archived sessions (${archivedCount})`}
+              className="flex h-8 w-8 cursor-pointer items-center justify-center text-mid hover:text-ink"
             >
-              {showArchived ? "Back to fleet" : `Archived ${archivedCount}`}
+              <Icon name={showArchived ? "back" : "archive"} />
             </button>
           </>
         )}
@@ -140,20 +143,22 @@ export function Fleet({
             type="button"
             disabled={busy || ticked.size === 0}
             onClick={onSend}
-            className="cursor-pointer rounded-[3px] bg-ink px-5 py-[10px] text-[13.5px] font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={ticked.size === 0 ? "pick an agent" : `send to ${ticked.size} agent${ticked.size === 1 ? "" : "s"}`}
+            title={ticked.size === 0 ? "Pick an agent" : `Send to ${ticked.size} agent${ticked.size === 1 ? "" : "s"}`}
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {ticked.size === 0
-              ? "Pick an agent"
-              : `Send to ${ticked.size} agent${ticked.size === 1 ? "" : "s"}`}
+            <Icon name="send" />
           </button>
           <span className="flex items-stretch">
             <button
               type="button"
               disabled={busy || !chosen}
               onClick={() => onSpawn(chosen)}
-              className="tnum cursor-pointer rounded-l-[3px] border border-edge px-[17px] py-[10px] text-[12.5px] text-ink disabled:opacity-40"
+              aria-label="start a new agent"
+              title="Start a new agent"
+              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
             >
-              Start a new agent on
+              <Icon name="plus" />
             </button>
             <select
               value={chosen}
@@ -173,9 +178,11 @@ export function Fleet({
             type="button"
             disabled={busy}
             onClick={onDiscard}
-            className="tnum cursor-pointer rounded-[3px] border border-rule px-[17px] py-[10px] text-[12.5px] text-mid hover:text-ink disabled:opacity-40"
+            aria-label="discard"
+            title="Discard"
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
           >
-            Discard
+            <Icon name="discard" />
           </button>
         </footer>
       )}
@@ -247,9 +254,11 @@ function Card({
             type="button"
             onClick={onPin}
             aria-pressed={agent.pinned}
-            className={`cursor-pointer px-1 text-[11px] ${agent.pinned ? "text-ink" : "text-faint hover:text-mid"}`}
+            aria-label={agent.pinned ? `unpin ${agent.name}` : `pin ${agent.name}`}
+            title={agent.pinned ? "Unpin" : "Pin"}
+            className={`flex h-7 w-7 cursor-pointer items-center justify-center ${agent.pinned ? "text-ink" : "text-faint hover:text-mid"}`}
           >
-            {agent.pinned ? "Unpin" : "Pin"}
+            <Icon name={agent.pinned ? "unpin" : "pin"} size={14} />
           </button>
         )}
         {routing && (

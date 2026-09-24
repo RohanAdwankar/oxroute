@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
+import { Icon } from "./components/Icon";
 import { Inbox } from "./components/Inbox";
 import { api, follow } from "./lib/api";
 import {
@@ -572,9 +573,9 @@ export default function Home() {
             onClick={() => setInboxVisible(true)}
             aria-label="open inbox"
             title="open inbox"
-            className="absolute top-1/2 left-0 z-10 -translate-y-1/2 cursor-pointer border border-l-0 border-rule bg-card px-2 py-2 text-[18px] leading-none text-faint hover:text-ink"
+            className="absolute top-1/2 left-0 z-10 flex h-9 w-8 -translate-y-1/2 cursor-pointer items-center justify-center border border-l-0 border-rule bg-card text-faint hover:text-ink"
           >
-            ›
+            <Icon name="expand" />
           </button>
         )}
 
