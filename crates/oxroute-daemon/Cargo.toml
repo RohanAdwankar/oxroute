@@ -19,6 +19,10 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 futures-util.workspace = true
+oxdraw.workspace = true
+# OxDraw 0.2.1 enables reqwest's native TLS defaults even when its HTTP server
+# is disabled. Vendoring OpenSSL keeps daemon builds reproducible on minimal VMs.
+openssl = { version = "0.10", features = ["vendored"] }
 axum = { version = "0.8", features = ["multipart"] }
 tower-http = { version = "0.6", features = ["cors"] }
 async-stream = "0.3.6"

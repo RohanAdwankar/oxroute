@@ -68,7 +68,12 @@ export const api = {
   updateTask: (task: TaskItem) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
       method: "PUT",
-      body: JSON.stringify({ text: task.text, done: task.done, agentId: task.agentId }),
+      body: JSON.stringify({
+        text: task.text,
+        status: task.status,
+        blockedByTaskId: task.blockedByTaskId,
+        agentId: task.agentId,
+      }),
     }),
   deleteTask: (id: string) =>
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),

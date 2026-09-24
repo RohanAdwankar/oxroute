@@ -58,10 +58,13 @@ export interface Agent {
   pinned: boolean;
 }
 
+export type TaskStatus = "incomplete" | "complete" | "waiting_for_human" | "blocked";
+
 export interface TaskItem {
   id: string;
   text: string;
-  done: boolean;
+  status: TaskStatus;
+  blockedByTaskId: string;
   agentId: string;
   createdAt: number;
   updatedAt: number;

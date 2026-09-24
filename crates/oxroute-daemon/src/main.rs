@@ -11,14 +11,16 @@
 //! oxrouted doctor      say what is configured and what is missing
 //! ```
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
@@ -193,6 +195,7 @@ async fn serve() -> Result<()> {
         .route("/api/pin", post(pin))
         .route("/api/tasks", get(tasks).post(create_task))
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
+        .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
@@ -528,6 +531,84 @@ async fn tasks(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskItem>>, Fa
     Ok(Json(hub.tasks()?))
 }
 
+async fn task_diagram(State(hub): Hubs) -> Result<Response, Failed> {
+    let svg = render_task_diagram(&hub.tasks()?)?;
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "image/svg+xml")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(svg))?)
+}
+
+fn render_task_diagram(tasks: &[oxroute_core::TaskItem]) -> Result<String> {
+    use oxdraw::{
+        Diagram, DiagramKind, Direction, Edge, EdgeArrowDirection, EdgeKind, LayoutOverrides, Node,
+        NodeShape, NodeStyleOverride,
+    };
+
+    anyhow::ensure!(!tasks.is_empty(), "no tasks to draw");
+    let mut nodes = HashMap::new();
+    let mut order = Vec::new();
+    let mut ids = HashMap::new();
+    let mut styles = HashMap::new();
+    for (index, task) in tasks.iter().enumerate() {
+        let id = format!("task_{index}");
+        let state = match task.status {
+            oxroute_core::TaskStatus::Incomplete => "incomplete",
+            oxroute_core::TaskStatus::Complete => "complete",
+            oxroute_core::TaskStatus::WaitingForHuman => "waiting for human",
+            oxroute_core::TaskStatus::Blocked => "blocked",
+        };
+        let text: String = task.text.chars().take(54).collect();
+        let label = format!("{state}\n{text}");
+        let width = (label.chars().count() as f32 * 6.8 + 52.0).clamp(180.0, 330.0);
+        nodes.insert(id.clone(), Node {
+            label,
+            shape: NodeShape::Rectangle,
+            image: None,
+            width,
+            height: 62.0,
+        });
+        let (fill, stroke, color) = match task.status {
+            oxroute_core::TaskStatus::Incomplete => ("#f7f4ef", "#81786d", "#28231f"),
+            oxroute_core::TaskStatus::Complete => ("#e3eee8", "#2f886c", "#1e5c48"),
+            oxroute_core::TaskStatus::WaitingForHuman => ("#f5ead7", "#b66a0a", "#7a4706"),
+            oxroute_core::TaskStatus::Blocked => ("#f2dfdc", "#a6493d", "#6f3028"),
+        };
+        styles.insert(id.clone(), NodeStyleOverride {
+            fill: Some(fill.into()),
+            stroke: Some(stroke.into()),
+            text: Some(color.into()),
+            ..Default::default()
+        });
+        ids.insert(task.id.as_str(), id.clone());
+        order.push(id);
+    }
+    let edges = tasks.iter().filter_map(|task| {
+        let from = ids.get(task.blocked_by_task_id.as_str())?;
+        let to = ids.get(task.id.as_str())?;
+        Some(Edge {
+            from: from.clone(),
+            to: to.clone(),
+            label: Some("blocks".into()),
+            kind: EdgeKind::Solid,
+            arrow: EdgeArrowDirection::Forward,
+        })
+    }).collect();
+    let diagram = Diagram {
+        kind: DiagramKind::Flowchart,
+        direction: Direction::TopDown,
+        nodes,
+        order,
+        edges,
+        subgraphs: vec![],
+        node_membership: HashMap::new(),
+    };
+    diagram.render_svg("#fbf9f6", Some(&LayoutOverrides {
+        node_styles: styles,
+        ..Default::default()
+    }))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateTaskBody {
@@ -587,4 +668,36 @@ async fn mode(
 ) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.set_mode(Mode::parse(&body.mode))?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxroute_core::{TaskItem, TaskStatus};
+
+    fn task(id: &str, text: &str, status: TaskStatus, blocker: &str) -> TaskItem {
+        TaskItem {
+            id: id.into(),
+            text: text.into(),
+            status,
+            blocked_by_task_id: blocker.into(),
+            agent_id: String::new(),
+            created_at: 1.0,
+            updated_at: 1.0,
+        }
+    }
+
+    #[test]
+    fn oxdraw_task_diagram_colors_states_and_connects_blockers() {
+        let svg = render_task_diagram(&[
+            task("first", "prepare data", TaskStatus::WaitingForHuman, ""),
+            task("second", "run report", TaskStatus::Blocked, "first"),
+        ]).unwrap();
+        assert!(svg.contains("waiting for human"));
+        assert!(svg.contains("blocked"));
+        assert!(svg.contains("#f5ead7"));
+        assert!(svg.contains("#f2dfdc"));
+        assert!(svg.contains("blocks"));
+        assert!(svg.contains("marker-end=\"url(#arrow-end)\""));
+    }
 }
