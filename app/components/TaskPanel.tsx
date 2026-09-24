@@ -43,7 +43,7 @@ export function TaskPanel({
   };
 
   return (
-    <aside className="absolute inset-y-0 right-0 z-30 flex w-[min(430px,calc(100vw-32px))] flex-col border-l border-rule bg-card shadow-[-8px_0_24px_rgba(33,29,25,0.08)]">
+    <aside className="flex w-[min(430px,calc(100vw-32px))] shrink-0 flex-col border-l border-rule bg-card">
       <header className="flex h-[63px] shrink-0 items-center gap-3 border-b border-rule px-5">
         <Icon name="tasks" />
         <span className="text-[15px] font-semibold">Tasks</span>
