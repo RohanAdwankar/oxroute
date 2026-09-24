@@ -267,8 +267,10 @@ impl Store {
                 out.push(row?);
             }
             let mut done = c.prepare(
-                "SELECT * FROM agents WHERE archived = 0 AND status = 'complete'
-                 ORDER BY pinned DESC, updated_at DESC LIMIT ?1",
+                "SELECT * FROM (
+                    SELECT * FROM agents WHERE status = 'complete'
+                    ORDER BY pinned DESC, updated_at DESC LIMIT ?1
+                 ) WHERE archived = 0",
             )?;
             for row in done.query_map(params![completed_limit as i64], read_agent)? {
                 out.push(row?);
@@ -1077,6 +1079,27 @@ mod tests {
         store.set_agent_archived(&archived.id, false).unwrap();
         assert_eq!(store.agents(20).unwrap()[0].id, archived.id);
         assert!(store.archived_agents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn archiving_a_visible_session_does_not_backfill_old_history() {
+        let store = Store::in_memory().unwrap();
+        for (id, updated_at) in [("old", 1.0), ("middle", 2.0), ("new", 3.0)] {
+            let mut item = agent(id);
+            item.status = AgentStatus::Complete;
+            item.updated_at = updated_at;
+            store.save_agent(&item).unwrap();
+        }
+
+        assert_eq!(
+            store.agents(2).unwrap().iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>(),
+            vec!["new", "middle"]
+        );
+        store.set_agent_archived("new", true).unwrap();
+        assert_eq!(
+            store.agents(2).unwrap().iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>(),
+            vec!["middle"]
+        );
     }
 
     #[test]
