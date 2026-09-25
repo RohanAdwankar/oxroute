@@ -21,7 +21,7 @@ const KEYS: [string, string][] = [
   ["i", "add something to the inbox"],
   ["m", "ask me first, or auto route"],
   ["v", "letters on, off"],
-  ["esc", "close, then back to the inbox"],
+  ["esc", "back out of the agent, then the routing question"],
   ["?", "this sheet"],
 ];
 

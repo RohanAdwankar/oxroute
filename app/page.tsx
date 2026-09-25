@@ -442,6 +442,10 @@ export default function Home() {
           return setFocus("inbox");
         case "l":
           stop();
+          // h shows the inbox, so l shows the fleet: with a pane open the
+          // fleet is behind it, and focusing a column you cannot see does
+          // nothing you can act on.
+          if (open) showAgent(null);
           return setFocus("fleet");
         case "Tab":
           stop();
