@@ -7,6 +7,7 @@ import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Help } from "./components/Help";
 import { Icon } from "./components/Icon";
+import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
@@ -58,6 +59,7 @@ export default function Home() {
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [help, setHelp] = useState(false);
+  const [jump, setJump] = useState(false);
   const [watch, setWatch] = useState(false);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
@@ -501,6 +503,12 @@ export default function Home() {
         case "?":
           stop();
           return setHelp((open) => !open);
+        case "f":
+          // Everything reachable wears a letter, so nothing here has to be
+          // remembered.
+          if (!vim) return;
+          stop();
+          return setJump(true);
         case "i":
         case "/":
           stop();
@@ -552,6 +560,7 @@ export default function Home() {
   return (
     <main className="flex h-full flex-col">
       {help && <Help onClose={() => setHelp(false)} />}
+      {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
         snapshot={snapshot}
         notice={notice}
@@ -714,7 +723,7 @@ export default function Home() {
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
-            vim={vim}
+            vim={vim && !jump}
             onToggle={toggle}
             onOpen={(id) => {
               clearRouting();

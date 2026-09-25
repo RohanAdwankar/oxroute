@@ -18,6 +18,7 @@ const KEYS: [string, string][] = [
   ["space", "tick an agent, while routing"],
   ["n", "start a new agent for this signal"],
   ["d", "discard this signal"],
+  ["f", "letters on everything; type one to go there"],
   ["i", "add something to the inbox"],
   ["m", "ask me first, or auto route"],
   ["v", "letters on, off"],

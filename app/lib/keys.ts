@@ -5,7 +5,7 @@
  * to the whole routing question rather than to one agent. A letter here can
  * never be a hint, or the badge on a card would do something else.
  */
-export const RESERVED = new Set(["h", "j", "k", "l", "g", "m", "v", "i", "n", "d"]);
+export const RESERVED = new Set(["h", "j", "k", "l", "g", "m", "v", "i", "n", "d", "f"]);
 
 /**
  * Keyboard hints for the fleet.
