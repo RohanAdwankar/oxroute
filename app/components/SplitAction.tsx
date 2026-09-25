@@ -70,7 +70,15 @@ export function SplitAction({
         <Icon name="chevronDown" size={11} />
       </button>
       {open && (
-        <div role="menu" className="absolute top-full right-0 z-30 mt-1 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]">
+        <div
+          role="menu"
+          // The composer sits on the bottom edge, so its menu opens upward;
+          // below the button there is no screen left to draw it on.
+          className={[
+            "absolute right-0 z-30 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]",
+            variant === "composer" ? "bottom-full mb-1" : "top-full mt-1",
+          ].join(" ")}
+        >
           {menu.map((item) => (
             <button
               key={item.label}
