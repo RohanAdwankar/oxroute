@@ -138,32 +138,6 @@ fn doctor() -> Result<()> {
             .join(", ")
     );
     println!(
-        "github          {}",
-        match &config.github_token {
-            Some(_) => format!("token set ({})", config.github_api),
-            None => "no token (boards read snapshots, cards cannot move)".into(),
-        }
-    );
-    for view in &config.views {
-        let detail = match &view.kind {
-            oxroute_core::config::ViewKind::Board(board) => {
-                let mut bits = Vec::new();
-                if let Some(repo) = &board.repo {
-                    bits.push(repo.clone());
-                }
-                if let Some(snapshot) = &board.snapshot {
-                    bits.push(if snapshot.exists() {
-                        snapshot.display().to_string()
-                    } else {
-                        format!("{} (MISSING)", snapshot.display())
-                    });
-                }
-                bits.join(", ")
-            }
-        };
-        println!("view {:<10} {} [{}] {detail}", view.id, view.name, view.kind.as_str());
-    }
-    println!(
         "diagram         {} (in each agent's directory: {})",
         config.diagram_path,
         config.diagram_for("").display()
@@ -230,10 +204,13 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
-        .route("/api/views/{id}/board", get(board))
-        .route("/api/views/{id}/board/move", post(move_card))
-        .route("/api/views/{id}/board/start", post(start_card))
-        .route("/api/views/{id}/unlink", post(unlink))
+        .route("/api/agents/{id}/tags", get(tags).post(change_tags))
+        .route("/api/boards", get(boards).post(create_board))
+        .route(
+            "/api/boards/{id}",
+            get(arrange).put(update_board).delete(delete_board),
+        )
+        .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
         .route("/api/agents/{id}/diagram/preview", post(diagram_preview))
         .route("/api/agents/{id}/diagram/send", post(diagram_send))
@@ -713,70 +690,124 @@ async fn mode(
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
-// -- views -------------------------------------------------------------------
+// -- tags and boards ---------------------------------------------------------
 
-#[derive(Deserialize)]
-struct BoardQuery {
-    #[serde(default)]
-    refresh: bool,
+async fn tags(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<String>>, Failed> {
+    hub.store.agent(&id)?.context("no such agent").map_err(Failed)?;
+    Ok(Json(hub.store.tags(&id)?))
 }
 
-async fn board(
+#[derive(Deserialize)]
+struct TagsBody {
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<String>,
+    /// Replaces any tag with the same key.
+    #[serde(default)]
+    set: Vec<String>,
+}
+
+async fn change_tags(
     State(hub): Hubs,
     Path(id): Path<String>,
-    Query(query): Query<BoardQuery>,
-) -> Result<Json<oxroute_core::board::Board>, Failed> {
-    Ok(Json(hub.board(&id, query.refresh).await?))
+    Json(body): Json<TagsBody>,
+) -> Result<Json<Vec<String>>, Failed> {
+    Ok(Json(hub.tag(&id, &body.add, &body.remove, &body.set)?))
 }
 
+async fn boards(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::tags::Board>>, Failed> {
+    Ok(Json(hub.boards()?))
+}
+
+/// A board as sent: every setting is optional, so `{"name": "Ideas"}` or
+/// `{"columns": "stage"}` alone makes one.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardBody {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    columns: String,
+    #[serde(default)]
+    column_order: Vec<String>,
+    #[serde(default)]
+    rows: String,
+    #[serde(default)]
+    row_order: Vec<String>,
+    #[serde(default)]
+    filters: Vec<String>,
+    #[serde(default)]
+    selected: Vec<String>,
+    #[serde(default)]
+    sort: String,
+}
+
+impl From<BoardBody> for oxroute_core::tags::Board {
+    fn from(body: BoardBody) -> Self {
+        oxroute_core::tags::Board {
+            id: String::new(),
+            name: body.name,
+            columns: body.columns,
+            column_order: body.column_order,
+            rows: body.rows,
+            row_order: body.row_order,
+            filters: body.filters,
+            selected: body.selected,
+            sort: body.sort,
+            created_at: 0.0,
+            updated_at: 0.0,
+        }
+    }
+}
+
+async fn create_board(
+    State(hub): Hubs,
+    Json(body): Json<BoardBody>,
+) -> Result<Json<oxroute_core::tags::Board>, Failed> {
+    Ok(Json(hub.create_board(body.into())?))
+}
+
+async fn update_board(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<BoardBody>,
+) -> Result<Json<oxroute_core::tags::Board>, Failed> {
+    Ok(Json(hub.update_board(&id, body.into())?))
+}
+
+async fn delete_board(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    hub.delete_board(&id)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn arrange(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<oxroute_core::tags::Arranged>, Failed> {
+    Ok(Json(hub.arrange(&id)?))
+}
+
+/// A card dropped on a cell. Each value is null for the lane of sessions
+/// without that key.
 #[derive(Deserialize)]
 struct MoveBody {
-    number: u64,
-    lane: String,
+    agent: String,
+    #[serde(default)]
+    column: Option<String>,
+    #[serde(default)]
+    row: Option<String>,
 }
 
 async fn move_card(
     State(hub): Hubs,
     Path(id): Path<String>,
     Json(body): Json<MoveBody>,
-) -> Result<Json<oxroute_core::board::Board>, Failed> {
-    Ok(Json(hub.move_card(&id, body.number, &body.lane).await?))
-}
-
-#[derive(Deserialize)]
-struct StartBody {
-    number: u64,
-    #[serde(default)]
-    model: Option<String>,
-    /// An agent already running, instead of a new one.
-    #[serde(default)]
-    agent: Option<String>,
-}
-
-async fn start_card(
-    State(hub): Hubs,
-    Path(id): Path<String>,
-    Json(body): Json<StartBody>,
-) -> Result<Json<serde_json::Value>, Failed> {
-    let agent = hub
-        .start_on_card(&id, body.number, body.model.as_deref(), body.agent.as_deref())
-        .await?;
-    Ok(Json(json!({ "agent": agent })))
-}
-
-#[derive(Deserialize)]
-struct UnlinkBody {
-    item: String,
-    agent: String,
-}
-
-async fn unlink(
-    State(hub): Hubs,
-    Path(id): Path<String>,
-    Json(body): Json<UnlinkBody>,
-) -> Result<Json<serde_json::Value>, Failed> {
-    hub.unlink(&id, &body.item, &body.agent)?;
-    Ok(Json(json!({ "ok": true })))
+) -> Result<Json<Vec<String>>, Failed> {
+    Ok(Json(hub.move_card(&id, &body.agent, body.column.as_deref(), body.row.as_deref())?))
 }
 
 /// An agent's diagram: where it is, and the directory its code is in.
@@ -968,86 +999,6 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
         }
-    }
-
-    /// Just enough of GitHub to page through issues and take a PATCH.
-    async fn fake_github() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
-        use axum::extract::{Path as P, Query as Q};
-        let patches = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let issue = |number: u64, labels: &[&str], state: &str| {
-            json!({
-                "number": number, "title": format!("issue {number}"), "state": state,
-                "html_url": format!("https://github.com/o/r/issues/{number}"),
-                "labels": labels.iter().map(|l| json!({ "name": l })).collect::<Vec<_>>(),
-                "body": "", "updated_at": "2026-09-25T00:00:00Z"
-            })
-        };
-        let page_one: Vec<_> = (1..=100)
-            .map(|n| issue(n, &["status:idea", "priority:p2"], "open"))
-            .collect();
-        let page_two = vec![issue(101, &["status:idea", "track:oss"], "open"), json!({
-            "number": 102, "title": "a pull request", "state": "open", "pull_request": {}
-        })];
-        let seen = patches.clone();
-        let app = Router::new()
-            .route(
-                "/repos/o/r/issues",
-                get(move |Q(q): Q<HashMap<String, String>>| {
-                    let page = if q.get("page").map(String::as_str) == Some("1") {
-                        page_one.clone()
-                    } else {
-                        page_two.clone()
-                    };
-                    async move { Json(serde_json::Value::Array(page)) }
-                }),
-            )
-            .route(
-                "/repos/o/r/issues/{n}",
-                get(move |P(n): P<u64>| async move {
-                    Json(issue(n, &["status:idea", "track:oss", "added-since"], "open"))
-                })
-                .patch(move |P(n): P<u64>, Json(body): Json<serde_json::Value>| {
-                    let seen = seen.clone();
-                    async move {
-                        seen.lock().unwrap().push(body.clone());
-                        let labels: Vec<&str> = body["labels"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .map(|l| l.as_str().unwrap())
-                            .collect();
-                        let state = body.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-                        Json(issue(n, &labels, state))
-                    }
-                }),
-            );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (format!("http://{address}"), patches)
-    }
-
-    #[tokio::test]
-    async fn a_board_pages_through_github_and_a_move_rewrites_one_label() {
-        use oxroute_core::board::GitHub;
-        let (api, patches) = fake_github().await;
-        let github = GitHub::new(&api, Some("token".into()));
-        let issues = github.issues("o/r").await.unwrap();
-        // Two pages, and the pull request is not a card.
-        assert_eq!(issues.len(), 101);
-
-        let moved = github.set_lane("o/r", &issues[0], "in-progress").await.unwrap();
-        assert!(moved.labels.contains(&"status:in-progress".to_string()));
-        assert!(!moved.labels.contains(&"status:idea".to_string()));
-        // A label added on GitHub after the board was fetched survives.
-        assert!(moved.labels.contains(&"added-since".to_string()));
-
-        let done = github.set_lane("o/r", &issues[0], "completed").await.unwrap();
-        assert!(!done.open, "moving to done closes the issue");
-        let patches = patches.lock().unwrap();
-        assert_eq!(patches[1]["state"], "closed");
-        assert_eq!(patches[1]["state_reason"], "completed");
-        assert!(patches[0].get("state").is_none(), "an open issue staying open is not reopened");
     }
 
     #[test]

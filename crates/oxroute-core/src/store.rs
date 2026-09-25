@@ -17,6 +17,7 @@ use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
     SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskStatus,
 };
+use crate::tags::Board;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS agents (
@@ -112,12 +113,17 @@ CREATE TABLE IF NOT EXISTS kv (
     value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS view_links (
-    view     TEXT NOT NULL,
-    item     TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS tags (
     agent_id TEXT NOT NULL,
-    at       REAL NOT NULL,
-    PRIMARY KEY (view, item, agent_id)
+    tag      TEXT NOT NULL,
+    PRIMARY KEY (agent_id, tag)
+);
+CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
+
+CREATE TABLE IF NOT EXISTS boards (
+    id         TEXT PRIMARY KEY,
+    spec       TEXT NOT NULL,
+    created_at REAL NOT NULL
 );
 "#;
 
@@ -1071,45 +1077,92 @@ impl Store {
         })
     }
 
-    // -- views -----------------------------------------------------------
+    // -- tags ------------------------------------------------------------
 
-    /// Say that an agent is working on one thing a view shows: a card on a
-    /// board, a change to a diagram. Linking twice is not an error.
-    pub fn link(&self, view: &str, item: &str, agent_id: &str) -> Result<()> {
+    pub fn tags(&self, agent_id: &str) -> Result<Vec<String>> {
         self.with(|c| {
-            c.execute(
-                "INSERT INTO view_links (view, item, agent_id, at) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT DO NOTHING",
-                params![view, item, agent_id, crate::model::now()],
-            )?;
-            Ok(())
+            let mut statement =
+                c.prepare("SELECT tag FROM tags WHERE agent_id = ?1 ORDER BY tag")?;
+            let tags = statement
+                .query_map(params![agent_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            Ok(tags)
         })
     }
 
-    pub fn unlink(&self, view: &str, item: &str, agent_id: &str) -> Result<()> {
+    /// Every tagged session's tags, for drawing a board in one read.
+    pub fn all_tags(&self) -> Result<HashMap<String, Vec<String>>> {
         self.with(|c| {
-            c.execute(
-                "DELETE FROM view_links WHERE view = ?1 AND item = ?2 AND agent_id = ?3",
-                params![view, item, agent_id],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Item -> the agents working on it, oldest link first.
-    pub fn links(&self, view: &str) -> Result<HashMap<String, Vec<String>>> {
-        self.with(|c| {
-            let mut statement = c.prepare(
-                "SELECT item, agent_id FROM view_links WHERE view = ?1 ORDER BY at, rowid",
-            )?;
+            let mut statement = c.prepare("SELECT agent_id, tag FROM tags ORDER BY agent_id, tag")?;
             let mut out: HashMap<String, Vec<String>> = HashMap::new();
-            for row in statement.query_map(params![view], |row| {
+            for row in statement.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })? {
-                let (item, agent) = row?;
-                out.entry(item).or_default().push(agent);
+                let (agent, tag) = row?;
+                out.entry(agent).or_default().push(tag);
             }
             Ok(out)
+        })
+    }
+
+    /// Replace a session's tags with exactly these. The caller has already
+    /// normalised them; see [`crate::tags::change`].
+    pub fn set_tags(&self, agent_id: &str, tags: &[String]) -> Result<()> {
+        self.with(|c| {
+            let transaction = c.unchecked_transaction()?;
+            transaction.execute("DELETE FROM tags WHERE agent_id = ?1", params![agent_id])?;
+            for tag in tags {
+                transaction.execute(
+                    "INSERT OR IGNORE INTO tags (agent_id, tag) VALUES (?1, ?2)",
+                    params![agent_id, tag],
+                )?;
+            }
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
+    // -- boards ----------------------------------------------------------
+
+    /// Boards in the order they were made, which is the order of the tabs.
+    pub fn boards(&self) -> Result<Vec<Board>> {
+        self.with(|c| {
+            let mut statement = c.prepare("SELECT spec FROM boards ORDER BY created_at, id")?;
+            let specs = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            // A board that no longer parses is skipped rather than taking
+            // every other board down with it.
+            Ok(specs
+                .iter()
+                .filter_map(|spec| serde_json::from_str(spec).ok())
+                .collect())
+        })
+    }
+
+    pub fn board(&self, id: &str) -> Result<Option<Board>> {
+        Ok(self.boards()?.into_iter().find(|board| board.id == id))
+    }
+
+    pub fn save_board(&self, board: &Board) -> Result<()> {
+        let spec = serde_json::to_string(board)?;
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO boards (id, spec, created_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET spec = excluded.spec",
+                params![board.id, spec, board.created_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_board(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            anyhow::ensure!(
+                c.execute("DELETE FROM boards WHERE id = ?1", params![id])? == 1,
+                "no such board"
+            );
+            Ok(())
         })
     }
 
@@ -1292,18 +1345,45 @@ mod tests {
     }
 
     #[test]
-    fn a_view_item_remembers_every_agent_linked_to_it() {
+    fn tags_replace_as_a_set_and_read_back_per_session_and_all_at_once() {
         let store = Store::in_memory().unwrap();
-        store.link("ideas", "#12", "agent_a").unwrap();
-        store.link("ideas", "#12", "agent_b").unwrap();
-        store.link("ideas", "#12", "agent_a").unwrap();
-        store.link("arch", "#12", "agent_c").unwrap();
-        let links = store.links("ideas").unwrap();
-        assert_eq!(links["#12"], ["agent_a", "agent_b"]);
-        store.unlink("ideas", "#12", "agent_a").unwrap();
-        assert_eq!(store.links("ideas").unwrap()["#12"], ["agent_b"]);
-        // Views never see each other's links.
-        assert_eq!(store.links("arch").unwrap()["#12"], ["agent_c"]);
+        let tags = |t: &[&str]| t.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        store.set_tags("a", &tags(&["stage:idea", "priority:p2"])).unwrap();
+        store.set_tags("b", &tags(&["stage:building"])).unwrap();
+        store.set_tags("a", &tags(&["stage:eval"])).unwrap();
+        assert_eq!(store.tags("a").unwrap(), ["stage:eval"]);
+        let all = store.all_tags().unwrap();
+        assert_eq!(all["b"], ["stage:building"]);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn boards_keep_their_order_and_their_settings() {
+        let store = Store::in_memory().unwrap();
+        let board = |id: &str, at: f64| Board {
+            id: id.into(),
+            name: id.into(),
+            columns: "stage".into(),
+            column_order: vec!["idea".into()],
+            rows: "project".into(),
+            row_order: vec![],
+            filters: vec!["priority".into()],
+            selected: vec![],
+            sort: String::new(),
+            created_at: at,
+            updated_at: at,
+        };
+        store.save_board(&board("second", 2.0)).unwrap();
+        store.save_board(&board("first", 1.0)).unwrap();
+        let mut renamed = board("first", 1.0);
+        renamed.name = "Ideas".into();
+        store.save_board(&renamed).unwrap();
+        let ids: Vec<_> = store.boards().unwrap().into_iter().map(|b| b.id).collect();
+        assert_eq!(ids, ["first", "second"]);
+        assert_eq!(store.board("first").unwrap().unwrap().name, "Ideas");
+        store.delete_board("second").unwrap();
+        assert!(store.delete_board("second").is_err());
+        assert_eq!(store.boards().unwrap().len(), 1);
     }
 
     #[test]

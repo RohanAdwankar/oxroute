@@ -7,6 +7,7 @@ import { clock, since } from "../lib/format";
 import type { AgentView, DiagramEdit, Entry, EntryKind } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
+import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown } from "./Markdown";
 import { SplitAction } from "./SplitAction";
@@ -93,6 +94,9 @@ export function AgentPanel({
   onSendDiagram,
   onCreateDiagram,
   say,
+  tags,
+  knownTags,
+  onTag,
 }: {
   view: AgentView;
   onBack: () => void;
@@ -101,6 +105,9 @@ export function AgentPanel({
   onSendDiagram: (edits: DiagramEdit[], note: string) => void;
   onCreateDiagram: () => void;
   say: (text: string) => void;
+  tags: string[];
+  knownTags: string[];
+  onTag: (change: { add?: string[]; remove?: string[]; set?: string[] }) => void;
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
@@ -382,6 +389,16 @@ export function AgentPanel({
         >
           <Icon name="stop" />
         </button>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 border-b border-hair px-5 py-[6px]">
+        <TagEditor
+          tags={tags}
+          known={knownTags}
+          busy={busy}
+          onAdd={(tag) => onTag(tagChange(tag))}
+          onRemove={(tag) => onTag({ remove: [tag] })}
+        />
       </div>
 
       {mode === "diagram" && (

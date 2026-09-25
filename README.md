@@ -105,21 +105,22 @@ Full parity, because the point is that you can switch and not notice:
 New on top of that: the inbox, the two other surfaces, the harness seam, and
 `/mode`.
 
-## Views, and three ways to say something
+## Tags, boards, and three ways to say something
 
-**Views.** The main column is the fleet. A view replaces it with another way
-of looking at the same work, and the top bar switches between them. Views are
-declared in the config file as `[[views]]`; `deploy/config.example.toml` has
-them annotated. One kind ships, the board.
+**Tags.** A session carries tags: `key:value` like `stage:idea`,
+`priority:p2` or `project:agents`, or a bare word like `urgent`. Set them from
+a session's header, with `tag stage:idea` or `untag urgent` in its Slack
+thread, or let the agent do it — every turn tells it how, over the same API.
+Nothing in oxroute knows what any tag means.
 
-**Board.** Every issue in a repository as a card, one column per `status:`
-label — the whole plan on one screen. Filter by priority, track, or text. Open
-a card to start an agent on it: the agent gets the issue as its brief and is an
-ordinary agent from then on. The card shows every agent on it, live, and how
-many of their tasks are done. Dragging a card to another column rewrites its
-status label on GitHub, so the same board on another machine — with its own
-agents, on its own harness — sees the move at its next refresh. Without a
-token a board reads a JSON snapshot and is read only.
+**Boards.** A board is a saved way of arranging tagged sessions: a key for the
+columns, a key for the rows, the order of each, keys offered as filters and the
+values selected, and a key to sort by. With both columns and rows set it is a
+grid — project themes down the side, stages across the top — and every card
+sits in the cell its two tags name. Dragging a card to another cell sets those
+two tags. Make as many boards as you like from the `+` in the top bar; each is
+stored in the daemon, so every surface sees the same one, and an agent can
+make or rearrange a board through `/api/boards` just as it tags itself.
 
 **Type, Diagram, Draw.** An agent's composer has three modes. Type is a
 message. The other two are for when a picture says it better:
@@ -137,10 +138,9 @@ message. The other two are for when a picture says it better:
   or dropped image, or a blank page. Pen, box, arrow and text, in one red.
   Sending attaches the result to whatever was typed, and the timeline shows it.
 
-All of it is behaviour in the daemon, behind `/api/views/{id}/…` and
-`/api/agents/{id}/diagram/…`, so every surface can grow it. Adding a view kind
-is a `ViewKind` variant in `config.rs`, the endpoints it needs, a component in
-`app/views/`, and one line in `app/views/registry.tsx`.
+All of it is behaviour in the daemon — `/api/agents/{id}/tags`,
+`/api/boards`, `/api/agents/{id}/diagram/…` — so every surface can grow it.
+`crates/oxroute-core/src/tags.rs` is the whole of what a board is.
 
 ## Two seams
 
@@ -221,7 +221,7 @@ that can reach it can run commands as you. Reach it over an SSH tunnel.
 ```
 crates/oxroute-core/       the library everything else is a client of
   model.rs                 the nouns, and the words a person can type
-  board.rs                 issues as cards, read from GitHub or a snapshot
+  tags.rs                  tags on sessions, and boards arranged by them
   store.rs                 durable state, SQLite
   hub.rs                   the only module that knows about both seams
   source/{mod,slack}.rs    where signals come from
@@ -236,7 +236,6 @@ crates/oxroute-daemon/     HTTP + SSE in front of the hub
   diagram.rs               an agent's diagram: preview, rewrite, brief it
 crates/oxroute-tui/        ratatui, a client of that API
 app/                       Next.js, a client of that API
-  views/                   the view kinds, and the registry that picks one
   components/composer/     drawing a message: the diagram editor and the sketch
 docs/architecture.mmd      this repository as an oxdraw diagram
 deploy/                    systemd units, install script, Slack manifest
@@ -252,7 +251,7 @@ on the protocol. `app/lib/types.ts` is hand-written and pinned by a test in
 against the app-server protocol; the Claude Code harness, run against the
 binary — spawn, answer, resume, remember; the inbox, the bindings, the turn
 lifecycle, steering, forking, side questions, artifacts, naming, the
-dashboard, the migration, the board view, drawn messages; 142 tests, of which 44 drive the hub end to end
+dashboard, the migration, tags and boards, drawn messages; 142 tests, of which 44 drive the hub end to end
 against a fake harness.
 
 **Not yet**: Codex is exercised by tests and by the bot this is a port of, but

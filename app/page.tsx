@@ -8,7 +8,7 @@ import { Fleet } from "./components/Fleet";
 import { Icon } from "./components/Icon";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
-import { VIEWS } from "./views/registry";
+import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
 import {
   HINTS,
@@ -28,7 +28,8 @@ const EMPTY: Snapshot = {
   messages: {},
   inbox: [],
   tasks: [],
-  views: [],
+  tags: {},
+  boards: [],
   sources: [],
   models: [],
 };
@@ -59,8 +60,8 @@ export default function Home() {
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [watch, setWatch] = useState(false);
-  // Which view the main column shows when no agent is open. Null is the fleet.
-  const [viewId, setViewId] = useState<string | null>(null);
+  // Which board the main column shows when no agent is open. Null is the fleet.
+  const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
   const [inboxAt, setInboxAt] = useState(0);
@@ -133,16 +134,15 @@ export default function Home() {
     window.history.pushState(null, "", url);
   }, []);
 
-  const showView = useCallback(
+  const showBoard = useCallback(
     (id: string | null) => {
       showAgent(null);
       setRouting(null);
       setTicked(new Set());
-      setViewId(id);
+      setBoardId(id);
       const url = new URL(window.location.href);
-      if (id) url.searchParams.set("view", id);
-      else url.searchParams.delete("view");
-      url.searchParams.delete("card");
+      if (id) url.searchParams.set("board", id);
+      else url.searchParams.delete("board");
       window.history.replaceState(null, "", url);
     },
     [showAgent],
@@ -156,7 +156,7 @@ export default function Home() {
   useEffect(() => {
     const restore = () => {
       const url = new URL(window.location.href);
-      setViewId(url.searchParams.get("view"));
+      setBoardId(url.searchParams.get("board"));
       const agent = url.searchParams.get("agent");
       setOpen(agent);
       setPanes(agent ? [agent] : []);
@@ -352,8 +352,8 @@ export default function Home() {
   };
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
-  const activeView = snapshot.views.find((view) => view.id === viewId) ?? null;
-  const ActiveView = activeView ? VIEWS[activeView.kind]?.component : undefined;
+  const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
+  const knownTags = [...new Set(Object.values(snapshot.tags).flat())].sort();
   const clearRouting = () => {
     setRouting(null);
     setTicked(new Set());
@@ -415,7 +415,7 @@ export default function Home() {
       // A view owns the main column. The fleet's keys would drive cards
       // nobody can see, so only the ones that reach elsewhere still work.
       if (
-        activeView &&
+        activeBoard &&
         !selected &&
         !open &&
         focus === "fleet" &&
@@ -569,8 +569,14 @@ export default function Home() {
         }
         tasksOpen={tasksOpen}
         onTasks={() => setTasksOpen((current) => !current)}
-        activeView={activeView?.id ?? null}
-        onView={showView}
+        activeBoard={activeBoard?.id ?? null}
+        onBoard={showBoard}
+        onNewBoard={() =>
+          void run(async () => {
+            const board = await api.createBoard({});
+            showBoard(board.id);
+          })
+        }
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -660,6 +666,9 @@ export default function Home() {
                       }
                       onCreateDiagram={() => void run(() => api.createDiagram(id))}
                       say={say}
+                      tags={snapshot.tags[id] ?? []}
+                      knownTags={knownTags}
+                      onTag={(change) => void run(() => api.tag(id, change))}
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}
@@ -705,15 +714,16 @@ export default function Home() {
               );
             })}
           </div>
-        ) : activeView && ActiveView && !selected ? (
-          <ActiveView
-            key={activeView.id}
-            view={activeView}
+        ) : activeBoard && !selected ? (
+          <BoardView
+            key={activeBoard.id}
+            board={activeBoard}
             snapshot={snapshot}
             revision={revision}
             busy={busy}
             run={run}
             say={say}
+            onDeleted={() => showBoard(null)}
             onOpenAgent={(id) => {
               clearRouting();
               showAgent(id);
@@ -731,6 +741,7 @@ export default function Home() {
             models={snapshot.models}
             defaultModel={snapshot.defaultModel}
             messages={snapshot.messages}
+            tags={snapshot.tags}
             watch={watch && !showArchived && selected === null}
             routing={selected}
             ticked={ticked}

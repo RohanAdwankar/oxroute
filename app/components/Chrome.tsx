@@ -1,7 +1,6 @@
 "use client";
 
 import type { Mode, Snapshot } from "../lib/types";
-import { VIEWS } from "../views/registry";
 import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
 
@@ -21,8 +20,9 @@ export function Chrome({
   onWatch,
   tasksOpen,
   onTasks,
-  activeView,
-  onView,
+  activeBoard,
+  onBoard,
+  onNewBoard,
   onSearchOpen,
   onSearchContinue,
 }: {
@@ -35,8 +35,9 @@ export function Chrome({
   onWatch: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
-  activeView: string | null;
-  onView: (id: string | null) => void;
+  activeBoard: string | null;
+  onBoard: (id: string | null) => void;
+  onNewBoard: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
 }) {
@@ -101,29 +102,36 @@ export function Chrome({
         <Icon name="terminal" />
       </button>
 
-      {snapshot.views.length > 0 && (
-        <nav className="flex" aria-label="views">
+      <nav className="flex" aria-label="boards">
+        <ViewTab
+          label="Fleet"
+          icon="terminal"
+          active={activeBoard === null}
+          first
+          last={false}
+          onClick={() => onBoard(null)}
+        />
+        {snapshot.boards.map((board) => (
           <ViewTab
-            label="Fleet"
-            icon="terminal"
-            active={activeView === null}
-            first
+            key={board.id}
+            label={board.name}
+            icon="board"
+            active={activeBoard === board.id}
+            first={false}
             last={false}
-            onClick={() => onView(null)}
+            onClick={() => onBoard(board.id)}
           />
-          {snapshot.views.map((view, index) => (
-            <ViewTab
-              key={view.id}
-              label={view.name}
-              icon={VIEWS[view.kind]?.icon ?? "open"}
-              active={activeView === view.id}
-              first={false}
-              last={index === snapshot.views.length - 1}
-              onClick={() => onView(view.id)}
-            />
-          ))}
-        </nav>
-      )}
+        ))}
+        <button
+          type="button"
+          onClick={onNewBoard}
+          aria-label="new board"
+          title="New board"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink"
+        >
+          <Icon name="plus" size={14} />
+        </button>
+      </nav>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
 

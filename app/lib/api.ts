@@ -3,6 +3,7 @@
 import type {
   Agent,
   AgentView,
+  Arranged,
   Backend,
   Board,
   ConversationLine,
@@ -92,15 +93,20 @@ export const api = {
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
 
-  // Views. Every one is behind the daemon, so a view draws and nothing more.
-  board: (view: string, refresh = false) =>
-    call<Board>(`/api/views/${encodeURIComponent(view)}/board${refresh ? "?refresh=true" : ""}`),
-  moveCard: (view: string, number: number, lane: string) =>
-    post<Board>(`/api/views/${encodeURIComponent(view)}/board/move`, { number, lane }),
-  startCard: (view: string, number: number, options: { model?: string; agent?: string } = {}) =>
-    post<{ agent: Agent }>(`/api/views/${encodeURIComponent(view)}/board/start`, { number, ...options }),
-  unlink: (view: string, item: string, agent: string) =>
-    post<unknown>(`/api/views/${encodeURIComponent(view)}/unlink`, { item, agent }),
+  // Tags and boards. A board is its settings; moving a card is tagging it.
+  tag: (agent: string, change: { add?: string[]; remove?: string[]; set?: string[] }) =>
+    post<string[]>(`/api/agents/${encodeURIComponent(agent)}/tags`, change),
+  createBoard: (board: Partial<Board> = {}) => post<Board>("/api/boards", board),
+  updateBoard: (board: Board) =>
+    call<Board>(`/api/boards/${encodeURIComponent(board.id)}`, {
+      method: "PUT",
+      body: JSON.stringify(board),
+    }),
+  deleteBoard: (id: string) =>
+    call<unknown>(`/api/boards/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  arrange: (id: string) => call<Arranged>(`/api/boards/${encodeURIComponent(id)}`),
+  moveCard: (board: string, agent: string, column: string | null, row: string | null) =>
+    post<string[]>(`/api/boards/${encodeURIComponent(board)}/move`, { agent, column, row }),
 
   // Drawing a message instead of typing one.
   diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),

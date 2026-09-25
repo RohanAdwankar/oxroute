@@ -8,7 +8,7 @@ graph LR
     daemon[HTTP daemon]
     web[Web UI]
     tui[Terminal UI]
-    board[Board]
+    tags[Tags and boards]
     diagram[Diagram]
 
     slack --> hub
@@ -20,7 +20,7 @@ graph LR
     hub --> store
     hub --> codex
     hub --> claude
-    hub --> board
+    hub --> tags
 
 %% OXDRAW CODE slack crates/oxroute-core/src/source/slack.rs
 %% OXDRAW CODE webhook crates/oxroute-daemon/src/main.rs def:ingest
@@ -31,5 +31,5 @@ graph LR
 %% OXDRAW CODE daemon crates/oxroute-daemon/src/main.rs
 %% OXDRAW CODE web app/page.tsx
 %% OXDRAW CODE tui crates/oxroute-tui/src/main.rs
-%% OXDRAW CODE board crates/oxroute-core/src/board.rs
+%% OXDRAW CODE tags crates/oxroute-core/src/tags.rs def:arrange
 %% OXDRAW CODE diagram crates/oxroute-daemon/src/diagram.rs

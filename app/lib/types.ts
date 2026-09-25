@@ -141,64 +141,56 @@ export interface Snapshot {
   messages: Record<string, string>;
   inbox: InboxItem[];
   tasks: TaskItem[];
-  /** What the main column can show besides the fleet, from `[[views]]`. */
-  views: ViewInfo[];
+  /** Agent id -> its tags. */
+  tags: Record<string, string[]>;
+  /** Every board, in tab order. */
+  boards: Board[];
   sources: string[];
   models: ModelInfo[];
 }
 
-// -- views ---------------------------------------------------------------
+// -- tags and boards -------------------------------------------------------
 
-export interface ViewInfo {
-  id: string;
-  name: string;
-  /** Which component draws it: a key of `app/views/registry.tsx`. */
-  kind: string;
-}
-
-/** An agent on a card or a diagram box, as little as the view needs. */
-export interface CardAgent {
-  id: string;
-  name: string;
-  status: AgentStatus;
-  model: string;
-}
-
-export interface Lane {
-  id: string;
-  name: string;
-}
-
-export interface Card {
-  number: number;
-  title: string;
-  url: string;
-  open: boolean;
-  lane: string;
-  priority: string | null;
-  kind: string | null;
-  tracks: string[];
-  tags: string[];
-  body: string;
-  updatedAt: string;
-  agents: CardAgent[];
-  tasksDone: number;
-  tasksTotal: number;
-}
-
+/**
+ * A saved arrangement of sessions by their tags. `columns` and `rows` are
+ * tag keys; with both set the board is a grid. See `crates/oxroute-core/src/tags.rs`.
+ */
 export interface Board {
-  view: string;
+  id: string;
   name: string;
-  repo: string | null;
-  lanes: Lane[];
-  cards: Card[];
-  source: "github" | "snapshot";
-  /** Whether a move writes back to GitHub. */
-  writable: boolean;
-  fetchedAt: number;
-  /** Issues whose status has no column on this board. */
-  hidden: number;
-  warning: string | null;
+  columns: string;
+  columnOrder: string[];
+  rows: string;
+  rowOrder: string[];
+  /** Keys offered as filters. */
+  filters: string[];
+  /** Tags a card must have: any within a key, all across keys. */
+  selected: string[];
+  /** A key to sort cards by; empty for most recent first. */
+  sort: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BoardRow {
+  /** Null is the row of sessions without the row key. */
+  value: string | null;
+  /** Agent ids per cell, lined up with `Arranged.columns`. */
+  cells: string[][];
+}
+
+export interface Arranged {
+  board: Board;
+  /** Column values; null is the column of sessions without the key. */
+  columns: (string | null)[];
+  rows: BoardRow[];
+  sessions: Record<string, Agent>;
+  /** Every key in use, with its values. */
+  values: Record<string, string[]>;
+  /** Bare tags in use. */
+  plain: string[];
+  shown: number;
+  total: number;
 }
 
 export interface CodeRef {

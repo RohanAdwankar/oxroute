@@ -57,18 +57,22 @@ Implement the trait in `source/mod.rs` or `agent/mod.rs` and register it in
 shared). Optional methods have defaults that refuse honestly; prefer that to
 a silent no-op. `tests/hub.rs` has a fake of each to copy.
 
-## Adding a view
+## Tags and boards
 
-A view is another way of drawing the main column. Its kind is a `ViewKind`
-variant in `config.rs`, which is also where its `[[views]]` keys are checked;
-what it does lives in the core behind `/api/views/{id}/…`; and it is drawn by
-a component in `app/views/` registered in `app/views/registry.tsx`. Keep the
-component to drawing: board logic is in `board.rs` and the hub.
+A tag is `key:value` or a bare word on a session, and `tags.rs` never
+learns what one means. Keep it that way: the moment a key is special-cased
+(a "stage" that must be one of five values, a "priority" sorted by hand) the
+board stops being general. Ordering belongs in the board's `columnOrder` and
+`rowOrder`, not in code.
 
-**A board writes exactly one thing back: the `status:` label.** It reads the
-issue fresh before the write so a label added on GitHub since the last fetch
-is never dropped. Everything else on a card — agents, task progress — is
-oxroute's own state, joined in from `view_links` and the task list.
+**`set` replaces a key, `add` keeps it.** A column move and "the stage is
+now X" are `set`; a second `track:` is `add`. A bare key in `remove` takes
+every value of it, which is what dropping a card in the "No stage" lane does.
+
+**A board is its settings and nothing else.** It is stored whole and
+replaced whole, by whoever rearranges it, so there is one way to change one.
+Its layout is worked out on read (`tags::arrange`) from the sessions as they
+are, and a filter never removes a column.
 
 ## Drawing a message
 

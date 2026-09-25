@@ -353,7 +353,6 @@ struct Harnessed {
     can_steer: bool,
     delay: Duration,
     backend: Backend,
-    views: Vec<oxroute_core::config::ViewConfig>,
 }
 
 impl Default for Harnessed {
@@ -364,7 +363,6 @@ impl Default for Harnessed {
             can_steer: true,
             delay: Duration::ZERO,
             backend: Backend::Codex,
-            views: vec![],
         }
     }
 }
@@ -453,9 +451,6 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         slack_bot_token: None,
         owner: "U_ME".into(),
         listen: "127.0.0.1:0".into(),
-        github_token: None,
-        github_api: "https://api.github.invalid".into(),
-        views: options.views.clone(),
         diagram_path: "docs/architecture.mmd".into(),
     };
 
@@ -818,8 +813,11 @@ async fn local_forks_nest_and_open_source_threads() {
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let original = w.hub.store.agents(10).unwrap()[0].id.clone();
 
+    w.hub.tag(&original, &["stage:building".into()], &[], &[]).unwrap();
     let child = w.hub.fork_local(&original).await.unwrap();
     let grandchild = w.hub.fork_local(&child.id).await.unwrap();
+    // A branch of the work sits where the work sits.
+    assert_eq!(w.hub.store.tags(&grandchild.id).unwrap(), ["stage:building"]);
 
     assert_eq!(
         w.posts.lock().unwrap().threads,
@@ -1625,137 +1623,141 @@ async fn something_you_typed_carries_no_provenance_label() {
     assert_eq!(received.origin, "");
 }
 
-// -- views ---------------------------------------------------------------
+// -- tags and boards -------------------------------------------------------
 
-fn board_view(id: &str, snapshot: &std::path::Path) -> oxroute_core::config::ViewConfig {
-    use oxroute_core::config::{BoardConfig, ViewConfig, ViewKind, DEFAULT_LANES};
-    ViewConfig {
-        id: id.into(),
-        name: "Ideas".into(),
-        kind: ViewKind::Board(BoardConfig {
-            repo: None,
-            snapshot: Some(snapshot.to_path_buf()),
-            lanes: DEFAULT_LANES.iter().map(|l| l.to_string()).collect(),
-        }),
-        model: None,
-        cwd: None,
-    }
+fn words(tags: &[&str]) -> Vec<String> {
+    tags.iter().map(|t| t.to_string()).collect()
 }
 
-async fn world_with_board(mode: Mode) -> (World, PathBuf) {
-    let snapshot = std::env::temp_dir().join(format!(
-        "oxroute-board-{}-{}.json",
-        std::process::id(),
-        new_id("t")
-    ));
-    std::fs::write(
-        &snapshot,
-        r#"{"ideas": [
-            {"issue": 9, "title": "modular ui", "state": "open", "status": "idea",
-             "priority": 1, "kind": "devtool", "tracks": ["oss"], "tags": [],
-             "body": "move every issue onto a board", "url": "https://github.com/o/r/issues/9",
-             "updated_at": "2026-09-25T01:43:46Z"},
-            {"issue": 8, "title": "not space efficient", "state": "closed", "status": null,
-             "priority": null, "kind": null, "tracks": [], "tags": [], "body": "",
-             "url": "", "updated_at": "2026-09-22T22:04:04Z"}
-        ]}"#,
-    )
-    .unwrap();
-    let w = build(
-        mode,
-        Harnessed {
-            views: vec![board_view("ideas", &snapshot)],
-            ..Default::default()
-        },
-    )
-    .await;
-    (w, snapshot)
+async fn two_sessions(w: &World) -> (String, String) {
+    w.hub.accept(signal("100.0", "100.0", "first idea")).await.unwrap();
+    w.hub.accept(signal("200.0", "200.0", "second idea")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap().len() == 2).await);
+    let agents = w.hub.store.agents(10).unwrap();
+    let id = |name: &str| agents.iter().find(|a| a.name == name).unwrap().id.clone();
+    (id("first idea"), id("second idea"))
 }
 
 #[tokio::test]
-async fn a_board_reads_its_snapshot_into_columns() {
-    let (w, _) = world_with_board(Mode::Ask).await;
-    let snapshot = w.hub.snapshot(10).unwrap();
-    assert_eq!(snapshot.views.len(), 1);
-    assert_eq!(snapshot.views[0].kind, "board");
-
-    let board = w.hub.board("ideas", false).await.unwrap();
-    assert_eq!(board.source, "snapshot");
-    assert!(!board.writable, "a snapshot cannot be written back");
-    let lane = |n: u64| board.cards.iter().find(|c| c.number == n).unwrap().lane.clone();
-    assert_eq!(lane(9), "idea");
-    // Closed with no status reads as done.
-    assert_eq!(lane(8), "completed");
-    assert_eq!(board.lanes[2].name, "Building");
+async fn tags_set_add_and_remove_and_show_in_the_snapshot() {
+    let w = world(Mode::Auto, false).await;
+    let (first, _) = two_sessions(&w).await;
+    w.hub.tag(&first, &words(&["Stage: Idea", "track:oss"]), &[], &[]).unwrap();
+    let now = w.hub.tag(&first, &words(&["track:business"]), &[], &words(&["stage:building"])).unwrap();
+    assert_eq!(now, ["stage:building", "track:business", "track:oss"]);
+    assert_eq!(w.hub.snapshot(10).unwrap().tags[&first], now);
+    let error = w.hub.tag(&first, &words(&["stage:"]), &[], &[]).unwrap_err().to_string();
+    assert!(error.contains("is not a tag"), "{error}");
+    assert!(w.hub.tag("nobody", &words(&["x"]), &[], &[]).is_err());
 }
 
 #[tokio::test]
-async fn starting_an_agent_on_a_card_puts_it_on_the_card_with_its_progress() {
-    // Ask mode, on purpose: starting from a card is itself the decision, so
-    // it must not wait in the inbox for a second one.
-    let (w, _) = world_with_board(Mode::Ask).await;
-    let agent = w.hub.start_on_card("ideas", 9, None, None).await.unwrap();
+async fn a_board_is_its_settings_and_moving_a_card_is_setting_one_tag() {
+    let w = world(Mode::Auto, false).await;
+    let (first, second) = two_sessions(&w).await;
+    w.hub.tag(&first, &words(&["stage:idea", "priority:p2"]), &[], &[]).unwrap();
+    w.hub.tag(&second, &words(&["stage:building", "priority:p1"]), &[], &[]).unwrap();
 
-    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
-    let started = w.calls.lock().unwrap().started.clone();
-    let prompt = started[0].1.iter().filter_map(TurnInput::as_text).next().unwrap().to_string();
-    assert!(prompt.starts_with("Work on #9: modular ui"), "{prompt}");
-    assert!(prompt.contains("move every issue onto a board"));
-
-    let task = w.hub.create_task("draw the columns", &agent.id).unwrap();
-    w.hub.create_task("wire the presets", &agent.id).unwrap();
-    w.hub
-        .update_task(&task.id, &task.text, TaskStatus::Complete, "", &agent.id)
-        .unwrap();
-
-    let board = w.hub.board("ideas", false).await.unwrap();
-    let card = board.cards.iter().find(|c| c.number == 9).unwrap();
-    assert_eq!(card.agents.len(), 1);
-    assert_eq!(card.agents[0].id, agent.id);
-    // Named for the issue, not for the first words of its brief.
-    assert_eq!(card.agents[0].name, "#9 modular ui");
-    assert_eq!((card.tasks_done, card.tasks_total), (1, 2));
-
-    // The agent is an ordinary one, and says where its work came from.
-    let received = w
+    let board = w
         .hub
-        .timeline(&agent.id, 10)
-        .unwrap()
-        .into_iter()
-        .find(|e| e.kind == EntryKind::Received)
+        .create_board(oxroute_core::tags::Board {
+            id: String::new(),
+            name: String::new(),
+            columns: "stage".into(),
+            column_order: words(&["idea", "building", "shipped"]),
+            rows: String::new(),
+            row_order: vec![],
+            filters: words(&["priority"]),
+            selected: vec![],
+            sort: String::new(),
+            created_at: 0.0,
+            updated_at: 0.0,
+        })
         .unwrap();
-    assert_eq!(received.origin, "board Ideas #9");
+    assert_eq!(board.name, "Board 1");
+    assert_eq!(w.hub.snapshot(10).unwrap().boards.len(), 1);
+
+    let laid = w.hub.arrange(&board.id).unwrap();
+    // The cards in a column of the first row.
+    let column = |laid: &oxroute_core::tags::Arranged, value: &str| {
+        let at = laid.columns.iter().position(|c| c.as_deref() == Some(value)).unwrap();
+        laid.rows[0].cells[at].clone()
+    };
+    assert_eq!(column(&laid, "idea"), vec![first.clone()]);
+    assert_eq!(column(&laid, "building"), vec![second.clone()]);
+
+    // Drag the first card to an empty column.
+    let tags = w.hub.move_card(&board.id, &first, Some("shipped"), None).unwrap();
+    assert_eq!(tags, ["priority:p2", "stage:shipped"]);
+    assert_eq!(column(&w.hub.arrange(&board.id).unwrap(), "shipped"), vec![first.clone()]);
+
+    // And off every column, to the one for sessions with no stage.
+    w.hub.move_card(&board.id, &first, None, None).unwrap();
+    let laid = w.hub.arrange(&board.id).unwrap();
+    assert_eq!(laid.columns.last().unwrap(), &None);
+    assert_eq!(laid.rows[0].cells.last().unwrap(), &vec![first.clone()]);
+
+    // With rows as well, a drop names a cell and sets both tags.
+    let mut grid = board.clone();
+    grid.rows = "project".into();
+    grid.row_order = words(&["agents", "compilers"]);
+    w.hub.update_board(&board.id, grid).unwrap();
+    let tags = w.hub.move_card(&board.id, &first, Some("idea"), Some("compilers")).unwrap();
+    assert_eq!(tags, ["priority:p2", "project:compilers", "stage:idea"]);
+    let laid = w.hub.arrange(&board.id).unwrap();
+    let compilers = laid.rows.iter().find(|r| r.value.as_deref() == Some("compilers")).unwrap();
+    assert_eq!(compilers.cells[0], vec![first.clone()]);
+
+    // Rearranging is replacing the settings, whoever does it.
+    let mut rearranged = board.clone();
+    rearranged.name = "Priorities".into();
+    rearranged.columns = "priority".into();
+    rearranged.rows = String::new();
+    rearranged.selected = words(&["stage:building"]);
+    let saved = w.hub.update_board(&board.id, rearranged).unwrap();
+    assert_eq!(saved.created_at, board.created_at);
+    let laid = w.hub.arrange(&board.id).unwrap();
+    assert_eq!((laid.shown, laid.total), (1, 2));
+    assert_eq!(column(&laid, "p1"), vec![second.clone()]);
+
+    w.hub.delete_board(&board.id).unwrap();
+    assert!(w.hub.arrange(&board.id).is_err());
+}
+
+#[tokio::test]
+async fn a_thread_can_tag_its_own_session() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "an idea")).await.unwrap();
+    assert!(settle(|| !w.hub.store.agents(10).unwrap().is_empty()).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.accept(signal("100.0", "101.0", "tag stage:idea priority:p2")).await.unwrap();
+    assert!(settle(|| w.hub.store.tags(&agent).unwrap().len() == 2).await);
+    w.hub.accept(signal("100.0", "102.0", "untag priority")).await.unwrap();
+    assert!(settle(|| w.hub.store.tags(&agent).unwrap() == ["stage:idea"]).await);
     assert!(w
-        .hub
-        .store
-        .inbox(10)
+        .posts
+        .lock()
         .unwrap()
+        .replies
         .iter()
-        .all(|item| item.state == InboxState::Done));
+        .any(|(_, text)| text == "Tagged: stage:idea"));
 }
 
 #[tokio::test]
-async fn more_work_on_a_card_can_go_to_the_agent_already_on_it() {
-    let (w, _) = world_with_board(Mode::Auto).await;
-    let first = w.hub.start_on_card("ideas", 9, None, None).await.unwrap();
+async fn every_turn_tells_the_agent_how_to_tag_itself() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "do the thing")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
-    let again = w.hub.start_on_card("ideas", 9, None, Some(&first.id)).await.unwrap();
-    assert_eq!(again.id, first.id);
-    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
-    assert_eq!(w.hub.store.agents(10).unwrap().len(), 1);
-
-    w.hub.unlink("ideas", "#9", &first.id).unwrap();
-    let board = w.hub.board("ideas", false).await.unwrap();
-    assert!(board.cards.iter().all(|c| c.agents.is_empty()));
-}
-
-#[tokio::test]
-async fn a_snapshot_board_refuses_a_move_instead_of_pretending() {
-    let (w, _) = world_with_board(Mode::Ask).await;
-    let error = w.hub.move_card("ideas", 9, "in-progress").await.unwrap_err().to_string();
-    assert!(error.contains("snapshot"), "{error}");
-    let error = w.hub.move_card("ideas", 9, "shipped").await.unwrap_err().to_string();
-    assert!(error.contains("no shipped column"), "{error}");
-    let error = w.hub.board("nope", false).await.unwrap_err().to_string();
-    assert!(error.contains("no view called nope"), "{error}");
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let started = w.calls.lock().unwrap().started.clone();
+    let told = started[0]
+        .1
+        .iter()
+        .filter_map(TurnInput::as_text)
+        .find(|text| text.contains("/api/agents/"))
+        .expect("no tagging instruction")
+        .to_string();
+    assert!(told.contains(&format!("/api/agents/{agent}/tags")), "{told}");
+    assert!(told.contains("/api/boards"));
 }
