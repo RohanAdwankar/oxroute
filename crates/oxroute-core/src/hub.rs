@@ -824,29 +824,34 @@ impl Hub {
         self.record(&agent.id, EntryKind::You, &shown, "", "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
-            None => {
-                let (target, permalink) = self.open_current_thread(&shown).await?;
-                for binding in self.store.bindings_for(&agent.id)? {
-                    if binding.source == target.source && binding.conversation != target.conversation
-                    {
-                        self.store.unbind(
-                            &binding.source,
-                            &binding.conversation,
-                            &binding.thread_key,
-                        )?;
+            None => match self.open_current_thread(&shown).await? {
+                Some((target, permalink)) => {
+                    for binding in self.store.bindings_for(&agent.id)? {
+                        if binding.source == target.source
+                            && binding.conversation != target.conversation
+                        {
+                            self.store.unbind(
+                                &binding.source,
+                                &binding.conversation,
+                                &binding.thread_key,
+                            )?;
+                        }
                     }
+                    self.store.bind(
+                        &target.source,
+                        &target.conversation,
+                        &target.thread_key,
+                        &agent.id,
+                    )?;
+                    if !permalink.is_empty() {
+                        self.store.set_agent_permalink(&agent.id, &permalink)?;
+                    }
+                    (Some(target), true)
                 }
-                self.store.bind(
-                    &target.source,
-                    &target.conversation,
-                    &target.thread_key,
-                    &agent.id,
-                )?;
-                if !permalink.is_empty() {
-                    self.store.set_agent_permalink(&agent.id, &permalink)?;
-                }
-                (Some(target), true)
-            }
+                // Nowhere to mirror to. The agent still gets the message and
+                // the timeline still records it.
+                None => (None, false),
+            },
         };
 
         // A question submitted from the web or TUI is part of the Slack
@@ -1674,7 +1679,7 @@ impl Hub {
             .unwrap_or_else(|| self.config.backend_for(&model));
 
         let slack_home = if signal.source == "you" {
-            Some(self.open_current_thread(&signal.text).await?)
+            self.open_current_thread(&signal.text).await?
         } else {
             None
         };
@@ -1888,18 +1893,32 @@ impl Hub {
         ))
     }
 
-    async fn open_current_thread(&self, text: &str) -> Result<(Target, String)> {
-        let (source_name, conversation, _) = self
-            .dashboard_location()
-            .context("no current source conversation")?;
-        let source = self
-            .source(&source_name)
-            .with_context(|| format!("source {source_name} is not configured"))?;
-        let (thread_key, permalink) = source.open_thread(&conversation, text).await?;
-        Ok((
-            Target::new(source_name, conversation, thread_key),
-            permalink,
-        ))
+    /// Open a thread in whichever source conversation is currently in play.
+    ///
+    /// `None` when there is nowhere to mirror to: no source configured, none
+    /// in play yet, or the source refused. Slack is a mirror and not a
+    /// prerequisite -- on a machine with no Slack app an agent simply lives
+    /// only in the UI, and work must never be blocked on somewhere to echo
+    /// it to.
+    async fn open_current_thread(&self, text: &str) -> Result<Option<(Target, String)>> {
+        let Some((source_name, conversation, _)) = self.dashboard_location() else {
+            return Ok(None);
+        };
+        let Some(source) = self.source(&source_name) else {
+            return Ok(None);
+        };
+        match source.open_thread(&conversation, text).await {
+            Ok((thread_key, permalink)) => Ok(Some((
+                Target::new(source_name, conversation, thread_key),
+                permalink,
+            ))),
+            // A configured source that is failing is worth knowing about,
+            // but not worth refusing to start the work over.
+            Err(error) => {
+                tracing::warn!(source = %source_name, %error, "could not open a thread to mirror into");
+                Ok(None)
+            }
+        }
     }
 
     /// Keep the one dashboard message current. Posted on first use into
@@ -2108,7 +2127,18 @@ impl Hub {
         } else {
             native.cwd
         };
-        let (target, permalink) = self.open_current_thread(&prompt).await?;
+        // Mirror it into the current conversation when there is one. With
+        // no source configured the continued session lives in the UI, which
+        // is a complete way to use oxroute rather than a degraded one.
+        let mirrored = self.open_current_thread(&prompt).await?;
+        let permalink = mirrored
+            .as_ref()
+            .map(|(_, permalink)| permalink.clone())
+            .unwrap_or_default();
+        let local = new_id("msg");
+        let target = mirrored
+            .map(|(target, _)| target)
+            .unwrap_or_else(|| Target::new("you", "local", local));
         let signal = Signal {
             id: new_id("sig"),
             source: target.source.clone(),

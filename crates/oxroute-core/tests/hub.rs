@@ -982,7 +982,10 @@ async fn the_same_native_session_can_be_continued_more_than_once() {
 }
 
 #[tokio::test]
-async fn continuing_without_a_current_source_conversation_fails_before_creating_an_agent() {
+async fn continuing_without_a_current_source_conversation_still_works() {
+    // Slack is a mirror, not a prerequisite. With nowhere to echo to, a
+    // continued session lives in the UI, which is a complete way to use
+    // oxroute rather than a degraded one.
     let w = world(Mode::Auto, false).await;
     w.native.lock().unwrap().push(NativeSession {
         backend: Backend::Codex,
@@ -994,14 +997,52 @@ async fn continuing_without_a_current_source_conversation_fails_before_creating_
         updated_at: 42.0,
     });
 
-    assert!(w
+    let agent = w
         .hub
         .continue_session(Backend::Codex, "native-local")
         .await
-        .unwrap_err()
-        .to_string()
-        .contains("no current source conversation"));
-    assert!(w.hub.store.agents(20).unwrap().is_empty());
+        .expect("no source conversation must not stop the work");
+
+    assert_eq!(w.hub.store.agents(20).unwrap().len(), 1);
+    assert_eq!(agent.cwd, "/work/local");
+    // It is bound somewhere local rather than to a Slack thread that does
+    // not exist, and has no permalink to offer.
+    assert!(agent.permalink.is_empty());
+    let bindings = w.hub.store.bindings_for(&agent.id).unwrap();
+    assert!(
+        bindings.iter().all(|binding| binding.source != "slack"),
+        "nothing should be bound to slack: {bindings:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_can_be_started_from_the_ui_with_no_source_configured() {
+    // The case that was broken: on a laptop with no Slack app, pressing
+    // "start a new agent" refused with "no current source conversation".
+    let w = world(Mode::Ask, false).await;
+    let mut typed = signal("500.0", "500.0", "look into the flaky test");
+    typed.source = "you".into();
+    w.hub.accept(typed).await.unwrap();
+
+    let waiting = w
+        .hub
+        .store
+        .inbox(10)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.state == InboxState::Waiting)
+        .expect("a typed note waits in ask mode");
+
+    w.hub
+        .route(
+            &waiting.signal.id,
+            Routing::Spawn { backend: None, model: None, cwd: None },
+        )
+        .await
+        .expect("starting an agent must not need somewhere to mirror to");
+
+    assert!(settle(|| w.hub.store.agents(10).unwrap().len() == 1).await);
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
 }
 
 #[tokio::test]
