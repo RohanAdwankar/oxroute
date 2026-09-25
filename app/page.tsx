@@ -13,6 +13,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
 import {
   HINTS,
+  LETTERS,
   defaultVimMode,
   getVimMode,
   isTyping,
@@ -409,6 +410,11 @@ export default function Home() {
         return;
       }
 
+      // With the hints off this is a mouse interface, so a bare letter must
+      // not act: n started an agent and m changed how everything routes.
+      // Arrows, enter, escape and tab are nobody's typing, and stay.
+      if (!vim && LETTERS.has(event.key)) return;
+
       const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here = focus === "inbox" ? inbox.length : fleet.length;
@@ -432,7 +438,6 @@ export default function Home() {
           stop();
           return move(-1);
         case "g":
-          if (!vim) return;
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(0);
         case "G":
@@ -506,7 +511,6 @@ export default function Home() {
         case "f":
           // Everything reachable wears a letter, so nothing here has to be
           // remembered.
-          if (!vim) return;
           stop();
           return setJump(true);
         case "i":

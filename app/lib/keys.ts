@@ -38,6 +38,27 @@ export const HINTS = [
   "p",
 ].filter((key) => !RESERVED.has(key));
 
+/**
+ * The keys that only mean something with the hints on: someone with the
+ * hints off is likelier to be about to type them than to have pressed them
+ * on purpose. v and ? are not here on purpose -- one turns the hints back
+ * on and the other says how, so they answer whatever state you are in.
+ */
+export const LETTERS = new Set([
+  "h",
+  "j",
+  "k",
+  "l",
+  "g",
+  "G",
+  "m",
+  "i",
+  "/",
+  "n",
+  "d",
+  "f",
+]);
+
 export function hintFor(index: number): string | null {
   return HINTS[index] ?? null;
 }
