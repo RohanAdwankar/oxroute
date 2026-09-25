@@ -56,7 +56,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [help, setHelp] = useState(false);
@@ -74,6 +74,7 @@ export default function Home() {
   const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
   // A signal the inbox cursor should land on as soon as the daemon reports it.
   const landOn = useRef<string | null>(null);
+  const firstLoad = useRef(true);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -83,7 +84,6 @@ export default function Home() {
         inboxWidthRef.current = saved;
         lastInboxWidth.current = saved;
       }
-      setInboxOpen(window.localStorage.getItem("oxroute.inboxOpen") !== "false");
       setWatch(window.localStorage.getItem("oxroute.watch") === "true");
     });
     return () => window.cancelAnimationFrame(frame);
@@ -91,7 +91,6 @@ export default function Home() {
 
   const setInboxVisible = useCallback((open: boolean) => {
     setInboxOpen(open);
-    window.localStorage.setItem("oxroute.inboxOpen", String(open));
     if (open) {
       setInboxWidth(lastInboxWidth.current);
       inboxWidthRef.current = lastInboxWidth.current;
@@ -233,6 +232,12 @@ export default function Home() {
       (next) => {
         if (!live) return;
         setSnapshot(next);
+        // Nothing to decide, nothing to read: the column earns its width by
+        // having something waiting in it.
+        if (firstLoad.current) {
+          firstLoad.current = false;
+          setInboxVisible(next.inbox.some((item) => item.state === "waiting"));
+        }
         setReady(true);
         // Something you just typed in is a decision you are about to make, so
         // it opens as one: the enter that adds it lands on the routing
@@ -251,7 +256,7 @@ export default function Home() {
     return () => {
       live = false;
     };
-  }, [revision, complain, openRouting]);
+  }, [revision, complain, openRouting, setInboxVisible]);
 
   useEffect(() => {
     if (panes.length === 0) return;

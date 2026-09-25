@@ -41,6 +41,7 @@ export function TaskPanel({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [showDone, setShowDone] = useState(false);
   const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
   const ordered = [...tasks].sort((a, b) => {
@@ -49,6 +50,95 @@ export function TaskPanel({
     return group(a) - group(b) || Number(a.status === "complete") - Number(b.status === "complete") || b.updatedAt - a.updatedAt;
   });
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
+  // A finished task is a record, not work; it is kept, not shown.
+  const open = ordered.filter((task) => task.status !== "complete");
+  const finished = ordered.filter((task) => task.status === "complete");
+
+  const row = (task: TaskItem) => {
+    const blockers = tasks.filter((candidate) => candidate.id !== task.id);
+    return <div key={task.id} className="group flex items-start gap-3 border-b border-hair px-5 py-4">
+    <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
+    <div className="min-w-0 flex-1">
+      {editing === task.id ? (
+        <input
+          autoFocus
+          value={editDraft}
+          onChange={(event) => setEditDraft(event.target.value)}
+          onBlur={() => {
+            const text = editDraft.trim();
+            setEditing(null);
+            if (text && text !== task.text) onUpdate({ ...task, text });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setEditDraft(task.text);
+              event.currentTarget.blur();
+            }
+          }}
+          className="w-full border-b border-edge bg-transparent text-[13px] outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(task.id);
+            setEditDraft(task.text);
+          }}
+          className={`block w-full cursor-text text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
+        >
+          {task.text}
+        </button>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <select
+          value={task.status}
+          disabled={busy}
+          aria-label={`status for ${task.text}`}
+          onChange={(event) => {
+            const status = event.target.value as TaskStatus;
+            onUpdate({
+              ...task,
+              status,
+              blockedByTaskId: status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
+            });
+          }}
+          className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
+        >
+          {STATES.map((state) => (
+            <option key={state.value} value={state.value} disabled={state.value === "blocked" && blockers.length === 0}>
+              {state.label}
+            </option>
+          ))}
+        </select>
+        {task.status === "blocked" && (
+          <select
+            value={task.blockedByTaskId}
+            disabled={busy}
+            aria-label={`blocking task for ${task.text}`}
+            onChange={(event) => onUpdate({ ...task, blockedByTaskId: event.target.value })}
+            className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-[#a6493d] outline-none"
+          >
+            {blockers.map((blocker) => <option key={blocker.id} value={blocker.id}>blocked by {blocker.text}</option>)}
+          </select>
+        )}
+        <select
+          value={task.agentId}
+          disabled={busy}
+          aria-label={`assign ${task.text}`}
+          onChange={(event) => onUpdate({ ...task, agentId: event.target.value })}
+          className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-faint outline-none"
+        >
+          <option value="">Unassigned</option>
+          {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+        </select>
+      </div>
+    </div>
+    <button type="button" onClick={() => onDelete(task.id)} disabled={busy} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
+      <Icon name="discard" size={14} />
+    </button>
+  </div>;
+  };
 
   const create = () => {
     const text = draft.trim();
@@ -96,90 +186,17 @@ export function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>
-          {ordered.map((task) => {
-            const blockers = tasks.filter((candidate) => candidate.id !== task.id);
-            return <div key={task.id} className="group flex items-start gap-3 border-b border-hair px-5 py-4">
-            <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
-            <div className="min-w-0 flex-1">
-              {editing === task.id ? (
-                <input
-                  autoFocus
-                  value={editDraft}
-                  onChange={(event) => setEditDraft(event.target.value)}
-                  onBlur={() => {
-                    const text = editDraft.trim();
-                    setEditing(null);
-                    if (text && text !== task.text) onUpdate({ ...task, text });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                    if (event.key === "Escape") {
-                      setEditDraft(task.text);
-                      event.currentTarget.blur();
-                    }
-                  }}
-                  className="w-full border-b border-edge bg-transparent text-[13px] outline-none"
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditing(task.id);
-                    setEditDraft(task.text);
-                  }}
-                  className={`block w-full cursor-text text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
-                >
-                  {task.text}
-                </button>
-              )}
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <select
-                  value={task.status}
-                  disabled={busy}
-                  aria-label={`status for ${task.text}`}
-                  onChange={(event) => {
-                    const status = event.target.value as TaskStatus;
-                    onUpdate({
-                      ...task,
-                      status,
-                      blockedByTaskId: status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
-                    });
-                  }}
-                  className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
-                >
-                  {STATES.map((state) => (
-                    <option key={state.value} value={state.value} disabled={state.value === "blocked" && blockers.length === 0}>
-                      {state.label}
-                    </option>
-                  ))}
-                </select>
-                {task.status === "blocked" && (
-                  <select
-                    value={task.blockedByTaskId}
-                    disabled={busy}
-                    aria-label={`blocking task for ${task.text}`}
-                    onChange={(event) => onUpdate({ ...task, blockedByTaskId: event.target.value })}
-                    className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-[#a6493d] outline-none"
-                  >
-                    {blockers.map((blocker) => <option key={blocker.id} value={blocker.id}>blocked by {blocker.text}</option>)}
-                  </select>
-                )}
-                <select
-                  value={task.agentId}
-                  disabled={busy}
-                  aria-label={`assign ${task.text}`}
-                  onChange={(event) => onUpdate({ ...task, agentId: event.target.value })}
-                  className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-faint outline-none"
-                >
-                  <option value="">Unassigned</option>
-                  {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <button type="button" onClick={() => onDelete(task.id)} disabled={busy} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
-              <Icon name="discard" size={14} />
+          {open.map(row)}
+          {finished.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDone((shown) => !shown)}
+              className="w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink"
+            >
+              Done · {finished.length}
             </button>
-          </div>})}
+          )}
+          {showDone && finished.map(row)}
         </>}
       </div>
     </aside>
