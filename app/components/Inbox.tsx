@@ -41,6 +41,8 @@ export function Inbox({
 }) {
   const waiting = items.filter((item) => item.state === "waiting");
   const done = items.filter((item) => item.state !== "waiting");
+  // What is settled is settled; it is kept, not shown.
+  const [showDone, setShowDone] = useState(false);
   const name = (id: string) => agents.find((a) => a.id === id)?.name ?? "an agent";
   const at = items[cursor]?.signal.id ?? null;
 
@@ -84,8 +86,10 @@ export function Inbox({
           />
         ))}
 
-        {done.length > 0 && <Band label="Done" />}
-        {done.map((item) => (
+        {done.length > 0 && (
+          <Band label={`Done · ${done.length}`} onClick={() => setShowDone((open) => !open)} />
+        )}
+        {showDone && done.map((item) => (
           <Row
             key={item.signal.id}
             item={item}
@@ -155,11 +159,28 @@ function Compose({
   );
 }
 
-function Band({ label, strong }: { label: string; strong?: boolean }) {
+function Band({
+  label,
+  strong,
+  onClick,
+}: {
+  label: string;
+  strong?: boolean;
+  onClick?: () => void;
+}) {
+  const skin = "w-full border-y border-rule bg-band px-[18px] py-2 text-left first:border-t-0";
+  const text = `text-[11px] ${strong ? "text-ink" : "text-faint"}`;
+  if (!onClick) {
+    return (
+      <div className={skin}>
+        <span className={text}>{label}</span>
+      </div>
+    );
+  }
   return (
-    <div className="border-y border-rule bg-band px-[18px] py-2 first:border-t-0">
-      <span className={`text-[11px] ${strong ? "text-ink" : "text-faint"}`}>{label}</span>
-    </div>
+    <button type="button" onClick={onClick} className={`${skin} cursor-pointer hover:text-ink`}>
+      <span className={text}>{label}</span>
+    </button>
   );
 }
 
