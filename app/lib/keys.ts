@@ -1,13 +1,19 @@
 "use client";
 
 /**
+ * Keys the interface itself owns: moving around, and the actions that apply
+ * to the whole routing question rather than to one agent. A letter here can
+ * never be a hint, or the badge on a card would do something else.
+ */
+export const RESERVED = new Set(["h", "j", "k", "l", "g", "m", "v", "i", "n", "d"]);
+
+/**
  * Keyboard hints for the fleet.
  *
  * The goal is one keystroke from "this arrived" to "that agent has it", so
- * every agent on screen carries a letter you can type. `hjkl` is reserved for
- * moving around, which is the whole reason vim users want the mode at all,
- * and the rest of the home row comes first because that is where your hands
- * already are.
+ * every agent on screen carries a letter you can type. The home row comes
+ * first because that is where your hands already are, and anything the
+ * interface has claimed drops out.
  */
 export const HINTS = [
   "a",
@@ -30,10 +36,7 @@ export const HINTS = [
   "i",
   "o",
   "p",
-] as const;
-
-/** Keys that mean "move", and so can never be a hint. */
-export const RESERVED = new Set(["h", "j", "k", "l", "n", "m"]);
+].filter((key) => !RESERVED.has(key));
 
 export function hintFor(index: number): string | null {
   return HINTS[index] ?? null;

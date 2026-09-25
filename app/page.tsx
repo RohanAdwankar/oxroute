@@ -499,7 +499,7 @@ export default function Home() {
       // A hint letter sends the selected signal straight to that agent.
       // One keystroke, which is the point of the mode.
       if (vim && selected) {
-        const at = HINTS.indexOf(event.key as (typeof HINTS)[number]);
+        const at = HINTS.indexOf(event.key);
         const agent = at >= 0 ? fleet[at] : undefined;
         if (agent) {
           stop();
