@@ -31,11 +31,25 @@ export OXROUTE_CODEX_URL="${OXROUTE_CODEX_URL:-ws://127.0.0.1:18788}"
 # Left unset on purpose: with no Slack tokens the daemon runs with no
 # sources, and you drive it from the UI or with POST /api/signal.
 
+# BSD and GNU stat share no flags. Without this the watcher below dies on
+# macOS, and because it owns the daemon, the daemon dies with it.
+mtime() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"
+}
+
+# Codex is optional: a machine that only runs Claude agents has no
+# app-server to talk to, and should not be told about it on every start.
 codex_cli="${OXROUTE_CODEX_CLI:-$HOME/.local/bin/codex}"
-env -u SLACK_APP_TOKEN -u SLACK_BOT_TOKEN \
-  -u OXROUTE_SLACK_APP_TOKEN -u OXROUTE_SLACK_BOT_TOKEN \
-  "$codex_cli" app-server --listen "$OXROUTE_CODEX_URL" &
-app_server=$!
+app_server=""
+if command -v "$codex_cli" >/dev/null 2>&1; then
+  env -u SLACK_APP_TOKEN -u SLACK_BOT_TOKEN \
+    -u OXROUTE_SLACK_APP_TOKEN -u OXROUTE_SLACK_BOT_TOKEN \
+    "$codex_cli" app-server --listen "$OXROUTE_CODEX_URL" &
+  app_server=$!
+else
+  echo "no codex at $codex_cli -- Codex agents disabled, Claude agents fine"
+  echo "  set OXROUTE_CODEX_CLI to enable them"
+fi
 
 watch_daemon() {
   local daemon signature next
@@ -49,10 +63,10 @@ watch_daemon() {
   ./target/debug/oxrouted &
   daemon=$!
   trap stop_daemon EXIT INT TERM
-  signature=$(stat -c %y target/debug/oxrouted)
+  signature=$(mtime target/debug/oxrouted)
   while true; do
     if cargo build --quiet; then
-      next=$(stat -c %y target/debug/oxrouted)
+      next=$(mtime target/debug/oxrouted)
       if [ "$next" != "$signature" ]; then
         kill "$daemon" 2>/dev/null || true
         wait "$daemon" 2>/dev/null || true
@@ -70,13 +84,24 @@ watch_daemon &
 watcher=$!
 cleanup() {
   trap - EXIT INT TERM
-  kill "$watcher" "$app_server" 2>/dev/null || true
-  wait "$watcher" "$app_server" 2>/dev/null || true
+  kill "$watcher" ${app_server:+"$app_server"} 2>/dev/null || true
+  wait "$watcher" ${app_server:+"$app_server"} 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-until curl -sf "http://$OXROUTE_LISTEN/api/health" >/dev/null 2>&1; do sleep 0.5; done
+# Waiting forever for a daemon that has already died is the least useful
+# thing this script could do, so give up and say what to look at.
+for _ in $(seq 1 120); do
+  if curl -sf "http://$OXROUTE_LISTEN/api/health" >/dev/null 2>&1; then
+    break
+  fi
+  if ! kill -0 "$watcher" 2>/dev/null; then
+    echo "oxrouted did not start. Run ./target/debug/oxrouted directly to see why." >&2
+    exit 1
+  fi
+  sleep 0.5
+done
 
 ./target/debug/oxrouted doctor || true
 
