@@ -17,7 +17,7 @@ import {
   setVimMode,
   subscribeVimMode,
 } from "./lib/keys";
-import type { AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
+import type { Agent, AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
 
 const EMPTY: Snapshot = {
   mode: "ask",
@@ -207,6 +207,21 @@ export default function Home() {
     [reload, say],
   );
 
+  // The fleet is passed in rather than read from state, so a snapshot that
+  // has only just arrived can open the question it brought with it.
+  const openRouting = useCallback(
+    (item: InboxItem, agents: Agent[]) => {
+      showAgent(null);
+      setRouting(item.signal.id);
+      setTicked(new Set(item.suggested ? [item.suggested] : []));
+      setFocus("fleet");
+      // Start on the agent this thread already belongs to, if it has one.
+      const at = agents.findIndex((a) => a.id === item.suggested);
+      setFleetAt(at >= 0 ? at : 0);
+    },
+    [showAgent],
+  );
+
   useEffect(() => {
     let live = true;
     api.snapshot().then(
@@ -215,21 +230,23 @@ export default function Home() {
         setSnapshot(next);
         setReady(true);
         // Something you just typed in is a decision you are about to make, so
-        // the keyboard follows it into the list: enter opens the routing
-        // question without reaching for the mouse first.
+        // it opens as one: the enter that adds it lands on the routing
+        // question, and the agent's hint letter finishes the job.
         const at = next.inbox.findIndex((item) => item.signal.id === landOn.current);
         if (at < 0) return;
         landOn.current = null;
         compose.current?.blur();
-        setFocus("inbox");
         setInboxAt(at);
+        const item = next.inbox[at];
+        if (item.state === "waiting") openRouting(item, next.agents);
+        else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
     );
     return () => {
       live = false;
     };
-  }, [revision, complain]);
+  }, [revision, complain, openRouting]);
 
   useEffect(() => {
     if (panes.length === 0) return;
@@ -360,7 +377,7 @@ export default function Home() {
       }
       return;
     }
-    openRouting(item);
+    openRouting(item, snapshot.agents);
   };
 
   // Routing a signal, from wherever the keyboard or the mouse asked.
@@ -370,19 +387,6 @@ export default function Home() {
       void run(() => api.routeExisting(signalId, agentIds), clearRouting);
     },
     [run],
-  );
-
-  const openRouting = useCallback(
-    (item: InboxItem) => {
-      showAgent(null);
-      setRouting(item.signal.id);
-      setTicked(new Set(item.suggested ? [item.suggested] : []));
-      setFocus("fleet");
-      // Start on the agent this thread already belongs to, if it has one.
-      const at = snapshot.agents.findIndex((a) => a.id === item.suggested);
-      setFleetAt(at >= 0 ? at : 0);
-    },
-    [snapshot.agents, showAgent],
   );
 
   const toggle = (id: string) =>
