@@ -138,7 +138,7 @@ function Compose({
           }
         }}
         rows={1}
-        placeholder="Something you thought of…"
+        placeholder="Something you thought of…  (i)"
         className="max-h-24 min-h-[34px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-[9px] py-[7px] text-[11.5px] outline-none placeholder:text-faint focus:border-edge"
       />
       <button

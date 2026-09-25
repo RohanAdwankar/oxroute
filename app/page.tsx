@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
+import { Help } from "./components/Help";
 import { Icon } from "./components/Icon";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
@@ -56,6 +57,7 @@ export default function Home() {
   const [inboxOpen, setInboxOpen] = useState(true);
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [help, setHelp] = useState(false);
   const [watch, setWatch] = useState(false);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
@@ -487,6 +489,9 @@ export default function Home() {
         case "v":
           stop();
           return toggleVim();
+        case "?":
+          stop();
+          return setHelp((open) => !open);
         case "i":
         case "/":
           stop();
@@ -496,15 +501,17 @@ export default function Home() {
           break;
       }
 
-      // A hint letter sends the selected signal straight to that agent.
-      // One keystroke, which is the point of the mode.
-      if (vim && selected) {
+      // A letter goes to the agent it is drawn on: it sends the signal being
+      // routed, or, with nothing to route, it opens that agent. One
+      // keystroke either way, which is the point of the mode.
+      if (vim) {
         const at = HINTS.indexOf(event.key);
         const agent = at >= 0 ? fleet[at] : undefined;
-        if (agent) {
-          stop();
-          sendTo(selected.signal.id, [agent.id]);
-        }
+        if (!agent) return;
+        stop();
+        if (selected) return sendTo(selected.signal.id, [agent.id]);
+        setFleetAt(at);
+        showAgent(agent.id);
       }
     };
 
@@ -535,6 +542,7 @@ export default function Home() {
 
   return (
     <main className="flex h-full flex-col">
+      {help && <Help onClose={() => setHelp(false)} />}
       <Chrome
         snapshot={snapshot}
         notice={notice}
@@ -697,7 +705,7 @@ export default function Home() {
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
-            vim={vim && selected !== null}
+            vim={vim}
             onToggle={toggle}
             onOpen={(id) => {
               clearRouting();
