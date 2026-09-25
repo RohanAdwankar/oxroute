@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -262,6 +263,7 @@ struct Posts {
 struct FakeSource {
     posts: Arc<Mutex<Posts>>,
     next_thread: Mutex<usize>,
+    fail_open: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -303,6 +305,9 @@ impl Source for FakeSource {
     }
 
     async fn open_thread(&self, _conversation: &str, title: &str) -> Result<(String, String)> {
+        if self.fail_open.load(Ordering::Relaxed) {
+            anyhow::bail!("source unavailable");
+        }
         let mut n = self.next_thread.lock().unwrap();
         *n += 1;
         self.posts.lock().unwrap().threads.push(title.to_string());
@@ -329,6 +334,7 @@ struct World {
     /// agent reporting what it is doing mid-turn.
     harness: broadcast::Sender<HarnessEvent>,
     native: Arc<Mutex<Vec<NativeSession>>>,
+    fail_open: Arc<AtomicBool>,
 }
 
 impl World {
@@ -456,12 +462,14 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     };
     let harness_events = harness.events.clone();
     let native = harness.native.clone();
+    let fail_open = Arc::new(AtomicBool::new(false));
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
     hub.with_harness(Arc::new(harness));
     hub.with_source(Arc::new(FakeSource {
         posts: posts.clone(),
         next_thread: Mutex::new(0),
+        fail_open: fail_open.clone(),
     }));
     hub.start().await.unwrap();
     hub.set_mode(mode).unwrap();
@@ -472,6 +480,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         posts,
         harness: harness_events,
         native,
+        fail_open,
     }
 }
 
@@ -1046,6 +1055,46 @@ async fn an_agent_can_be_started_from_the_ui_with_no_source_configured() {
 }
 
 #[tokio::test]
+async fn a_broken_mirror_is_visible_without_blocking_local_work() {
+    let w = world(Mode::Ask, false).await;
+    w.hub
+        .store
+        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .unwrap();
+    w.fail_open.store(true, Ordering::Relaxed);
+    let mut events = w.hub.subscribe();
+
+    let mut typed = signal("501.0", "501.0", "inspect the failed build");
+    typed.source = "you".into();
+    w.hub.accept(typed).await.unwrap();
+    let waiting = w
+        .hub
+        .store
+        .inbox(10)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.state == InboxState::Waiting)
+        .unwrap();
+    w.hub
+        .route(
+            &waiting.signal.id,
+            Routing::Spawn { backend: None, model: None, cwd: None },
+        )
+        .await
+        .expect("a mirror failure must not stop the work");
+
+    let notice = std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| match event {
+        Event::Notice { text } => Some(text),
+        _ => None,
+    });
+    assert_eq!(
+        notice.as_deref(),
+        Some("slack mirror failed: source unavailable. Continuing locally.")
+    );
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+}
+
+#[tokio::test]
 async fn continuing_an_unconfigured_native_model_uses_the_configured_backend_default() {
     let w = world(Mode::Auto, false).await;
     w.hub
@@ -1132,6 +1181,7 @@ async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
     hub.with_source(Arc::new(FakeSource {
         posts: posts.clone(),
         next_thread: Mutex::new(0),
+        fail_open: Arc::new(AtomicBool::new(false)),
     }));
     hub.start().await.unwrap();
 

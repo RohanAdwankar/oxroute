@@ -1916,6 +1916,9 @@ impl Hub {
             // but not worth refusing to start the work over.
             Err(error) => {
                 tracing::warn!(source = %source_name, %error, "could not open a thread to mirror into");
+                self.emit(Event::Notice {
+                    text: format!("{source_name} mirror failed: {error}. Continuing locally."),
+                });
                 Ok(None)
             }
         }
