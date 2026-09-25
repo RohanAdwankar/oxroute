@@ -67,6 +67,8 @@ export default function Home() {
   const lastInboxWidth = useRef(340);
   const paneArea = useRef<HTMLDivElement>(null);
   const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
+  // A signal the inbox cursor should land on as soon as the daemon reports it.
+  const landOn = useRef<string | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -212,6 +214,15 @@ export default function Home() {
         if (!live) return;
         setSnapshot(next);
         setReady(true);
+        // Something you just typed in is a decision you are about to make, so
+        // the keyboard follows it into the list: enter opens the routing
+        // question without reaching for the mouse first.
+        const at = next.inbox.findIndex((item) => item.signal.id === landOn.current);
+        if (at < 0) return;
+        landOn.current = null;
+        compose.current?.blur();
+        setFocus("inbox");
+        setInboxAt(at);
       },
       (error: unknown) => live && complain(error),
     );
@@ -555,7 +566,11 @@ export default function Home() {
                 cursor={inboxAt}
                 active={focus === "inbox"}
                 composeRef={compose}
-                onNote={(text) => void run(() => api.note(text))}
+                onNote={(text) =>
+                  void run(async () => {
+                    landOn.current = (await api.note(text)).signal;
+                  })
+                }
                 onCollapse={() => setInboxVisible(false)}
               />
             </div>
