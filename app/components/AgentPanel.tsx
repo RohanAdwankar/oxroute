@@ -489,6 +489,7 @@ export function AgentPanel({
               }
             }}
             rows={1}
+            data-composer
             placeholder="Message"
             className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />

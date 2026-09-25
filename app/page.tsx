@@ -469,6 +469,12 @@ export default function Home() {
           return setFocus("inbox");
         case "Enter": {
           stop();
+          // What is in front of you is a conversation, so enter starts
+          // typing in it rather than reopening a card you cannot see.
+          if (reading) {
+            document.querySelector<HTMLTextAreaElement>("[data-composer]")?.focus();
+            return;
+          }
           if (focus === "inbox") {
             const item = inbox[inboxAt];
             if (item) pick(item);
@@ -521,7 +527,10 @@ export default function Home() {
         case "i":
         case "/":
           stop();
-          compose.current?.focus();
+          // The box may be behind a collapsed column; asking for it opens it.
+          setInboxVisible(true);
+          setFocus("inbox");
+          window.requestAnimationFrame(() => compose.current?.focus());
           return;
         default:
           break;

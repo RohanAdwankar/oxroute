@@ -13,7 +13,7 @@ const KEYS: [string, string][] = [
   ["g G", "first, last"],
   ["h l", "inbox, fleet"],
   ["tab", "other column"],
-  ["enter", "open the item, or send it where it is ticked"],
+  ["enter", "open the item, send it where it is ticked, or type to an agent"],
   ["a s f …", "jump to that agent, or send this signal to it"],
   ["space", "tick an agent, while routing"],
   ["n", "start a new agent for this signal"],
