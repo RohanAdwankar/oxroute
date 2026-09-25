@@ -6,7 +6,6 @@ import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Help } from "./components/Help";
-import { Icon } from "./components/Icon";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
@@ -617,6 +616,8 @@ export default function Home() {
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
+        inboxOpen={inboxOpen}
+        onInbox={() => setInboxVisible(!inboxOpen)}
         vim={vim}
         onVim={toggleVim}
         watch={watch}
@@ -685,17 +686,7 @@ export default function Home() {
               <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
             </div>
           </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setInboxVisible(true)}
-            aria-label="open inbox"
-            title="open inbox"
-            className="absolute top-1/2 left-0 z-10 flex h-9 w-8 -translate-y-1/2 cursor-pointer items-center justify-center border border-l-0 border-rule bg-card text-faint hover:text-ink"
-          >
-            <Icon name="expand" />
-          </button>
-        )}
+        ) : null}
 
         {open ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
