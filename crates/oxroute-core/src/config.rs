@@ -81,6 +81,11 @@ struct FileConfig {
     codex: FileCodex,
     #[serde(default)]
     claude: FileClaude,
+    #[serde(default)]
+    github: FileGithub,
+    /// `[[views]]`: what the main column can show besides the fleet.
+    #[serde(default)]
+    views: Vec<FileView>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +135,34 @@ struct FileCodex {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FileGithub {
+    token: Option<String>,
+    api: Option<String>,
+}
+
+/// One `[[views]]` table. Which keys apply depends on `kind`; a key another
+/// kind uses is refused rather than ignored, so a typo cannot pass silently.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileView {
+    kind: String,
+    name: Option<String>,
+    id: Option<String>,
+    /// The model an agent started from this view gets.
+    model: Option<String>,
+    /// Where that agent runs. Defaults to the workspace.
+    cwd: Option<String>,
+    // board
+    repo: Option<String>,
+    snapshot: Option<String>,
+    lanes: Option<Vec<String>>,
+    // diagram
+    file: Option<String>,
+    root: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileClaude {
     permission_mode: Option<String>,
 }
@@ -170,6 +203,156 @@ pub struct Config {
     /// here on purpose: it runs commands on a machine you own.
     pub owner: String,
     pub listen: String,
+    /// Read and write access to GitHub issues, for a board view.
+    pub github_token: Option<String>,
+    pub github_api: String,
+    /// What the main column can show besides the fleet, in order.
+    pub views: Vec<ViewConfig>,
+}
+
+/// A view: another way of looking at the work, in place of the fleet.
+///
+/// Every kind is declared here and nowhere else, so adding one is a variant
+/// here, a module behind the API, and a component in `app/views/`.
+#[derive(Debug, Clone)]
+pub struct ViewConfig {
+    /// What the URL and the API call it. Stable across restarts.
+    pub id: String,
+    /// What a person calls it.
+    pub name: String,
+    pub kind: ViewKind,
+    /// The model an agent started from this view gets, when nobody picks.
+    pub model: Option<String>,
+    /// Where an agent started from this view runs.
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ViewKind {
+    /// Issues as cards in columns, one column per status label.
+    Board(BoardConfig),
+    /// A Mermaid architecture diagram whose edits become work for an agent.
+    Diagram(DiagramConfig),
+}
+
+impl ViewKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ViewKind::Board(_) => "board",
+            ViewKind::Diagram(_) => "diagram",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardConfig {
+    /// `owner/name`. Read live, and written back when a card moves.
+    pub repo: Option<String>,
+    /// A JSON export of the issues, read when there is no repo or no token.
+    pub snapshot: Option<PathBuf>,
+    /// The columns, left to right, as `status:` label suffixes.
+    pub lanes: Vec<String>,
+}
+
+/// The columns a board gets when the config does not list its own.
+pub const DEFAULT_LANES: &[&str] = &[
+    "idea",
+    "research",
+    "in-progress",
+    "needs-eval",
+    "needs-marketing",
+    "maintenance",
+    "completed",
+];
+
+#[derive(Debug, Clone)]
+pub struct DiagramConfig {
+    /// The `.mmd` file. oxdraw's own format, so oxdraw can open it too.
+    pub file: PathBuf,
+    /// The code the diagram describes.
+    pub root: PathBuf,
+}
+
+fn resolve_views(files: Vec<FileView>) -> Result<Vec<ViewConfig>> {
+    let mut views: Vec<ViewConfig> = Vec::new();
+    for view in files {
+        let kind = view.kind.trim().to_lowercase();
+        let refuse = |key: &str, present: bool| -> Result<()> {
+            anyhow::ensure!(!present, "a `{kind}` view has no `{key}` setting");
+            Ok(())
+        };
+        let resolved = match kind.as_str() {
+            "board" => {
+                refuse("file", view.file.is_some())?;
+                refuse("root", view.root.is_some())?;
+                anyhow::ensure!(
+                    view.repo.is_some() || view.snapshot.is_some(),
+                    "a board view needs a `repo`, a `snapshot`, or both"
+                );
+                let lanes = view
+                    .lanes
+                    .unwrap_or_else(|| DEFAULT_LANES.iter().map(|l| l.to_string()).collect());
+                anyhow::ensure!(!lanes.is_empty(), "a board needs at least one lane");
+                ViewKind::Board(BoardConfig {
+                    repo: view.repo,
+                    snapshot: view.snapshot.as_deref().map(expand),
+                    lanes,
+                })
+            }
+            "diagram" => {
+                for (key, present) in [
+                    ("repo", view.repo.is_some()),
+                    ("snapshot", view.snapshot.is_some()),
+                    ("lanes", view.lanes.is_some()),
+                ] {
+                    refuse(key, present)?;
+                }
+                let file = expand(view.file.as_deref().context("a diagram view needs a `file`")?);
+                let root = match view.root.as_deref() {
+                    Some(root) => expand(root),
+                    None => file.parent().map(Path::to_path_buf).unwrap_or_default(),
+                };
+                ViewKind::Diagram(DiagramConfig { file, root })
+            }
+            other => anyhow::bail!("unknown view kind `{other}` (have: board, diagram)"),
+        };
+        let name = view.name.unwrap_or_else(|| match &resolved {
+            ViewKind::Board(board) => board.repo.clone().unwrap_or_else(|| "Board".into()),
+            ViewKind::Diagram(_) => "Diagram".into(),
+        });
+        let id = view.id.unwrap_or_else(|| slug(&name));
+        anyhow::ensure!(!id.is_empty(), "view `{name}` needs an `id`");
+        anyhow::ensure!(
+            id != "fleet" && views.iter().all(|v| v.id != id),
+            "two views are called `{id}`; give one an `id`"
+        );
+        // An agent changing code from a diagram belongs in that code.
+        let cwd = view.cwd.map(|cwd| expand(&cwd)).or_else(|| match &resolved {
+            ViewKind::Diagram(diagram) => Some(diagram.root.clone()),
+            ViewKind::Board(_) => None,
+        });
+        views.push(ViewConfig {
+            id,
+            name,
+            kind: resolved,
+            model: view.model,
+            cwd: cwd.map(|cwd| cwd.to_string_lossy().to_string()),
+        });
+    }
+    Ok(views)
+}
+
+/// `RohanAdwankar/0 ideas` -> `rohanadwankar-0-ideas`.
+fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
 }
 
 fn home() -> PathBuf {
@@ -383,6 +566,15 @@ impl Config {
             listen: pick(&["OXROUTE_LISTEN"], file.listen, || {
                 "127.0.0.1:8787".into()
             }),
+            github_token: from_env(&["OXROUTE_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"])
+                .or(file.github.token)
+                .filter(|t| !t.is_empty()),
+            github_api: pick(&["OXROUTE_GITHUB_API"], file.github.api, || {
+                "https://api.github.com".into()
+            })
+            .trim_end_matches('/')
+            .to_string(),
+            views: resolve_views(file.views)?,
         })
     }
 
@@ -487,6 +679,10 @@ mod tests {
             "OXROUTE_CLAUDE_PERMISSION_MODE",
             "OXROUTE_SLACK_APP_TOKEN",
             "SLACK_APP_TOKEN",
+            "OXROUTE_GITHUB_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "OXROUTE_GITHUB_API",
         ] {
             std::env::remove_var(name);
         }
@@ -601,6 +797,76 @@ stall_timeout = 120.0
             .unwrap_err()
             .to_string();
         assert!(error.contains("owner"), "{error}");
+    }
+
+    #[test]
+    fn views_are_declared_in_order_with_their_own_settings() {
+        let _guard = exclusive();
+        std::env::set_var("OXROUTE_OWNER", "me");
+        let path = write(
+            "views",
+            r#"
+[github]
+token = "ghp_file"
+
+[[views]]
+kind = "board"
+name = "Ideas"
+repo = "RohanAdwankar/0"
+snapshot = "~/code/0/data/ideas.json"
+model = "sol"
+
+[[views]]
+kind = "diagram"
+name = "Architecture"
+file = "~/code/oxroute/docs/architecture.mmd"
+"#,
+        );
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.github_token.as_deref(), Some("ghp_file"));
+        assert_eq!(config.github_api, "https://api.github.com");
+        let ids: Vec<_> = config.views.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["ideas", "architecture"]);
+        let ViewKind::Board(board) = &config.views[0].kind else { panic!("not a board") };
+        assert_eq!(board.repo.as_deref(), Some("RohanAdwankar/0"));
+        assert_eq!(board.lanes.first().map(String::as_str), Some("idea"));
+        assert!(board.snapshot.as_ref().unwrap().is_absolute());
+        assert_eq!(config.views[0].model.as_deref(), Some("sol"));
+        let ViewKind::Diagram(diagram) = &config.views[1].kind else { panic!("not a diagram") };
+        // With no root, the code is wherever the diagram lives, and that is
+        // where an agent working from it runs.
+        assert!(diagram.root.ends_with("code/oxroute/docs"));
+        assert!(config.views[1].cwd.as_deref().unwrap().ends_with("code/oxroute/docs"));
+        assert_eq!(config.views[0].cwd, None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_view_setting_that_belongs_to_another_kind_is_refused() {
+        let _guard = exclusive();
+        std::env::set_var("OXROUTE_OWNER", "me");
+        let path = write(
+            "view-mixup",
+            "[[views]]\nkind = \"diagram\"\nfile = \"a.mmd\"\nrepo = \"x/y\"\n",
+        );
+        let error = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(error.contains("no `repo` setting"), "{error}");
+        let path = write("view-kind", "[[views]]\nkind = \"gantt\"\n");
+        let error = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(error.contains("unknown view kind"), "{error}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_github_token_in_the_environment_wins() {
+        let _guard = exclusive();
+        std::env::set_var("OXROUTE_OWNER", "me");
+        std::env::set_var("GITHUB_TOKEN", "from-env");
+        let path = write("gh", "[github]\ntoken = \"from-file\"\n");
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.github_token.as_deref(), Some("from-env"));
+        assert!(config.views.is_empty());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

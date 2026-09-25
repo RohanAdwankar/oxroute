@@ -1,6 +1,7 @@
 "use client";
 
 import type { Mode, Snapshot } from "../lib/types";
+import { VIEWS } from "../views/registry";
 import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
 
@@ -20,6 +21,8 @@ export function Chrome({
   onWatch,
   tasksOpen,
   onTasks,
+  activeView,
+  onView,
   onSearchOpen,
   onSearchContinue,
 }: {
@@ -32,6 +35,8 @@ export function Chrome({
   onWatch: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
+  activeView: string | null;
+  onView: (id: string | null) => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
 }) {
@@ -96,6 +101,30 @@ export function Chrome({
         <Icon name="terminal" />
       </button>
 
+      {snapshot.views.length > 0 && (
+        <nav className="flex" aria-label="views">
+          <ViewTab
+            label="Fleet"
+            icon="terminal"
+            active={activeView === null}
+            first
+            last={false}
+            onClick={() => onView(null)}
+          />
+          {snapshot.views.map((view, index) => (
+            <ViewTab
+              key={view.id}
+              label={view.name}
+              icon={VIEWS[view.kind]?.icon ?? "open"}
+              active={activeView === view.id}
+              first={false}
+              last={index === snapshot.views.length - 1}
+              onClick={() => onView(view.id)}
+            />
+          ))}
+        </nav>
+      )}
+
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
       <div className="flex-1" />
@@ -106,6 +135,43 @@ export function Chrome({
         </span>
       )}
     </header>
+  );
+}
+
+/**
+ * One entry in the view switch. Views carry names, so these are words; the
+ * fleet is the view every install has.
+ */
+function ViewTab({
+  label,
+  icon,
+  active,
+  first,
+  last,
+  onClick,
+}: {
+  label: string;
+  icon: IconName;
+  active: boolean;
+  first: boolean;
+  last: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        "flex h-8 cursor-pointer items-center gap-[6px] border px-3 text-[12.5px] transition-colors",
+        first ? "rounded-l-[3px]" : "border-l-0",
+        last ? "rounded-r-[3px]" : "",
+        active ? "border-edge bg-wash text-ink" : "border-rule text-mid hover:text-ink",
+      ].join(" ")}
+    >
+      <Icon name={icon} size={14} />
+      {label}
+    </button>
   );
 }
 

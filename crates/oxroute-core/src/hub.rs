@@ -26,7 +26,8 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex, Notify};
 use crate::agent::claude::ClaudeHarness;
 use crate::agent::codex::CodexHarness;
 use crate::agent::{Harness, HarnessEvent, SessionSpec};
-use crate::config::{free_bytes, Config, Mode};
+use crate::board::{self, Board, CardAgent, Lane};
+use crate::config::{free_bytes, Config, Mode, ViewConfig, ViewKind};
 use crate::dashboard;
 use crate::model::*;
 use crate::naming;
@@ -194,6 +195,8 @@ pub struct Hub {
     /// One per agent, so its turns run in order.
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     naming: AsyncMutex<HashSet<String>>,
+    github: board::GitHub,
+    boards: board::Cache,
 }
 
 impl Hub {
@@ -204,8 +207,11 @@ impl Hub {
             (Backend::Codex, codex as Arc<dyn Harness>),
             (Backend::ClaudeCode, claude as Arc<dyn Harness>),
         ]);
+        let github = board::GitHub::new(&config.github_api, config.github_token.clone());
         Arc::new(Hub {
             harnesses,
+            github,
+            boards: board::Cache::default(),
             config,
             store: Arc::new(store),
             sources: HashMap::new(),
@@ -1984,6 +1990,7 @@ impl Hub {
             messages: self.store.message_previews()?,
             inbox,
             tasks: self.store.tasks()?,
+            views: self.views(),
             sources: self.sources.keys().cloned().collect(),
             models: self
                 .config
@@ -2057,6 +2064,240 @@ impl Hub {
 
     pub fn delete_task(&self, id: &str) -> Result<()> {
         self.store.delete_task(id)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
+    // -- views -----------------------------------------------------------
+
+    /// The views configured, in order, for a surface to offer beside the fleet.
+    pub fn views(&self) -> Vec<ViewInfo> {
+        self.config
+            .views
+            .iter()
+            .map(|view| ViewInfo {
+                id: view.id.clone(),
+                name: view.name.clone(),
+                kind: view.kind.as_str().to_string(),
+            })
+            .collect()
+    }
+
+    pub fn view(&self, id: &str) -> Result<&ViewConfig> {
+        self.config
+            .views
+            .iter()
+            .find(|view| view.id == id)
+            .with_context(|| format!("no view called {id}"))
+    }
+
+    fn board_config(&self, id: &str) -> Result<(&ViewConfig, &crate::config::BoardConfig)> {
+        let view = self.view(id)?;
+        match &view.kind {
+            ViewKind::Board(board) => Ok((view, board)),
+            other => anyhow::bail!("{id} is a {} view, not a board", other.as_str()),
+        }
+    }
+
+    /// A board, with the agents on each card and how far their tasks have got.
+    ///
+    /// The issues are cached for a few minutes; `refresh` fetches them now.
+    /// Agents and tasks are always current, because they are ours.
+    pub async fn board(&self, id: &str, refresh: bool) -> Result<Board> {
+        let (view, config) = self.board_config(id)?;
+        let loaded = match self.boards.fresh(id).filter(|_| !refresh) {
+            Some(loaded) => loaded,
+            None => {
+                let loaded = board::load(config, &self.github).await?;
+                self.boards.put(id, loaded.clone());
+                loaded
+            }
+        };
+        let (mut cards, hidden) = board::cards(&loaded.issues, &config.lanes);
+        let mut linked = self.linked(id)?;
+        let tasks = self.store.tasks()?;
+        for card in &mut cards {
+            let Some(agents) = linked.remove(&format!("#{}", card.number)) else {
+                continue;
+            };
+            let agent_ids: Vec<&String> = agents.iter().map(|a| &a.id).collect();
+            card.agents = agents.clone();
+            for task in tasks.iter().filter(|task| agent_ids.contains(&&task.agent_id)) {
+                card.tasks_total += 1;
+                if task.status == TaskStatus::Complete {
+                    card.tasks_done += 1;
+                }
+            }
+        }
+        Ok(Board {
+            view: view.id.clone(),
+            name: view.name.clone(),
+            repo: config.repo.clone(),
+            lanes: config
+                .lanes
+                .iter()
+                .map(|lane| Lane {
+                    id: lane.clone(),
+                    name: board::lane_name(lane),
+                })
+                .collect(),
+            cards,
+            source: loaded.source.to_string(),
+            writable: loaded.writable,
+            fetched_at: loaded.fetched_at,
+            hidden,
+            warning: loaded.warning,
+        })
+    }
+
+    async fn issue(&self, id: &str, number: u64) -> Result<board::Issue> {
+        if let Some(issue) = self.boards.issue(id, number) {
+            return Ok(issue);
+        }
+        self.board(id, true).await?;
+        self.boards
+            .issue(id, number)
+            .with_context(|| format!("no issue #{number} on this board"))
+    }
+
+    /// Move a card to another column. On GitHub, that is its status label.
+    pub async fn move_card(&self, id: &str, number: u64, lane: &str) -> Result<Board> {
+        let (_, config) = self.board_config(id)?;
+        anyhow::ensure!(
+            config.lanes.iter().any(|l| l == lane),
+            "this board has no {lane} column"
+        );
+        let repo = config
+            .repo
+            .clone()
+            .context("this board reads a snapshot, which cannot be written to")?;
+        anyhow::ensure!(
+            self.github.can_write(),
+            "moving a card writes to GitHub, which needs a token"
+        );
+        let issue = self.issue(id, number).await?;
+        let moved = self.github.set_lane(&repo, &issue, lane).await?;
+        self.boards.replace(id, moved);
+        self.emit(Event::Sync);
+        self.board(id, false).await
+    }
+
+    /// Put an agent on a card: a new one, or one that already exists.
+    pub async fn start_on_card(
+        self: &Arc<Self>,
+        id: &str,
+        number: u64,
+        model: Option<&str>,
+        agent: Option<&str>,
+    ) -> Result<Agent> {
+        let (_, config) = self.board_config(id)?;
+        let issue = self.issue(id, number).await?;
+        let text = board::prompt(config.repo.as_deref(), &issue);
+        let name = format!("#{number} {}", issue.title);
+        self.start_on(id, &format!("#{number}"), &text, Some(&name), model, agent)
+            .await
+    }
+
+    /// Give an agent work from a view, and remember which item it is for.
+    ///
+    /// This is an ordinary signal, routed the ordinary way, so the agent it
+    /// starts is like any other: it shows in the fleet, answers in its
+    /// timeline, and carries the view in its provenance. The view item is the
+    /// thread, so the next piece of work on the same item finds the same agent.
+    ///
+    /// A new agent is called `name` rather than after the first words of its
+    /// prompt, which for work from a view are boilerplate.
+    pub async fn start_on(
+        self: &Arc<Self>,
+        id: &str,
+        item: &str,
+        text: &str,
+        name: Option<&str>,
+        model: Option<&str>,
+        agent: Option<&str>,
+    ) -> Result<Agent> {
+        let view = self.view(id)?.clone();
+        anyhow::ensure!(!text.trim().is_empty(), "there is nothing to send");
+        let external_id = new_id("msg");
+        let signal = Signal {
+            id: new_id("sig"),
+            source: view.kind.as_str().to_string(),
+            conversation: view.id.clone(),
+            thread_key: item.to_string(),
+            external_id,
+            author: self.config.owner.clone(),
+            label: format!("{} {item}", view.name),
+            text: text.to_string(),
+            attachments: vec![],
+            at: now(),
+            root: true,
+        };
+        self.store.put_signal(&signal)?;
+        let routing = match agent {
+            Some(agent) => Routing::Existing {
+                agent_ids: vec![agent.to_string()],
+            },
+            None => Routing::Spawn {
+                backend: None,
+                model: model.map(str::to_string).or_else(|| view.model.clone()),
+                cwd: view.cwd.clone(),
+            },
+        };
+        self.route(&signal.id, routing).await?;
+        let agent_id = match agent {
+            Some(agent) => agent.to_string(),
+            None => {
+                let id = self
+                    .store
+                    .bound_agent(&signal.source, &signal.conversation, &signal.thread_key)?
+                    .context("the agent was started but not wired to the view")?;
+                if let Some(name) = name.map(naming::provisional) {
+                    self.store.rename_agent(&id, &name)?;
+                }
+                id
+            }
+        };
+        self.store.link(&view.id, item, &agent_id)?;
+        self.emit(Event::Sync);
+        self.store.agent(&agent_id)?.context("no such agent")
+    }
+
+    /// Item -> the agents on it, for one view. An agent that has since been
+    /// deleted is left out rather than drawn as a ghost.
+    pub fn linked(&self, id: &str) -> Result<HashMap<String, Vec<CardAgent>>> {
+        let mut out = HashMap::new();
+        for (item, agent_ids) in self.store.links(id)? {
+            let mut agents = Vec::new();
+            for agent_id in agent_ids {
+                if let Some(agent) = self.store.agent(&agent_id)? {
+                    agents.push(CardAgent {
+                        id: agent.id,
+                        name: agent.name,
+                        status: agent.status,
+                        model: agent.model,
+                    });
+                }
+            }
+            if !agents.is_empty() {
+                out.insert(item, agents);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Say an agent is on a view item, without sending it anything.
+    pub fn link(&self, id: &str, item: &str, agent: &str) -> Result<()> {
+        self.view(id)?;
+        anyhow::ensure!(self.store.agent(agent)?.is_some(), "no such agent");
+        self.store.link(id, item, agent)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
+    /// Take an agent off a view item. The agent itself keeps running.
+    pub fn unlink(&self, id: &str, item: &str, agent: &str) -> Result<()> {
+        self.view(id)?;
+        self.store.unlink(id, item, agent)?;
         self.emit(Event::Sync);
         Ok(())
     }
@@ -2255,8 +2496,22 @@ pub struct Snapshot {
     pub messages: HashMap<String, String>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
+    /// What the main column can show besides the fleet. Defaulted, so a
+    /// client talking to a daemon from before views still reads a snapshot.
+    #[serde(default)]
+    pub views: Vec<ViewInfo>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
+}
+
+/// A configured view, as a surface needs to offer it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewInfo {
+    pub id: String,
+    pub name: String,
+    /// `board` or `diagram`: which component draws it.
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

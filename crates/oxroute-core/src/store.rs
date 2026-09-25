@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS view_links (
+    view     TEXT NOT NULL,
+    item     TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    at       REAL NOT NULL,
+    PRIMARY KEY (view, item, agent_id)
+);
 "#;
 
 pub struct Store {
@@ -1063,6 +1071,48 @@ impl Store {
         })
     }
 
+    // -- views -----------------------------------------------------------
+
+    /// Say that an agent is working on one thing a view shows: a card on a
+    /// board, a change to a diagram. Linking twice is not an error.
+    pub fn link(&self, view: &str, item: &str, agent_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO view_links (view, item, agent_id, at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT DO NOTHING",
+                params![view, item, agent_id, crate::model::now()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn unlink(&self, view: &str, item: &str, agent_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM view_links WHERE view = ?1 AND item = ?2 AND agent_id = ?3",
+                params![view, item, agent_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Item -> the agents working on it, oldest link first.
+    pub fn links(&self, view: &str) -> Result<HashMap<String, Vec<String>>> {
+        self.with(|c| {
+            let mut statement = c.prepare(
+                "SELECT item, agent_id FROM view_links WHERE view = ?1 ORDER BY at, rowid",
+            )?;
+            let mut out: HashMap<String, Vec<String>> = HashMap::new();
+            for row in statement.query_map(params![view], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })? {
+                let (item, agent) = row?;
+                out.entry(item).or_default().push(agent);
+            }
+            Ok(out)
+        })
+    }
+
     // -- scratch ---------------------------------------------------------
 
     pub fn get(&self, key: &str) -> Result<Option<String>> {
@@ -1239,6 +1289,21 @@ mod tests {
 
         store.delete_task(&task.id).unwrap();
         assert!(store.tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_view_item_remembers_every_agent_linked_to_it() {
+        let store = Store::in_memory().unwrap();
+        store.link("ideas", "#12", "agent_a").unwrap();
+        store.link("ideas", "#12", "agent_b").unwrap();
+        store.link("ideas", "#12", "agent_a").unwrap();
+        store.link("arch", "#12", "agent_c").unwrap();
+        let links = store.links("ideas").unwrap();
+        assert_eq!(links["#12"], ["agent_a", "agent_b"]);
+        store.unlink("ideas", "#12", "agent_a").unwrap();
+        assert_eq!(store.links("ideas").unwrap()["#12"], ["agent_b"]);
+        // Views never see each other's links.
+        assert_eq!(store.links("arch").unwrap()["#12"], ["agent_c"]);
     }
 
     #[test]

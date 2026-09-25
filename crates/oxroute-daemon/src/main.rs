@@ -33,6 +33,8 @@ use oxroute_core::hub::Routing;
 use oxroute_core::source::slack::SlackSource;
 use oxroute_core::{Config, Hub, Store};
 
+mod diagram;
+
 const INBOX_LIMIT: usize = 200;
 const TIMELINE_LIMIT: usize = 500;
 const SEARCH_LIMIT: usize = 200;
@@ -135,6 +137,39 @@ fn doctor() -> Result<()> {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    println!(
+        "github          {}",
+        match &config.github_token {
+            Some(_) => format!("token set ({})", config.github_api),
+            None => "no token (boards read snapshots, cards cannot move)".into(),
+        }
+    );
+    for view in &config.views {
+        let detail = match &view.kind {
+            oxroute_core::config::ViewKind::Board(board) => {
+                let mut bits = Vec::new();
+                if let Some(repo) = &board.repo {
+                    bits.push(repo.clone());
+                }
+                if let Some(snapshot) = &board.snapshot {
+                    bits.push(if snapshot.exists() {
+                        snapshot.display().to_string()
+                    } else {
+                        format!("{} (MISSING)", snapshot.display())
+                    });
+                }
+                bits.join(", ")
+            }
+            oxroute_core::config::ViewKind::Diagram(diagram) => {
+                if diagram.file.exists() {
+                    diagram.file.display().to_string()
+                } else {
+                    format!("{} (MISSING)", diagram.file.display())
+                }
+            }
+        };
+        println!("view {:<10} {} [{}] {detail}", view.id, view.name, view.kind.as_str());
+    }
     match oxroute_core::migrate::legacy_database() {
         Some(path) => println!("codex-slack     {} (run `oxrouted migrate`)", path.display()),
         None => println!("codex-slack     nothing to import"),
@@ -197,6 +232,13 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
+        .route("/api/views/{id}/board", get(board))
+        .route("/api/views/{id}/board/move", post(move_card))
+        .route("/api/views/{id}/board/start", post(start_card))
+        .route("/api/views/{id}/unlink", post(unlink))
+        .route("/api/views/{id}/diagram", get(diagram_view))
+        .route("/api/views/{id}/diagram/preview", post(diagram_preview))
+        .route("/api/views/{id}/diagram/apply", post(diagram_apply))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
@@ -670,6 +712,209 @@ async fn mode(
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
+// -- views -------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct BoardQuery {
+    #[serde(default)]
+    refresh: bool,
+}
+
+async fn board(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Query(query): Query<BoardQuery>,
+) -> Result<Json<oxroute_core::board::Board>, Failed> {
+    Ok(Json(hub.board(&id, query.refresh).await?))
+}
+
+#[derive(Deserialize)]
+struct MoveBody {
+    number: u64,
+    lane: String,
+}
+
+async fn move_card(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<MoveBody>,
+) -> Result<Json<oxroute_core::board::Board>, Failed> {
+    Ok(Json(hub.move_card(&id, body.number, &body.lane).await?))
+}
+
+#[derive(Deserialize)]
+struct StartBody {
+    number: u64,
+    #[serde(default)]
+    model: Option<String>,
+    /// An agent already running, instead of a new one.
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+async fn start_card(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<StartBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let agent = hub
+        .start_on_card(&id, body.number, body.model.as_deref(), body.agent.as_deref())
+        .await?;
+    Ok(Json(json!({ "agent": agent })))
+}
+
+#[derive(Deserialize)]
+struct UnlinkBody {
+    item: String,
+    agent: String,
+}
+
+async fn unlink(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<UnlinkBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    hub.unlink(&id, &body.item, &body.agent)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+fn diagram_config<'a>(
+    hub: &'a Hub,
+    id: &str,
+) -> Result<(&'a oxroute_core::config::ViewConfig, &'a oxroute_core::config::DiagramConfig)> {
+    let view = hub.view(id)?;
+    match &view.kind {
+        oxroute_core::config::ViewKind::Diagram(diagram) => Ok((view, diagram)),
+        other => anyhow::bail!("{id} is a {} view, not a diagram", other.as_str()),
+    }
+}
+
+/// A diagram as the view draws it: the picture, where every box is, and the
+/// agents on each box.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagramPayload {
+    view: String,
+    name: String,
+    file: String,
+    root: String,
+    #[serde(flatten)]
+    drawn: diagram::Drawn,
+    /// Box id -> the agents working on it.
+    agents: HashMap<String, Vec<oxroute_core::board::CardAgent>>,
+    /// Every agent put on this diagram, for "send the next change to".
+    working: Vec<oxroute_core::board::CardAgent>,
+    /// Seconds since the epoch the file last changed. An agent editing it
+    /// changes this, which is how the view knows to redraw.
+    modified: f64,
+}
+
+fn diagram_payload(hub: &Hub, id: &str, edits: &[diagram::Edit]) -> Result<DiagramPayload> {
+    let (view, config) = diagram_config(hub, id)?;
+    let file = diagram::DiagramFile::read(&config.file)?;
+    let drawn = diagram::draw(&file, edits)?;
+    let mut agents = HashMap::new();
+    let mut working = Vec::new();
+    for (item, linked) in hub.linked(id)? {
+        if let Some(node) = item.strip_prefix("node:") {
+            agents.insert(node.to_string(), linked);
+        } else if item == DIAGRAM_ITEM {
+            working = linked;
+        }
+    }
+    let modified = std::fs::metadata(&config.file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64())
+        .unwrap_or_default();
+    Ok(DiagramPayload {
+        view: view.id.clone(),
+        name: view.name.clone(),
+        file: config.file.display().to_string(),
+        root: config.root.display().to_string(),
+        drawn,
+        agents,
+        working,
+        modified,
+    })
+}
+
+/// Every change to one diagram is one thread, so the next change can go to
+/// the agent that made the last one.
+const DIAGRAM_ITEM: &str = "diagram";
+
+async fn diagram_view(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<DiagramPayload>, Failed> {
+    Ok(Json(diagram_payload(&hub, &id, &[])?))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    #[serde(default)]
+    edits: Vec<diagram::Edit>,
+}
+
+async fn diagram_preview(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<PreviewBody>,
+) -> Result<Json<DiagramPayload>, Failed> {
+    Ok(Json(diagram_payload(&hub, &id, &body.edits)?))
+}
+
+#[derive(Deserialize)]
+struct ApplyBody {
+    edits: Vec<diagram::Edit>,
+    #[serde(default)]
+    note: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+/// Write the edits into the diagram, then hand an agent the change.
+///
+/// The file is written first. A diagram that changed with nobody told is
+/// visible and easy to recover; an agent told about a change the file does
+/// not have would be building to a spec that does not exist.
+async fn diagram_apply(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<ApplyBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    if body.edits.is_empty() {
+        return Err(Failed(anyhow::anyhow!("there are no changes to apply")));
+    }
+    let (_, config) = diagram_config(&hub, &id)?;
+    let file = diagram::DiagramFile::read(&config.file)?;
+    let request = diagram::describe(&file, &body.edits, &config.file, &config.root, &body.note)?;
+    let rewritten = diagram::rewrite(&file, &body.edits)?;
+    diagram::write(&config.file, &rewritten)?;
+
+    let name = diagram::title(&file, &body.edits);
+    let agent = hub
+        .start_on(
+            &id,
+            DIAGRAM_ITEM,
+            &request,
+            Some(&name),
+            body.model.as_deref(),
+            body.agent.as_deref(),
+        )
+        .await
+        .map_err(|error| {
+            Failed(error.context("the diagram is saved, but no agent could be started on it"))
+        })?;
+    for node in diagram::touched(&body.edits) {
+        hub.link(&id, &format!("node:{node}"), &agent.id)?;
+    }
+    Ok(Json(json!({ "agent": agent, "diagram": diagram_payload(&hub, &id, &[])? })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +930,86 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
         }
+    }
+
+    /// Just enough of GitHub to page through issues and take a PATCH.
+    async fn fake_github() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+        use axum::extract::{Path as P, Query as Q};
+        let patches = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let issue = |number: u64, labels: &[&str], state: &str| {
+            json!({
+                "number": number, "title": format!("issue {number}"), "state": state,
+                "html_url": format!("https://github.com/o/r/issues/{number}"),
+                "labels": labels.iter().map(|l| json!({ "name": l })).collect::<Vec<_>>(),
+                "body": "", "updated_at": "2026-09-25T00:00:00Z"
+            })
+        };
+        let page_one: Vec<_> = (1..=100)
+            .map(|n| issue(n, &["status:idea", "priority:p2"], "open"))
+            .collect();
+        let page_two = vec![issue(101, &["status:idea", "track:oss"], "open"), json!({
+            "number": 102, "title": "a pull request", "state": "open", "pull_request": {}
+        })];
+        let seen = patches.clone();
+        let app = Router::new()
+            .route(
+                "/repos/o/r/issues",
+                get(move |Q(q): Q<HashMap<String, String>>| {
+                    let page = if q.get("page").map(String::as_str) == Some("1") {
+                        page_one.clone()
+                    } else {
+                        page_two.clone()
+                    };
+                    async move { Json(serde_json::Value::Array(page)) }
+                }),
+            )
+            .route(
+                "/repos/o/r/issues/{n}",
+                get(move |P(n): P<u64>| async move {
+                    Json(issue(n, &["status:idea", "track:oss", "added-since"], "open"))
+                })
+                .patch(move |P(n): P<u64>, Json(body): Json<serde_json::Value>| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().unwrap().push(body.clone());
+                        let labels: Vec<&str> = body["labels"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|l| l.as_str().unwrap())
+                            .collect();
+                        let state = body.get("state").and_then(|s| s.as_str()).unwrap_or("open");
+                        Json(issue(n, &labels, state))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), patches)
+    }
+
+    #[tokio::test]
+    async fn a_board_pages_through_github_and_a_move_rewrites_one_label() {
+        use oxroute_core::board::GitHub;
+        let (api, patches) = fake_github().await;
+        let github = GitHub::new(&api, Some("token".into()));
+        let issues = github.issues("o/r").await.unwrap();
+        // Two pages, and the pull request is not a card.
+        assert_eq!(issues.len(), 101);
+
+        let moved = github.set_lane("o/r", &issues[0], "in-progress").await.unwrap();
+        assert!(moved.labels.contains(&"status:in-progress".to_string()));
+        assert!(!moved.labels.contains(&"status:idea".to_string()));
+        // A label added on GitHub after the board was fetched survives.
+        assert!(moved.labels.contains(&"added-since".to_string()));
+
+        let done = github.set_lane("o/r", &issues[0], "completed").await.unwrap();
+        assert!(!done.open, "moving to done closes the issue");
+        let patches = patches.lock().unwrap();
+        assert_eq!(patches[1]["state"], "closed");
+        assert_eq!(patches[1]["state_reason"], "completed");
+        assert!(patches[0].get("state").is_none(), "an open issue staying open is not reopened");
     }
 
     #[test]

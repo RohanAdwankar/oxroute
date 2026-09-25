@@ -4,8 +4,10 @@ export type IconName =
   | "attach"
   | "auto"
   | "back"
+  | "board"
   | "chevronDown"
   | "collapse"
+  | "diagram"
   | "discard"
   | "expand"
   | "external"
@@ -18,6 +20,7 @@ export type IconName =
   | "plus"
   | "quote"
   | "queue"
+  | "refresh"
   | "restore"
   | "send"
   | "stop"
@@ -32,8 +35,10 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     attach: <path d="M6 8.5 10.5 4a2.1 2.1 0 0 1 3 3L7 13.5a3.2 3.2 0 0 1-4.5-4.5L9 2.5" />,
     auto: <><path d="m8 1 1.2 3.8L13 6l-3.8 1.2L8 11 6.8 7.2 3 6l3.8-1.2Z" /><path d="m13 11 .6 1.8 1.4.7-1.4.7L13 16l-.6-1.8-1.4-.7 1.4-.7Z" /></>,
     back: <path d="m10.5 3-5 5 5 5M5.5 8H15" />,
+    board: <><rect x="1.5" y="2.5" width="3.5" height="11" rx=".5" /><rect x="6.25" y="2.5" width="3.5" height="7" rx=".5" /><rect x="11" y="2.5" width="3.5" height="9" rx=".5" /></>,
     chevronDown: <path d="m3 6 5 5 5-5" />,
     collapse: <path d="m10 3-5 5 5 5" />,
+    diagram: <><rect x="1.5" y="2" width="5" height="3.5" rx=".5" /><rect x="9.5" y="2" width="5" height="3.5" rx=".5" /><rect x="5.5" y="10.5" width="5" height="3.5" rx=".5" /><path d="M4 5.5v2.5h8V5.5M8 8v2.5" /></>,
     discard: <><path d="M3 5h10M6 5V3h4v2M5 5l.6 9h4.8l.6-9" /></>,
     expand: <path d="m6 3 5 5-5 5" />,
     external: <><path d="M9 3h4v4M13 3 7 9" /><path d="M12 9v4H3V4h4" /></>,
@@ -45,6 +50,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     play: <path d="m5 3 8 5-8 5Z" />,
     plus: <path d="M8 2v12M2 8h12" />,
     quote: <path d="M3 4h4v4H5a3 3 0 0 1-3 3M10 4h4v4h-2a3 3 0 0 1-3 3" />,
+    refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,

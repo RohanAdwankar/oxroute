@@ -8,6 +8,7 @@ import { Fleet } from "./components/Fleet";
 import { Icon } from "./components/Icon";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
+import { VIEWS } from "./views/registry";
 import { api, follow } from "./lib/api";
 import {
   HINTS,
@@ -27,6 +28,7 @@ const EMPTY: Snapshot = {
   messages: {},
   inbox: [],
   tasks: [],
+  views: [],
   sources: [],
   models: [],
 };
@@ -57,6 +59,8 @@ export default function Home() {
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [watch, setWatch] = useState(false);
+  // Which view the main column shows when no agent is open. Null is the fleet.
+  const [viewId, setViewId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
   const [inboxAt, setInboxAt] = useState(0);
@@ -129,6 +133,21 @@ export default function Home() {
     window.history.pushState(null, "", url);
   }, []);
 
+  const showView = useCallback(
+    (id: string | null) => {
+      showAgent(null);
+      setRouting(null);
+      setTicked(new Set());
+      setViewId(id);
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("view", id);
+      else url.searchParams.delete("view");
+      url.searchParams.delete("card");
+      window.history.replaceState(null, "", url);
+    },
+    [showAgent],
+  );
+
   const complain = useCallback(
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
@@ -137,6 +156,7 @@ export default function Home() {
   useEffect(() => {
     const restore = () => {
       const url = new URL(window.location.href);
+      setViewId(url.searchParams.get("view"));
       const agent = url.searchParams.get("agent");
       setOpen(agent);
       setPanes(agent ? [agent] : []);
@@ -332,6 +352,8 @@ export default function Home() {
   };
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
+  const activeView = snapshot.views.find((view) => view.id === viewId) ?? null;
+  const ActiveView = activeView ? VIEWS[activeView.kind]?.component : undefined;
   const clearRouting = () => {
     setRouting(null);
     setTicked(new Set());
@@ -387,6 +409,18 @@ export default function Home() {
       if (isTyping(event.target)) {
         // Escape gets you out of the compose box and back to the keys.
         if (event.key === "Escape") (event.target as HTMLElement).blur();
+        return;
+      }
+
+      // A view owns the main column. The fleet's keys would drive cards
+      // nobody can see, so only the ones that reach elsewhere still work.
+      if (
+        activeView &&
+        !selected &&
+        !open &&
+        focus === "fleet" &&
+        !["h", "Tab", "Escape", "i", "/", "m", "v"].includes(event.key)
+      ) {
         return;
       }
 
@@ -535,6 +569,8 @@ export default function Home() {
         }
         tasksOpen={tasksOpen}
         onTasks={() => setTasksOpen((current) => !current)}
+        activeView={activeView?.id ?? null}
+        onView={showView}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -661,6 +697,20 @@ export default function Home() {
               );
             })}
           </div>
+        ) : activeView && ActiveView && !selected ? (
+          <ActiveView
+            key={activeView.id}
+            view={activeView}
+            snapshot={snapshot}
+            revision={revision}
+            busy={busy}
+            run={run}
+            say={say}
+            onOpenAgent={(id) => {
+              clearRouting();
+              showAgent(id);
+            }}
+          />
         ) : (
           <Fleet
             agents={showArchived ? snapshot.archived : snapshot.agents}

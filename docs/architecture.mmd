@@ -1,0 +1,35 @@
+graph LR
+    slack[Slack]
+    webhook[Webhook]
+    hub[Hub]
+    store[Store]
+    codex[Codex harness]
+    claude[Claude Code harness]
+    daemon[HTTP daemon]
+    web[Web UI]
+    tui[Terminal UI]
+    board[Board]
+    diagram[Diagram]
+
+    slack --> hub
+    webhook --> daemon
+    web --> daemon
+    tui --> daemon
+    daemon --> hub
+    daemon --> diagram
+    hub --> store
+    hub --> codex
+    hub --> claude
+    hub --> board
+
+%% OXDRAW CODE slack crates/oxroute-core/src/source/slack.rs
+%% OXDRAW CODE webhook crates/oxroute-daemon/src/main.rs def:ingest
+%% OXDRAW CODE hub crates/oxroute-core/src/hub.rs def:Hub
+%% OXDRAW CODE store crates/oxroute-core/src/store.rs def:Store
+%% OXDRAW CODE codex crates/oxroute-core/src/agent/codex.rs
+%% OXDRAW CODE claude crates/oxroute-core/src/agent/claude.rs
+%% OXDRAW CODE daemon crates/oxroute-daemon/src/main.rs
+%% OXDRAW CODE web app/page.tsx
+%% OXDRAW CODE tui crates/oxroute-tui/src/main.rs
+%% OXDRAW CODE board crates/oxroute-core/src/board.rs
+%% OXDRAW CODE diagram crates/oxroute-daemon/src/diagram.rs

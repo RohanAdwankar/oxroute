@@ -141,9 +141,116 @@ export interface Snapshot {
   messages: Record<string, string>;
   inbox: InboxItem[];
   tasks: TaskItem[];
+  /** What the main column can show besides the fleet, from `[[views]]`. */
+  views: ViewInfo[];
   sources: string[];
   models: ModelInfo[];
 }
+
+// -- views ---------------------------------------------------------------
+
+export interface ViewInfo {
+  id: string;
+  name: string;
+  /** Which component draws it: a key of `app/views/registry.tsx`. */
+  kind: string;
+}
+
+/** An agent on a card or a diagram box, as little as the view needs. */
+export interface CardAgent {
+  id: string;
+  name: string;
+  status: AgentStatus;
+  model: string;
+}
+
+export interface Lane {
+  id: string;
+  name: string;
+}
+
+export interface Card {
+  number: number;
+  title: string;
+  url: string;
+  open: boolean;
+  lane: string;
+  priority: string | null;
+  kind: string | null;
+  tracks: string[];
+  tags: string[];
+  body: string;
+  updatedAt: string;
+  agents: CardAgent[];
+  tasksDone: number;
+  tasksTotal: number;
+}
+
+export interface Board {
+  view: string;
+  name: string;
+  repo: string | null;
+  lanes: Lane[];
+  cards: Card[];
+  source: "github" | "snapshot";
+  /** Whether a move writes back to GitHub. */
+  writable: boolean;
+  fetchedAt: number;
+  /** Issues whose status has no column on this board. */
+  hidden: number;
+  warning: string | null;
+}
+
+export interface CodeRef {
+  file: string;
+  lines: string | null;
+  symbol: string | null;
+}
+
+export interface DiagramNode {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  code: CodeRef | null;
+  change: "added" | "renamed" | null;
+}
+
+export interface DiagramEdge {
+  from: string;
+  to: string;
+  label: string | null;
+  added: boolean;
+}
+
+export interface DiagramPayload {
+  view: string;
+  name: string;
+  file: string;
+  root: string;
+  svg: string;
+  width: number;
+  height: number;
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  /** Boxes a pending edit takes away. */
+  removed: string[];
+  /** Box id -> the agents working on it. */
+  agents: Record<string, CardAgent[]>;
+  /** Every agent that has worked on this diagram. */
+  working: CardAgent[];
+  modified: number;
+}
+
+/** A pending change to a diagram, held here until it is applied. */
+export type DiagramEdit =
+  | { op: "addNode"; id: string; label: string }
+  | { op: "addEdge"; from: string; to: string; label?: string }
+  | { op: "rename"; id: string; label: string }
+  | { op: "removeNode"; id: string }
+  | { op: "removeEdge"; from: string; to: string };
 
 export interface AgentView {
   agent: Agent;

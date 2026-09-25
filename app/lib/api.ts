@@ -1,6 +1,19 @@
 "use client";
 
-import type { Agent, AgentView, Backend, ConversationLine, DaemonEvent, Mode, SearchResults, Snapshot, TaskItem } from "./types";
+import type {
+  Agent,
+  AgentView,
+  Backend,
+  Board,
+  ConversationLine,
+  DaemonEvent,
+  DiagramEdit,
+  DiagramPayload,
+  Mode,
+  SearchResults,
+  Snapshot,
+  TaskItem,
+} from "./types";
 
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
@@ -78,6 +91,28 @@ export const api = {
   deleteTask: (id: string) =>
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
+
+  // Views. Every one is behind the daemon, so a view draws and nothing more.
+  board: (view: string, refresh = false) =>
+    call<Board>(`/api/views/${encodeURIComponent(view)}/board${refresh ? "?refresh=true" : ""}`),
+  moveCard: (view: string, number: number, lane: string) =>
+    post<Board>(`/api/views/${encodeURIComponent(view)}/board/move`, { number, lane }),
+  startCard: (view: string, number: number, options: { model?: string; agent?: string } = {}) =>
+    post<{ agent: Agent }>(`/api/views/${encodeURIComponent(view)}/board/start`, { number, ...options }),
+  unlink: (view: string, item: string, agent: string) =>
+    post<unknown>(`/api/views/${encodeURIComponent(view)}/unlink`, { item, agent }),
+  diagram: (view: string) => call<DiagramPayload>(`/api/views/${encodeURIComponent(view)}/diagram`),
+  previewDiagram: (view: string, edits: DiagramEdit[]) =>
+    post<DiagramPayload>(`/api/views/${encodeURIComponent(view)}/diagram/preview`, { edits }),
+  applyDiagram: (
+    view: string,
+    edits: DiagramEdit[],
+    options: { note?: string; model?: string; agent?: string } = {},
+  ) =>
+    post<{ agent: Agent; diagram: DiagramPayload }>(
+      `/api/views/${encodeURIComponent(view)}/diagram/apply`,
+      { edits, ...options },
+    ),
 };
 
 /**

@@ -105,6 +105,35 @@ Full parity, because the point is that you can switch and not notice:
 New on top of that: the inbox, the two other surfaces, the harness seam, and
 `/mode`.
 
+## Views: the main column is configurable
+
+The main column is the fleet. A view replaces it with another way of looking
+at the same work, and the top bar switches between them. Views are declared in
+the config file as `[[views]]`; `deploy/config.example.toml` has both kinds
+annotated. Two ship:
+
+**Board.** Every issue in a repository as a card, one column per `status:`
+label — the whole plan on one screen. Filter by priority, track, or text. Open
+a card to start an agent on it: the agent gets the issue as its brief and is an
+ordinary agent from then on. The card shows every agent on it, live, and how
+many of their tasks are done. Dragging a card to another column rewrites its
+status label on GitHub, so the same board on another machine — with its own
+agents, on its own harness — sees the move at its next refresh. Without a
+token a board reads a JSON snapshot and is read only.
+
+**Diagram.** An architecture diagram in oxdraw's own format. Each box records
+where its code lives with a `%% OXDRAW CODE <box> <path>` line. Add a box, draw
+a dependency, rename or remove one: each is a pending change, previewed in
+place. Applying writes the diagram and hands an agent a brief — what changed,
+where the code for every touched box is, and the diagram as it now stands — so
+the agent makes the code match. `docs/architecture.mmd` is this repository,
+drawn that way.
+
+Both are behaviour in the daemon behind `/api/views/{id}/…`, not in the web UI,
+so every surface can grow them. Adding a kind is a `ViewKind` variant in
+`config.rs`, the endpoints it needs, a component in `app/views/`, and one line
+in `app/views/registry.tsx`.
+
 ## Two seams
 
 **Sources** (`source/mod.rs`) need five things: run, reply, post a status you
@@ -184,6 +213,7 @@ that can reach it can run commands as you. Reach it over an SSH tunnel.
 ```
 crates/oxroute-core/       the library everything else is a client of
   model.rs                 the nouns, and the words a person can type
+  board.rs                 issues as cards, read from GitHub or a snapshot
   store.rs                 durable state, SQLite
   hub.rs                   the only module that knows about both seams
   source/{mod,slack}.rs    where signals come from
@@ -195,8 +225,11 @@ crates/oxroute-core/       the library everything else is a client of
   tests/hub.rs             the tests that matter
 
 crates/oxroute-daemon/     HTTP + SSE in front of the hub
+  diagram.rs               oxdraw diagrams: preview, rewrite, brief an agent
 crates/oxroute-tui/        ratatui, a client of that API
 app/                       Next.js, a client of that API
+  views/                   the view kinds, and the registry that picks one
+docs/architecture.mmd      this repository as an oxdraw diagram
 deploy/                    systemd units, install script, Slack manifest
 ```
 
@@ -210,7 +243,7 @@ on the protocol. `app/lib/types.ts` is hand-written and pinned by a test in
 against the app-server protocol; the Claude Code harness, run against the
 binary — spawn, answer, resume, remember; the inbox, the bindings, the turn
 lifecycle, steering, forking, side questions, artifacts, naming, the
-dashboard, the migration; 67 tests, of which 20 drive the hub end to end
+dashboard, the migration, the board and diagram views; 139 tests, of which 44 drive the hub end to end
 against a fake harness.
 
 **Not yet**: Codex is exercised by tests and by the bot this is a port of, but

@@ -15,6 +15,7 @@
 //! | [`source`]  | where signals come from; Slack is the one wired up   |
 //! | [`agent`]   | the harnesses: Codex and Claude Code                 |
 //! | [`hub`]     | the only thing that knows about both sides           |
+//! | [`board`]   | issues as cards, for a board view                     |
 //! | [`progress`]| what a running turn looks like to a person watching  |
 //! | [`migrate`] | moving in from the Slack bot this replaces           |
 //!
@@ -23,6 +24,7 @@
 //! them can do, because none of them has behaviour of its own.
 
 pub mod agent;
+pub mod board;
 pub mod config;
 pub mod dashboard;
 pub mod hub;

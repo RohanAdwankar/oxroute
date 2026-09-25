@@ -99,3 +99,40 @@ label = "Astra"
 # Refuse new work below this much free disk, rather than running out of
 # space halfway through a write.
 # min_free_bytes = 536870912
+
+# -- views --------------------------------------------------------------
+#
+# The main column shows the fleet. A view is another way of looking at the
+# same work, switched from the top bar. Declare as many as you like; they
+# appear in this order. Each has a `kind`, a `name`, and optionally the
+# `model` and `cwd` an agent started from it gets.
+
+# A board: issues as cards, one column per `status:` label. With a repo and
+# a token it reads GitHub live, and dragging a card rewrites its status label,
+# so a second machine pointed at the same repo sees the move. With only a
+# snapshot (a JSON export such as the 0 repo's data/ideas.json) it is read only.
+#
+# [[views]]
+# kind = "board"
+# name = "Ideas"
+# repo = "RohanAdwankar/0"
+# snapshot = "~/code/0/data/ideas.json"   # the fallback when GitHub cannot be read
+# lanes = ["idea", "research", "in-progress", "needs-eval", "needs-marketing", "maintenance", "completed"]
+# model = "opus"
+
+# A diagram: an oxdraw architecture diagram. Add a box, draw an arrow, rename
+# or remove one, then apply: the file is rewritten and an agent is told what
+# changed and where the code for each box lives, from the diagram's own
+# `%% OXDRAW CODE <box> <path>` lines. oxdraw opens the same file.
+#
+# [[views]]
+# kind = "diagram"
+# name = "Architecture"
+# file = "~/code/oxroute/docs/architecture.mmd"
+# root = "~/code/oxroute"                 # defaults to the file's directory
+
+# [github]
+# A token that can read and label issues. GITHUB_TOKEN or GH_TOKEN in the
+# environment works too, and wins.
+# token = "ghp_..."
+# api = "https://api.github.com"

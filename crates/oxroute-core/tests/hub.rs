@@ -346,13 +346,14 @@ impl World {
 }
 
 /// How the fake harness should behave for one test.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Harnessed {
     hang: bool,
     leave_artifacts: bool,
     can_steer: bool,
     delay: Duration,
     backend: Backend,
+    views: Vec<oxroute_core::config::ViewConfig>,
 }
 
 impl Default for Harnessed {
@@ -363,6 +364,7 @@ impl Default for Harnessed {
             can_steer: true,
             delay: Duration::ZERO,
             backend: Backend::Codex,
+            views: vec![],
         }
     }
 }
@@ -451,6 +453,9 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         slack_bot_token: None,
         owner: "U_ME".into(),
         listen: "127.0.0.1:0".into(),
+        github_token: None,
+        github_api: "https://api.github.invalid".into(),
+        views: options.views.clone(),
     };
 
     let harness = FakeHarness {
@@ -1617,4 +1622,139 @@ async fn something_you_typed_carries_no_provenance_label() {
         .unwrap();
     // "you local" is two words saying nothing.
     assert_eq!(received.origin, "");
+}
+
+// -- views ---------------------------------------------------------------
+
+fn board_view(id: &str, snapshot: &std::path::Path) -> oxroute_core::config::ViewConfig {
+    use oxroute_core::config::{BoardConfig, ViewConfig, ViewKind, DEFAULT_LANES};
+    ViewConfig {
+        id: id.into(),
+        name: "Ideas".into(),
+        kind: ViewKind::Board(BoardConfig {
+            repo: None,
+            snapshot: Some(snapshot.to_path_buf()),
+            lanes: DEFAULT_LANES.iter().map(|l| l.to_string()).collect(),
+        }),
+        model: None,
+        cwd: None,
+    }
+}
+
+async fn world_with_board(mode: Mode) -> (World, PathBuf) {
+    let snapshot = std::env::temp_dir().join(format!(
+        "oxroute-board-{}-{}.json",
+        std::process::id(),
+        new_id("t")
+    ));
+    std::fs::write(
+        &snapshot,
+        r#"{"ideas": [
+            {"issue": 9, "title": "modular ui", "state": "open", "status": "idea",
+             "priority": 1, "kind": "devtool", "tracks": ["oss"], "tags": [],
+             "body": "move every issue onto a board", "url": "https://github.com/o/r/issues/9",
+             "updated_at": "2026-09-25T01:43:46Z"},
+            {"issue": 8, "title": "not space efficient", "state": "closed", "status": null,
+             "priority": null, "kind": null, "tracks": [], "tags": [], "body": "",
+             "url": "", "updated_at": "2026-09-22T22:04:04Z"}
+        ]}"#,
+    )
+    .unwrap();
+    let w = build(
+        mode,
+        Harnessed {
+            views: vec![board_view("ideas", &snapshot)],
+            ..Default::default()
+        },
+    )
+    .await;
+    (w, snapshot)
+}
+
+#[tokio::test]
+async fn a_board_reads_its_snapshot_into_columns() {
+    let (w, _) = world_with_board(Mode::Ask).await;
+    let snapshot = w.hub.snapshot(10).unwrap();
+    assert_eq!(snapshot.views.len(), 1);
+    assert_eq!(snapshot.views[0].kind, "board");
+
+    let board = w.hub.board("ideas", false).await.unwrap();
+    assert_eq!(board.source, "snapshot");
+    assert!(!board.writable, "a snapshot cannot be written back");
+    let lane = |n: u64| board.cards.iter().find(|c| c.number == n).unwrap().lane.clone();
+    assert_eq!(lane(9), "idea");
+    // Closed with no status reads as done.
+    assert_eq!(lane(8), "completed");
+    assert_eq!(board.lanes[2].name, "Building");
+}
+
+#[tokio::test]
+async fn starting_an_agent_on_a_card_puts_it_on_the_card_with_its_progress() {
+    // Ask mode, on purpose: starting from a card is itself the decision, so
+    // it must not wait in the inbox for a second one.
+    let (w, _) = world_with_board(Mode::Ask).await;
+    let agent = w.hub.start_on_card("ideas", 9, None, None).await.unwrap();
+
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let prompt = started[0].1.iter().filter_map(TurnInput::as_text).next().unwrap().to_string();
+    assert!(prompt.starts_with("Work on #9: modular ui"), "{prompt}");
+    assert!(prompt.contains("move every issue onto a board"));
+
+    let task = w.hub.create_task("draw the columns", &agent.id).unwrap();
+    w.hub.create_task("wire the presets", &agent.id).unwrap();
+    w.hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", &agent.id)
+        .unwrap();
+
+    let board = w.hub.board("ideas", false).await.unwrap();
+    let card = board.cards.iter().find(|c| c.number == 9).unwrap();
+    assert_eq!(card.agents.len(), 1);
+    assert_eq!(card.agents[0].id, agent.id);
+    // Named for the issue, not for the first words of its brief.
+    assert_eq!(card.agents[0].name, "#9 modular ui");
+    assert_eq!((card.tasks_done, card.tasks_total), (1, 2));
+
+    // The agent is an ordinary one, and says where its work came from.
+    let received = w
+        .hub
+        .timeline(&agent.id, 10)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == EntryKind::Received)
+        .unwrap();
+    assert_eq!(received.origin, "board Ideas #9");
+    assert!(w
+        .hub
+        .store
+        .inbox(10)
+        .unwrap()
+        .iter()
+        .all(|item| item.state == InboxState::Done));
+}
+
+#[tokio::test]
+async fn more_work_on_a_card_can_go_to_the_agent_already_on_it() {
+    let (w, _) = world_with_board(Mode::Auto).await;
+    let first = w.hub.start_on_card("ideas", 9, None, None).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let again = w.hub.start_on_card("ideas", 9, None, Some(&first.id)).await.unwrap();
+    assert_eq!(again.id, first.id);
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert_eq!(w.hub.store.agents(10).unwrap().len(), 1);
+
+    w.hub.unlink("ideas", "#9", &first.id).unwrap();
+    let board = w.hub.board("ideas", false).await.unwrap();
+    assert!(board.cards.iter().all(|c| c.agents.is_empty()));
+}
+
+#[tokio::test]
+async fn a_snapshot_board_refuses_a_move_instead_of_pretending() {
+    let (w, _) = world_with_board(Mode::Ask).await;
+    let error = w.hub.move_card("ideas", 9, "in-progress").await.unwrap_err().to_string();
+    assert!(error.contains("snapshot"), "{error}");
+    let error = w.hub.move_card("ideas", 9, "shipped").await.unwrap_err().to_string();
+    assert!(error.contains("no shipped column"), "{error}");
+    let error = w.hub.board("nope", false).await.unwrap_err().to_string();
+    assert!(error.contains("no view called nope"), "{error}");
 }

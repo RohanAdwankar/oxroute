@@ -8,7 +8,7 @@ here are a change to one of them.
 ## Building and testing
 
 ```bash
-cargo test --workspace     # 67 tests; tests/hub.rs is the set that matters
+cargo test --workspace     # 139 tests; tests/hub.rs is the set that matters
 cargo build --release
 npm run lint && npm run build
 ```
@@ -56,3 +56,22 @@ Implement the trait in `source/mod.rs` or `agent/mod.rs` and register it in
 `hub.rs` (`with_source` / `with_harness`, both called before the hub is
 shared). Optional methods have defaults that refuse honestly; prefer that to
 a silent no-op. `tests/hub.rs` has a fake of each to copy.
+
+## Adding a view
+
+A view is another way of drawing the main column. Its kind is a `ViewKind`
+variant in `config.rs`, which is also where its `[[views]]` keys are checked;
+what it does lives in the core or the daemon behind `/api/views/{id}/…`; and
+it is drawn by a component in `app/views/` registered in
+`app/views/registry.tsx`. Keep the component to drawing. Board logic is in
+`board.rs` and the hub; diagram logic is in the daemon's `diagram.rs`, next
+to the task diagram, because only the daemon links oxdraw.
+
+**A board writes exactly one thing back: the `status:` label.** It reads the
+issue fresh before the write so a label added on GitHub since the last fetch
+is never dropped. Everything else on a card — agents, task progress — is
+oxroute's own state, joined in from `view_links` and the task list.
+
+**A diagram is written before an agent hears about it.** A saved diagram
+with nobody told is recoverable; an agent building to a change the file does
+not have is not.
