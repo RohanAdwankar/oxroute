@@ -92,8 +92,10 @@ trap 'exit 130' INT TERM
 
 # Waiting forever for a daemon that has already died is the least useful
 # thing this script could do, so give up and say what to look at.
+ready=false
 for _ in $(seq 1 120); do
   if curl -sf "http://$OXROUTE_LISTEN/api/health" >/dev/null 2>&1; then
+    ready=true
     break
   fi
   if ! kill -0 "$watcher" 2>/dev/null; then
@@ -102,6 +104,10 @@ for _ in $(seq 1 120); do
   fi
   sleep 0.5
 done
+if [ "$ready" != true ]; then
+  echo "oxrouted did not become healthy within 60 seconds." >&2
+  exit 1
+fi
 
 ./target/debug/oxrouted doctor || true
 
