@@ -161,6 +161,7 @@ export function TaskPanel({
 
       <div className="flex shrink-0 gap-2 border-b border-rule p-4">
         <input
+          data-task-input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {

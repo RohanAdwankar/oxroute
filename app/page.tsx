@@ -22,6 +22,10 @@ import {
 } from "./lib/keys";
 import type { Agent, AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
 
+/** The screen, left to right. h and l step along it. */
+const COLUMNS = ["inbox", "fleet", "tasks"] as const;
+type Column = (typeof COLUMNS)[number];
+
 const EMPTY: Snapshot = {
   mode: "ask",
   defaultModel: "",
@@ -63,7 +67,7 @@ export default function Home() {
   const [jump, setJump] = useState(false);
   const [watch, setWatch] = useState(false);
   // Which column the keyboard drives, and where it is in each.
-  const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
+  const [focus, setFocus] = useState<Column>("inbox");
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
@@ -440,10 +444,20 @@ export default function Home() {
 
       const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
-      const here = focus === "inbox" ? inbox.length : fleet.length;
+      const here = focus === "inbox" ? inbox.length : focus === "fleet" ? fleet.length : 0;
       const move = (delta: number) => {
+        if (focus === "tasks") return;
         const setAt = focus === "inbox" ? setInboxAt : setFleetAt;
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
+      };
+      // h and l walk the screen: inbox, what you are working on, tasks. A
+      // column you step into opens, because a column you cannot see is not
+      // somewhere you can be.
+      const step = (delta: number) => {
+        const next = COLUMNS[Math.min(Math.max(COLUMNS.indexOf(focus) + delta, 0), COLUMNS.length - 1)];
+        if (next === "inbox") setInboxVisible(true);
+        if (next === "tasks") setTasksOpen(true);
+        setFocus(next);
       };
       const stop = () => event.preventDefault();
       // With a pane open the fleet is not on screen, so the keys that act on
@@ -468,18 +482,13 @@ export default function Home() {
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
         case "h":
           stop();
-          setInboxVisible(true);
-          return setFocus("inbox");
+          return step(-1);
         case "l":
           stop();
-          // h shows the inbox, so l shows the fleet: with a pane open the
-          // fleet is behind it, and focusing a column you cannot see does
-          // nothing you can act on.
-          if (open) showAgent(null);
-          return setFocus("fleet");
+          return step(1);
         case "Tab":
           stop();
-          return setFocus((at) => (at === "inbox" ? "fleet" : "inbox"));
+          return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
           if (open) return showAgent(null);
@@ -487,6 +496,10 @@ export default function Home() {
           return setFocus("inbox");
         case "Enter": {
           stop();
+          if (focus === "tasks") {
+            document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
+            return;
+          }
           // What is in front of you is a conversation, so enter starts
           // typing in it rather than reopening a card you cannot see.
           if (reading) {
@@ -788,7 +801,10 @@ export default function Home() {
             )}
             currentAgent={panes.at(-1) ?? null}
             busy={busy}
-            onClose={() => setTasksOpen(false)}
+            onClose={() => {
+              setTasksOpen(false);
+              setFocus("fleet");
+            }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
             onUpdate={(task) => void run(() => api.updateTask(task))}
             onDelete={(id) => void run(() => api.deleteTask(id))}

@@ -11,8 +11,8 @@ import { useEffect } from "react";
 const KEYS: [string, string][] = [
   ["j k", "move down, up"],
   ["g G", "first, last"],
-  ["h l", "inbox, fleet"],
-  ["tab", "other column"],
+  ["h l", "column left, right: inbox, agents, tasks"],
+  ["tab", "next column"],
   ["enter", "open the item, send it where it is ticked, or type to an agent"],
   ["a s f …", "jump to that agent, or send this signal to it"],
   ["space", "tick an agent, while routing"],
