@@ -375,6 +375,24 @@ export default function Home() {
     setTicked(new Set());
   };
 
+  // Deciding one signal is rarely deciding only one, so a settled question
+  // hands you the next one waiting instead of dropping you back at the
+  // fleet. The cursor lands on it the moment the daemon confirms it, which
+  // is the same path a signal you typed in takes.
+  const settled = useCallback(
+    (signalId: string) => () => {
+      setRouting(null);
+      setTicked(new Set());
+      const at = snapshot.inbox.findIndex((item) => item.signal.id === signalId);
+      const waiting = snapshot.inbox.filter(
+        (item) => item.state === "waiting" && item.signal.id !== signalId,
+      );
+      const next = waiting.find((item) => snapshot.inbox.indexOf(item) > at) ?? waiting[0];
+      if (next) landOn.current = next.signal.id;
+    },
+    [snapshot.inbox],
+  );
+
   const pick = (item: InboxItem) => {
     const at = snapshot.inbox.findIndex((i) => i.signal.id === item.signal.id);
     if (at >= 0) setInboxAt(at);
@@ -394,9 +412,9 @@ export default function Home() {
   const sendTo = useCallback(
     (signalId: string, agentIds: string[]) => {
       if (agentIds.length === 0) return;
-      void run(() => api.routeExisting(signalId, agentIds), clearRouting);
+      void run(() => api.routeExisting(signalId, agentIds), settled(signalId));
     },
-    [run],
+    [run, settled],
   );
 
   const toggle = (id: string) =>
@@ -500,13 +518,16 @@ export default function Home() {
         case "d":
           if (!selected) return;
           stop();
-          return void run(() => api.discard(selected.signal.id), clearRouting);
+          return void run(() => api.discard(selected.signal.id), settled(selected.signal.id));
         case "n": {
           if (reading) return;
           stop();
           const item = selected ?? inbox[inboxAt];
           if (item && item.state === "waiting") {
-            void run(() => api.routeSpawn(item.signal.id, snapshot.defaultModel), clearRouting);
+            void run(
+              () => api.routeSpawn(item.signal.id, snapshot.defaultModel),
+              settled(item.signal.id),
+            );
           }
           return;
         }
@@ -751,10 +772,10 @@ export default function Home() {
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>
               selected &&
-              void run(() => api.routeSpawn(selected.signal.id, model), clearRouting)
+              void run(() => api.routeSpawn(selected.signal.id, model), settled(selected.signal.id))
             }
             onDiscard={() =>
-              selected && void run(() => api.discard(selected.signal.id), clearRouting)
+              selected && void run(() => api.discard(selected.signal.id), settled(selected.signal.id))
             }
           />
         )}
