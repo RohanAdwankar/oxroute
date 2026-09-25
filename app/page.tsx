@@ -10,6 +10,7 @@ import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
+import { orderTasks } from "./lib/tasks";
 import {
   HINTS,
   LETTERS,
@@ -69,6 +70,8 @@ export default function Home() {
   const [focus, setFocus] = useState<Column>("inbox");
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
+  const [taskAt, setTaskAt] = useState(0);
+  const [tasksDone, setTasksDone] = useState(false);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
@@ -127,6 +130,8 @@ export default function Home() {
 
   const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
+    // Opening an agent is walking into it: the keys act on it from here.
+    if (id) setFocus("fleet");
     setPanes(id ? [id] : []);
     setPaneWidths(id ? [1] : []);
     setFocusEntry(entry ?? null);
@@ -372,6 +377,14 @@ export default function Home() {
     setPaneWidths(next);
   };
 
+  // The task column, in the order it is drawn, so the keyboard and the panel
+  // are counting the same rows.
+  const orderedTasks = orderTasks(snapshot.tasks, panes.at(-1) ?? null);
+  const finishedTasks = orderedTasks.filter((task) => task.status === "complete").length;
+  const visibleTasks = tasksDone
+    ? orderedTasks
+    : orderedTasks.filter((task) => task.status !== "complete");
+
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
     setRouting(null);
@@ -443,10 +456,17 @@ export default function Home() {
 
       const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
-      const here = focus === "inbox" ? inbox.length : focus === "fleet" ? fleet.length : 0;
+      const here =
+        focus === "inbox" ? inbox.length : focus === "fleet" ? fleet.length : visibleTasks.length;
       const move = (delta: number) => {
-        if (focus === "tasks") return;
-        const setAt = focus === "inbox" ? setInboxAt : setFleetAt;
+        // In an open agent the middle column is a conversation, not a list,
+        // so moving in it means reading it.
+        if (focus === "fleet" && reading) {
+          document.querySelector("[data-transcript]")?.scrollBy({ top: delta * 90 });
+          return;
+        }
+        const setAt =
+          focus === "inbox" ? setInboxAt : focus === "fleet" ? setFleetAt : setTaskAt;
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
       };
       // h and l walk the screen: inbox, what you are working on, tasks. A
@@ -496,7 +516,11 @@ export default function Home() {
         case "Enter": {
           stop();
           if (focus === "tasks") {
-            document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
+            // Enter opens whatever the cursor is on, and with an empty
+            // column the only thing to open is the box that fills it.
+            const row = document.querySelectorAll<HTMLElement>("[data-task-row] button")[taskAt];
+            if (row) row.click();
+            else document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
             return;
           }
           // What is in front of you is a conversation, so enter starts
@@ -766,6 +790,7 @@ export default function Home() {
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
+            active={focus === "fleet"}
             vim={vim && !jump}
             onToggle={toggle}
             onOpen={(id) => {
@@ -787,6 +812,12 @@ export default function Home() {
         {tasksOpen && (
           <TaskPanel
             tasks={snapshot.tasks}
+            visible={visibleTasks}
+            finished={finishedTasks}
+            showDone={tasksDone}
+            onShowDone={() => setTasksDone((shown) => !shown)}
+            cursor={taskAt}
+            active={focus === "tasks"}
             agents={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}

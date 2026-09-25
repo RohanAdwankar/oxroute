@@ -9,7 +9,7 @@ import { useEffect } from "react";
  * everything else, so the keyboard is learnable without reading the source.
  */
 const KEYS: [string, string][] = [
-  ["j k", "move down, up"],
+  ["j k", "move down, up in the column you are in"],
   ["g G", "first, last"],
   ["h l", "column left, right: inbox, agents, tasks"],
   ["tab", "next column"],

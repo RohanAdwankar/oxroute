@@ -51,6 +51,7 @@ export function Fleet({
   onDiscard,
   busy,
   cursor,
+  active,
   vim,
 }: {
   agents: Agent[];
@@ -72,6 +73,8 @@ export function Fleet({
   busy: boolean;
   /// Which card the keyboard is on.
   cursor: number;
+  /// True when the keyboard is driving this column.
+  active: boolean;
   /// Show the one-key hints. Off means the mouse is doing the work.
   vim: boolean;
 }) {
@@ -160,7 +163,7 @@ export function Fleet({
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id}
-                focused={index === cursor}
+                focused={active && index === cursor}
                 hint={vim ? hintFor(index) : null}
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}

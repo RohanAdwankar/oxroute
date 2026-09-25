@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Agent, TaskItem, TaskStatus } from "../lib/types";
 import { Icon } from "./Icon";
@@ -19,8 +19,33 @@ const STATE_COLOR: Record<TaskStatus, string> = {
   blocked: "text-[#a6493d]",
 };
 
+/** One task, and whether the keyboard is on it. */
+function Row({ focused, children }: { focused: boolean; children: React.ReactNode }) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) row.current?.scrollIntoView({ block: "nearest" });
+  }, [focused]);
+  return (
+    <div
+      ref={row}
+      data-task-row
+      className={`group flex items-start gap-3 border-b border-hair border-l-[3px] py-4 pr-5 pl-[17px] ${
+        focused ? "border-l-ink bg-wash" : "border-l-transparent"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function TaskPanel({
   tasks,
+  visible,
+  finished,
+  showDone,
+  onShowDone,
+  cursor,
+  active,
   agents,
   currentAgent,
   busy,
@@ -30,6 +55,13 @@ export function TaskPanel({
   onDelete,
 }: {
   tasks: TaskItem[];
+  /// The rows on screen, in order; the keyboard counts these.
+  visible: TaskItem[];
+  finished: number;
+  showDone: boolean;
+  onShowDone: () => void;
+  cursor: number;
+  active: boolean;
   agents: Agent[];
   currentAgent: string | null;
   busy: boolean;
@@ -41,22 +73,13 @@ export function TaskPanel({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const [showDone, setShowDone] = useState(false);
   const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
-  const ordered = [...tasks].sort((a, b) => {
-    const group = (task: TaskItem) =>
-      currentAgent ? task.agentId === currentAgent ? 0 : task.agentId ? 2 : 1 : 0;
-    return group(a) - group(b) || Number(a.status === "complete") - Number(b.status === "complete") || b.updatedAt - a.updatedAt;
-  });
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
-  // A finished task is a record, not work; it is kept, not shown.
-  const open = ordered.filter((task) => task.status !== "complete");
-  const finished = ordered.filter((task) => task.status === "complete");
 
-  const row = (task: TaskItem) => {
+  const row = (task: TaskItem, at: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
-    return <div key={task.id} className="group flex items-start gap-3 border-b border-hair px-5 py-4">
+    return <Row key={task.id} focused={active && at === cursor}>
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
@@ -137,7 +160,7 @@ export function TaskPanel({
     <button type="button" onClick={() => onDelete(task.id)} disabled={busy} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
       <Icon name="discard" size={14} />
     </button>
-  </div>;
+  </Row>;
   };
 
   const create = () => {
@@ -176,7 +199,7 @@ export function TaskPanel({
       </div>
 
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
-        {ordered.length === 0 ? (
+        {visible.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">No tasks yet.</p>
         ) : <>
           <div className="border-b border-rule bg-paper p-4">
@@ -187,17 +210,20 @@ export function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>
-          {open.map(row)}
-          {finished.length > 0 && (
+          {visible.filter((task) => task.status !== "complete").map(row)}
+          {finished > 0 && (
             <button
               type="button"
-              onClick={() => setShowDone((shown) => !shown)}
+              onClick={onShowDone}
               className="w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink"
             >
-              Done · {finished.length}
+              Done · {finished}
             </button>
           )}
-          {showDone && finished.map(row)}
+          {showDone &&
+            visible
+              .filter((task) => task.status === "complete")
+              .map((task, at) => row(task, visible.length - finished + at))}
         </>}
       </div>
     </aside>
