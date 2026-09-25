@@ -11,7 +11,7 @@ import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
-import { orderTasks } from "./lib/tasks";
+import { taskRows } from "./lib/tasks";
 import {
   HINTS,
   LETTERS,
@@ -385,13 +385,7 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  // The task column, in the order it is drawn, so the keyboard and the panel
-  // are counting the same rows.
-  const orderedTasks = orderTasks(snapshot.tasks, panes.at(-1) ?? null);
-  const finishedTasks = orderedTasks.filter((task) => task.status === "complete").length;
-  const visibleTasks = tasksDone
-    ? orderedTasks
-    : orderedTasks.filter((task) => task.status !== "complete");
+  const tasks = taskRows(snapshot.tasks, panes.at(-1) ?? null, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
@@ -464,7 +458,7 @@ export default function Home() {
 
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here =
-        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : visibleTasks.length;
+        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : tasks.length;
       const move = (delta: number) => {
         // In an open agent the middle column is a conversation, not a list,
         // so moving in it means reading it.
@@ -525,8 +519,12 @@ export default function Home() {
           if (focus === "tasks") {
             // Enter opens whatever the cursor is on, and with an empty
             // column the only thing to open is the box that fills it.
-            const row = document.querySelectorAll<HTMLElement>("[data-task-row] button")[taskAt];
-            if (row) row.click();
+            const row = tasks[taskAt];
+            if (row?.kind === "band") return setTasksDone((shown) => !shown);
+            // The band is a row but not a task, so the two counts differ.
+            const nth = tasks.slice(0, taskAt).filter((entry) => entry.kind === "task").length;
+            const edit = document.querySelectorAll<HTMLElement>("[data-task-open]")[nth];
+            if (edit) edit.click();
             else document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
             return;
           }
@@ -824,9 +822,7 @@ export default function Home() {
         {tasksOpen && (
           <TaskPanel
             tasks={snapshot.tasks}
-            visible={visibleTasks}
-            finished={finishedTasks}
-            showDone={tasksDone}
+            rows={tasks}
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
             active={focus === "tasks"}

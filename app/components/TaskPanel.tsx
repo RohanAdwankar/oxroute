@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { TaskRow } from "../lib/tasks";
 import type { Agent, TaskItem, TaskStatus } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -40,9 +41,7 @@ function Row({ focused, children }: { focused: boolean; children: React.ReactNod
 
 export function TaskPanel({
   tasks,
-  visible,
-  finished,
-  showDone,
+  rows,
   onShowDone,
   cursor,
   active,
@@ -56,9 +55,7 @@ export function TaskPanel({
 }: {
   tasks: TaskItem[];
   /// The rows on screen, in order; the keyboard counts these.
-  visible: TaskItem[];
-  finished: number;
-  showDone: boolean;
+  rows: TaskRow[];
   onShowDone: () => void;
   cursor: number;
   active: boolean;
@@ -114,6 +111,7 @@ export function TaskPanel({
             setEditing(task.id);
             setEditDraft(task.text);
           }}
+          data-task-open
           className={`block w-full cursor-text text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
         >
           {task.text}
@@ -205,7 +203,7 @@ export function TaskPanel({
       </div>
 
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
-        {visible.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">No tasks yet.</p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">
@@ -216,20 +214,22 @@ export function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>}
-          {visible.filter((task) => task.status !== "complete").map(row)}
-          {finished > 0 && (
-            <button
-              type="button"
-              onClick={onShowDone}
-              className="w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink"
-            >
-              Done · {finished}
-            </button>
+          {rows.map((entry, at) =>
+            entry.kind === "band" ? (
+              <button
+                key="done"
+                type="button"
+                onClick={onShowDone}
+                className={`w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink ${
+                  active && at === cursor ? "border-l-[3px] border-l-ink pl-[17px]" : ""
+                }`}
+              >
+                Done · {entry.count}
+              </button>
+            ) : (
+              row(entry.task, at)
+            ),
           )}
-          {showDone &&
-            visible
-              .filter((task) => task.status === "complete")
-              .map((task, at) => row(task, visible.length - finished + at))}
         </>}
       </div>
     </aside>
