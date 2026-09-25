@@ -76,6 +76,12 @@ export function TaskPanel({
   const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
+  // A flowchart of things that do not depend on each other is a list with
+  // extra steps, so it is drawn only once something is waiting on something.
+  const linked = tasks.some(
+    (task) =>
+      task.blockedByTaskId && tasks.some((other) => other.id === task.blockedByTaskId),
+  );
 
   const row = (task: TaskItem, at: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
@@ -202,14 +208,14 @@ export function TaskPanel({
         {visible.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">No tasks yet.</p>
         ) : <>
-          <div className="border-b border-rule bg-paper p-4">
+          {linked && <div className="border-b border-rule bg-paper p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/api/task-diagram.svg?v=${encodeURIComponent(graphVersion)}`}
               alt="Task dependency flowchart"
               className="max-h-[270px] w-full object-contain"
             />
-          </div>
+          </div>}
           {visible.filter((task) => task.status !== "complete").map(row)}
           {finished > 0 && (
             <button
