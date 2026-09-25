@@ -160,16 +160,14 @@ fn doctor() -> Result<()> {
                 }
                 bits.join(", ")
             }
-            oxroute_core::config::ViewKind::Diagram(diagram) => {
-                if diagram.file.exists() {
-                    diagram.file.display().to_string()
-                } else {
-                    format!("{} (MISSING)", diagram.file.display())
-                }
-            }
         };
         println!("view {:<10} {} [{}] {detail}", view.id, view.name, view.kind.as_str());
     }
+    println!(
+        "diagram         {} (in each agent's directory: {})",
+        config.diagram_path,
+        config.diagram_for("").display()
+    );
     match oxroute_core::migrate::legacy_database() {
         Some(path) => println!("codex-slack     {} (run `oxrouted migrate`)", path.display()),
         None => println!("codex-slack     nothing to import"),
@@ -236,9 +234,12 @@ async fn serve() -> Result<()> {
         .route("/api/views/{id}/board/move", post(move_card))
         .route("/api/views/{id}/board/start", post(start_card))
         .route("/api/views/{id}/unlink", post(unlink))
-        .route("/api/views/{id}/diagram", get(diagram_view))
-        .route("/api/views/{id}/diagram/preview", post(diagram_preview))
-        .route("/api/views/{id}/diagram/apply", post(diagram_apply))
+        .route("/api/agents/{id}/diagram", get(diagram_view))
+        .route("/api/agents/{id}/diagram/preview", post(diagram_preview))
+        .route("/api/agents/{id}/diagram/send", post(diagram_send))
+        .route("/api/agents/{id}/diagram/create", post(diagram_create))
+        .route("/api/diagram/render", post(diagram_render))
+        .route("/api/attachments/{name}", get(attachment))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
@@ -778,71 +779,60 @@ async fn unlink(
     Ok(Json(json!({ "ok": true })))
 }
 
-fn diagram_config<'a>(
-    hub: &'a Hub,
-    id: &str,
-) -> Result<(&'a oxroute_core::config::ViewConfig, &'a oxroute_core::config::DiagramConfig)> {
-    let view = hub.view(id)?;
-    match &view.kind {
-        oxroute_core::config::ViewKind::Diagram(diagram) => Ok((view, diagram)),
-        other => anyhow::bail!("{id} is a {} view, not a diagram", other.as_str()),
+/// An agent's diagram: where it is, and the directory its code is in.
+fn diagram_of(hub: &Hub, id: &str) -> Result<(oxroute_core::Agent, std::path::PathBuf)> {
+    let agent = hub.store.agent(id)?.context("no such agent")?;
+    let path = hub.config.diagram_for(&agent.cwd);
+    Ok((agent, path))
+}
+
+fn workdir(hub: &Hub, agent: &oxroute_core::Agent) -> String {
+    if agent.cwd.is_empty() {
+        hub.config.workspace_path().display().to_string()
+    } else {
+        agent.cwd.clone()
     }
 }
 
-/// A diagram as the view draws it: the picture, where every box is, and the
-/// agents on each box.
+/// An agent's diagram as the composer draws it: the picture, and where
+/// every box is so a click on the picture can find it.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DiagramPayload {
-    view: String,
-    name: String,
+    /// False when the agent's repository has no diagram yet. The rest is
+    /// then empty, and the composer offers to have the agent draw one.
+    exists: bool,
     file: String,
-    root: String,
     #[serde(flatten)]
-    drawn: diagram::Drawn,
-    /// Box id -> the agents working on it.
-    agents: HashMap<String, Vec<oxroute_core::board::CardAgent>>,
-    /// Every agent put on this diagram, for "send the next change to".
-    working: Vec<oxroute_core::board::CardAgent>,
-    /// Seconds since the epoch the file last changed. An agent editing it
-    /// changes this, which is how the view knows to redraw.
+    drawn: Option<diagram::Drawn>,
+    /// Seconds since the epoch the file last changed. The agent editing it
+    /// changes this, which is how the composer knows to redraw.
     modified: f64,
 }
 
 fn diagram_payload(hub: &Hub, id: &str, edits: &[diagram::Edit]) -> Result<DiagramPayload> {
-    let (view, config) = diagram_config(hub, id)?;
-    let file = diagram::DiagramFile::read(&config.file)?;
-    let drawn = diagram::draw(&file, edits)?;
-    let mut agents = HashMap::new();
-    let mut working = Vec::new();
-    for (item, linked) in hub.linked(id)? {
-        if let Some(node) = item.strip_prefix("node:") {
-            agents.insert(node.to_string(), linked);
-        } else if item == DIAGRAM_ITEM {
-            working = linked;
-        }
-    }
-    let modified = std::fs::metadata(&config.file)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs_f64())
-        .unwrap_or_default();
+    let (_, path) = diagram_of(hub, id)?;
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Ok(DiagramPayload {
+            exists: false,
+            file: path.display().to_string(),
+            drawn: None,
+            modified: 0.0,
+        });
+    };
+    let file = diagram::DiagramFile::read(&path)?;
     Ok(DiagramPayload {
-        view: view.id.clone(),
-        name: view.name.clone(),
-        file: config.file.display().to_string(),
-        root: config.root.display().to_string(),
-        drawn,
-        agents,
-        working,
-        modified,
+        exists: true,
+        file: path.display().to_string(),
+        drawn: Some(diagram::draw(&file, edits)?),
+        modified: metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_default(),
     })
 }
-
-/// Every change to one diagram is one thread, so the next change can go to
-/// the agent that made the last one.
-const DIAGRAM_ITEM: &str = "diagram";
 
 async fn diagram_view(
     State(hub): Hubs,
@@ -866,53 +856,101 @@ async fn diagram_preview(
 }
 
 #[derive(Deserialize)]
-struct ApplyBody {
+struct SendBody {
     edits: Vec<diagram::Edit>,
     #[serde(default)]
     note: String,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    agent: Option<String>,
 }
 
-/// Write the edits into the diagram, then hand an agent the change.
+/// Draw a change instead of describing it: write it into the diagram, then
+/// send the agent a brief on what changed and where that code is.
 ///
 /// The file is written first. A diagram that changed with nobody told is
 /// visible and easy to recover; an agent told about a change the file does
 /// not have would be building to a spec that does not exist.
-async fn diagram_apply(
+async fn diagram_send(
     State(hub): Hubs,
     Path(id): Path<String>,
-    Json(body): Json<ApplyBody>,
-) -> Result<Json<serde_json::Value>, Failed> {
+    Json(body): Json<SendBody>,
+) -> Result<Json<DiagramPayload>, Failed> {
     if body.edits.is_empty() {
-        return Err(Failed(anyhow::anyhow!("there are no changes to apply")));
+        return Err(Failed(anyhow::anyhow!("there are no changes to send")));
     }
-    let (_, config) = diagram_config(&hub, &id)?;
-    let file = diagram::DiagramFile::read(&config.file)?;
-    let request = diagram::describe(&file, &body.edits, &config.file, &config.root, &body.note)?;
-    let rewritten = diagram::rewrite(&file, &body.edits)?;
-    diagram::write(&config.file, &rewritten)?;
+    let (agent, path) = diagram_of(&hub, &id)?;
+    let root = workdir(&hub, &agent);
+    let file = diagram::DiagramFile::read(&path)?;
+    let brief = diagram::describe(&file, &body.edits, &path, std::path::Path::new(&root), &body.note)?;
+    diagram::write(&path, &diagram::rewrite(&file, &body.edits)?)?;
+    hub.say_to(&id, &brief).await.map_err(|error| {
+        Failed(error.context("the diagram is saved, but the agent could not be told"))
+    })?;
+    Ok(Json(diagram_payload(&hub, &id, &[])?))
+}
 
-    let name = diagram::title(&file, &body.edits);
-    let agent = hub
-        .start_on(
-            &id,
-            DIAGRAM_ITEM,
-            &request,
-            Some(&name),
-            body.model.as_deref(),
-            body.agent.as_deref(),
-        )
-        .await
-        .map_err(|error| {
-            Failed(error.context("the diagram is saved, but no agent could be started on it"))
-        })?;
-    for node in diagram::touched(&body.edits) {
-        hub.link(&id, &format!("node:{node}"), &agent.id)?;
+/// A repository with no diagram yet: ask its agent to draw one, in the
+/// format the composer reads.
+async fn diagram_create(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let (agent, path) = diagram_of(&hub, &id)?;
+    let root = workdir(&hub, &agent);
+    hub.say_to(&id, &diagram::create_request(&path, std::path::Path::new(&root)))
+        .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct RenderBody {
+    source: String,
+    /// Boxes the change added, coloured as the editor showed them.
+    #[serde(default)]
+    added: Vec<String>,
+}
+
+/// Draw a diagram someone sent, for the timeline to show as a picture.
+async fn diagram_render(Json(body): Json<RenderBody>) -> Result<Json<serde_json::Value>, Failed> {
+    let file = diagram::DiagramFile::parse(&body.source)?;
+    Ok(Json(json!({ "svg": diagram::draw_marked(&file, &body.added)?.svg })))
+}
+
+/// An image sent from a surface, so the timeline can show what was sent.
+///
+/// Only a bare file name inside the attachments directory: anything with a
+/// separator, or a leading dot, is refused before the disk is touched.
+async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
+    let Some(kind) = image_type(&name) else {
+        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
+    };
+    match tokio::fs::read(hub.config.attachments.join(&name)).await {
+        Ok(bytes) => Ok(Response::builder()
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .body(Body::from(bytes))?),
+        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
     }
-    Ok(Json(json!({ "agent": agent, "diagram": diagram_payload(&hub, &id, &[])? })))
+}
+
+/// The content type of an attachment worth serving, or `None`.
+///
+/// Only a bare image file name: anything with a separator or a leading dot
+/// is refused before the disk is touched, so no name reaches outside the
+/// attachments directory.
+fn image_type(name: &str) -> Option<&'static str> {
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && std::path::Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name);
+    if !plain {
+        return None;
+    }
+    match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1010,6 +1048,15 @@ mod tests {
         assert_eq!(patches[1]["state"], "closed");
         assert_eq!(patches[1]["state_reason"], "completed");
         assert!(patches[0].get("state").is_none(), "an open issue staying open is not reopened");
+    }
+
+    #[test]
+    fn only_a_bare_image_name_is_served_from_attachments() {
+        assert_eq!(image_type("web-msg_1-sketch.png"), Some("image/png"));
+        assert_eq!(image_type("photo.JPG"), Some("image/jpeg"));
+        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.png", "notes.txt", ""] {
+            assert_eq!(image_type(refused), None, "{refused} was served");
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@ here are a change to one of them.
 ## Building and testing
 
 ```bash
-cargo test --workspace     # 139 tests; tests/hub.rs is the set that matters
+cargo test --workspace     # 142 tests; tests/hub.rs is the set that matters
 cargo build --release
 npm run lint && npm run build
 ```
@@ -61,17 +61,24 @@ a silent no-op. `tests/hub.rs` has a fake of each to copy.
 
 A view is another way of drawing the main column. Its kind is a `ViewKind`
 variant in `config.rs`, which is also where its `[[views]]` keys are checked;
-what it does lives in the core or the daemon behind `/api/views/{id}/…`; and
-it is drawn by a component in `app/views/` registered in
-`app/views/registry.tsx`. Keep the component to drawing. Board logic is in
-`board.rs` and the hub; diagram logic is in the daemon's `diagram.rs`, next
-to the task diagram, because only the daemon links oxdraw.
+what it does lives in the core behind `/api/views/{id}/…`; and it is drawn by
+a component in `app/views/` registered in `app/views/registry.tsx`. Keep the
+component to drawing: board logic is in `board.rs` and the hub.
 
 **A board writes exactly one thing back: the `status:` label.** It reads the
 issue fresh before the write so a label added on GitHub since the last fetch
 is never dropped. Everything else on a card — agents, task progress — is
 oxroute's own state, joined in from `view_links` and the task list.
 
-**A diagram is written before an agent hears about it.** A saved diagram
+## Drawing a message
+
+The composer's Diagram and Draw modes are ways to say something to one
+agent, so they live in the agent panel, not in a view. Diagram logic is the
+daemon's `diagram.rs`, next to the task diagram, because only the daemon
+links oxdraw. Draw is a picture composed in the browser and sent through the
+same `say-images` path as a pasted image; there is nothing for the daemon to
+do but store and serve it.
+
+**A diagram is written before the agent hears about it.** A saved diagram
 with nobody told is recoverable; an agent building to a change the file does
 not have is not.

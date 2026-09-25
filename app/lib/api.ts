@@ -101,18 +101,17 @@ export const api = {
     post<{ agent: Agent }>(`/api/views/${encodeURIComponent(view)}/board/start`, { number, ...options }),
   unlink: (view: string, item: string, agent: string) =>
     post<unknown>(`/api/views/${encodeURIComponent(view)}/unlink`, { item, agent }),
-  diagram: (view: string) => call<DiagramPayload>(`/api/views/${encodeURIComponent(view)}/diagram`),
-  previewDiagram: (view: string, edits: DiagramEdit[]) =>
-    post<DiagramPayload>(`/api/views/${encodeURIComponent(view)}/diagram/preview`, { edits }),
-  applyDiagram: (
-    view: string,
-    edits: DiagramEdit[],
-    options: { note?: string; model?: string; agent?: string } = {},
-  ) =>
-    post<{ agent: Agent; diagram: DiagramPayload }>(
-      `/api/views/${encodeURIComponent(view)}/diagram/apply`,
-      { edits, ...options },
-    ),
+
+  // Drawing a message instead of typing one.
+  diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),
+  previewDiagram: (agent: string, edits: DiagramEdit[]) =>
+    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
+  sendDiagram: (agent: string, edits: DiagramEdit[], note: string) =>
+    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, { edits, note }),
+  createDiagram: (agent: string) =>
+    post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, {}),
+  renderDiagram: (source: string, added: string[] = []) =>
+    post<{ svg: string }>("/api/diagram/render", { source, added }),
 };
 
 /**

@@ -105,12 +105,12 @@ Full parity, because the point is that you can switch and not notice:
 New on top of that: the inbox, the two other surfaces, the harness seam, and
 `/mode`.
 
-## Views: the main column is configurable
+## Views, and three ways to say something
 
-The main column is the fleet. A view replaces it with another way of looking
-at the same work, and the top bar switches between them. Views are declared in
-the config file as `[[views]]`; `deploy/config.example.toml` has both kinds
-annotated. Two ship:
+**Views.** The main column is the fleet. A view replaces it with another way
+of looking at the same work, and the top bar switches between them. Views are
+declared in the config file as `[[views]]`; `deploy/config.example.toml` has
+them annotated. One kind ships, the board.
 
 **Board.** Every issue in a repository as a card, one column per `status:`
 label — the whole plan on one screen. Filter by priority, track, or text. Open
@@ -121,18 +121,26 @@ status label on GitHub, so the same board on another machine — with its own
 agents, on its own harness — sees the move at its next refresh. Without a
 token a board reads a JSON snapshot and is read only.
 
-**Diagram.** An architecture diagram in oxdraw's own format. Each box records
-where its code lives with a `%% OXDRAW CODE <box> <path>` line. Add a box, draw
-a dependency, rename or remove one: each is a pending change, previewed in
-place. Applying writes the diagram and hands an agent a brief — what changed,
-where the code for every touched box is, and the diagram as it now stands — so
-the agent makes the code match. `docs/architecture.mmd` is this repository,
-drawn that way.
+**Type, Diagram, Draw.** An agent's composer has three modes. Type is a
+message. The other two are for when a picture says it better:
 
-Both are behaviour in the daemon behind `/api/views/{id}/…`, not in the web UI,
-so every surface can grow them. Adding a kind is a `ViewKind` variant in
-`config.rs`, the endpoints it needs, a component in `app/views/`, and one line
-in `app/views/registry.tsx`.
+* **Diagram** opens the architecture diagram of the agent's repository —
+  `docs/architecture.mmd` under its working directory unless `[diagram] path`
+  says otherwise — in oxdraw's format, where each box records where its code
+  lives with a `%% OXDRAW CODE <box> <path>` line. Add a box, draw a
+  dependency, rename or remove one, and send: the diagram is rewritten and the
+  agent gets a brief on what changed and where that code is, so it makes the
+  code match. The timeline shows the change as the diagram, new boxes in
+  green. A repository with no diagram yet gets a button that asks the agent to
+  draw one. `docs/architecture.mmd` is this repository, drawn that way.
+* **Draw** marks up a picture: a screenshot taken from the browser, a pasted
+  or dropped image, or a blank page. Pen, box, arrow and text, in one red.
+  Sending attaches the result to whatever was typed, and the timeline shows it.
+
+All of it is behaviour in the daemon, behind `/api/views/{id}/…` and
+`/api/agents/{id}/diagram/…`, so every surface can grow it. Adding a view kind
+is a `ViewKind` variant in `config.rs`, the endpoints it needs, a component in
+`app/views/`, and one line in `app/views/registry.tsx`.
 
 ## Two seams
 
@@ -225,10 +233,11 @@ crates/oxroute-core/       the library everything else is a client of
   tests/hub.rs             the tests that matter
 
 crates/oxroute-daemon/     HTTP + SSE in front of the hub
-  diagram.rs               oxdraw diagrams: preview, rewrite, brief an agent
+  diagram.rs               an agent's diagram: preview, rewrite, brief it
 crates/oxroute-tui/        ratatui, a client of that API
 app/                       Next.js, a client of that API
   views/                   the view kinds, and the registry that picks one
+  components/composer/     drawing a message: the diagram editor and the sketch
 docs/architecture.mmd      this repository as an oxdraw diagram
 deploy/                    systemd units, install script, Slack manifest
 ```
@@ -243,7 +252,7 @@ on the protocol. `app/lib/types.ts` is hand-written and pinned by a test in
 against the app-server protocol; the Claude Code harness, run against the
 binary — spawn, answer, resume, remember; the inbox, the bindings, the turn
 lifecycle, steering, forking, side questions, artifacts, naming, the
-dashboard, the migration, the board and diagram views; 139 tests, of which 44 drive the hub end to end
+dashboard, the migration, the board view, drawn messages; 142 tests, of which 44 drive the hub end to end
 against a fake harness.
 
 **Not yet**: Codex is exercised by tests and by the bot this is a port of, but

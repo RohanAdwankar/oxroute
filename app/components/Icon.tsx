@@ -15,6 +15,7 @@ export type IconName =
   | "keyboard"
   | "merge"
   | "open"
+  | "pen"
   | "pin"
   | "play"
   | "plus"
@@ -26,6 +27,7 @@ export type IconName =
   | "stop"
   | "tasks"
   | "terminal"
+  | "text"
   | "thread";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
@@ -46,6 +48,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     keyboard: <><rect x="1.5" y="3" width="13" height="10" rx="1" /><path d="M4 6h.01M7 6h.01M10 6h.01M13 6h.01M4 9h.01M7 9h5" /></>,
     merge: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" /><circle cx="8" cy="13" r="1.5" /><path d="M5 4.5v2A3.5 3.5 0 0 0 8 10v1.5M11 4.5v2A3.5 3.5 0 0 1 8 10" /></>,
     open: <path d="m6 3 5 5-5 5M2 8h9" />,
+    pen: <><path d="M11 2.5 13.5 5 6 12.5l-3.3.8.8-3.3Z" /><path d="m9.5 4 2.5 2.5" /></>,
     pin: <path d="M5 2h6l-1 4 2 2v1H9v5l-1 1-1-1V9H4V8l2-2Z" fill="currentColor" stroke="none" />,
     play: <path d="m5 3 8 5-8 5Z" />,
     plus: <path d="M8 2v12M2 8h12" />,
@@ -57,6 +60,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,
     tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
     terminal: <><path d="m3 4 4 4-4 4M9 12h4" /></>,
+    text: <path d="M3 4h10M3 8h10M3 12h6" />,
     thread: <><path d="M2 3h9v7H6l-3 3v-3H2z" /><path d="M8 6h6v6h-2v2l-2-2H8" /></>,
   };
 

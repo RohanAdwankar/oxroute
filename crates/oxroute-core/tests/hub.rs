@@ -456,6 +456,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         github_token: None,
         github_api: "https://api.github.invalid".into(),
         views: options.views.clone(),
+        diagram_path: "docs/architecture.mmd".into(),
     };
 
     let harness = FakeHarness {

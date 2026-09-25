@@ -246,11 +246,25 @@ fn centre(point: &oxdraw::Point) -> Option<(f32, f32)> {
 
 /// Draw the file with pending edits applied.
 pub fn draw(file: &DiagramFile, edits: &[Edit]) -> Result<Drawn> {
+    draw_with(file, edits, &[])
+}
+
+/// Draw a diagram as sent, with the boxes that change added marked as new.
+/// The timeline has the diagram after the change, not the edits that made it.
+pub fn draw_marked(file: &DiagramFile, added: &[String]) -> Result<Drawn> {
+    draw_with(file, &[], added)
+}
+
+fn draw_with(file: &DiagramFile, edits: &[Edit], added: &[String]) -> Result<Drawn> {
     let mut diagram = file.diagram.clone();
     apply(&mut diagram, edits)?;
 
     let before: HashSet<&String> = file.diagram.nodes.keys().collect();
-    let mut change: HashMap<String, &str> = HashMap::new();
+    let mut change: HashMap<String, &str> = added
+        .iter()
+        .filter(|id| diagram.nodes.contains_key(*id))
+        .map(|id| (id.clone(), "added"))
+        .collect();
     for edit in edits {
         match edit {
             Edit::AddNode { id, .. } => {
@@ -416,49 +430,21 @@ pub fn write(path: &Path, contents: &str) -> Result<()> {
     std::fs::rename(&temporary, path).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Which boxes an edit list touches: every agent put on a change is linked
-/// to them, so the diagram can show who is on what.
-pub fn touched(edits: &[Edit]) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for edit in edits {
-        match edit {
-            Edit::AddNode { id, .. } | Edit::Rename { id, .. } | Edit::RemoveNode { id } => {
-                out.insert(id.clone());
-            }
-            Edit::AddEdge { from, to, .. } | Edit::RemoveEdge { from, to } => {
-                out.insert(from.clone());
-                out.insert(to.clone());
-            }
-        }
-    }
-    out
-}
-
-/// A name for the agent that makes a change: the first thing it is for.
-pub fn title(file: &DiagramFile, edits: &[Edit]) -> String {
-    let label = |id: &str| {
-        file.diagram.nodes.get(id).map(|n| n.label.clone()).unwrap_or_else(|| {
-            edits
-                .iter()
-                .find_map(|e| match e {
-                    Edit::AddNode { id: added, label } if added == id => Some(clean_label(label)),
-                    _ => None,
-                })
-                .unwrap_or_else(|| id.to_string())
-        })
-    };
-    let first = match edits.first() {
-        Some(Edit::AddNode { label: l, .. }) => format!("Add {}", clean_label(l)),
-        Some(Edit::AddEdge { from, to, .. }) => format!("Wire {} to {}", label(from), label(to)),
-        Some(Edit::Rename { id, label: l }) => format!("Rename {} to {}", label(id), clean_label(l)),
-        Some(Edit::RemoveNode { id }) => format!("Remove {}", label(id)),
-        Some(Edit::RemoveEdge { from, to }) => format!("Unwire {} from {}", label(from), label(to)),
-        None => return "Diagram change".into(),
-    };
-    match edits.len() {
-        1 => first,
-        n => format!("{first}, and {} more", n - 1),
-    }
+/// What an agent is asked when its repository has no diagram yet: draw
+/// one, in the format this reads, so the next change can be drawn.
+pub fn create_request(path: &Path, root: &Path) -> String {
+    format!(
+        "Draw the architecture of the code under {root} as a diagram at {path}, so changes \
+         to it can be drawn instead of described.\n\n\
+         Write Mermaid: `graph LR`, one box per component a person would name (ten to twenty), \
+         and an arrow from each component to what it depends on. Box ids are letters, digits \
+         and `_`.\n\n\
+         Under the diagram, add one line per box saying where its code is, relative to {root}:\n\n\
+         %% OXDRAW CODE <box> <path> [def:<main symbol>]\n\n\
+         This is oxdraw's format; `oxdraw --input {path}` opens it.\n",
+        root = root.display(),
+        path = path.display(),
+    )
 }
 
 /// What an agent is told when the diagram changes: what moved, where the
@@ -600,6 +586,15 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_diagram_draws_its_new_boxes_as_new() {
+        let file = DiagramFile::parse(FILE).unwrap();
+        let drawn = draw_marked(&file, &["store".into(), "nowhere".into()]).unwrap();
+        let store = drawn.nodes.iter().find(|n| n.id == "store").unwrap();
+        assert_eq!(store.change.as_deref(), Some("added"));
+        assert!(drawn.svg.contains(ADDED.0));
+    }
+
+    #[test]
     fn a_rewrite_keeps_the_code_map_for_boxes_that_are_still_there() {
         let file = DiagramFile::parse(FILE).unwrap();
         let mut edits = add_cache();
@@ -626,13 +621,6 @@ mod tests {
         assert!(text.contains("code: crates/oxroute-core/src/hub.rs lines 1-40 (Hub)"));
         assert!(text.contains("renamed from \"Hub\" to \"Router\""));
         assert!(text.contains("```mermaid"));
-        assert_eq!(
-            touched(&edits).into_iter().collect::<Vec<_>>(),
-            ["cache", "hub"]
-        );
-        assert_eq!(title(&file, &edits), "Add Board cache, and 2 more");
-        let wire = [Edit::AddEdge { from: "web".into(), to: "store".into(), label: String::new() }];
-        assert_eq!(title(&file, &wire), "Wire Web UI to Store");
     }
 
     /// `app/lib/types.ts` reads these by name; see the same test in
@@ -650,6 +638,17 @@ mod tests {
         }
         assert_eq!(hub["code"]["file"], "crates/oxroute-core/src/hub.rs");
         assert!(drawn["edges"][0].get("added").is_some());
+    }
+
+    #[test]
+    fn asking_for_a_diagram_asks_for_one_this_can_read_back() {
+        let text = create_request(Path::new("/r/docs/architecture.mmd"), Path::new("/r"));
+        assert!(text.contains("/r/docs/architecture.mmd"));
+        assert!(text.contains("%% OXDRAW CODE <box> <path>"));
+        // A diagram written the way the request says reads here.
+        let example = "graph LR\n    web[Web]\n    api[API]\n    web --> api\n\n%% OXDRAW CODE api src/api.rs def:Api\n";
+        let file = DiagramFile::parse(example).unwrap();
+        assert_eq!(file.code["api"].symbol.as_deref(), Some("Api"));
     }
 
     #[test]

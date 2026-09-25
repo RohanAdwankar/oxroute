@@ -2093,10 +2093,9 @@ impl Hub {
 
     fn board_config(&self, id: &str) -> Result<(&ViewConfig, &crate::config::BoardConfig)> {
         let view = self.view(id)?;
-        match &view.kind {
-            ViewKind::Board(board) => Ok((view, board)),
-            other => anyhow::bail!("{id} is a {} view, not a board", other.as_str()),
-        }
+        // One kind today. A second one makes this a real match.
+        let ViewKind::Board(board) = &view.kind;
+        Ok((view, board))
     }
 
     /// A board, with the agents on each card and how far their tasks have got.

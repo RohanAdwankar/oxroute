@@ -104,8 +104,8 @@ label = "Astra"
 #
 # The main column shows the fleet. A view is another way of looking at the
 # same work, switched from the top bar. Declare as many as you like; they
-# appear in this order. Each has a `kind`, a `name`, and optionally the
-# `model` and `cwd` an agent started from it gets.
+# appear in this order. Each has a `kind` (`board` today), a `name`, and
+# optionally the `model` and `cwd` an agent started from it gets.
 
 # A board: issues as cards, one column per `status:` label. With a repo and
 # a token it reads GitHub live, and dragging a card rewrites its status label,
@@ -120,16 +120,14 @@ label = "Astra"
 # lanes = ["idea", "research", "in-progress", "needs-eval", "needs-marketing", "maintenance", "completed"]
 # model = "opus"
 
-# A diagram: an oxdraw architecture diagram. Add a box, draw an arrow, rename
-# or remove one, then apply: the file is rewritten and an agent is told what
-# changed and where the code for each box lives, from the diagram's own
-# `%% OXDRAW CODE <box> <path>` lines. oxdraw opens the same file.
+# -- drawing a message ----------------------------------------------------
 #
-# [[views]]
-# kind = "diagram"
-# name = "Architecture"
-# file = "~/code/oxroute/docs/architecture.mmd"
-# root = "~/code/oxroute"                 # defaults to the file's directory
+# An agent's composer can send a drawn change to its architecture diagram
+# instead of a description. This is where that diagram is: relative to the
+# agent's working directory, or absolute. oxdraw opens the same file.
+#
+# [diagram]
+# path = "docs/architecture.mmd"
 
 # [github]
 # A token that can read and label issues. GITHUB_TOKEN or GH_TOKEN in the

@@ -5,7 +5,6 @@ import type { ComponentType } from "react";
 import type { IconName } from "../components/Icon";
 import type { Snapshot, ViewInfo } from "../lib/types";
 import { BoardView } from "./BoardView";
-import { DiagramView } from "./DiagramView";
 
 /**
  * What every view is handed. The same things the fleet gets, and nothing a
@@ -38,5 +37,4 @@ export interface ViewModule {
  */
 export const VIEWS: Record<string, ViewModule> = {
   board: { component: BoardView, icon: "board" },
-  diagram: { component: DiagramView, icon: "diagram" },
 };

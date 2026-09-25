@@ -225,24 +225,21 @@ export interface DiagramEdge {
   added: boolean;
 }
 
-export interface DiagramPayload {
-  view: string;
-  name: string;
-  file: string;
-  root: string;
-  svg: string;
-  width: number;
-  height: number;
-  nodes: DiagramNode[];
-  edges: DiagramEdge[];
-  /** Boxes a pending edit takes away. */
-  removed: string[];
-  /** Box id -> the agents working on it. */
-  agents: Record<string, CardAgent[]>;
-  /** Every agent that has worked on this diagram. */
-  working: CardAgent[];
-  modified: number;
-}
+/** An agent's architecture diagram, as the composer draws it. */
+export type DiagramPayload =
+  | { exists: false; file: string; modified: number }
+  | {
+      exists: true;
+      file: string;
+      modified: number;
+      svg: string;
+      width: number;
+      height: number;
+      nodes: DiagramNode[];
+      edges: DiagramEdge[];
+      /** Boxes a pending edit takes away. */
+      removed: string[];
+    };
 
 /** A pending change to a diagram, held here until it is applied. */
 export type DiagramEdit =

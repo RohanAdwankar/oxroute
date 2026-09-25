@@ -652,6 +652,14 @@ export default function Home() {
                       busy={busy}
                       onBack={() => closePane(index)}
                       onSay={(text, images) => void run(() => api.say(id, text, images))}
+                      onSendDiagram={(edits, note) =>
+                        void run(async () => {
+                          await api.sendDiagram(id, edits, note);
+                          say("Sent the drawn change");
+                        })
+                      }
+                      onCreateDiagram={() => void run(() => api.createDiagram(id))}
+                      say={say}
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}

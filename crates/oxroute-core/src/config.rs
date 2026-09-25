@@ -83,6 +83,8 @@ struct FileConfig {
     claude: FileClaude,
     #[serde(default)]
     github: FileGithub,
+    #[serde(default)]
+    diagram: FileDiagram,
     /// `[[views]]`: what the main column can show besides the fleet.
     #[serde(default)]
     views: Vec<FileView>,
@@ -140,8 +142,13 @@ struct FileGithub {
     api: Option<String>,
 }
 
-/// One `[[views]]` table. Which keys apply depends on `kind`; a key another
-/// kind uses is refused rather than ignored, so a typo cannot pass silently.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileDiagram {
+    path: Option<String>,
+}
+
+/// One `[[views]]` table.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileView {
@@ -152,13 +159,9 @@ struct FileView {
     model: Option<String>,
     /// Where that agent runs. Defaults to the workspace.
     cwd: Option<String>,
-    // board
     repo: Option<String>,
     snapshot: Option<String>,
     lanes: Option<Vec<String>>,
-    // diagram
-    file: Option<String>,
-    root: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -208,6 +211,10 @@ pub struct Config {
     pub github_api: String,
     /// What the main column can show besides the fleet, in order.
     pub views: Vec<ViewConfig>,
+    /// Where an agent's architecture diagram is, relative to its working
+    /// directory unless absolute. Drawing a change to it is a way to message
+    /// the agent.
+    pub diagram_path: String,
 }
 
 /// A view: another way of looking at the work, in place of the fleet.
@@ -231,15 +238,12 @@ pub struct ViewConfig {
 pub enum ViewKind {
     /// Issues as cards in columns, one column per status label.
     Board(BoardConfig),
-    /// A Mermaid architecture diagram whose edits become work for an agent.
-    Diagram(DiagramConfig),
 }
 
 impl ViewKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             ViewKind::Board(_) => "board",
-            ViewKind::Diagram(_) => "diagram",
         }
     }
 }
@@ -265,26 +269,12 @@ pub const DEFAULT_LANES: &[&str] = &[
     "completed",
 ];
 
-#[derive(Debug, Clone)]
-pub struct DiagramConfig {
-    /// The `.mmd` file. oxdraw's own format, so oxdraw can open it too.
-    pub file: PathBuf,
-    /// The code the diagram describes.
-    pub root: PathBuf,
-}
-
 fn resolve_views(files: Vec<FileView>) -> Result<Vec<ViewConfig>> {
     let mut views: Vec<ViewConfig> = Vec::new();
     for view in files {
         let kind = view.kind.trim().to_lowercase();
-        let refuse = |key: &str, present: bool| -> Result<()> {
-            anyhow::ensure!(!present, "a `{kind}` view has no `{key}` setting");
-            Ok(())
-        };
         let resolved = match kind.as_str() {
             "board" => {
-                refuse("file", view.file.is_some())?;
-                refuse("root", view.root.is_some())?;
                 anyhow::ensure!(
                     view.repo.is_some() || view.snapshot.is_some(),
                     "a board view needs a `repo`, a `snapshot`, or both"
@@ -299,26 +289,15 @@ fn resolve_views(files: Vec<FileView>) -> Result<Vec<ViewConfig>> {
                     lanes,
                 })
             }
-            "diagram" => {
-                for (key, present) in [
-                    ("repo", view.repo.is_some()),
-                    ("snapshot", view.snapshot.is_some()),
-                    ("lanes", view.lanes.is_some()),
-                ] {
-                    refuse(key, present)?;
-                }
-                let file = expand(view.file.as_deref().context("a diagram view needs a `file`")?);
-                let root = match view.root.as_deref() {
-                    Some(root) => expand(root),
-                    None => file.parent().map(Path::to_path_buf).unwrap_or_default(),
-                };
-                ViewKind::Diagram(DiagramConfig { file, root })
-            }
-            other => anyhow::bail!("unknown view kind `{other}` (have: board, diagram)"),
+            // Drawing on a diagram is a way to message an agent now, set
+            // with [diagram] path, so say where it went.
+            "diagram" => anyhow::bail!(
+                "diagrams are drawn in an agent's chat now; set `[diagram] path` instead of a view"
+            ),
+            other => anyhow::bail!("unknown view kind `{other}` (have: board)"),
         };
         let name = view.name.unwrap_or_else(|| match &resolved {
             ViewKind::Board(board) => board.repo.clone().unwrap_or_else(|| "Board".into()),
-            ViewKind::Diagram(_) => "Diagram".into(),
         });
         let id = view.id.unwrap_or_else(|| slug(&name));
         anyhow::ensure!(!id.is_empty(), "view `{name}` needs an `id`");
@@ -326,17 +305,12 @@ fn resolve_views(files: Vec<FileView>) -> Result<Vec<ViewConfig>> {
             id != "fleet" && views.iter().all(|v| v.id != id),
             "two views are called `{id}`; give one an `id`"
         );
-        // An agent changing code from a diagram belongs in that code.
-        let cwd = view.cwd.map(|cwd| expand(&cwd)).or_else(|| match &resolved {
-            ViewKind::Diagram(diagram) => Some(diagram.root.clone()),
-            ViewKind::Board(_) => None,
-        });
         views.push(ViewConfig {
             id,
             name,
             kind: resolved,
             model: view.model,
-            cwd: cwd.map(|cwd| cwd.to_string_lossy().to_string()),
+            cwd: view.cwd.map(|cwd| expand(&cwd).to_string_lossy().to_string()),
         });
     }
     Ok(views)
@@ -575,12 +549,26 @@ impl Config {
             .trim_end_matches('/')
             .to_string(),
             views: resolve_views(file.views)?,
+            diagram_path: pick(&["OXROUTE_DIAGRAM_PATH"], file.diagram.path, || {
+                "docs/architecture.mmd".into()
+            }),
         })
     }
 
     /// Kept so existing callers and the Slack bot's env file still work.
     pub fn from_env() -> Result<Self> {
         Self::load()
+    }
+
+    /// An agent's architecture diagram: `diagram_path` under its working
+    /// directory, unless the setting is already absolute.
+    pub fn diagram_for(&self, cwd: &str) -> PathBuf {
+        let path = expand(&self.diagram_path);
+        if path.is_absolute() {
+            return path;
+        }
+        let cwd = if cwd.is_empty() { self.workspace.as_str() } else { cwd };
+        expand(cwd).join(path)
     }
 
     /// The workspace, as a path rather than as the string a person typed.
@@ -683,6 +671,7 @@ mod tests {
             "GITHUB_TOKEN",
             "GH_TOKEN",
             "OXROUTE_GITHUB_API",
+            "OXROUTE_DIAGRAM_PATH",
         ] {
             std::env::remove_var(name);
         }
@@ -816,41 +805,33 @@ repo = "RohanAdwankar/0"
 snapshot = "~/code/0/data/ideas.json"
 model = "sol"
 
-[[views]]
-kind = "diagram"
-name = "Architecture"
-file = "~/code/oxroute/docs/architecture.mmd"
+[diagram]
+path = "design/system.mmd"
 "#,
         );
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.github_token.as_deref(), Some("ghp_file"));
         assert_eq!(config.github_api, "https://api.github.com");
         let ids: Vec<_> = config.views.iter().map(|v| v.id.as_str()).collect();
-        assert_eq!(ids, ["ideas", "architecture"]);
-        let ViewKind::Board(board) = &config.views[0].kind else { panic!("not a board") };
+        assert_eq!(ids, ["ideas"]);
+        let ViewKind::Board(board) = &config.views[0].kind;
         assert_eq!(board.repo.as_deref(), Some("RohanAdwankar/0"));
         assert_eq!(board.lanes.first().map(String::as_str), Some("idea"));
         assert!(board.snapshot.as_ref().unwrap().is_absolute());
         assert_eq!(config.views[0].model.as_deref(), Some("sol"));
-        let ViewKind::Diagram(diagram) = &config.views[1].kind else { panic!("not a diagram") };
-        // With no root, the code is wherever the diagram lives, and that is
-        // where an agent working from it runs.
-        assert!(diagram.root.ends_with("code/oxroute/docs"));
-        assert!(config.views[1].cwd.as_deref().unwrap().ends_with("code/oxroute/docs"));
         assert_eq!(config.views[0].cwd, None);
+        // A relative diagram path is under the agent's own directory.
+        assert_eq!(config.diagram_for("/r/app"), Path::new("/r/app/design/system.mmd"));
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn a_view_setting_that_belongs_to_another_kind_is_refused() {
+    fn a_view_kind_that_does_not_exist_is_refused_and_says_why() {
         let _guard = exclusive();
         std::env::set_var("OXROUTE_OWNER", "me");
-        let path = write(
-            "view-mixup",
-            "[[views]]\nkind = \"diagram\"\nfile = \"a.mmd\"\nrepo = \"x/y\"\n",
-        );
+        let path = write("view-diagram", "[[views]]\nkind = \"diagram\"\n");
         let error = format!("{:#}", Config::load_from(&path).unwrap_err());
-        assert!(error.contains("no `repo` setting"), "{error}");
+        assert!(error.contains("[diagram] path"), "{error}");
         let path = write("view-kind", "[[views]]\nkind = \"gantt\"\n");
         let error = format!("{:#}", Config::load_from(&path).unwrap_err());
         assert!(error.contains("unknown view kind"), "{error}");
@@ -866,6 +847,9 @@ file = "~/code/oxroute/docs/architecture.mmd"
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.github_token.as_deref(), Some("from-env"));
         assert!(config.views.is_empty());
+        // The default diagram is the one this repository keeps.
+        assert_eq!(config.diagram_path, "docs/architecture.mmd");
+        assert_eq!(config.diagram_for("/x"), Path::new("/x/docs/architecture.mmd"));
         let _ = std::fs::remove_file(&path);
     }
 
