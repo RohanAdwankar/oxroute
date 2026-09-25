@@ -10,6 +10,7 @@ import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
+import { inboxRows } from "./lib/inbox";
 import { orderTasks } from "./lib/tasks";
 import {
   HINTS,
@@ -71,6 +72,7 @@ export default function Home() {
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
   const [taskAt, setTaskAt] = useState(0);
+  const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
@@ -250,13 +252,15 @@ export default function Home() {
         // Something you just typed in is a decision you are about to make, so
         // it opens as one: the enter that adds it lands on the routing
         // question, and the agent's hint letter finishes the job.
-        const at = next.inbox.findIndex((item) => item.signal.id === landOn.current);
-        if (at < 0) return;
+        const landed = inboxRows(next.inbox, false).findIndex(
+          (row) => row.kind === "item" && row.item.signal.id === landOn.current,
+        );
+        if (landed < 0) return;
         landOn.current = null;
         compose.current?.blur();
-        setInboxAt(at);
-        const item = next.inbox[at];
-        if (item.state === "waiting") openRouting(item, next.agents);
+        setInboxAt(landed);
+        const row = inboxRows(next.inbox, false)[landed];
+        if (row.kind === "item" && row.item.state === "waiting") openRouting(row.item, next.agents);
         else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
@@ -377,6 +381,10 @@ export default function Home() {
     setPaneWidths(next);
   };
 
+  // Both columns as they are drawn, so the keyboard counts the rows on
+  // screen rather than the data behind them.
+  const rows = inboxRows(snapshot.inbox, inboxDone);
+
   // The task column, in the order it is drawn, so the keyboard and the panel
   // are counting the same rows.
   const orderedTasks = orderTasks(snapshot.tasks, panes.at(-1) ?? null);
@@ -410,7 +418,7 @@ export default function Home() {
   );
 
   const pick = (item: InboxItem) => {
-    const at = snapshot.inbox.findIndex((i) => i.signal.id === item.signal.id);
+    const at = rows.findIndex((row) => row.kind === "item" && row.item.signal.id === item.signal.id);
     if (at >= 0) setInboxAt(at);
     if (item.state !== "waiting") {
       // A settled item is history. Jump to where it went.
@@ -454,10 +462,9 @@ export default function Home() {
       // Arrows, enter, escape and tab are nobody's typing, and stay.
       if (!vim && LETTERS.has(event.key)) return;
 
-      const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here =
-        focus === "inbox" ? inbox.length : focus === "fleet" ? fleet.length : visibleTasks.length;
+        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : visibleTasks.length;
       const move = (delta: number) => {
         // In an open agent the middle column is a conversation, not a list,
         // so moving in it means reading it.
@@ -530,8 +537,10 @@ export default function Home() {
             return;
           }
           if (focus === "inbox") {
-            const item = inbox[inboxAt];
-            if (item) pick(item);
+            const row = rows[inboxAt];
+            // The band over the settled items opens; an item is a decision.
+            if (row?.kind === "band") return setInboxDone((shown) => !shown);
+            if (row) pick(row.item);
             return;
           }
           if (selected) {
@@ -558,7 +567,8 @@ export default function Home() {
         case "n": {
           if (reading) return;
           stop();
-          const item = selected ?? inbox[inboxAt];
+          const under = rows[inboxAt];
+          const item = selected ?? (under?.kind === "item" ? under.item : undefined);
           if (item && item.state === "waiting") {
             void run(
               () => api.routeSpawn(item.signal.id, snapshot.defaultModel),
@@ -666,6 +676,8 @@ export default function Home() {
             <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
               <Inbox
                 items={snapshot.inbox}
+                rows={rows}
+                onShowDone={() => setInboxDone((shown) => !shown)}
                 agents={snapshot.agents}
                 selected={routing}
                 onSelect={pick}
