@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -262,6 +263,7 @@ struct Posts {
 struct FakeSource {
     posts: Arc<Mutex<Posts>>,
     next_thread: Mutex<usize>,
+    fail_open: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -303,6 +305,9 @@ impl Source for FakeSource {
     }
 
     async fn open_thread(&self, _conversation: &str, title: &str) -> Result<(String, String)> {
+        if self.fail_open.load(Ordering::Relaxed) {
+            anyhow::bail!("source unavailable");
+        }
         let mut n = self.next_thread.lock().unwrap();
         *n += 1;
         self.posts.lock().unwrap().threads.push(title.to_string());
@@ -329,6 +334,7 @@ struct World {
     /// agent reporting what it is doing mid-turn.
     harness: broadcast::Sender<HarnessEvent>,
     native: Arc<Mutex<Vec<NativeSession>>>,
+    fail_open: Arc<AtomicBool>,
 }
 
 impl World {
@@ -456,12 +462,14 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     };
     let harness_events = harness.events.clone();
     let native = harness.native.clone();
+    let fail_open = Arc::new(AtomicBool::new(false));
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
     hub.with_harness(Arc::new(harness));
     hub.with_source(Arc::new(FakeSource {
         posts: posts.clone(),
         next_thread: Mutex::new(0),
+        fail_open: fail_open.clone(),
     }));
     hub.start().await.unwrap();
     hub.set_mode(mode).unwrap();
@@ -472,6 +480,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         posts,
         harness: harness_events,
         native,
+        fail_open,
     }
 }
 
@@ -982,7 +991,10 @@ async fn the_same_native_session_can_be_continued_more_than_once() {
 }
 
 #[tokio::test]
-async fn continuing_without_a_current_source_conversation_fails_before_creating_an_agent() {
+async fn continuing_without_a_current_source_conversation_still_works() {
+    // Slack is a mirror, not a prerequisite. With nowhere to echo to, a
+    // continued session lives in the UI, which is a complete way to use
+    // oxroute rather than a degraded one.
     let w = world(Mode::Auto, false).await;
     w.native.lock().unwrap().push(NativeSession {
         backend: Backend::Codex,
@@ -994,14 +1006,92 @@ async fn continuing_without_a_current_source_conversation_fails_before_creating_
         updated_at: 42.0,
     });
 
-    assert!(w
+    let agent = w
         .hub
         .continue_session(Backend::Codex, "native-local")
         .await
-        .unwrap_err()
-        .to_string()
-        .contains("no current source conversation"));
-    assert!(w.hub.store.agents(20).unwrap().is_empty());
+        .expect("no source conversation must not stop the work");
+
+    assert_eq!(w.hub.store.agents(20).unwrap().len(), 1);
+    assert_eq!(agent.cwd, "/work/local");
+    // It is bound somewhere local rather than to a Slack thread that does
+    // not exist, and has no permalink to offer.
+    assert!(agent.permalink.is_empty());
+    let bindings = w.hub.store.bindings_for(&agent.id).unwrap();
+    assert!(
+        bindings.iter().all(|binding| binding.source != "slack"),
+        "nothing should be bound to slack: {bindings:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_can_be_started_from_the_ui_with_no_source_configured() {
+    // The case that was broken: on a laptop with no Slack app, pressing
+    // "start a new agent" refused with "no current source conversation".
+    let w = world(Mode::Ask, false).await;
+    let mut typed = signal("500.0", "500.0", "look into the flaky test");
+    typed.source = "you".into();
+    w.hub.accept(typed).await.unwrap();
+
+    let waiting = w
+        .hub
+        .store
+        .inbox(10)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.state == InboxState::Waiting)
+        .expect("a typed note waits in ask mode");
+
+    w.hub
+        .route(
+            &waiting.signal.id,
+            Routing::Spawn { backend: None, model: None, cwd: None },
+        )
+        .await
+        .expect("starting an agent must not need somewhere to mirror to");
+
+    assert!(settle(|| w.hub.store.agents(10).unwrap().len() == 1).await);
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+}
+
+#[tokio::test]
+async fn a_broken_mirror_is_visible_without_blocking_local_work() {
+    let w = world(Mode::Ask, false).await;
+    w.hub
+        .store
+        .set("dashboard", "slack\u{1f}D1\u{1f}status")
+        .unwrap();
+    w.fail_open.store(true, Ordering::Relaxed);
+    let mut events = w.hub.subscribe();
+
+    let mut typed = signal("501.0", "501.0", "inspect the failed build");
+    typed.source = "you".into();
+    w.hub.accept(typed).await.unwrap();
+    let waiting = w
+        .hub
+        .store
+        .inbox(10)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.state == InboxState::Waiting)
+        .unwrap();
+    w.hub
+        .route(
+            &waiting.signal.id,
+            Routing::Spawn { backend: None, model: None, cwd: None },
+        )
+        .await
+        .expect("a mirror failure must not stop the work");
+
+    let notice = std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| match event {
+        Event::Notice { text } => Some(text),
+        _ => None,
+    });
+    assert_eq!(
+        notice.as_deref(),
+        Some("slack mirror failed: source unavailable. Continuing locally.")
+    );
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
 }
 
 #[tokio::test]
@@ -1091,6 +1181,7 @@ async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
     hub.with_source(Arc::new(FakeSource {
         posts: posts.clone(),
         next_thread: Mutex::new(0),
+        fail_open: Arc::new(AtomicBool::new(false)),
     }));
     hub.start().await.unwrap();
 
