@@ -415,6 +415,10 @@ export default function Home() {
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
       };
       const stop = () => event.preventDefault();
+      // With a pane open the fleet is not on screen, so the keys that act on
+      // a card you can no longer see do nothing: reading an agent should not
+      // be one letter away from swapping to another one.
+      const reading = open !== null && !selected;
 
       switch (event.key) {
         case "j":
@@ -476,6 +480,7 @@ export default function Home() {
           stop();
           return void run(() => api.discard(selected.signal.id), clearRouting);
         case "n": {
+          if (reading) return;
           stop();
           const item = selected ?? inbox[inboxAt];
           if (item && item.state === "waiting") {
@@ -504,7 +509,7 @@ export default function Home() {
       // A letter goes to the agent it is drawn on: it sends the signal being
       // routed, or, with nothing to route, it opens that agent. One
       // keystroke either way, which is the point of the mode.
-      if (vim) {
+      if (vim && !reading) {
         const at = HINTS.indexOf(event.key);
         const agent = at >= 0 ? fleet[at] : undefined;
         if (!agent) return;
