@@ -6,11 +6,12 @@ import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Help } from "./components/Help";
-import { Icon } from "./components/Icon";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { api, follow } from "./lib/api";
+import { inboxRows } from "./lib/inbox";
+import { taskRows } from "./lib/tasks";
 import {
   HINTS,
   LETTERS,
@@ -21,6 +22,10 @@ import {
   subscribeVimMode,
 } from "./lib/keys";
 import type { Agent, AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
+
+/** The screen, left to right. h and l step along it. */
+const COLUMNS = ["inbox", "fleet", "tasks"] as const;
+type Column = (typeof COLUMNS)[number];
 
 const EMPTY: Snapshot = {
   mode: "ask",
@@ -63,9 +68,12 @@ export default function Home() {
   const [jump, setJump] = useState(false);
   const [watch, setWatch] = useState(false);
   // Which column the keyboard drives, and where it is in each.
-  const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
+  const [focus, setFocus] = useState<Column>("inbox");
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
+  const [taskAt, setTaskAt] = useState(0);
+  const [inboxDone, setInboxDone] = useState(false);
+  const [tasksDone, setTasksDone] = useState(false);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
@@ -124,6 +132,8 @@ export default function Home() {
 
   const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
+    // Opening an agent is walking into it: the keys act on it from here.
+    if (id) setFocus("fleet");
     setPanes(id ? [id] : []);
     setPaneWidths(id ? [1] : []);
     setFocusEntry(entry ?? null);
@@ -242,13 +252,15 @@ export default function Home() {
         // Something you just typed in is a decision you are about to make, so
         // it opens as one: the enter that adds it lands on the routing
         // question, and the agent's hint letter finishes the job.
-        const at = next.inbox.findIndex((item) => item.signal.id === landOn.current);
-        if (at < 0) return;
+        const landed = inboxRows(next.inbox, false).findIndex(
+          (row) => row.kind === "item" && row.item.signal.id === landOn.current,
+        );
+        if (landed < 0) return;
         landOn.current = null;
         compose.current?.blur();
-        setInboxAt(at);
-        const item = next.inbox[at];
-        if (item.state === "waiting") openRouting(item, next.agents);
+        setInboxAt(landed);
+        const row = inboxRows(next.inbox, false)[landed];
+        if (row.kind === "item" && row.item.state === "waiting") openRouting(row.item, next.agents);
         else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
@@ -369,6 +381,12 @@ export default function Home() {
     setPaneWidths(next);
   };
 
+  // Both columns as they are drawn, so the keyboard counts the rows on
+  // screen rather than the data behind them.
+  const rows = inboxRows(snapshot.inbox, inboxDone);
+
+  const tasks = taskRows(snapshot.tasks, panes.at(-1) ?? null, tasksDone);
+
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
     setRouting(null);
@@ -394,7 +412,7 @@ export default function Home() {
   );
 
   const pick = (item: InboxItem) => {
-    const at = snapshot.inbox.findIndex((i) => i.signal.id === item.signal.id);
+    const at = rows.findIndex((row) => row.kind === "item" && row.item.signal.id === item.signal.id);
     if (at >= 0) setInboxAt(at);
     if (item.state !== "waiting") {
       // A settled item is history. Jump to where it went.
@@ -438,12 +456,28 @@ export default function Home() {
       // Arrows, enter, escape and tab are nobody's typing, and stay.
       if (!vim && LETTERS.has(event.key)) return;
 
-      const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
-      const here = focus === "inbox" ? inbox.length : fleet.length;
+      const here =
+        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : tasks.length;
       const move = (delta: number) => {
-        const setAt = focus === "inbox" ? setInboxAt : setFleetAt;
+        // In an open agent the middle column is a conversation, not a list,
+        // so moving in it means reading it.
+        if (focus === "fleet" && reading) {
+          document.querySelector("[data-transcript]")?.scrollBy({ top: delta * 90 });
+          return;
+        }
+        const setAt =
+          focus === "inbox" ? setInboxAt : focus === "fleet" ? setFleetAt : setTaskAt;
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
+      };
+      // h and l walk the screen: inbox, what you are working on, tasks. A
+      // column you step into opens, because a column you cannot see is not
+      // somewhere you can be.
+      const step = (delta: number) => {
+        const next = COLUMNS[Math.min(Math.max(COLUMNS.indexOf(focus) + delta, 0), COLUMNS.length - 1)];
+        if (next === "inbox") setInboxVisible(true);
+        if (next === "tasks") setTasksOpen(true);
+        setFocus(next);
       };
       const stop = () => event.preventDefault();
       // With a pane open the fleet is not on screen, so the keys that act on
@@ -468,18 +502,13 @@ export default function Home() {
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
         case "h":
           stop();
-          setInboxVisible(true);
-          return setFocus("inbox");
+          return step(-1);
         case "l":
           stop();
-          // h shows the inbox, so l shows the fleet: with a pane open the
-          // fleet is behind it, and focusing a column you cannot see does
-          // nothing you can act on.
-          if (open) showAgent(null);
-          return setFocus("fleet");
+          return step(1);
         case "Tab":
           stop();
-          return setFocus((at) => (at === "inbox" ? "fleet" : "inbox"));
+          return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
           if (open) return showAgent(null);
@@ -487,15 +516,31 @@ export default function Home() {
           return setFocus("inbox");
         case "Enter": {
           stop();
+          if (focus === "tasks") {
+            // Enter opens whatever the cursor is on, and with an empty
+            // column the only thing to open is the box that fills it.
+            const row = tasks[taskAt];
+            if (row?.kind === "band") return setTasksDone((shown) => !shown);
+            // The band is a row but not a task, so the two counts differ.
+            const nth = tasks.slice(0, taskAt).filter((entry) => entry.kind === "task").length;
+            const edit = document.querySelectorAll<HTMLElement>("[data-task-open]")[nth];
+            if (edit) edit.click();
+            else document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
+            return;
+          }
           // What is in front of you is a conversation, so enter starts
-          // typing in it rather than reopening a card you cannot see.
-          if (reading) {
+          // typing in it rather than reopening a card you cannot see. Only
+          // when the middle column has the emphasis: an open pane must not
+          // answer for a column you have moved away from.
+          if (focus === "fleet" && reading) {
             document.querySelector<HTMLTextAreaElement>("[data-composer]")?.focus();
             return;
           }
           if (focus === "inbox") {
-            const item = inbox[inboxAt];
-            if (item) pick(item);
+            const row = rows[inboxAt];
+            // The band over the settled items opens; an item is a decision.
+            if (row?.kind === "band") return setInboxDone((shown) => !shown);
+            if (row) pick(row.item);
             return;
           }
           if (selected) {
@@ -522,7 +567,8 @@ export default function Home() {
         case "n": {
           if (reading) return;
           stop();
-          const item = selected ?? inbox[inboxAt];
+          const under = rows[inboxAt];
+          const item = selected ?? (under?.kind === "item" ? under.item : undefined);
           if (item && item.state === "waiting") {
             void run(
               () => api.routeSpawn(item.signal.id, snapshot.defaultModel),
@@ -604,6 +650,8 @@ export default function Home() {
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
+        inboxOpen={inboxOpen}
+        onInbox={() => setInboxVisible(!inboxOpen)}
         vim={vim}
         onVim={toggleVim}
         watch={watch}
@@ -628,6 +676,8 @@ export default function Home() {
             <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
               <Inbox
                 items={snapshot.inbox}
+                rows={rows}
+                onShowDone={() => setInboxDone((shown) => !shown)}
                 agents={snapshot.agents}
                 selected={routing}
                 onSelect={pick}
@@ -672,17 +722,7 @@ export default function Home() {
               <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
             </div>
           </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setInboxVisible(true)}
-            aria-label="open inbox"
-            title="open inbox"
-            className="absolute top-1/2 left-0 z-10 flex h-9 w-8 -translate-y-1/2 cursor-pointer items-center justify-center border border-l-0 border-rule bg-card text-faint hover:text-ink"
-          >
-            <Icon name="expand" />
-          </button>
-        )}
+        ) : null}
 
         {open ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
@@ -762,6 +802,7 @@ export default function Home() {
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
+            active={focus === "fleet"}
             vim={vim && !jump}
             onToggle={toggle}
             onOpen={(id) => {
@@ -783,12 +824,19 @@ export default function Home() {
         {tasksOpen && (
           <TaskPanel
             tasks={snapshot.tasks}
+            rows={tasks}
+            onShowDone={() => setTasksDone((shown) => !shown)}
+            cursor={taskAt}
+            active={focus === "tasks"}
             agents={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
             currentAgent={panes.at(-1) ?? null}
             busy={busy}
-            onClose={() => setTasksOpen(false)}
+            onClose={() => {
+              setTasksOpen(false);
+              setFocus("fleet");
+            }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
             onUpdate={(task) => void run(() => api.updateTask(task))}
             onDelete={(id) => void run(() => api.deleteTask(id))}

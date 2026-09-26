@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 
 import { clip, clock } from "../lib/format";
+import type { InboxRow } from "../lib/inbox";
 import type { Agent, InboxItem } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -15,6 +16,8 @@ import { Icon } from "./Icon";
  */
 export function Inbox({
   items,
+  rows,
+  onShowDone,
   agents,
   selected,
   onSelect,
@@ -26,12 +29,15 @@ export function Inbox({
   onCollapse,
 }: {
   items: InboxItem[];
+  /// The column as it is drawn; the cursor counts these.
+  rows: InboxRow[];
+  onShowDone: () => void;
   agents: Agent[];
   selected: string | null;
   onSelect: (item: InboxItem) => void;
   onNote: (text: string) => void;
   busy: boolean;
-  /// Which row the keyboard is on, as an index into `items`.
+  /// Which row the keyboard is on, as an index into `rows`.
   cursor: number;
   /// True when the keyboard is driving this column.
   active: boolean;
@@ -40,11 +46,7 @@ export function Inbox({
   onCollapse: () => void;
 }) {
   const waiting = items.filter((item) => item.state === "waiting");
-  const done = items.filter((item) => item.state !== "waiting");
-  // What is settled is settled; it is kept, not shown.
-  const [showDone, setShowDone] = useState(false);
   const name = (id: string) => agents.find((a) => a.id === id)?.name ?? "an agent";
-  const at = items[cursor]?.signal.id ?? null;
 
   return (
     <aside className="flex h-full w-full flex-col bg-card">
@@ -74,31 +76,27 @@ export function Inbox({
           </p>
         )}
 
-        {waiting.length > 0 && <Band label="Waiting on you" strong />}
-        {waiting.map((item) => (
-          <Row
-            key={item.signal.id}
-            item={item}
-            selected={selected === item.signal.id}
-            focused={active && at === item.signal.id}
-            onSelect={onSelect}
-            name={name}
-          />
-        ))}
-
-        {done.length > 0 && (
-          <Band label={`Done · ${done.length}`} onClick={() => setShowDone((open) => !open)} />
+        {rows.map((row, index) =>
+          row.kind === "band" ? (
+            <Band
+              key="done"
+              label={`Done · ${row.count}`}
+              focused={active && index === cursor}
+              onClick={onShowDone}
+            />
+          ) : (
+            <Fragment key={`${row.item.signal.id}-${index}`}>
+              {index === 0 && <Band label="Waiting on you" strong />}
+              <Row
+                item={row.item}
+                selected={selected === row.item.signal.id}
+                focused={active && index === cursor}
+                onSelect={onSelect}
+                name={name}
+              />
+            </Fragment>
+          ),
         )}
-        {showDone && done.map((item) => (
-          <Row
-            key={item.signal.id}
-            item={item}
-            selected={selected === item.signal.id}
-            focused={active && at === item.signal.id}
-            onSelect={onSelect}
-            name={name}
-          />
-        ))}
       </div>
     </aside>
   );
@@ -162,13 +160,17 @@ function Compose({
 function Band({
   label,
   strong,
+  focused,
   onClick,
 }: {
   label: string;
   strong?: boolean;
+  focused?: boolean;
   onClick?: () => void;
 }) {
-  const skin = "w-full border-y border-rule bg-band px-[18px] py-2 text-left first:border-t-0";
+  const skin = `w-full border-y border-rule bg-band px-[18px] py-2 text-left first:border-t-0 ${
+    focused ? "border-l-[3px] border-l-ink pl-[15px]" : ""
+  }`;
   const text = `text-[11px] ${strong ? "text-ink" : "text-faint"}`;
   if (!onClick) {
     return (

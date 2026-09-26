@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { TaskRow } from "../lib/tasks";
 import type { Agent, TaskItem, TaskStatus } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -19,8 +20,31 @@ const STATE_COLOR: Record<TaskStatus, string> = {
   blocked: "text-[#a6493d]",
 };
 
+/** One task, and whether the keyboard is on it. */
+function Row({ focused, children }: { focused: boolean; children: React.ReactNode }) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) row.current?.scrollIntoView({ block: "nearest" });
+  }, [focused]);
+  return (
+    <div
+      ref={row}
+      data-task-row
+      className={`group flex items-start gap-3 border-b border-hair border-l-[3px] py-4 pr-5 pl-[17px] ${
+        focused ? "border-l-ink bg-wash" : "border-l-transparent"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function TaskPanel({
   tasks,
+  rows,
+  onShowDone,
+  cursor,
+  active,
   agents,
   currentAgent,
   busy,
@@ -30,6 +54,11 @@ export function TaskPanel({
   onDelete,
 }: {
   tasks: TaskItem[];
+  /// The rows on screen, in order; the keyboard counts these.
+  rows: TaskRow[];
+  onShowDone: () => void;
+  cursor: number;
+  active: boolean;
   agents: Agent[];
   currentAgent: string | null;
   busy: boolean;
@@ -41,22 +70,19 @@ export function TaskPanel({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const [showDone, setShowDone] = useState(false);
   const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
-  const ordered = [...tasks].sort((a, b) => {
-    const group = (task: TaskItem) =>
-      currentAgent ? task.agentId === currentAgent ? 0 : task.agentId ? 2 : 1 : 0;
-    return group(a) - group(b) || Number(a.status === "complete") - Number(b.status === "complete") || b.updatedAt - a.updatedAt;
-  });
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
-  // A finished task is a record, not work; it is kept, not shown.
-  const open = ordered.filter((task) => task.status !== "complete");
-  const finished = ordered.filter((task) => task.status === "complete");
+  // A flowchart of things that do not depend on each other is a list with
+  // extra steps, so it is drawn only once something is waiting on something.
+  const linked = tasks.some(
+    (task) =>
+      task.blockedByTaskId && tasks.some((other) => other.id === task.blockedByTaskId),
+  );
 
-  const row = (task: TaskItem) => {
+  const row = (task: TaskItem, at: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
-    return <div key={task.id} className="group flex items-start gap-3 border-b border-hair px-5 py-4">
+    return <Row key={task.id} focused={active && at === cursor}>
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
@@ -85,6 +111,7 @@ export function TaskPanel({
             setEditing(task.id);
             setEditDraft(task.text);
           }}
+          data-task-open
           className={`block w-full cursor-text text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
         >
           {task.text}
@@ -137,7 +164,7 @@ export function TaskPanel({
     <button type="button" onClick={() => onDelete(task.id)} disabled={busy} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
       <Icon name="discard" size={14} />
     </button>
-  </div>;
+  </Row>;
   };
 
   const create = () => {
@@ -161,6 +188,7 @@ export function TaskPanel({
 
       <div className="flex shrink-0 gap-2 border-b border-rule p-4">
         <input
+          data-task-input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -175,28 +203,33 @@ export function TaskPanel({
       </div>
 
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
-        {ordered.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">No tasks yet.</p>
         ) : <>
-          <div className="border-b border-rule bg-paper p-4">
+          {linked && <div className="border-b border-rule bg-paper p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/api/task-diagram.svg?v=${encodeURIComponent(graphVersion)}`}
               alt="Task dependency flowchart"
               className="max-h-[270px] w-full object-contain"
             />
-          </div>
-          {open.map(row)}
-          {finished.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowDone((shown) => !shown)}
-              className="w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink"
-            >
-              Done · {finished.length}
-            </button>
+          </div>}
+          {rows.map((entry, at) =>
+            entry.kind === "band" ? (
+              <button
+                key="done"
+                type="button"
+                onClick={onShowDone}
+                className={`w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink ${
+                  active && at === cursor ? "border-l-[3px] border-l-ink pl-[17px]" : ""
+                }`}
+              >
+                Done · {entry.count}
+              </button>
+            ) : (
+              row(entry.task, at)
+            ),
           )}
-          {showDone && finished.map(row)}
         </>}
       </div>
     </aside>
