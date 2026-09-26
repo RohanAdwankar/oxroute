@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
@@ -541,70 +541,15 @@ export function AgentPanel({
               }
 
               const { entry } = item;
-              const tag = TAG[entry.kind];
-              const mine = MINE.includes(entry.kind);
               return (
-                <div
+                <Message
                   key={entry.id}
-                  data-entry={entry.id}
-                  className={[
-                    "flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0",
-                    // The whole row, so what you said is found by running
-                    // your eye down the column rather than reading it.
-                    mine ? "group -mx-7 bg-mine px-7" : "",
-                    entry.id === focusEntry ? "bg-band" : "",
-                  ].join(" ")}
-                >
-                  <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
-                    {minute(entry.at)}
-                  </span>
-                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                    <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
-                      {tag && (
-                        <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
-                          {tag.label}
-                        </span>
-                      )}
-                      {entry.kind === "you" ? <YouSaid text={entry.text} /> : <Markdown>{entry.text}</Markdown>}
-                    </div>
-                    {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
-                    {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenAgent(entry.detail)}
-                        aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
-                        title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
-                        className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
-                      >
-                        <Icon name="open" size={13} />
-                      </button>
-                    ) : entry.detail ? (
-                      <span className="text-[11px] text-faint">{entry.detail}</span>
-                    ) : null}
-                  </div>
-                  {mine && asked.length > 1 && (
-                    <span className="flex shrink-0 items-center gap-[2px] opacity-0 transition-opacity group-hover:opacity-100">
-                      {(
-                        [
-                          ["the question before this", asked[asked.indexOf(entry.id) - 1], "rotate-180"],
-                          ["the question after this", asked[asked.indexOf(entry.id) + 1], ""],
-                        ] as const
-                      ).map(([label, to, turn]) => (
-                        <button
-                          key={label}
-                          type="button"
-                          disabled={to === undefined}
-                          onClick={() => to !== undefined && jumpTo(to)}
-                          aria-label={label}
-                          title={label}
-                          className={`flex h-6 w-6 cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-default disabled:opacity-25 ${turn}`}
-                        >
-                          <Icon name="chevronDown" size={12} />
-                        </button>
-                      ))}
-                    </span>
-                  )}
-                </div>
+                  entry={entry}
+                  focused={entry.id === focusEntry}
+                  asked={asked}
+                  onJump={jumpTo}
+                  onOpenAgent={onOpenAgent}
+                />
               );
             })
           )}
@@ -785,6 +730,94 @@ function YouSaid({ text }: { text: string }) {
     </div>
   );
 }
+
+/// One message, drawn once.
+///
+/// Typing in the composer changes state on the panel, and without this
+/// every keystroke re-rendered every message in the conversation --
+/// Markdown and all -- which is what made a long session feel slow to type
+/// in. The entry objects are stable between renders, so memo holds.
+const Message = memo(function Message({
+  entry,
+  focused,
+  asked,
+  onJump,
+  onOpenAgent,
+}: {
+  entry: Entry;
+  focused: boolean;
+  /// The ids of every question asked, so a question can point at its
+  /// neighbours.
+  asked: number[];
+  onJump: (id: number) => void;
+  onOpenAgent: (id: string) => void;
+}) {
+  const tag = TAG[entry.kind];
+  const mine = MINE.includes(entry.kind);
+  return (
+        <div
+          key={entry.id}
+          data-entry={entry.id}
+          className={[
+            "flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0",
+            // The whole row, so what you said is found by running
+            // your eye down the column rather than reading it.
+            mine ? "group -mx-7 bg-mine px-7" : "",
+            focused ? "bg-band" : "",
+          ].join(" ")}
+        >
+          <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
+            {minute(entry.at)}
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+            <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
+              {tag && (
+                <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
+                  {tag.label}
+                </span>
+              )}
+              {entry.kind === "you" ? <YouSaid text={entry.text} /> : <Markdown>{entry.text}</Markdown>}
+            </div>
+            {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
+            {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
+              <button
+                type="button"
+                onClick={() => onOpenAgent(entry.detail)}
+                aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
+                title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
+                className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
+              >
+                <Icon name="open" size={13} />
+              </button>
+            ) : entry.detail ? (
+              <span className="text-[11px] text-faint">{entry.detail}</span>
+            ) : null}
+          </div>
+          {mine && asked.length > 1 && (
+            <span className="flex shrink-0 items-center gap-[2px] opacity-0 transition-opacity group-hover:opacity-100">
+              {(
+                [
+                  ["the question before this", asked[asked.indexOf(entry.id) - 1], "rotate-180"],
+                  ["the question after this", asked[asked.indexOf(entry.id) + 1], ""],
+                ] as const
+              ).map(([label, to, turn]) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={to === undefined}
+                  onClick={() => to !== undefined && onJump(to)}
+                  aria-label={label}
+                  title={label}
+                  className={`flex h-6 w-6 cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-default disabled:opacity-25 ${turn}`}
+                >
+                  <Icon name="chevronDown" size={12} />
+                </button>
+              ))}
+            </span>
+          )}
+        </div>
+      );
+});
 
 function AttachedImage({ name }: { name: string }) {
   const [missing, setMissing] = useState(false);
