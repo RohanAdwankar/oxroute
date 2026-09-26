@@ -21,7 +21,16 @@ mkdir -p "$stage/workspace" "$out"
 # anything.
 git init -q "$stage/workspace"
 printf 'the shed\n=======\n\nit needs painting.\n' > "$stage/workspace/README.md"
-git -C "$stage/workspace" add README.md
+# A diagram to draw on. The composer edits this file and tells the agent
+# what changed, so the demo needs one that is already there.
+mkdir -p "$stage/workspace/docs"
+cat > "$stage/workspace/docs/architecture.mmd" <<'MMD'
+flowchart TD
+  shed["the shed<br/>README.md"]
+  paint["the paint<br/>README.md"]
+  shed --> paint
+MMD
+git -C "$stage/workspace" add README.md docs/architecture.mmd
 git -C "$stage/workspace" -c user.email=demo@oxroute -c user.name=demo commit -qm "the shed"
 
 cp deploy/config.example.toml "$stage/config.toml"

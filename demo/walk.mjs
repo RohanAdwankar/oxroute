@@ -112,13 +112,38 @@ await page.keyboard.type("the garage tin is last year's -- check the invoice");
 await shot(page, "correction");
 await page.keyboard.press("Escape");
 
-// 6. Branching the work, and the two places a branch can land.
+// 6. Saying something by drawing it: the change to the picture is the
+//    message, and the file on disk changes with it.
+await page.locator('[aria-label="Attach images"] ~ button, [aria-label="Attach images options"]').first().click();
+await page.waitForTimeout(300);
+await page.getByRole("menuitem", { name: /Diagram/ }).click();
+// The picture is drawn by oxdraw on the daemon side, so wait for the
+// diagram itself rather than for the pane that will hold it.
+await until(async () => (await page.locator("text=Changes").count()) > 0, 60);
+await page.waitForTimeout(800);
+await shot(page, "diagram");
+
+// Drawing a box is the message: the file changes and the agent is told
+// what changed and why.
+await page.locator('[aria-label="new box label"]').fill("the invoice");
+await page.locator('[aria-label="add the box"]').click();
+await until(async () => (await page.locator("text=the invoice").count()) > 0, 60);
+await shot(page, "drawn");
+
+// Sending it writes the file and tells the agent what changed.
+await page.locator("[data-composer]").fill("this is where the colour is written down");
+await page.getByRole("button", { name: /Send the change/ }).first().click();
+await until(async () => (await api("/api/state")).agents[0].status === "working", 60);
+await page.waitForTimeout(1500);
+await shot(page, "sent");
+
+// 7. Branching the work, and the two places a branch can land.
 await page.locator('[aria-label$="options"]').first().click();
 await page.waitForTimeout(300);
 await shot(page, "fork");
 await page.keyboard.press("Escape");
 
-// 7. The interface has two questions in it, and this is both of them.
+// 8. The interface has two questions in it, and this is both of them.
 await page.locator('[title="Settings"]').click();
 await page.waitForTimeout(300);
 await shot(page, "settings");
@@ -130,7 +155,7 @@ await page.locator('[title="Settings"]').click();
 await page.getByRole("button", { name: /Light/ }).click();
 await page.keyboard.press("Escape");
 
-// 8. Everything said is searchable, including sessions that were never
+// 9. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
 await page.getByPlaceholder("Search sessions").fill("shed");
 await page.waitForTimeout(1200);
