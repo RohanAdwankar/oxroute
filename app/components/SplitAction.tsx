@@ -6,6 +6,7 @@ import { Icon, type IconName } from "./Icon";
 
 export function SplitAction({
   label,
+  hint,
   icon,
   onClick,
   disabled,
@@ -13,6 +14,8 @@ export function SplitAction({
   variant = "toolbar",
 }: {
   label: string;
+  /// The longer sentence, when the label alone does not explain it.
+  hint?: string;
   icon: IconName;
   onClick: () => void;
   disabled?: boolean;
@@ -51,7 +54,7 @@ export function SplitAction({
         }}
         disabled={disabled}
         aria-label={label}
-        title={label}
+        title={hint ?? label}
         className={
           {
             composer:
@@ -72,7 +75,7 @@ export function SplitAction({
         aria-label={`${label} options`}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`${label} options`}
+        title={`${label}: more ways`}
         className={
           {
             composer:

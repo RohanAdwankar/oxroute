@@ -881,10 +881,10 @@ export default function Home() {
                       onTask={(text, images) =>
                         void run(() => api.createTaskWithImages(text, id, images))
                       }
-                      onSendDiagram={(edits, note) =>
+                      onSendDiagram={(edits, note, queued) =>
                         void run(async () => {
-                          await api.sendDiagram(id, edits, note);
-                          say("Sent the drawn change");
+                          await api.sendDiagram(id, edits, note, queued);
+                          say(queued ? "Queued the drawn change" : "Sent the drawn change");
                         })
                       }
                       onCreateDiagram={(about) =>

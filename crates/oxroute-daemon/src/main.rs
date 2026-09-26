@@ -1051,6 +1051,9 @@ struct SendBody {
     edits: Vec<diagram::Edit>,
     #[serde(default)]
     note: String,
+    /// Wait for the running turn rather than folding into it.
+    #[serde(default)]
+    queued: bool,
 }
 
 /// Draw a change instead of describing it: write it into the diagram, then
@@ -1072,7 +1075,7 @@ async fn diagram_send(
     let file = diagram::DiagramFile::read(&path)?;
     let brief = diagram::describe(&file, &body.edits, &path, std::path::Path::new(&root), &body.note)?;
     diagram::write(&path, &diagram::rewrite(&file, &body.edits)?)?;
-    hub.say_to(&id, &brief).await.map_err(|error| {
+    hub.say_to_with_images(&id, &brief, vec![], body.queued).await.map_err(|error| {
         Failed(error.context("the diagram is saved, but the agent could not be told"))
     })?;
     Ok(Json(diagram_payload(&hub, &id, &[])?))

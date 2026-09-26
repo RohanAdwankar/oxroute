@@ -111,7 +111,7 @@ export function AgentPanel({
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => void;
   /** Draw instead of describe: the edits become the message. */
-  onSendDiagram: (edits: DiagramEdit[], note: string) => void;
+  onSendDiagram: (edits: DiagramEdit[], note: string, queued: boolean) => void;
   onCreateDiagram: (about: string) => void;
   say: (text: string) => void;
   tags: string[];
@@ -231,19 +231,19 @@ export function AgentPanel({
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
   }, []);
 
-  const sendDrawn = async () => {
+  /// A drawing is a message like any other, so it can wait for the turn
+  /// that is running rather than landing in the middle of it.
+  const sendDrawn = async (queued: boolean) => {
     if (busy) return;
     const text = draft.trim();
     if (mode === "diagram") {
       if (edits.length === 0) return;
-      onSendDiagram(edits, text);
+      onSendDiagram(edits, text, queued);
       setEdits([]);
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      // A picture drawn while an agent is working waits its turn, like
-      // anything else said then.
-      onSay(text, [picture, ...uploads.map((upload) => upload.file)], agent.status === "working");
+      onSay(text, [picture, ...uploads.map((upload) => upload.file)], queued);
       uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
       setUploads([]);
       sketch.current?.clear();
@@ -264,7 +264,7 @@ export function AgentPanel({
 
   const send = (queued = agent.status === "working") => {
     if (mode !== "type") {
-      void sendDrawn();
+      void sendDrawn(queued);
       return;
     }
     const text = draft.trim();
@@ -684,7 +684,8 @@ export function AgentPanel({
             // already says; a button that redraws itself underneath you
             // reads as a different button.
             <SplitAction
-              label={working ? "Send — the agent is working, so it waits its turn" : "Send message"}
+              label="Send message"
+              hint={working ? "The agent is working, so this waits its turn" : "Send message"}
               icon="send"
               onClick={() => send(working)}
               disabled={busy || !canSend}
@@ -698,17 +699,33 @@ export function AgentPanel({
             />
           ) : (
             // A drawing is made at the moment it is sent, so there is
-            // nothing yet to put on the task list: one button, one meaning.
-            <button
-              type="button"
-              onClick={() => send(false)}
+            // nothing yet to put on the task list -- but it waits its turn
+            // like anything else said to a working agent.
+            <SplitAction
+              label={mode === "diagram" ? "Send the change" : "Send the picture"}
+              hint={
+                working
+                  ? "The agent is working, so this waits its turn"
+                  : mode === "diagram"
+                    ? "Send the change"
+                    : "Send the picture"
+              }
+              icon="send"
+              onClick={() => send(working)}
               disabled={busy || !canSend}
-              aria-label={mode === "diagram" ? "send the drawn change" : "send the picture"}
-              title={mode === "diagram" ? "Send the change" : "Send the picture"}
-              className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Icon name="send" />
-            </button>
+              menu={
+                working
+                  ? [
+                      {
+                        label: "Send now, into the turn",
+                        icon: "queue" as const,
+                        onClick: () => send(false),
+                      },
+                    ]
+                  : []
+              }
+              variant="composer"
+            />
           )}
         </div>
       </footer>

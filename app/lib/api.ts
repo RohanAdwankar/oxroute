@@ -135,8 +135,13 @@ export const api = {
   diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),
   previewDiagram: (agent: string, edits: DiagramEdit[]) =>
     post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
-  sendDiagram: (agent: string, edits: DiagramEdit[], note: string) =>
-    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, { edits, note }),
+  /// `queued` waits for the running turn instead of folding into it.
+  sendDiagram: (agent: string, edits: DiagramEdit[], note: string, queued = false) =>
+    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, {
+      edits,
+      note,
+      queued,
+    }),
   /// `about` narrows what to draw; empty asks for the whole architecture.
   createDiagram: (agent: string, about = "") =>
     post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, { about }),
