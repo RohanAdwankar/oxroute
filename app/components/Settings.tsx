@@ -2,11 +2,16 @@
 
 import { useEffect } from "react";
 
-import { type Density } from "../lib/keys";
+import { type Density, type Theme } from "../lib/keys";
 
 const ROOM: { value: Density; label: string; detail: string }[] = [
   { value: "compact", label: "Compact", detail: "For a small screen, or a large zoom" },
   { value: "wide", label: "Wide", detail: "More air around everything" },
+];
+
+const LOOK: { value: Theme; label: string; detail: string }[] = [
+  { value: "light", label: "Light", detail: "Warm paper" },
+  { value: "dark", label: "Dark", detail: "The same palette, read the other way round" },
 ];
 
 const HINTS: { value: boolean; label: string; detail: string }[] = [
@@ -23,12 +28,16 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
 export function Settings({
   density,
   onDensity,
+  theme,
+  onTheme,
   vim,
   onVim,
   onClose,
 }: {
   density: Density;
   onDensity: (next: Density) => void;
+  theme: Theme;
+  onTheme: (next: Theme) => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -57,6 +66,13 @@ export function Settings({
           options={ROOM}
           chosen={density}
           onChoose={onDensity}
+        />
+        <Choice
+          title="Look"
+          detail="Which way round the palette reads."
+          options={LOOK}
+          chosen={theme}
+          onChoose={onTheme}
         />
         <Choice
           title="Keyboard"

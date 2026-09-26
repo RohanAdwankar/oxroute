@@ -18,11 +18,9 @@ import { taskRows } from "./lib/tasks";
 import {
   HINTS,
   LETTERS,
-  defaultDensity,
-  getDensity,
-  setDensity,
-  subscribeDensity,
   defaultVimMode,
+  density,
+  theme,
   getVimMode,
   isTyping,
   setVimMode,
@@ -91,7 +89,8 @@ export default function Home() {
   const [tasksDone, setTasksDone] = useState(false);
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
-  const density = useSyncExternalStore(subscribeDensity, getDensity, defaultDensity);
+  const room = useSyncExternalStore(density.subscribe, density.get, density.fallback);
+  const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -783,8 +782,10 @@ export default function Home() {
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
-          density={density}
-          onDensity={setDensity}
+          density={room}
+          onDensity={density.set}
+          theme={tone}
+          onTheme={theme.set}
           vim={vim}
           onVim={setVimMode}
           onClose={() => setSettings(false)}

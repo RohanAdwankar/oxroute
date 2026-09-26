@@ -47,6 +47,26 @@ html[data-density="compact"] {
   --said: 15px;
 }
 
+/* The same palette read the other way round: warm still, but ink for
+   paper. Nothing downstream names a colour, so this is the whole of it. */
+html[data-theme="dark"] {
+  --color-paper: #17140f;
+  --color-card: #1e1a15;
+  --color-rule: #332d25;
+  --color-hair: #272119;
+  --color-ink: #f0ebe2;
+  --color-mid: #b0a598;
+  --color-faint: #7e7468;
+  --color-edge: #4a4238;
+  --color-wash: #262019;
+  --color-band: #221d16;
+  --color-ok: #49b891;
+  --color-merge: #b58bea;
+  --color-mine: #262036;
+  --color-hold: #d79b3a;
+  --color-drop: #5e9ad6;
+}
+
 html,
 body {
   height: 100%;

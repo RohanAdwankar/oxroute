@@ -313,7 +313,7 @@ function Card({
                 <path
                   d="M1.5,5.2 L3.9,7.6 L8.5,2.6"
                   fill="none"
-                  stroke="#f7f4ef"
+                  stroke="var(--color-paper)"
                   strokeWidth="1.9"
                   strokeLinecap="round"
                   strokeLinejoin="round"

@@ -126,50 +126,55 @@ export function subscribeVimMode(listener: () => void): () => void {
 
 
 /**
- * How much room the interface takes: "wide" as it was, "compact" with the
- * air taken out.
+ * A preference the interface reads from the document itself.
  *
- * It is an attribute on the document rather than a prop threaded through
- * every component, because every component that has a size wants it and
- * none of them want to think about it.
+ * It is an attribute on <html> rather than a prop threaded through every
+ * component, because everything that draws wants it and none of them want
+ * to think about it. The first value is what the server renders, before
+ * any browser storage is readable.
  */
-export type Density = "wide" | "compact";
-
-const DENSITY = "oxroute.density";
-let density: Density | null = null;
-const watchers = new Set<() => void>();
-
-export function getDensity(): Density {
-  if (density === null) {
-    try {
-      density = window.localStorage.getItem(DENSITY) === "wide" ? "wide" : "compact";
-    } catch {
-      density = "compact";
-    }
-    document.documentElement.dataset.density = density;
-  }
-  return density;
-}
-
-/** What the server renders, before any browser storage is readable. */
-export function defaultDensity(): Density {
-  return "compact";
-}
-
-export function setDensity(next: Density): void {
-  density = next;
-  document.documentElement.dataset.density = next;
-  try {
-    window.localStorage.setItem(DENSITY, next);
-  } catch {
-    /* a preference is a convenience, not state worth failing over */
-  }
-  for (const watcher of watchers) watcher();
-}
-
-export function subscribeDensity(watcher: () => void): () => void {
-  watchers.add(watcher);
-  return () => {
-    watchers.delete(watcher);
+function choice<T extends string>(key: string, attribute: string, values: readonly T[]) {
+  let value: T | null = null;
+  const watchers = new Set<() => void>();
+  const fallback = values[0];
+  return {
+    fallback: () => fallback,
+    get(): T {
+      if (value === null) {
+        let stored: string | null = null;
+        try {
+          stored = window.localStorage.getItem(key);
+        } catch {
+          /* a preference is a convenience, not state worth failing over */
+        }
+        value = values.find((option) => option === stored) ?? fallback;
+        document.documentElement.dataset[attribute] = value;
+      }
+      return value;
+    },
+    set(next: T): void {
+      value = next;
+      document.documentElement.dataset[attribute] = next;
+      try {
+        window.localStorage.setItem(key, next);
+      } catch {
+        /* as above */
+      }
+      for (const watcher of watchers) watcher();
+    },
+    subscribe(watcher: () => void): () => void {
+      watchers.add(watcher);
+      return () => {
+        watchers.delete(watcher);
+      };
+    },
   };
 }
+
+/** How much room the interface takes: compact, or wide as it was. */
+export type Density = "compact" | "wide";
+export const density = choice<Density>("oxroute.density", "density", ["compact", "wide"]);
+
+/** Paper or ink: the same palette, read the other way round. */
+export type Theme = "light" | "dark";
+export const theme = choice<Theme>("oxroute.theme", "theme", ["light", "dark"]);
