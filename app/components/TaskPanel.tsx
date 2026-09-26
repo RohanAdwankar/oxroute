@@ -280,6 +280,9 @@ export function TaskPanel({
                   status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
               },
               note,
+              // Picking complete here is a person saying so, which is the
+              // whole of what the rule asks for.
+              status === "complete",
             );
           }}
           className="mt-2 w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
