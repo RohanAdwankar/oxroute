@@ -21,6 +21,7 @@ import {
   defaultVimMode,
   theme,
   verbose,
+  graph,
   getVimMode,
   isTyping,
   setVimMode,
@@ -92,6 +93,7 @@ export default function Home() {
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
   const loud = useSyncExternalStore(verbose.subscribe, verbose.get, verbose.fallback);
+  const drawn = useSyncExternalStore(graph.subscribe, graph.get, graph.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -800,6 +802,8 @@ export default function Home() {
           onTheme={theme.set}
           verbose={loud}
           onVerbose={verbose.set}
+          graph={drawn}
+          onGraph={graph.set}
           vim={vim}
           onVim={setVimMode}
           onClose={() => setSettings(false)}
@@ -1073,6 +1077,7 @@ export default function Home() {
             cursor={taskAt}
             active={focus === "tasks"}
             shown={shownTask}
+            graph={drawn === "on"}
             agents={snapshot.agents}
             named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,

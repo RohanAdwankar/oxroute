@@ -171,6 +171,10 @@ function choice<T extends string>(key: string, attribute: string, values: readon
   };
 }
 
+/** Whether the task list draws what is waiting on what. */
+export type Graph = "off" | "on";
+export const graph = choice<Graph>("oxroute.graph", "graph", ["off", "on"]);
+
 /** Whether the call an agent is making right now stays in view. */
 export type Verbose = "off" | "on";
 export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);

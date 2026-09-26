@@ -99,6 +99,7 @@ export function TaskPanel({
   cursor,
   active,
   shown,
+  graph,
   agents,
   named,
   busy,
@@ -118,6 +119,8 @@ export function TaskPanel({
   active: boolean;
   /// A task just filed from a composer, to be scrolled to once.
   shown: string | null;
+  /// Draw what is waiting on what, above the list.
+  graph: boolean;
   /// The agents a task can be given to.
   agents: Agent[];
   /// Every agent, live or archived, for reading a name back.
@@ -143,8 +146,9 @@ export function TaskPanel({
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
   // A flowchart of things that do not depend on each other is a list with
-  // extra steps, so it is drawn only once something is waiting on something.
-  const linked = tasks.some(
+  // extra steps, so it is drawn only when asked for and only once something
+  // is waiting on something.
+  const linked = graph && tasks.some(
     (task) =>
       task.blockedByTaskId && tasks.some((other) => other.id === task.blockedByTaskId),
   );

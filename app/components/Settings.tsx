@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { type Theme, type Verbose } from "../lib/keys";
+import { type Graph, type Theme, type Verbose } from "../lib/keys";
 
 const LOOK: { value: Theme; label: string; detail: string }[] = [
   { value: "light", label: "Light", detail: "Warm paper" },
@@ -12,6 +12,11 @@ const LOOK: { value: Theme; label: string; detail: string }[] = [
 const NOISE: { value: Verbose; label: string; detail: string }[] = [
   { value: "off", label: "Off", detail: "Every tool call behind its toggle" },
   { value: "on", label: "Verbose", detail: "The latest one stays in view" },
+];
+
+const SHAPE: { value: Graph; label: string; detail: string }[] = [
+  { value: "off", label: "Off", detail: "The list alone" },
+  { value: "on", label: "Flowchart", detail: "Draw what is waiting on what, above the list" },
 ];
 
 const HINTS: { value: boolean; label: string; detail: string }[] = [
@@ -30,6 +35,8 @@ export function Settings({
   onTheme,
   verbose,
   onVerbose,
+  graph,
+  onGraph,
   vim,
   onVim,
   onClose,
@@ -38,6 +45,8 @@ export function Settings({
   onTheme: (next: Theme) => void;
   verbose: Verbose;
   onVerbose: (next: Verbose) => void;
+  graph: Graph;
+  onGraph: (next: Graph) => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -73,6 +82,13 @@ export function Settings({
           options={NOISE}
           chosen={verbose}
           onChoose={onVerbose}
+        />
+        <Choice
+          title="Task list"
+          detail="Whether blocked work is drawn as well as listed."
+          options={SHAPE}
+          chosen={graph}
+          onChoose={onGraph}
         />
         <Choice
           title="Keyboard"
