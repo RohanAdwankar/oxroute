@@ -1628,7 +1628,7 @@ impl Hub {
         self.store.clear_active_turn(&agent.id)?;
 
         if !turn.stopped.load(Ordering::SeqCst) {
-            self.hand_back_artifacts(&turn, turn.target.as_ref()).await;
+            self.hand_back_artifacts(&agent.id, &turn, turn.target.as_ref()).await;
         }
         let _ = harness.release(&turn.session).await;
 
@@ -1887,10 +1887,18 @@ impl Hub {
 
     /// Anything the agent left in its artifact directory goes back to the
     /// human, plus anything it named explicitly along the way.
-    async fn hand_back_artifacts(&self, turn: &Arc<Live>, target: Option<&Target>) {
-        let Some(target) = target else { return };
-        let Some(source) = self.source(&target.source) else { return };
-
+    /// Give back whatever the turn produced.
+    ///
+    /// A picture an agent made is part of what it said, so it is kept where
+    /// a surface can fetch it and written into the timeline. Uploading to a
+    /// source as well is for the thread it came from -- and a deployment
+    /// with no source is not a deployment where pictures should vanish.
+    async fn hand_back_artifacts(
+        &self,
+        agent_id: &str,
+        turn: &Arc<Live>,
+        target: Option<&Target>,
+    ) {
         let mut paths: Vec<String> = turn.artifacts.lock().unwrap().iter().cloned().collect();
         let mut stack = vec![turn.artifact_dir.clone()];
         while let Some(dir) = stack.pop() {
@@ -1909,6 +1917,35 @@ impl Hub {
         if paths.is_empty() {
             return;
         }
+
+        // Pictures go where the web can ask for them, under a name of ours.
+        let mut shown = Vec::new();
+        for path in &paths {
+            let file = std::path::Path::new(path);
+            let is_image = file
+                .extension()
+                .and_then(|kind| kind.to_str())
+                .map(|kind| kind.to_ascii_lowercase())
+                .is_some_and(|kind| matches!(kind.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp"));
+            if !is_image {
+                continue;
+            }
+            let name = format!(
+                "{}-{}",
+                new_id("art"),
+                file.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default(),
+            );
+            match tokio::fs::copy(path, self.config.attachments.join(&name)).await {
+                Ok(_) => shown.push(name),
+                Err(error) => tracing::warn!(%error, path, "could not keep an artifact"),
+            }
+        }
+        if !shown.is_empty() {
+            self.record(agent_id, EntryKind::Said, &format!("Attached: {}", shown.join(", ")), "", "");
+        }
+
+        let Some(target) = target else { return };
+        let Some(source) = self.source(&target.source) else { return };
         if let Err(error) = source.upload(target, &paths).await {
             tracing::warn!(%error, "could not hand back artifacts");
         }

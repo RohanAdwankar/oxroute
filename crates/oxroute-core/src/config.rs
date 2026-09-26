@@ -504,6 +504,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_directory_finds_the_repository_it_sits_in() {
+        let scratch = std::env::temp_dir().join(format!("oxroute-repo-{}", std::process::id()));
+        let deep = scratch.join("crates").join("thing").join("src");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(scratch.join(".git")).unwrap();
+
+        // From anywhere inside it, the root is the same place.
+        assert_eq!(repository_of(&deep).as_deref(), Some(scratch.as_path()));
+        assert_eq!(repository_of(&scratch).as_deref(), Some(scratch.as_path()));
+
+        // And a directory that is not in a checkout is not in one.
+        let loose = std::env::temp_dir().join(format!("oxroute-loose-{}", std::process::id()));
+        std::fs::create_dir_all(&loose).unwrap();
+        let found = repository_of(&loose);
+        assert!(
+            found.as_deref() != Some(loose.as_path()),
+            "a directory with no .git should not report itself as a repository"
+        );
+
+        std::fs::remove_dir_all(&scratch).ok();
+        std::fs::remove_dir_all(&loose).ok();
+    }
+
+    #[test]
+    fn a_diagram_belongs_to_the_repository_not_the_subdirectory() {
+        let scratch = std::env::temp_dir().join(format!("oxroute-diag-{}", std::process::id()));
+        let deep = scratch.join("crates").join("core");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(scratch.join(".git")).unwrap();
+
+        // Settings come from the environment, which the whole test binary
+        // shares, so this waits its turn like every other test that reads
+        // them.
+        let _guard = ENV.lock().unwrap_or_else(|held| held.into_inner());
+        let config = Config::load_from(Path::new("/nonexistent/oxroute.toml"))
+            .expect("a config with nothing set");
+        assert_eq!(
+            config.diagram_for(&deep.to_string_lossy()),
+            scratch.join("docs/architecture.mmd"),
+            "a diagram belongs to the repository, not the directory below it",
+        );
+        std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[test]
     fn routing_defaults_to_human_choice() {
         assert_eq!(Mode::parse(""), Mode::Ask);
         assert_eq!(Mode::parse("unexpected"), Mode::Ask);
@@ -668,51 +713,5 @@ stall_timeout = 120.0
     #[test]
     fn free_space_on_a_real_path_is_plausible() {
         assert!(free_bytes(Path::new("/")) > 0);
-    }
-}
-
-#[cfg(test)]
-mod repository_tests {
-    use super::*;
-
-    #[test]
-    fn a_directory_finds_the_repository_it_sits_in() {
-        let scratch = std::env::temp_dir().join(format!("oxroute-repo-{}", std::process::id()));
-        let deep = scratch.join("crates").join("thing").join("src");
-        std::fs::create_dir_all(&deep).unwrap();
-        std::fs::create_dir_all(scratch.join(".git")).unwrap();
-
-        // From anywhere inside it, the root is the same place.
-        assert_eq!(repository_of(&deep).as_deref(), Some(scratch.as_path()));
-        assert_eq!(repository_of(&scratch).as_deref(), Some(scratch.as_path()));
-
-        // And a directory that is not in a checkout is not in one.
-        let loose = std::env::temp_dir().join(format!("oxroute-loose-{}", std::process::id()));
-        std::fs::create_dir_all(&loose).unwrap();
-        let found = repository_of(&loose);
-        assert!(
-            found.as_deref() != Some(loose.as_path()),
-            "a directory with no .git should not report itself as a repository"
-        );
-
-        std::fs::remove_dir_all(&scratch).ok();
-        std::fs::remove_dir_all(&loose).ok();
-    }
-
-    #[test]
-    fn a_diagram_belongs_to_the_repository_not_the_subdirectory() {
-        let scratch = std::env::temp_dir().join(format!("oxroute-diag-{}", std::process::id()));
-        let deep = scratch.join("crates").join("core");
-        std::fs::create_dir_all(&deep).unwrap();
-        std::fs::create_dir_all(scratch.join(".git")).unwrap();
-
-        let config = Config::load_from(Path::new("/nonexistent/oxroute.toml"))
-            .expect("a config with nothing set");
-        assert_eq!(
-            config.diagram_for(&deep.to_string_lossy()),
-            scratch.join("docs/architecture.mmd"),
-            "a diagram belongs to the repository, not the directory below it",
-        );
-        std::fs::remove_dir_all(&scratch).ok();
     }
 }

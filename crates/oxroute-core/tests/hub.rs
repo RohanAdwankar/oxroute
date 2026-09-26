@@ -2258,3 +2258,28 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
         .iter()
         .any(|note| note.text == "the trim is still bare"));
 }
+
+#[tokio::test]
+async fn a_picture_an_agent_made_reaches_a_surface_with_no_source() {
+    // No Slack, no thread: the web UI is the only place it could show up.
+    let w = build(
+        Mode::Auto,
+        Harnessed { source: false, leave_artifacts: true, ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "draw me something")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    let attached = w
+        .hub
+        .timeline(&agent, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.text.starts_with("Attached: "))
+        .expect("the picture was never mentioned in the timeline");
+    let name = attached.text.trim_start_matches("Attached: ").to_string();
+
+    // And the file is where the attachments route serves from.
+    assert!(w.hub.config.attachments.join(&name).exists(), "{name} was not kept");
+}

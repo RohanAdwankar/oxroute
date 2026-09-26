@@ -711,7 +711,8 @@ export function AgentPanel({
  * Something you sent. A drawn diagram change shows as the diagram, and a
  * picture as the picture, with the words the agent got one click away.
  */
-function YouSaid({ text }: { text: string }) {
+/// Anything anyone said: the words, and whatever came with them.
+function Said({ text }: { text: string }) {
   if (text.includes("```mermaid")) return <DiagramMessage text={text} />;
   const { body, names } = splitAttached(text);
   return (
@@ -773,7 +774,7 @@ const Message = memo(function Message({
                   {tag.label}
                 </span>
               )}
-              {entry.kind === "you" ? <YouSaid text={entry.text} /> : <Markdown>{entry.text}</Markdown>}
+              <Said text={entry.text} />
             </div>
             {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
             {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
