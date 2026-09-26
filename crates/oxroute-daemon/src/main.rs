@@ -289,10 +289,13 @@ struct Failed(anyhow::Error);
 
 impl IntoResponse for Failed {
     fn into_response(self) -> axum::response::Response {
-        tracing::warn!(error = %self.0, "request failed");
+        tracing::warn!(error = ?self.0, "request failed");
+        // The whole chain, not the outermost sentence: "reading
+        // docs/architecture.mmd" is not a reason, and it is what the person
+        // staring at the screen would otherwise be given.
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": self.0.to_string() })),
+            Json(json!({ "error": format!("{:#}", self.0) })),
         )
             .into_response()
     }

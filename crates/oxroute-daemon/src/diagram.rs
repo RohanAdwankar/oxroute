@@ -96,10 +96,31 @@ pub struct DiagramFile {
     pub code: HashMap<String, CodeRef>,
 }
 
+/// Mermaid spells the same picture two ways.
+///
+/// `flowchart` is what its documentation says today and what anyone -- a
+/// person, or an agent asked to draw one -- writes; `graph` is the older
+/// spelling, and the only one oxdraw reads. They are the same diagram, so
+/// the difference is settled here rather than refused at the door.
+const FLOWCHART: &str = "flowchart";
+const GRAPH: &str = "graph";
+
+fn spelt_flowchart(definition: &str) -> bool {
+    definition.trim_start().starts_with(FLOWCHART)
+}
+
+fn as_graph(definition: &str) -> String {
+    match definition.split_once(FLOWCHART) {
+        Some((before, after)) if before.trim().is_empty() => format!("{before}{GRAPH}{after}"),
+        _ => definition.to_string(),
+    }
+}
+
 impl DiagramFile {
     pub fn parse(source: &str) -> Result<Self> {
         let (definition, overrides) = split_source_and_overrides(source)?;
-        let diagram = Diagram::parse(&definition).context("the diagram is not valid Mermaid")?;
+        let diagram =
+            Diagram::parse(&as_graph(&definition)).context("the diagram is not valid Mermaid")?;
         Ok(DiagramFile {
             source: source.to_string(),
             diagram,
@@ -109,9 +130,12 @@ impl DiagramFile {
     }
 
     pub fn read(path: &Path) -> Result<Self> {
+        // Two different failures, said differently: a file that will not
+        // open and a diagram that will not parse need different answers
+        // from whoever reads the message.
         let source = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
-        Self::parse(&source).with_context(|| format!("reading {}", path.display()))
+        Self::parse(&source).with_context(|| format!("{} is not a diagram oxdraw can read", path.display()))
     }
 }
 
@@ -388,7 +412,13 @@ pub fn rewrite(file: &DiagramFile, edits: &[Edit]) -> Result<String> {
     apply(&mut diagram, edits)?;
     let indent = indentation(&file.source);
     let mut out = String::new();
-    for (at, line) in diagram.to_definition().lines().enumerate() {
+    // A file keeps the spelling it was written in.
+    let definition = if spelt_flowchart(&file.source) {
+        diagram.to_definition().replacen(GRAPH, FLOWCHART, 1)
+    } else {
+        diagram.to_definition()
+    };
+    for (at, line) in definition.lines().enumerate() {
         if at > 0 && !line.trim().is_empty() {
             out.push_str(&indent);
         }
@@ -734,5 +764,34 @@ mod repository {
             let code = node.code.as_ref().unwrap_or_else(|| panic!("{} has no code", node.id));
             assert!(root.join(&code.file).exists(), "{} points at {}", node.id, code.file);
         }
+    }
+}
+
+#[cfg(test)]
+mod hand_written_diagrams {
+    use super::*;
+
+    const HAND_WRITTEN: &str = "flowchart TD\n  hub[\"hub<br/>crates/oxroute-core/src/hub.rs\"]\n  store[\"store<br/>crates/oxroute-core/src/store.rs\"]\n  hub --> store\n";
+
+    /// Either spelling of the same Mermaid diagram reads back.
+    #[test]
+    fn a_diagram_reads_whichever_word_it_was_written_with() {
+        for source in [HAND_WRITTEN.to_string(), HAND_WRITTEN.replacen("flowchart", "graph", 1)] {
+            let file = DiagramFile::parse(&source).expect("this should read");
+            assert!(file.diagram.nodes.contains_key("hub"));
+        }
+    }
+
+    /// Editing one does not quietly respell it.
+    #[test]
+    fn an_edit_keeps_the_word_the_file_uses() {
+        let file = DiagramFile::parse(HAND_WRITTEN).unwrap();
+        let after = rewrite(
+            &file,
+            &[Edit::AddNode { id: "web".into(), label: "web".into() }],
+        )
+        .unwrap();
+        assert!(after.trim_start().starts_with("flowchart"), "{after}");
+        assert!(after.contains("web"));
     }
 }
