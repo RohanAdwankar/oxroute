@@ -37,7 +37,10 @@ function paint(
   context.fillStyle = "#fffdfa";
   context.fillRect(0, 0, size.width, size.height);
   if (image) context.drawImage(image, 0, 0, size.width, size.height);
-  const line = Math.max(3, size.width / 380);
+  // A mark is read at whatever size the picture ends up: in a timeline, in
+  // a thread, on a phone. It is drawn like a marker rather than a pen so it
+  // survives being shrunk, and the arrowheads follow from it.
+  const line = Math.max(7, size.width / 170);
   context.strokeStyle = INK;
   context.fillStyle = INK;
   context.lineWidth = line;
