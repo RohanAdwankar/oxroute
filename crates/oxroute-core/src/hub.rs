@@ -1434,7 +1434,9 @@ impl Hub {
              another task. This session's agent id is {}. Keep your own tasks current as \
              you work: mark one complete when it is done, and set it to blocked or \
              waiting_for_human when you cannot go further, because that is how you say \
-             you have stopped. Leave other agents' tasks alone unless you are asked.",
+             you have stopped. Every status change needs a \"note\" in the same request \
+             saying why, in three sentences or fewer -- as short as the commit that did \
+             it. Leave other agents' tasks alone unless you are asked.",
             self.config.listen,
             self.config.listen,
             agent.id,
@@ -2114,6 +2116,7 @@ impl Hub {
             messages: self.store.message_previews()?,
             inbox,
             tasks: self.store.tasks()?,
+            task_notes: self.store.task_notes()?,
             sources: self.sources.keys().cloned().collect(),
             models: self
                 .config
@@ -2168,6 +2171,11 @@ impl Hub {
         Ok(task)
     }
 
+    /// `note` is why the task moved, and a status change must bring one.
+    ///
+    /// Done, stuck and waiting are claims about work, and a claim nobody
+    /// accounted for is the thing this list kept producing: a row marked
+    /// complete with no way to tell what was complete about it.
     pub fn update_task(
         &self,
         id: &str,
@@ -2175,6 +2183,7 @@ impl Hub {
         status: TaskStatus,
         blocked_by_task_id: &str,
         agent_id: &str,
+        note: Option<&str>,
     ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
@@ -2183,7 +2192,15 @@ impl Hub {
         }
         let tasks = self.store.tasks()?;
         let current = tasks.iter().find(|task| task.id == id).context("no such task")?;
+        let note = note.map(str::trim).filter(|note| !note.is_empty());
+        anyhow::ensure!(
+            current.status == status || note.is_some(),
+            "moving a task to {} needs a note saying why -- a sentence or two, or the commit \
+             that did it",
+            status.as_str(),
+        );
         let created_at = current.created_at;
+        let current_status = current.status;
         validate_task_dependency(&tasks, id, status, blocked_by_task_id)?;
         let task = TaskItem {
             id: id.into(),
@@ -2195,8 +2212,35 @@ impl Hub {
             updated_at: now(),
         };
         self.store.save_task(&task)?;
+        if let Some(note) = note.filter(|_| current_status != status) {
+            self.add_task_note(id, note, "")?;
+        }
         self.emit(Event::Sync);
         Ok(task)
+    }
+
+    /// Write down why a task is where it is.
+    pub fn add_task_note(&self, task_id: &str, text: &str, agent_id: &str) -> Result<TaskNote> {
+        let text = text.trim();
+        anyhow::ensure!(!text.is_empty(), "a note cannot be empty");
+        anyhow::ensure!(
+            self.store.tasks()?.iter().any(|task| task.id == task_id),
+            "no such task"
+        );
+        let note = TaskNote {
+            id: new_id("note"),
+            task_id: task_id.into(),
+            text: text.into(),
+            agent_id: agent_id.into(),
+            at: now(),
+        };
+        self.store.save_task_note(&note)?;
+        self.emit(Event::Sync);
+        Ok(note)
+    }
+
+    pub fn task_notes(&self) -> Result<Vec<TaskNote>> {
+        self.store.task_notes()
     }
 
     /// Give a task to an agent that does not exist yet.
@@ -2486,6 +2530,8 @@ pub struct Snapshot {
     pub messages: HashMap<String, String>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
+    /// Why each task is where it is, oldest first.
+    pub task_notes: Vec<TaskNote>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
     /// What each harness can do, so a surface can say why a control is off

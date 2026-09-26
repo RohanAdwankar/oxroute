@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskStatus,
+    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskNote, TaskStatus,
 };
 
 const SCHEMA: &str = r#"
@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at         REAL NOT NULL,
     updated_at         REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_notes (
+    id       TEXT PRIMARY KEY,
+    task_id  TEXT NOT NULL,
+    text     TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '',
+    at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_notes_by_task ON task_notes (task_id, at);
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -431,6 +439,37 @@ impl Store {
         })
     }
 
+    pub fn task_notes(&self) -> Result<Vec<TaskNote>> {
+        self.with(|c| {
+            let mut statement = c.prepare(
+                "SELECT id, task_id, text, agent_id, at FROM task_notes ORDER BY at",
+            )?;
+            let notes = statement
+                .query_map([], |row| {
+                    Ok(TaskNote {
+                        id: row.get(0)?,
+                        task_id: row.get(1)?,
+                        text: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        at: row.get(4)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(notes)
+        })
+    }
+
+    pub fn save_task_note(&self, note: &TaskNote) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO task_notes (id, task_id, text, agent_id, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![note.id, note.task_id, note.text, note.agent_id, note.at],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn save_task(&self, task: &TaskItem) -> Result<()> {
         self.with(|c| {
             c.execute(
@@ -461,6 +500,7 @@ impl Store {
                  WHERE blocked_by_task_id = ?1",
                 params![id, crate::model::now()],
             )?;
+            transaction.execute("DELETE FROM task_notes WHERE task_id = ?1", params![id])?;
             anyhow::ensure!(
                 transaction.execute("DELETE FROM tasks WHERE id = ?1", params![id])? == 1,
                 "no such task"

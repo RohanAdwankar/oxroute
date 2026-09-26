@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TaskRow } from "../lib/tasks";
-import type { Agent, TaskItem, TaskStatus } from "../lib/types";
+import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
+import { clock } from "../lib/format";
 import { Icon } from "./Icon";
 
 const STATES: { value: TaskStatus; label: string }[] = [
@@ -46,6 +47,7 @@ function Row({ focused, children }: { focused: boolean; children: React.ReactNod
 export function TaskPanel({
   tasks,
   rows,
+  notes,
   onShowDone,
   cursor,
   active,
@@ -62,6 +64,8 @@ export function TaskPanel({
   tasks: TaskItem[];
   /// The rows on screen, in order; the keyboard counts these.
   rows: TaskRow[];
+  /// Why each task is where it is, oldest first.
+  notes: TaskNote[];
   onShowDone: () => void;
   cursor: number;
   active: boolean;
@@ -73,7 +77,8 @@ export function TaskPanel({
   busy: boolean;
   onClose: () => void;
   onCreate: (text: string, agent: string) => void;
-  onUpdate: (task: TaskItem) => void;
+  /// A status change carries why it changed.
+  onUpdate: (task: TaskItem, note?: string) => void;
   /// Move a task to an agent that does not exist yet.
   onHandOff: (task: TaskItem, fork: boolean) => void;
   onDelete: (id: string) => void;
@@ -81,6 +86,9 @@ export function TaskPanel({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  /// A status waiting on its account of itself.
+  const [pending, setPending] = useState<{ task: TaskItem; status: TaskStatus } | null>(null);
+  const [why, setWhy] = useState("");
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
@@ -95,6 +103,8 @@ export function TaskPanel({
 
   const row = (task: TaskItem, at: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
+    const mine = notes.filter((note) => note.taskId === task.id);
+    const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} focused={active && at === cursor}>
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
@@ -130,18 +140,51 @@ export function TaskPanel({
           {task.text}
         </button>
       )}
+      {mine.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {mine.map((note) => (
+            <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
+              <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
+              {note.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {asking && (
+        <input
+          autoFocus
+          value={why}
+          placeholder={`Why ${STATES.find((s) => s.value === asking.status)?.label.toLowerCase()}? A sentence or a commit`}
+          onChange={(event) => setWhy(event.target.value)}
+          onBlur={() => setPending(null)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") return setPending(null);
+            if (event.key !== "Enter") return;
+            const note = why.trim();
+            if (!note) return;
+            const status = asking.status;
+            setPending(null);
+            onUpdate(
+              {
+                ...task,
+                status,
+                blockedByTaskId:
+                  status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
+              },
+              note,
+            );
+          }}
+          className="mt-2 w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
+        />
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <select
-          value={task.status}
+          value={asking ? asking.status : task.status}
           disabled={busy}
           aria-label={`status for ${task.text}`}
           onChange={(event) => {
-            const status = event.target.value as TaskStatus;
-            onUpdate({
-              ...task,
-              status,
-              blockedByTaskId: status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
-            });
+            setWhy("");
+            setPending({ task, status: event.target.value as TaskStatus });
           }}
           className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
         >

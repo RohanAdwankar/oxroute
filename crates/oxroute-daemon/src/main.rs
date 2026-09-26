@@ -196,6 +196,8 @@ async fn serve() -> Result<()> {
         .route("/api/tasks", get(tasks).post(create_task))
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/tasks/{id}/hand-off", post(hand_off_task))
+        .route("/api/task-notes", get(task_notes))
+        .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
@@ -641,6 +643,26 @@ async fn hand_off_task(
     Ok(Json(hub.hand_off_task(&id, body.fork, body.model.as_deref()).await?))
 }
 
+#[derive(Deserialize)]
+struct NoteBody {
+    text: String,
+    /// The agent writing it; empty when a person is.
+    #[serde(default, rename = "agentId")]
+    agent_id: String,
+}
+
+async fn task_notes(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskNote>>, Failed> {
+    Ok(Json(hub.task_notes()?))
+}
+
+async fn add_task_note(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<NoteBody>,
+) -> Result<Json<oxroute_core::TaskNote>, Failed> {
+    Ok(Json(hub.add_task_note(&id, &body.text, &body.agent_id)?))
+}
+
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
@@ -653,6 +675,9 @@ async fn create_task(
 struct UpdateTaskBody {
     text: String,
     status: oxroute_core::TaskStatus,
+    /// Why it moved. Required when the status changes.
+    #[serde(default)]
+    note: Option<String>,
     #[serde(default)]
     blocked_by_task_id: String,
     #[serde(default)]
@@ -670,6 +695,7 @@ async fn update_task(
         body.status,
         &body.blocked_by_task_id,
         &body.agent_id,
+        body.note.as_deref(),
     )?))
 }
 

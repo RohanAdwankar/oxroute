@@ -1782,3 +1782,44 @@ async fn a_task_nobody_has_cannot_be_forked() {
     // There is no session to branch, and inventing one would not be a fork.
     assert!(w.hub.hand_off_task(&task.id, true, None).await.is_err());
 }
+
+#[tokio::test]
+async fn a_task_changes_status_only_with_a_note_saying_why() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "").unwrap();
+
+    // A claim about work with nothing said about it is refused.
+    assert!(w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", None)
+        .is_err());
+    assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Incomplete);
+
+    let done = w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"))
+        .unwrap();
+    assert_eq!(done.status, TaskStatus::Complete);
+    let notes = w.hub.task_notes().unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].task_id, task.id);
+    assert_eq!(notes[0].text, "painted in a1b2c3d");
+
+    // Editing anything else about a settled task needs no fresh account.
+    assert!(w
+        .hub
+        .update_task(&task.id, "paint the shed blue", TaskStatus::Complete, "", "", None)
+        .is_ok());
+    assert_eq!(w.hub.task_notes().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn notes_go_when_the_task_does() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "").unwrap();
+    w.hub.add_task_note(&task.id, "started on it", "").unwrap();
+    assert_eq!(w.hub.task_notes().unwrap().len(), 1);
+
+    w.hub.delete_task(&task.id).unwrap();
+    assert!(w.hub.task_notes().unwrap().is_empty());
+}

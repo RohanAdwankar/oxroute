@@ -391,6 +391,22 @@ impl TaskStatus {
     }
 }
 
+/// Why a task moved.
+///
+/// A status is a claim -- done, stuck, waiting -- and a claim with no
+/// account of itself is worth very little to whoever reads it next, so
+/// every change carries a short one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskNote {
+    pub id: String,
+    pub task_id: String,
+    pub text: String,
+    /// The agent that wrote it, empty when a person did.
+    pub agent_id: String,
+    pub at: f64,
+}
+
 /// One item in the shared task list. Empty agent and blocker IDs mean none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

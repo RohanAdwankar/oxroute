@@ -35,6 +35,7 @@ const EMPTY: Snapshot = {
   messages: {},
   inbox: [],
   tasks: [],
+  taskNotes: [],
   sources: [],
   models: [],
   backends: [],
@@ -866,6 +867,7 @@ export default function Home() {
           <TaskPanel
             tasks={snapshot.tasks}
             rows={tasks}
+            notes={snapshot.taskNotes}
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
             active={focus === "tasks"}
@@ -880,7 +882,7 @@ export default function Home() {
               setFocus("fleet");
             }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
-            onUpdate={(task) => void run(() => api.updateTask(task))}
+            onUpdate={(task, note) => void run(() => api.updateTask(task, note))}
             onHandOff={(task, fork) =>
               void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
             }

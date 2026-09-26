@@ -38,6 +38,6 @@ pub use config::{Config, Mode};
 pub use hub::{Hub, Routing, Snapshot};
 pub use model::{
     Agent, Backend, ConversationLine, Delivery, Event, InboxItem, NativeSession,
-    SearchDestination, SearchGroup, SearchResults, Signal, Target, TaskItem, TaskStatus,
+    SearchDestination, SearchGroup, SearchResults, Signal, Target, TaskItem, TaskNote, TaskStatus,
 };
 pub use store::Store;

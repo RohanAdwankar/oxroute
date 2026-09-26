@@ -71,7 +71,8 @@ export const api = {
   /// of whoever has it.
   handOffTask: (id: string, fork: boolean, model?: string) =>
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
-  updateTask: (task: TaskItem) =>
+  /// A status change carries why it changed.
+  updateTask: (task: TaskItem, note?: string) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -79,6 +80,7 @@ export const api = {
         status: task.status,
         blockedByTaskId: task.blockedByTaskId,
         agentId: task.agentId,
+        note,
       }),
     }),
   deleteTask: (id: string) =>
