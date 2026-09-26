@@ -17,7 +17,9 @@ export function SplitAction({
   onClick: () => void;
   disabled?: boolean;
   menu: { label: string; icon: IconName; onClick: () => void }[];
-  variant?: "toolbar" | "composer";
+  /// `quiet` is composer height without the filled button: for something
+  /// that sits beside the box rather than ending the sentence.
+  variant?: "toolbar" | "composer" | "quiet";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -49,9 +51,16 @@ export function SplitAction({
         disabled={disabled}
         aria-label={label}
         title={label}
-        className={variant === "composer"
-          ? "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-          : "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"}
+        className={
+          {
+            composer:
+              "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+            quiet:
+              "flex h-[42px] w-[26px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+            toolbar:
+              "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+          }[variant]
+        }
       >
         <Icon name={icon} />
       </button>
@@ -63,11 +72,18 @@ export function SplitAction({
         aria-haspopup="menu"
         aria-expanded={open}
         title={`${label} options`}
-        className={variant === "composer"
-          ? "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-          : "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"}
+        className={
+          {
+            composer:
+              "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+            quiet:
+              "flex h-[42px] w-[14px] cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+            toolbar:
+              "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+          }[variant]
+        }
       >
-        <Icon name="chevronDown" size={11} />
+        <Icon name="chevronDown" size={variant === "quiet" ? 9 : 11} />
       </button>
       {open && (
         <div
@@ -76,7 +92,7 @@ export function SplitAction({
           // below the button there is no screen left to draw it on.
           className={[
             "absolute right-0 z-30 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]",
-            variant === "composer" ? "bottom-full mb-1" : "top-full mt-1",
+            variant === "toolbar" ? "top-full mt-1" : "bottom-full mb-1",
           ].join(" ")}
         >
           {menu.map((item) => (

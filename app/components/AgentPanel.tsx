@@ -133,8 +133,6 @@ export function AgentPanel({
   const [draft, setDraft] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
-  /// The ways of drawing, hung off the paperclip until asked for.
-  const [drawMenu, setDrawMenu] = useState(false);
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -232,17 +230,6 @@ export function AgentPanel({
   useEffect(() => () => {
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
   }, []);
-
-  useEffect(() => {
-    if (!drawMenu) return;
-    const close = () => setDrawMenu(false);
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [drawMenu]);
 
   const sendDrawn = async () => {
     if (busy) return;
@@ -696,49 +683,18 @@ export function AgentPanel({
               event.target.value = "";
             }}
           />
-          <button
-            type="button"
+          <SplitAction
+            label="Attach images"
+            icon="attach"
             onClick={() => picker.current?.click()}
-            onContextMenu={(event) => {
-              // Right here is where a picture comes from, so it is where
-              // the other two ways of making one live.
-              event.preventDefault();
-              setDrawMenu(true);
-            }}
             disabled={busy}
-            aria-label="attach images"
-            title="Attach images — right click to draw or diagram"
-            className="relative flex h-[42px] w-[42px] cursor-pointer items-center justify-center gap-[1px] text-mid hover:text-ink disabled:opacity-40"
-          >
-            <Icon name="attach" />
-            {/* There is more here than the icon says, and a control with
-                nothing to show for it is a control nobody finds. */}
-            <Icon name="chevronDown" size={9} />
-            {drawMenu && (
-              <span
-                role="menu"
-                onPointerDown={(event) => event.stopPropagation()}
-                className="absolute bottom-full left-0 z-30 mb-1 flex min-w-max flex-col border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]"
-              >
-                {MODES.filter((option) => option.mode !== "type").map((option) => (
-                  <span
-                    key={option.mode}
-                    role="menuitem"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setDrawMenu(false);
-                      setMode(option.mode);
-                    }}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] text-mid hover:bg-wash hover:text-ink"
-                  >
-                    <Icon name={option.icon} size={14} />
-                    {option.label}
-                  </span>
-                ))}
-              </span>
-            )}
-          </button>
+            menu={MODES.filter((option) => option.mode !== "type").map((option) => ({
+              label: option.label,
+              icon: option.icon,
+              onClick: () => setMode(option.mode),
+            }))}
+            variant="quiet"
+          />
           <textarea
             ref={composer}
             value={draft}
