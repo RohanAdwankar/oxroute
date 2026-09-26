@@ -1152,20 +1152,12 @@ impl Hub {
     }
 
     /// Branch an agent's history into a new agent and give it a source thread.
-    pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id, true).await
-    }
-
-    /// Branch an agent beside its parent in the web UI.
+    /// Branch a session off this one.
     ///
-    /// No thread is opened for it: a pane is somewhere to work, and asking a
-    /// source for one is how forking came to need Slack to be configured at
-    /// all. Fork to a thread when the conversation is what you want.
-    pub async fn fork_local(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id, false).await
-    }
-
-    async fn fork_agent(self: &Arc<Self>, agent_id: &str, in_conversation: bool) -> Result<Agent> {
+    /// The fork gets its own thread wherever the parent's conversation
+    /// lives, if it lives anywhere; a machine with no source configured
+    /// forks just the same, into a pane.
+    pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1195,25 +1187,14 @@ impl Hub {
             ..agent.clone()
         };
 
-        // Where the fork's own conversation would go, if it has one. Asking
-        // for a thread and having nowhere to put it is a failure; a pane is
-        // somewhere to work either way, and a machine with no source
-        // configured can still fork.
+        // Where the fork's own conversation would go, if it has one.
         let home = match self.home_binding(agent_id) {
             Some(binding) => Some((binding.source, binding.conversation)),
             None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
         };
-        let home = match home {
-            Some((name, conversation)) => match self.source(&name) {
-                Some(source) => Some((name, conversation, source)),
-                None if in_conversation => {
-                    anyhow::bail!("source {name} is not configured")
-                }
-                None => None,
-            },
-            None if in_conversation => anyhow::bail!("no current source conversation"),
-            None => None,
-        };
+        let home = home.and_then(|(name, conversation)| {
+            self.source(&name).map(|source| (name, conversation, source))
+        });
 
         if let Some((source_name, conversation, source)) = home {
             let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
@@ -2544,7 +2525,7 @@ impl Hub {
                 !task.agent_id.is_empty(),
                 "a fork branches the agent that has the task, and nobody has this one"
             );
-            self.fork_local(&task.agent_id).await?
+            self.fork(&task.agent_id).await?
         } else {
             let signal = Signal {
                 id: new_id("sig"),

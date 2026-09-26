@@ -91,8 +91,8 @@ export function AgentPanel({
   onCorrect,
   onStopCorrecting,
   onInterrupt,
-  onForkSlack,
-  onForkLocal,
+  onFork,
+  onForkBeside,
   onOpenBeside,
   onMerge,
   onOpenAgent,
@@ -127,8 +127,10 @@ export function AgentPanel({
   knownTags: string[];
   onTag: (change: { add?: string[]; remove?: string[]; set?: string[] }) => void;
   onInterrupt: () => void;
-  onForkSlack: () => void;
-  onForkLocal: () => void;
+  /// Branch this session and read the branch here, in this pane.
+  onFork: () => void;
+  /// Branch it and put the branch in a pane of its own, beside this one.
+  onForkBeside: () => void;
   /// Put another session beside this one, without branching it.
   onOpenBeside: () => void;
   onMerge: (() => void) | null;
@@ -486,13 +488,15 @@ export function AgentPanel({
           <Icon name={archived ? "restore" : "archive"} size={14} />
         </button>
         <SplitAction
-          label={can.fork ? "Fork in conversation" : `${agent.backend} cannot fork a session`}
+          // A fork gets its own thread wherever this conversation lives, so
+          // the only thing left to choose is where you want to read it.
+          label={can.fork ? "Fork, and read it here" : `${agent.backend} cannot fork a session`}
           icon="fork"
-          onClick={onForkLocal}
+          onClick={onFork}
           disabled={busy || !can.fork}
           menu={[
-            { label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack },
-            { label: "Open another beside this", icon: "split", onClick: onOpenBeside },
+            { label: "Fork into a pane beside this", icon: "split", onClick: onForkBeside },
+            { label: "Open another beside this", icon: "thread", onClick: onOpenBeside },
           ]}
         />
         {onMerge && (

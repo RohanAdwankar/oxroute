@@ -412,10 +412,19 @@ export default function Home() {
     });
   }, []);
 
+  const forkBeside = (index: number, agent: string) =>
+    run(async () => {
+      const { agent: child } = await api.fork(agent);
+      placeBeside(index, child.id);
+    });
+
+  /// Branch, and carry on in the branch: the parent is where it was, and
+  /// this pane is now looking at the fork.
   const forkHere = (index: number, agent: string) =>
     run(async () => {
-      const { agent: child } = await api.forkLocal(agent);
-      placeBeside(index, child.id);
+      const { agent: child } = await api.fork(agent);
+      setPanes((current) => current.map((id, at) => (at === index ? child.id : id)));
+      if (open === agent) setUrlAgent(child.id);
     });
 
   const mergePane = (index: number, agent: string) =>
@@ -932,8 +941,8 @@ export default function Home() {
                       knownTags={knownTags}
                       onTag={(change) => void run(() => api.tag(id, change))}
                       onInterrupt={() => void run(() => api.interrupt(id))}
-                      onForkSlack={() => void run(() => api.fork(id))}
-                      onForkLocal={() => void forkHere(index, id)}
+                      onFork={() => void forkHere(index, id)}
+                      onForkBeside={() => void forkBeside(index, id)}
                       onOpenBeside={() => setPairing(index)}
                       onMerge={
                         view.timeline.some((entry) => entry.kind === "forkedFrom")

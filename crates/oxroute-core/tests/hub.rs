@@ -820,8 +820,8 @@ async fn local_forks_nest_and_open_source_threads() {
     let original = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub.tag(&original, &["stage:building".into()], &[], &[]).unwrap();
-    let child = w.hub.fork_local(&original).await.unwrap();
-    let grandchild = w.hub.fork_local(&child.id).await.unwrap();
+    let child = w.hub.fork(&original).await.unwrap();
+    let grandchild = w.hub.fork(&child.id).await.unwrap();
     // A branch of the work sits where the work sits.
     assert_eq!(w.hub.store.tags(&grandchild.id).unwrap(), ["stage:building"]);
 
@@ -844,7 +844,7 @@ async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let parent = w.hub.store.agents(10).unwrap()[0].clone();
-    let child = w.hub.fork_local(&parent.id).await.unwrap();
+    let child = w.hub.fork(&parent.id).await.unwrap();
     w.hub
         .store
         .add_entry(&child.id, now(), EntryKind::You, "try another design", "", "")
@@ -882,8 +882,8 @@ async fn a_fork_with_an_open_child_cannot_merge() {
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let original = w.hub.store.agents(10).unwrap()[0].id.clone();
-    let child = w.hub.fork_local(&original).await.unwrap();
-    w.hub.fork_local(&child.id).await.unwrap();
+    let child = w.hub.fork(&original).await.unwrap();
+    w.hub.fork(&child.id).await.unwrap();
 
     assert!(w
         .hub
@@ -1704,19 +1704,16 @@ async fn an_agent_with_nothing_open_is_left_alone() {
 }
 
 #[tokio::test]
-async fn a_pane_fork_works_with_no_source_to_put_a_thread_in() {
+async fn a_fork_works_with_no_source_to_put_a_thread_in() {
     let w = build(Mode::Auto, Harnessed { source: false, ..Harnessed::default() }).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let original = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     // A pane is somewhere to work; it does not need a conversation.
-    let child = w.hub.fork_local(&original).await.unwrap();
+    let child = w.hub.fork(&original).await.unwrap();
     assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(original.as_str()));
     assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
-
-    // Asking for the conversation, with nowhere to hold one, still fails.
-    assert!(w.hub.fork(&original).await.is_err());
 }
 
 #[tokio::test]
