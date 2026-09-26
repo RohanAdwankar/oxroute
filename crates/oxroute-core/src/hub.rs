@@ -1079,16 +1079,19 @@ impl Hub {
 
     /// Branch an agent's history into a new agent and give it a source thread.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id).await
+        self.fork_agent(agent_id, true).await
     }
 
-    /// Branch an agent beside its parent in the web UI. It still gets a
-    /// source thread so the same conversation exists on both surfaces.
+    /// Branch an agent beside its parent in the web UI.
+    ///
+    /// No thread is opened for it: a pane is somewhere to work, and asking a
+    /// source for one is how forking came to need Slack to be configured at
+    /// all. Fork to a thread when the conversation is what you want.
     pub async fn fork_local(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id).await
+        self.fork_agent(agent_id, false).await
     }
 
-    async fn fork_agent(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+    async fn fork_agent(self: &Arc<Self>, agent_id: &str, in_conversation: bool) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1118,25 +1121,36 @@ impl Hub {
             ..agent.clone()
         };
 
-        let binding = self.home_binding(agent_id);
-        let (source_name, conversation) = match binding {
-            Some(binding) => (binding.source, binding.conversation),
-            None => {
-                let (source, conversation, _) = self
-                    .dashboard_location()
-                    .context("no current source conversation")?;
-                (source, conversation)
-            }
+        // Where the fork's own conversation would go, if it has one. Asking
+        // for a thread and having nowhere to put it is a failure; a pane is
+        // somewhere to work either way, and a machine with no source
+        // configured can still fork.
+        let home = match self.home_binding(agent_id) {
+            Some(binding) => Some((binding.source, binding.conversation)),
+            None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
         };
-        let source = self
-            .source(&source_name)
-            .with_context(|| format!("source {source_name} is not configured"))?;
-        let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
-        forked.permalink = permalink;
-        self.store.save_agent(&forked)?;
+        let home = match home {
+            Some((name, conversation)) => match self.source(&name) {
+                Some(source) => Some((name, conversation, source)),
+                None if in_conversation => {
+                    anyhow::bail!("source {name} is not configured")
+                }
+                None => None,
+            },
+            None if in_conversation => anyhow::bail!("no current source conversation"),
+            None => None,
+        };
+
+        if let Some((source_name, conversation, source)) = home {
+            let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
+            forked.permalink = permalink;
+            self.store.save_agent(&forked)?;
+            self.store
+                .bind(&source_name, &conversation, &thread_key, &forked.id)?;
+        } else {
+            self.store.save_agent(&forked)?;
+        }
         self.store.copy_timeline(agent_id, &forked.id)?;
-        self.store
-            .bind(&source_name, &conversation, &thread_key, &forked.id)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
         self.record_fork(agent_id, &forked.id);
         self.emit(Event::Sync);
@@ -2108,6 +2122,20 @@ impl Hub {
                     backend: choice.backend,
                 })
                 .collect(),
+            backends: self
+                .harnesses
+                .values()
+                .map(|harness| {
+                    let can = harness.capabilities();
+                    BackendInfo {
+                        backend: harness.backend(),
+                        fork: can.fork,
+                        // Merging a fork means splicing what it said back
+                        // into its parent, which is what inject is.
+                        merge: can.inject,
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -2408,6 +2436,17 @@ pub struct Snapshot {
     pub tasks: Vec<TaskItem>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
+    /// What each harness can do, so a surface can say why a control is off
+    /// rather than naming backends itself.
+    pub backends: Vec<BackendInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendInfo {
+    pub backend: Backend,
+    pub fork: bool,
+    pub merge: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

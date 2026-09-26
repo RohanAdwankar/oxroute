@@ -348,6 +348,9 @@ impl World {
 /// How the fake harness should behave for one test.
 #[derive(Clone, Copy)]
 struct Harnessed {
+    /// Whether a source is registered at all. A machine that only uses the
+    /// web UI has none, and that is not a broken machine.
+    source: bool,
     hang: bool,
     leave_artifacts: bool,
     can_steer: bool,
@@ -358,6 +361,7 @@ struct Harnessed {
 impl Default for Harnessed {
     fn default() -> Self {
         Harnessed {
+            source: true,
             hang: false,
             leave_artifacts: false,
             can_steer: true,
@@ -466,11 +470,13 @@ async fn build(mode: Mode, options: Harnessed) -> World {
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
     hub.with_harness(Arc::new(harness));
-    hub.with_source(Arc::new(FakeSource {
-        posts: posts.clone(),
-        next_thread: Mutex::new(0),
-        fail_open: fail_open.clone(),
-    }));
+    if options.source {
+        hub.with_source(Arc::new(FakeSource {
+            posts: posts.clone(),
+            next_thread: Mutex::new(0),
+            fail_open: fail_open.clone(),
+        }));
+    }
     hub.start().await.unwrap();
     hub.set_mode(mode).unwrap();
 
@@ -1687,4 +1693,20 @@ async fn an_agent_with_nothing_open_is_left_alone() {
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(w.calls.lock().unwrap().started.len(), 2);
+}
+
+#[tokio::test]
+async fn a_pane_fork_works_with_no_source_to_put_a_thread_in() {
+    let w = build(Mode::Auto, Harnessed { source: false, ..Harnessed::default() }).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let original = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    // A pane is somewhere to work; it does not need a conversation.
+    let child = w.hub.fork_local(&original).await.unwrap();
+    assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(original.as_str()));
+    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+
+    // Asking for the conversation, with nowhere to hold one, still fails.
+    assert!(w.hub.fork(&original).await.is_err());
 }
