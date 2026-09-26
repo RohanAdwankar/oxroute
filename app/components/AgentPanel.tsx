@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
+import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
@@ -301,16 +302,26 @@ export function AgentPanel({
 
   // Drawing leaves the focus on the canvas, so tab is caught here as well
   // as in the message box: after a sketch, that is where your hands are.
+  //
+  // Attached once, and reading what it needs through a ref. Re-attaching on
+  // every render loses the very key it is here for: the page's own handler
+  // runs first, React flushes that render inside the same keydown, and a
+  // listener removed mid-dispatch is not called.
+  const drawTab = useRef<() => void>(() => {});
   useEffect(() => {
-    if (mode !== "draw") return;
+    drawTab.current = () => {
+      if (mode === "draw") void toTask();
+    };
+  });
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab" || event.shiftKey || isTyping(event.target)) return;
       event.preventDefault();
-      void toTask();
+      drawTab.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, []);
 
   const finishRename = () => {
     const name = nameDraft.trim();
