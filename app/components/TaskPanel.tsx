@@ -56,18 +56,28 @@ function Row({
 }
 
 /**
- * What has been said about a task, latest last.
+ * What has been said about a task, latest first.
  *
- * A long argument pushes every other task off the screen, so only the last
- * two are kept in view and the rest are a click away.
+ * A task that has been argued over pushes every other task off the screen,
+ * so only the last two stay in view; the rest are under them, one click
+ * away and counted.
  */
 const RECENT = 2;
 
 function Notes({ notes }: { notes: TaskNote[] }) {
   const [all, setAll] = useState(false);
-  const shown = all ? notes : notes.slice(-RECENT);
+  const latest = [...notes].reverse();
+  const shown = all ? latest : latest.slice(0, RECENT);
   return (
     <div className="mt-2 flex flex-col gap-1">
+      <ul className="flex flex-col gap-1">
+        {shown.map((note) => (
+          <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
+            <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
+            {note.text}
+          </li>
+        ))}
+      </ul>
       {notes.length > RECENT && (
         <button
           type="button"
@@ -77,14 +87,6 @@ function Notes({ notes }: { notes: TaskNote[] }) {
           {all ? "Latest only" : `${notes.length - RECENT} earlier`}
         </button>
       )}
-      <ul className="flex flex-col gap-1">
-        {shown.map((note) => (
-          <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
-            <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
-            {note.text}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
