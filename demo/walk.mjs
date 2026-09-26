@@ -87,52 +87,8 @@ const caption = async (text, hold = READ) => {
   if (hold) await page.waitForTimeout(hold);
 };
 
-/// A card between chapters, so the film has somewhere to breathe.
-const card = async (title, line, hold = 3600) => {
-  await page.evaluate(
-    ({ title, line }) => {
-      let cover = document.getElementById("demo-card");
-      if (!cover) {
-        cover = document.createElement("div");
-        cover.id = "demo-card";
-        cover.style.cssText = [
-          "position:fixed",
-          "inset:0",
-          "z-index:2147483646",
-          "background:#141110",
-          "color:#f7f4ef",
-          "display:flex",
-          "flex-direction:column",
-          "align-items:center",
-          "justify-content:center",
-          "gap:14px",
-          "font-family:ui-sans-serif,system-ui,sans-serif",
-          "text-align:center",
-        ].join(";");
-        cover.innerHTML =
-          '<div id="demo-card-title" style="font-size:44px;font-weight:600"></div>' +
-          '<div id="demo-card-line" style="font-size:22px;color:#b0a598;max-width:44ch"></div>';
-        document.body.appendChild(cover);
-      }
-      cover.style.display = title ? "flex" : "none";
-      if (title) {
-        cover.querySelector("#demo-card-title").textContent = title;
-        cover.querySelector("#demo-card-line").textContent = line ?? "";
-      }
-    },
-    { title, line },
-  );
-  if (hold) await page.waitForTimeout(hold);
-};
-
-// Ask first, so the film shows the decision being made rather than the
-// machine making it. The other mode gets its own beat at the end.
-await api("/api/mode", { mode: "ask" });
 await page.goto(URL);
 await page.waitForTimeout(800);
-
-await card("oxroute", "Work arrives. You decide who does it. You watch it get done.");
-await card("");
 
 // 1. Something arrives. With no Slack wired up this is the same POST a
 //    source would make.
@@ -385,8 +341,8 @@ await caption("Find the line you remember, and land in the session that said it.
 await shot(page, "search");
 await page.waitForTimeout(1200);
 
+await caption("One inbox, one fleet, one list of what is left.", 6000);
 await caption("", 0);
-await card("oxroute", "One inbox, one fleet, one list of what is left.", 6000);
 
 await context.close();
 await browser.close();
