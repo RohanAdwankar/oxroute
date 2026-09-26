@@ -18,6 +18,7 @@ export function SplitAction({
   disabled,
   menu,
   up = false,
+  from = "right",
 }: {
   label: string;
   /// The longer sentence, when the label alone does not explain it.
@@ -29,6 +30,9 @@ export function SplitAction({
   /// Whether the menu opens upward, for a square sitting on the bottom
   /// edge where there is no screen left below it.
   up?: boolean;
+  /// Which edge of the square the menu hangs from. A square near the left
+  /// of the window has no room to its left.
+  from?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -82,7 +86,8 @@ export function SplitAction({
         <div
           role="menu"
           className={[
-            "absolute right-0 z-30 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]",
+            "absolute z-30 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]",
+            from === "left" ? "left-0" : "right-0",
             up ? "bottom-full mb-1" : "top-full mt-1",
           ].join(" ")}
         >

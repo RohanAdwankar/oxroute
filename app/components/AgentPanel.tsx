@@ -726,6 +726,7 @@ export function AgentPanel({
             icon="attach"
             onClick={() => picker.current?.click()}
             disabled={busy}
+            from="left"
             menu={MODES.filter((option) => option.mode !== "type").map((option) => ({
               label: option.label,
               icon: option.icon,
