@@ -109,23 +109,41 @@ export function TaskPanel({
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
-        <input
+        // A task reads over several lines, so it is edited over several:
+        // a box that shows one line of what you are changing is a box you
+        // have to scroll to read what you just typed.
+        <textarea
           autoFocus
+          rows={1}
+          ref={(node) => {
+            if (!node) return;
+            node.style.height = "0px";
+            node.style.height = `${node.scrollHeight}px`;
+          }}
           value={editDraft}
-          onChange={(event) => setEditDraft(event.target.value)}
+          onChange={(event) => {
+            setEditDraft(event.target.value);
+            event.currentTarget.style.height = "0px";
+            event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
+          }}
           onBlur={() => {
             const text = editDraft.trim();
             setEditing(null);
             if (text && text !== task.text) onUpdate({ ...task, text });
           }}
           onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
+            // Enter saves, because a task is a sentence; a line break needs
+            // a modifier, the way the composer works.
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
             if (event.key === "Escape") {
               setEditDraft(task.text);
               event.currentTarget.blur();
             }
           }}
-          className="w-full border-b border-edge bg-transparent text-[13px] outline-none"
+          className="w-full resize-none border-b border-edge bg-transparent text-[13px] leading-[1.45] outline-none"
         />
       ) : (
         <button
