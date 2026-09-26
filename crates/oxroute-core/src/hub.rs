@@ -86,11 +86,6 @@ struct Live {
     is_done: AtomicBool,
     status: Mutex<Option<String>>,
     answer: Mutex<Option<String>>,
-    /// What already went on the timeline as the turn streamed. The closing
-    /// frame repeats the last thing an agent said, and anything recorded in
-    /// between -- an attachment, a notice -- would hide that from a check
-    /// that only looked at the entry before it.
-    narrated: Mutex<HashSet<String>>,
     progress: Mutex<Progress>,
     artifacts: Mutex<HashSet<String>>,
     artifact_dir: PathBuf,
@@ -113,7 +108,6 @@ impl Live {
             is_done: AtomicBool::new(false),
             status: Mutex::new(None),
             answer: Mutex::new(None),
-            narrated: Mutex::new(HashSet::new()),
             progress: Mutex::new(Progress::new()),
             artifacts: Mutex::new(HashSet::new()),
             artifact_dir,
@@ -638,9 +632,6 @@ impl Hub {
                 // the turn ends, so recording it here too would double it.
                 if !final_answer {
                     self.record(&agent_id, EntryKind::Said, &text, "", "");
-                    if let Some(turn) = self.live.lock().await.get(&agent_id) {
-                        turn.narrated.lock().unwrap().insert(text);
-                    }
                 }
             }
             HarnessEvent::Artifact { path, .. } => {
@@ -1659,10 +1650,11 @@ impl Hub {
         };
 
         // Claude Code's closing `result` frame usually repeats the last
-        // thing it said. Showing it twice makes the agent look confused, and
-        // it is the same answer whether or not an attachment was written
-        // down in between.
-        let repeated = turn.narrated.lock().unwrap().contains(&answer);
+        // thing it said. Showing it twice makes the agent look confused.
+        let repeated = self
+            .store
+            .last_entry(&agent.id)?
+            .is_some_and(|last| last.kind == EntryKind::Said && last.text == answer);
         if !repeated {
             self.record(&agent.id, EntryKind::Said, &answer, "", "");
         }
