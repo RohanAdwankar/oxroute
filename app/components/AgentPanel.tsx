@@ -223,7 +223,7 @@ export function AgentPanel({
     const input = composer.current;
     if (!input) return;
     input.style.height = "0px";
-    input.style.height = `${Math.max(38, Math.min(input.scrollHeight, 160))}px`;
+    input.style.height = `${Math.max(34, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
     pin();
   }, [draft, uploads, attachmentError, pin]);
@@ -364,7 +364,7 @@ export function AgentPanel({
       {/* One row, whatever the width: what cannot fit is cut, not wrapped,
           because a header that grows downwards takes the conversation's
           space to say what it already said. */}
-      <div className="flex h-[46px] shrink-0 items-center gap-x-[10px] overflow-hidden border-b border-rule px-3">
+      <div className="flex h-[38px] shrink-0 items-center gap-x-[10px] overflow-hidden border-b border-rule pl-3">
         <button
           type="button"
           onClick={onBack}
@@ -439,7 +439,7 @@ export function AgentPanel({
         </span>
 
 
-        <span className="flex shrink-0 items-center gap-[10px]">
+        <span className="flex shrink-0 items-stretch self-stretch border-l border-rule">
         {agent.permalink && (
           <a
             href={agent.permalink}
@@ -447,9 +447,9 @@ export function AgentPanel({
             rel="noreferrer"
             aria-label="open in Slack"
             title="Open in Slack"
-            className="flex h-8 w-8 items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink"
+            className="flex w-[34px] items-center justify-center border-r border-rule text-mid hover:text-ink"
           >
-            <Icon name="external" />
+            <Icon name="external" size={14} />
           </a>
         )}
         <button
@@ -458,15 +458,16 @@ export function AgentPanel({
           disabled={busy || (!archived && agent.status === "working")}
           aria-label={archived ? "restore session" : "archive session"}
           title={!archived && agent.status === "working" ? "Stop the active turn first" : archived ? "Restore session" : "Archive session"}
-          className="flex h-7 w-7 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex w-[34px] cursor-pointer items-center justify-center border-r border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Icon name={archived ? "restore" : "archive"} />
+          <Icon name={archived ? "restore" : "archive"} size={14} />
         </button>
         <SplitAction
           label={can.fork ? "Fork in conversation" : `${agent.backend} cannot fork a session`}
           icon="fork"
           onClick={onForkLocal}
           disabled={busy || !can.fork}
+          variant="strip"
           menu={[
             { label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack },
             { label: "Open another beside this", icon: "split", onClick: onOpenBeside },
@@ -485,9 +486,9 @@ export function AgentPanel({
                   ? "Stop the active turn first"
                   : "Merge into parent"
             }
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex w-[34px] cursor-pointer items-center justify-center border-r border-rule text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Icon name="merge" />
+            <Icon name="merge" size={14} />
           </button>
         )}
         <button
@@ -496,9 +497,9 @@ export function AgentPanel({
           disabled={busy || agent.status !== "working"}
           aria-label="stop the turn"
           title="Stop the turn"
-          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex w-[34px] cursor-pointer items-center justify-center text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Icon name="stop" />
+          <Icon name="stop" size={14} />
         </button>
         </span>
       </div>
@@ -612,7 +613,7 @@ export function AgentPanel({
       )}
 
       <footer
-        className={`flex shrink-0 flex-col gap-2 border-t px-5 py-[9px] ${
+        className={`flex shrink-0 flex-col gap-2 border-t px-5 py-[6px] ${
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
@@ -657,7 +658,7 @@ export function AgentPanel({
           </div>
         )}
         {attachmentError && <p className="text-[11px] text-hold">{attachmentError}</p>}
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-[6px]">
           <input
             ref={picker}
             type="file"
@@ -709,7 +710,7 @@ export function AgentPanel({
             rows={1}
             data-composer
             placeholder={PLACEHOLDER[mode]}
-            className="min-h-[38px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[8px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
+            className="min-h-[34px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[6px] text-[15px] outline-none placeholder:text-faint focus:border-edge"
           />
           {mode === "type" ? (
             // One button, one arrow, whether the agent is busy or not. What

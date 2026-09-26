@@ -42,7 +42,7 @@ export function Chrome({
   onSearchContinue: (agent: string) => void;
 }) {
   return (
-    <header className="flex min-h-[46px] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
+    <header className="flex min-h-[36px] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
       <div className="flex items-stretch" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
@@ -73,11 +73,11 @@ export function Chrome({
       <Cell onClick={onTasks} pressed={tasksOpen} label="Show or hide tasks" icon="tasks" />
 
       <nav className="flex items-stretch" aria-label="boards">
-        <ViewTab
-          label="Fleet"
-          icon="terminal"
-          active={activeBoard === null}
+        <Cell
           onClick={() => onBoard(null)}
+          pressed={activeBoard === null}
+          label="Show the fleet"
+          icon="terminal"
         />
         {snapshot.boards.map((board) => (
           <ViewTab
@@ -130,11 +130,11 @@ function Cell({
       aria-label={label}
       title={label}
       className={[
-        "flex w-[38px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        "flex w-[34px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
         pressed ? "bg-wash text-ink" : "text-faint hover:text-ink",
       ].join(" ")}
     >
-      <Icon name={icon} size={15} />
+      <Icon name={icon} size={14} />
     </button>
   );
 }
@@ -190,7 +190,7 @@ function ModeButton({
       aria-label={label}
       title={label}
       className={[
-        "flex w-[38px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        "flex w-[34px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
         active ? "bg-wash text-ink" : "text-faint hover:text-ink",
       ].join(" ")}
     >
