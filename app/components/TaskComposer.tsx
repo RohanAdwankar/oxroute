@@ -28,18 +28,20 @@ export function TaskComposer({
   };
 
   return (
-    <footer className="flex shrink-0 items-end gap-[6px] border-t border-rule bg-card px-[var(--pane-x)] py-[var(--row-y)]">
+    <footer className="flex shrink-0 items-stretch border-t border-rule bg-card">
       <textarea
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey) return;
+          // Enter and tab do the same thing here: out on the fleet there is
+          // no one to say it to, so filing it is the only thing to do.
+          if ((event.key !== "Enter" && event.key !== "Tab") || event.shiftKey) return;
           event.preventDefault();
           file();
         }}
         rows={1}
         placeholder="Add to the task list"
-        className="min-h-[var(--field)] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[6px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint focus:border-edge"
+        className="min-h-[var(--cell)] flex-1 resize-none overflow-y-hidden border-r border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
       />
       <SplitAction
         label="Add to the task list"
@@ -48,7 +50,7 @@ export function TaskComposer({
         onClick={file}
         disabled={busy || !draft.trim()}
         menu={[]}
-        variant="composer"
+        up
       />
     </footer>
   );
