@@ -125,6 +125,9 @@ const card = async (title, line, hold = 3600) => {
   if (hold) await page.waitForTimeout(hold);
 };
 
+// Ask first, so the film shows the decision being made rather than the
+// machine making it. The other mode gets its own beat at the end.
+await api("/api/mode", { mode: "ask" });
 await page.goto(URL);
 await page.waitForTimeout(800);
 
@@ -179,9 +182,56 @@ await until(async () => (await page.getByText("cannot regress").count()) > 0);
 await caption("It lands on the task list, and the list opens on what you just filed.");
 await shot(page, "filed");
 
-// 5. The list of what is left: a second thing written down from the fleet,
+// 5. The inbox is not only for what other people send: you write in it,
+//    it holds what you have not decided, and you can throw things away.
+await caption("The inbox holds everything undecided -- including what you think of yourself.");
+await page.locator('[aria-label="back to the fleet"]').click();
+await page.waitForTimeout(600);
+const note = page.getByPlaceholder("Something you thought of");
+await note.click();
+await note.type("the deploy script still points at the old port", { delay: 30 });
+await page.waitForTimeout(500);
+await shot(page, "note");
+await note.press("Enter");
+await page.waitForTimeout(900);
+
+await until(async () => (await page.getByText("Send this to").count()) > 0, 30);
+await caption("It comes straight back as something waiting on you, on the routing screen.");
+await shot(page, "routing-again");
+await caption("This one belongs to a session that already exists.");
+const tick = page.locator(`[aria-label="send to ${name}"]`).first();
+if ((await tick.getAttribute("aria-checked")) !== "true") {
+  await tick.click();
+  await page.waitForTimeout(500);
+}
+await page.getByRole("button", { name: /^send to \d+ agent/ }).click();
+// The routing screen closes once the thing has somewhere to be.
+await until(async () => (await page.getByText("Send this to").count()) === 0, 60);
+await page.waitForTimeout(900);
+await shot(page, "sent-to-existing");
+
+await caption("Not everything deserves an agent. Some of it you just throw away.");
+await api("/api/signal", {
+  source: "demo",
+  conversation: "C1",
+  user: "ops",
+  text: "reminder: the office is closed on Friday",
+});
+await until(async () => (await page.getByText("office is closed").count()) > 0, 60);
+await page.getByText("office is closed").first().click();
+await page.waitForTimeout(700);
+await page.locator('[aria-label="discard"]').click();
+await page.waitForTimeout(900);
+await caption("What is settled folds away under Done, still there if you want it.");
+await shot(page, "discarded");
+
+// 6. The list of what is left: a second thing written down from the fleet,
 //    an agent picking work up, and a person deciding when it is finished.
 await caption("The task list is what is left to do, for you and for every agent.");
+if ((await page.locator("[data-composer]").count()) === 0) {
+  await page.locator(`text=${name}`).first().click();
+  await page.waitForTimeout(700);
+}
 if ((await page.locator('[aria-label="Show or hide tasks"]').getAttribute("aria-pressed")) !== "true") {
   await page.locator('[aria-label="Show or hide tasks"]').click();
 }
@@ -228,7 +278,7 @@ await shot(page, "correction");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
-// 6. Saying something by drawing it: the change to the picture is the
+// 7. Saying something by drawing it: the change to the picture is the
 //    message, and the file on disk changes with it.
 await caption("Some things are quicker drawn than said.");
 await page.locator('[aria-label="Attach images options"]').first().click();
@@ -252,7 +302,7 @@ await page.waitForTimeout(1500);
 await caption("The agent is already working on it.");
 await shot(page, "sent");
 
-// 7. The other way to say it without words: draw on a blank page, or on a
+// 8. The other way to say it without words: draw on a blank page, or on a
 //    screenshot, and send the picture.
 await caption("Or draw it. A circle round the thing you mean says more than a paragraph.");
 await page.locator('[aria-label="Attach images options"]').first().click();
@@ -290,7 +340,7 @@ await page.waitForTimeout(1500);
 await caption("The agent sees what you drew, in the conversation.");
 await shot(page, "picture-sent");
 
-// 8. Branching the work, and the two places a branch can land.
+// 9. Branching the work, and the two places a branch can land.
 await caption("Branch a session when the work forks.");
 await page.locator('[aria-label$="options"]').first().click();
 await page.waitForTimeout(700);
@@ -299,7 +349,15 @@ await shot(page, "fork");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
-// 9. What little there is to decide.
+// 10. The one switch that changes what happens to everything next.
+await caption("Or let it route itself: auto sends each thing to the session it belongs to.");
+await page.locator('[aria-label="Auto route"]').click();
+await page.waitForTimeout(900);
+await shot(page, "auto");
+await page.locator('[aria-label="Ask me first"]').click();
+await page.waitForTimeout(700);
+
+// 11. What little there is to decide.
 await page.locator('[title="Settings"]').click();
 await page.waitForTimeout(700);
 await caption("Four settings, and no more.");
@@ -317,7 +375,7 @@ await page.waitForTimeout(600);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
-// 10. Everything said is searchable, including sessions that were never
+// 12. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
 await caption("Everything anyone said is searchable.", 0);
 await page.getByPlaceholder("Search sessions").type("health", { delay: 120 });
