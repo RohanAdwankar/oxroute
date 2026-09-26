@@ -7,6 +7,7 @@ import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Help } from "./components/Help";
 import { Settings } from "./components/Settings";
+import { TaskComposer } from "./components/TaskComposer";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
@@ -961,53 +962,58 @@ export default function Home() {
               );
             })}
           </div>
-        ) : activeBoard && !selected ? (
-          <BoardView
-            key={activeBoard.id}
-            board={activeBoard}
-            snapshot={snapshot}
-            revision={revision}
-            busy={busy}
-            run={run}
-            say={say}
-            onDeleted={() => showBoard(null)}
-            onOpenAgent={(id) => {
-              clearRouting();
-              showAgent(id);
-            }}
-          />
         ) : (
-          <Fleet
-            agents={showArchived ? snapshot.archived : snapshot.agents}
-            archivedCount={snapshot.archived.length}
-            showArchived={showArchived}
-            onShowArchived={() => {
-              setShowArchived((current) => !current);
-              setFleetAt(0);
-            }}
-            models={snapshot.models}
-            defaultModel={snapshot.defaultModel}
-            messages={snapshot.messages}
-            tags={snapshot.tags}
-            routing={selected}
-            beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
-            ticked={ticked}
-            busy={busy}
-            cursor={fleetAt}
-            active={focus === "fleet"}
-            vim={vim && !jump}
-            onToggle={toggle}
-            onOpen={chooseAgent}
-            onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
-            onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
-            onSpawn={(model) =>
-              selected &&
-              void run(() => api.routeSpawn(selected.signal.id, model), settled(selected.signal.id))
-            }
-            onDiscard={() =>
-              selected && void run(() => api.discard(selected.signal.id), settled(selected.signal.id))
-            }
-          />
+          <div className="flex min-w-0 flex-1 flex-col">
+            {activeBoard && !selected ? (
+              <BoardView
+                key={activeBoard.id}
+                board={activeBoard}
+                snapshot={snapshot}
+                revision={revision}
+                busy={busy}
+                run={run}
+                say={say}
+                onDeleted={() => showBoard(null)}
+                onOpenAgent={(id) => {
+                  clearRouting();
+                  showAgent(id);
+                }}
+              />
+            ) : (
+              <Fleet
+                agents={showArchived ? snapshot.archived : snapshot.agents}
+                archivedCount={snapshot.archived.length}
+                showArchived={showArchived}
+                onShowArchived={() => {
+                  setShowArchived((current) => !current);
+                  setFleetAt(0);
+                }}
+                models={snapshot.models}
+                defaultModel={snapshot.defaultModel}
+                messages={snapshot.messages}
+                tags={snapshot.tags}
+                routing={selected}
+                beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
+                ticked={ticked}
+                busy={busy}
+                cursor={fleetAt}
+                active={focus === "fleet"}
+                vim={vim && !jump}
+                onToggle={toggle}
+                onOpen={chooseAgent}
+                onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
+                onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
+                onSpawn={(model) =>
+                  selected &&
+                  void run(() => api.routeSpawn(selected.signal.id, model), settled(selected.signal.id))
+                }
+                onDiscard={() =>
+                  selected && void run(() => api.discard(selected.signal.id), settled(selected.signal.id))
+                }
+              />
+            )}
+            <TaskComposer busy={busy} onTask={(text) => void run(() => api.createTask(text))} />
+          </div>
         )}
 
         {tasksOpen && (
