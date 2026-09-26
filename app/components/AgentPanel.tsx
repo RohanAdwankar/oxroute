@@ -131,6 +131,8 @@ export function AgentPanel({
   const [draft, setDraft] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
+  /// The ways of drawing, hung off the paperclip until asked for.
+  const [drawMenu, setDrawMenu] = useState(false);
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -212,6 +214,17 @@ export function AgentPanel({
   useEffect(() => () => {
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
   }, []);
+
+  useEffect(() => {
+    if (!drawMenu) return;
+    const close = () => setDrawMenu(false);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [drawMenu]);
 
   const sendDrawn = async () => {
     if (busy) return;
@@ -583,26 +596,22 @@ export function AgentPanel({
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
-        <div className="flex items-center gap-1" role="group" aria-label="how to say it">
-          {MODES.map((option) => (
+        {mode !== "type" && (
+          <div className="flex items-center gap-2 text-[11.5px] text-faint">
+            <Icon name={MODES.find((option) => option.mode === mode)?.icon ?? "pen"} size={13} />
+            {MODES.find((option) => option.mode === mode)?.label}
+            {mode === "diagram" && edits.length > 0 && (
+              <span className="tnum text-[10.5px] text-ok">{edits.length}</span>
+            )}
             <button
-              key={option.mode}
               type="button"
-              aria-pressed={mode === option.mode}
-              onClick={() => setMode(option.mode)}
-              className={[
-                "flex h-7 cursor-pointer items-center gap-[6px] rounded-[3px] px-[10px] text-[12px]",
-                mode === option.mode ? "bg-wash text-ink" : "text-faint hover:text-mid",
-              ].join(" ")}
+              onClick={() => setMode("type")}
+              className="cursor-pointer text-faint hover:text-ink"
             >
-              <Icon name={option.icon} size={13} />
-              {option.label}
-              {option.mode === "diagram" && edits.length > 0 && (
-                <span className="tnum text-[10.5px] text-ok">{edits.length}</span>
-              )}
+              back to typing
             </button>
-          ))}
-        </div>
+          </div>
+        )}
         {draggingImages && <p className="text-[11px] text-drop">Drop images to attach</p>}
         {uploads.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -643,12 +652,42 @@ export function AgentPanel({
           <button
             type="button"
             onClick={() => picker.current?.click()}
+            onContextMenu={(event) => {
+              // Right here is where a picture comes from, so it is where
+              // the other two ways of making one live.
+              event.preventDefault();
+              setDrawMenu(true);
+            }}
             disabled={busy}
             aria-label="attach images"
-            title="attach images"
-            className="flex h-[42px] w-[34px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:opacity-40"
+            title="Attach images — right click to draw"
+            className="relative flex h-[42px] w-[34px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:opacity-40"
           >
             <Icon name="attach" />
+            {drawMenu && (
+              <span
+                role="menu"
+                onPointerDown={(event) => event.stopPropagation()}
+                className="absolute bottom-full left-0 z-30 mb-1 flex min-w-max flex-col border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]"
+              >
+                {MODES.filter((option) => option.mode !== "type").map((option) => (
+                  <span
+                    key={option.mode}
+                    role="menuitem"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setDrawMenu(false);
+                      setMode(option.mode);
+                    }}
+                    className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] text-mid hover:bg-wash hover:text-ink"
+                  >
+                    <Icon name={option.icon} size={14} />
+                    {option.label}
+                  </span>
+                ))}
+              </span>
+            )}
           </button>
           <textarea
             ref={composer}
@@ -667,6 +706,12 @@ export function AgentPanel({
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 send();
+              }
+              // Tab files it instead: the same words, kept as work rather
+              // than said now. There is nothing to tab to from here.
+              if (event.key === "Tab" && !event.shiftKey && mode === "type") {
+                event.preventDefault();
+                toTask();
               }
             }}
             rows={1}
