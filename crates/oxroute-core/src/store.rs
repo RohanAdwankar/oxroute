@@ -961,10 +961,6 @@ impl Store {
     }
 
     /// The most recent line on an agent's timeline.
-    pub fn last_entry(&self, agent_id: &str) -> Result<Option<Entry>> {
-        Ok(self.timeline(agent_id, 1)?.pop())
-    }
-
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(

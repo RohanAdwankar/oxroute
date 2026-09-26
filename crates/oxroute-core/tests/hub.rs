@@ -45,6 +45,9 @@ struct FakeHarness {
     /// When set, the turn writes a file into the directory it was given,
     /// exactly as an agent producing a chart would.
     leave_artifacts: bool,
+    /// When set, the answer streams first and the closing frame repeats it,
+    /// which is what Claude Code does.
+    narrates: bool,
     /// Whether this harness can fold input into a running turn. Claude Code
     /// cannot, and that path deserves its own coverage.
     can_steer: bool,
@@ -67,6 +70,7 @@ impl FakeHarness {
             sessions: Mutex::new(0),
             hang,
             leave_artifacts: false,
+            narrates: false,
             can_steer: true,
             delay: Duration::ZERO,
             backend: Backend::Codex,
@@ -125,9 +129,18 @@ impl Harness for FakeHarness {
             let events = self.events.clone();
             let session = session.to_string();
             let delay = self.delay;
+            let narrates = self.narrates;
             tokio::spawn(async move {
                 if !delay.is_zero() {
                     tokio::time::sleep(delay).await;
+                }
+                if narrates {
+                    let _ = events.send(HarnessEvent::Message {
+                        session: session.clone(),
+                        text: "done".into(),
+                        final_answer: false,
+                    });
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 let _ = events.send(HarnessEvent::Message {
                     session: session.clone(),
@@ -353,6 +366,7 @@ struct Harnessed {
     source: bool,
     hang: bool,
     leave_artifacts: bool,
+    narrates: bool,
     can_steer: bool,
     delay: Duration,
     backend: Backend,
@@ -364,6 +378,7 @@ impl Default for Harnessed {
             source: true,
             hang: false,
             leave_artifacts: false,
+            narrates: false,
             can_steer: true,
             delay: Duration::ZERO,
             backend: Backend::Codex,
@@ -460,6 +475,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
 
     let harness = FakeHarness {
         leave_artifacts: options.leave_artifacts,
+        narrates: options.narrates,
         can_steer: options.can_steer,
         delay: options.delay,
         backend: options.backend,
@@ -2272,6 +2288,29 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
         .unwrap()
         .iter()
         .any(|note| note.text == "the trim is still bare"));
+}
+
+#[tokio::test]
+async fn an_answer_is_written_down_once_even_with_an_attachment_after_it() {
+    // Claude Code streams an answer and then repeats it in the frame that
+    // closes the turn; anything recorded in between must not hide that.
+    let w = build(
+        Mode::Auto,
+        Harnessed { source: false, narrates: true, leave_artifacts: true, ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "draw me something")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    let said = w
+        .hub
+        .timeline(&agent, 50)
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.kind == EntryKind::Said && entry.text == "done")
+        .count();
+    assert_eq!(said, 1, "the same answer was written down twice");
 }
 
 #[tokio::test]
