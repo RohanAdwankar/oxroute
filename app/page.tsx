@@ -92,6 +92,9 @@ export default function Home() {
   // A signal the inbox cursor should land on as soon as the daemon reports it.
   const landOn = useRef<string | null>(null);
   const firstLoad = useRef(true);
+  /// Digits typed before a motion, and a lone g waiting for its pair.
+  const typed = useRef("");
+  const pendingG = useRef(false);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -187,6 +190,9 @@ export default function Home() {
       setBoardId(url.searchParams.get("board"));
       const agent = url.searchParams.get("agent");
       setOpen(agent);
+      // Arriving at an agent is the same as walking into one: the keys act
+      // on the conversation in front of you, not on the column beside it.
+      if (agent) setFocus("fleet");
       setPanes(agent ? [agent] : []);
       setPaneWidths(agent ? [1] : []);
       const entry = Number(url.searchParams.get("entry"));
@@ -535,6 +541,18 @@ export default function Home() {
           focus === "inbox" ? setInboxAt : focus === "fleet" ? setFleetAt : setTaskAt;
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
       };
+      /// The top or the bottom of whatever is in front of you.
+      const toEnd = (way: number) => {
+        if (focus === "fleet" && reading) {
+          const node = document.querySelector("[data-transcript]");
+          node?.scrollTo({ top: way < 0 ? 0 : node.scrollHeight, behavior: "smooth" });
+          return;
+        }
+        const setAt =
+          focus === "inbox" ? setInboxAt : focus === "fleet" ? setFleetAt : setTaskAt;
+        setAt(way < 0 ? 0 : Math.max(here - 1, 0));
+      };
+
       // h and l walk the screen: inbox, what you are working on, tasks. A
       // column you step into opens, because a column you cannot see is not
       // somewhere you can be.
@@ -545,23 +563,45 @@ export default function Home() {
         setFocus(next);
       };
       const stop = () => event.preventDefault();
+      /// A count typed before a motion, vim's way: 5j is five of them. It
+      /// is taken once and forgotten, so it never leaks into the next key.
+      const count = Math.max(Number(typed.current) || 1, 1);
+      const takeCount = () => {
+        typed.current = "";
+        return count;
+      };
       // With a pane open the fleet is not on screen, so the keys that act on
       // a card you can no longer see do nothing: reading an agent should not
       // be one letter away from swapping to another one.
       const reading = open !== null && !selected && pairing === null;
 
+      // Digits are a count waiting for the motion they belong to.
+      if (/^[0-9]$/.test(event.key) && (event.key !== "0" || typed.current)) {
+        stop();
+        typed.current += event.key;
+        return;
+      }
+      const wasG = pendingG.current;
+      pendingG.current = false;
+
       switch (event.key) {
         case "j":
         case "ArrowDown":
           stop();
-          return move(1);
+          return move(takeCount());
         case "k":
         case "ArrowUp":
           stop();
-          return move(-1);
+          return move(-takeCount());
         case "g":
           stop();
-          return (focus === "inbox" ? setInboxAt : setFleetAt)(0);
+          // gg, as in vim: one g waits to see whether a second follows.
+          if (!wasG) {
+            pendingG.current = true;
+            return;
+          }
+          typed.current = "";
+          return toEnd(-1);
         case "J":
         case "K": {
           if (focus !== "tasks") return;
@@ -581,7 +621,8 @@ export default function Home() {
         }
         case "G":
           stop();
-          return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
+          typed.current = "";
+          return toEnd(1);
         case "h":
           stop();
           return step(-1);
