@@ -1001,9 +1001,10 @@ struct DiagramPayload {
     /// False when the agent's repository has no diagram yet. The rest is
     /// then empty, and the composer offers to have the agent draw one.
     exists: bool,
-    /// False when the agent is not working in a checkout at all. There is
-    /// then nothing to draw, and nothing to offer to draw.
-    repository: bool,
+    /// Whether the diagram has anywhere to live: a configured absolute
+    /// path, or a checkout to resolve a relative one against. False means
+    /// there is nothing to draw and nothing to offer to draw.
+    rooted: bool,
     file: String,
     #[serde(flatten)]
     drawn: Option<diagram::Drawn>,
@@ -1014,12 +1015,14 @@ struct DiagramPayload {
 
 fn diagram_payload(hub: &Hub, id: &str, edits: &[diagram::Edit]) -> Result<DiagramPayload> {
     let (agent, path) = diagram_of(hub, id)?;
-    let repository = oxroute_core::config::repository_of(std::path::Path::new(&workdir(hub, &agent)))
-        .is_some();
+    // Somewhere for a diagram to live: the configured path is already a
+    // place (`/…` or `~/…`), or there is a checkout to resolve it against.
+    let rooted = hub.config.diagram_for("") == hub.config.diagram_for("/")
+        || oxroute_core::config::repository_of(std::path::Path::new(&workdir(hub, &agent))).is_some();
     let Ok(metadata) = std::fs::metadata(&path) else {
         return Ok(DiagramPayload {
             exists: false,
-            repository,
+            rooted,
             file: path.display().to_string(),
             drawn: None,
             modified: 0.0,
@@ -1028,7 +1031,7 @@ fn diagram_payload(hub: &Hub, id: &str, edits: &[diagram::Edit]) -> Result<Diagr
     let file = diagram::DiagramFile::read(&path)?;
     Ok(DiagramPayload {
         exists: true,
-        repository,
+        rooted,
         file: path.display().to_string(),
         drawn: Some(diagram::draw(&file, edits)?),
         modified: metadata
