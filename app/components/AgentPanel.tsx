@@ -328,7 +328,10 @@ export function AgentPanel({
         addFiles(Array.from(event.dataTransfer.files));
       }}
     >
-      <div className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-[10px] gap-y-1 border-b border-rule px-3 py-[6px]">
+      {/* One row, whatever the width: what cannot fit is cut, not wrapped,
+          because a header that grows downwards takes the conversation's
+          space to say what it already said. */}
+      <div className="flex h-[46px] shrink-0 items-center gap-x-[10px] overflow-hidden border-b border-rule px-3">
         <button
           type="button"
           onClick={onBack}
@@ -379,26 +382,31 @@ export function AgentPanel({
               setNameDraft(agent.name);
               setRenaming(true);
             }}
-            className="cursor-text text-[16px] font-semibold hover:underline"
+            className="max-w-[40%] shrink-0 cursor-text truncate text-[16px] font-semibold hover:underline"
             title="rename"
           >
             {agent.name}
           </button>
         )}
-        <span className="min-w-0 truncate text-[12.5px] text-faint">
+        {/* It gives up its width first, but never all of it: what an agent
+            is doing now is the thing this line is for. */}
+        <span className="min-w-[86px] flex-1 truncate text-[12.5px] text-faint">
           {agent.status} {since(agent.updatedAt)} · {agent.backend} · {agent.model} ·{" "}
           {view.delivery}
         </span>
 
-        <TagEditor
-          tags={tags}
-          known={knownTags}
-          busy={busy}
-          onAdd={(tag) => onTag(tagChange(tag))}
-          onRemove={(tag) => onTag({ remove: [tag] })}
-        />
-        <span className="flex-1" />
+        <span className="flex max-w-[45%] shrink items-center overflow-hidden">
+          <TagEditor
+            tags={tags}
+            known={knownTags}
+            busy={busy}
+            onAdd={(tag) => onTag(tagChange(tag))}
+            onRemove={(tag) => onTag({ remove: [tag] })}
+          />
+        </span>
 
+
+        <span className="flex shrink-0 items-center gap-[10px]">
         {agent.permalink && (
           <a
             href={agent.permalink}
@@ -459,6 +467,7 @@ export function AgentPanel({
         >
           <Icon name="stop" />
         </button>
+        </span>
       </div>
 
       {mode === "diagram" && (
