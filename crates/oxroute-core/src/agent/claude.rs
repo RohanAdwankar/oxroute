@@ -82,7 +82,11 @@ impl ClaudeHarness {
         self.events.subscribe()
     }
 
-    fn argv(&self, session: &str, spec: &SessionSpec, resuming: bool) -> Vec<String> {
+    /// How a session is opened: as itself, carried on, or branched off
+    /// another one. `--fork-session` copies the history and hands the copy
+    /// whatever id we ask for, which is what lets a fork be opened the same
+    /// way every other session is.
+    fn argv(&self, session: &str, spec: &SessionSpec, from: Opening<'_>) -> Vec<String> {
         let mut argv = vec![
             self.binary.clone(),
             "-p".into(),
@@ -94,59 +98,43 @@ impl ClaudeHarness {
             "--permission-mode".into(),
             self.permission_mode.clone(),
         ];
-        // `--resume` already names the session; passing both is contradictory.
-        if resuming {
-            argv.push("--resume".into());
-        } else {
-            argv.push("--session-id".into());
+        match from {
+            // `--resume` already names the session; passing both is
+            // contradictory.
+            Opening::Resume => {
+                argv.push("--resume".into());
+                argv.push(session.to_string());
+            }
+            Opening::Fresh => {
+                argv.push("--session-id".into());
+                argv.push(session.to_string());
+            }
+            Opening::ForkOf(parent) => {
+                argv.push("--resume".into());
+                argv.push(parent.to_string());
+                argv.push("--fork-session".into());
+                argv.push("--session-id".into());
+                argv.push(session.to_string());
+            }
         }
-        argv.push(session.to_string());
         if !spec.model.is_empty() {
             argv.push("--model".into());
             argv.push(spec.model.clone());
         }
         argv
     }
-}
 
-#[async_trait]
-impl Harness for ClaudeHarness {
-    fn events(&self) -> broadcast::Receiver<HarnessEvent> {
-        self.events.subscribe()
-    }
-
-    fn backend(&self) -> Backend {
-        Backend::ClaudeCode
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            // The CLI queues; it does not fold into a running turn.
-            steer: false,
-            // `--resume … --fork-session` exists and would work here, but it
-            // is untested, and claiming a capability we have not exercised is
-            // exactly what this struct is meant to prevent.
-            fork: false,
-            inject: false,
-            resume: true,
-        }
-    }
-
-    async fn open(&self, spec: &SessionSpec) -> Result<String> {
-        let resuming = spec.resume.as_deref().is_some_and(|s| !s.is_empty());
-        let session = match spec.resume.as_deref().filter(|s| !s.is_empty()) {
-            Some(existing) => existing.to_string(),
-            // The CLI wants a UUID, and naming the session ourselves is what
-            // lets this return before the process has said anything.
-            None => uuid::Uuid::new_v4().to_string(),
-        };
-
+    /// Start the process behind one session and listen to it.
+    ///
+    /// Every session arrives this way -- new, resumed, or branched off
+    /// another -- so there is one place where a session becomes a process.
+    async fn begin(&self, session: String, spec: &SessionSpec, from: Opening<'_>) -> Result<String> {
         if self.sessions.lock().await.contains_key(&session) {
             return Ok(session);
         }
 
         let cwd = if spec.cwd.is_empty() { &self.default_cwd } else { &spec.cwd };
-        let (child, mut lines) = JsonChild::spawn(&self.argv(&session, spec, resuming), Some(cwd))
+        let (child, mut lines) = JsonChild::spawn(&self.argv(&session, spec, from), Some(cwd))
             .context("starting Claude Code")?;
         self.sessions
             .lock()
@@ -170,7 +158,58 @@ impl Harness for ClaudeHarness {
 
         Ok(session)
     }
+}
 
+/// Where a session comes from.
+#[derive(Clone, Copy)]
+enum Opening<'a> {
+    Fresh,
+    Resume,
+    ForkOf(&'a str),
+}
+
+#[async_trait]
+impl Harness for ClaudeHarness {
+    fn events(&self) -> broadcast::Receiver<HarnessEvent> {
+        self.events.subscribe()
+    }
+
+    fn backend(&self) -> Backend {
+        Backend::ClaudeCode
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            // The CLI queues; it does not fold into a running turn.
+            steer: false,
+            fork: true,
+            inject: false,
+            resume: true,
+        }
+    }
+
+    async fn open(&self, spec: &SessionSpec) -> Result<String> {
+        match spec.resume.as_deref().filter(|s| !s.is_empty()) {
+            Some(existing) => self.begin(existing.to_string(), spec, Opening::Resume).await,
+            // The CLI wants a UUID, and naming the session ourselves is what
+            // lets this return before the process has said anything.
+            None => {
+                self.begin(uuid::Uuid::new_v4().to_string(), spec, Opening::Fresh)
+                    .await
+            }
+        }
+    }
+
+    /// Branch a session.
+    ///
+    /// Without its turns there is nothing of the original left to copy but
+    /// the model and the directory, which is a new session -- so that is
+    /// what a side question gets.
+    async fn fork(&self, session: &str, spec: &SessionSpec, exclude_turns: bool) -> Result<String> {
+        let child = uuid::Uuid::new_v4().to_string();
+        let from = if exclude_turns { Opening::Fresh } else { Opening::ForkOf(session) };
+        self.begin(child, spec, from).await
+    }
     async fn search_sessions(&self, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
         let root = self.history_root.clone();
         let query = query.to_string();
@@ -524,14 +563,18 @@ mod tests {
     #[test]
     fn a_new_session_is_named_by_us_and_a_resumed_one_is_not_renamed() {
         let harness = ClaudeHarness::bare("claude", "/work", "bypassPermissions");
-        let fresh = harness.argv("11111111-2222-3333-4444-555555555555", &spec("opus", None), false);
+        let fresh = harness.argv(
+            "11111111-2222-3333-4444-555555555555",
+            &spec("opus", None),
+            Opening::Fresh,
+        );
         assert!(fresh.windows(2).any(|w| w[0] == "--session-id"));
         assert!(!fresh.iter().any(|a| a == "--resume"));
 
         let again = harness.argv(
             "11111111-2222-3333-4444-555555555555",
             &spec("opus", Some("11111111-2222-3333-4444-555555555555")),
-            true,
+            Opening::Resume,
         );
         // Passing both would be contradictory; resume already names it.
         assert!(again.iter().any(|a| a == "--resume"));
@@ -539,9 +582,23 @@ mod tests {
     }
 
     #[test]
+    fn a_fork_resumes_the_parent_under_a_name_of_our_own() {
+        let harness = ClaudeHarness::bare("claude", "/work", "bypassPermissions");
+        let argv = harness.argv("child", &spec("opus", None), Opening::ForkOf("parent"));
+        // The parent is what is resumed, the copy is what is named, and the
+        // flag between them is what makes it a copy rather than the same
+        // conversation continued.
+        let resumed = argv.windows(2).find(|w| w[0] == "--resume").map(|w| w[1].clone());
+        let named = argv.windows(2).find(|w| w[0] == "--session-id").map(|w| w[1].clone());
+        assert_eq!(resumed.as_deref(), Some("parent"));
+        assert_eq!(named.as_deref(), Some("child"));
+        assert!(argv.iter().any(|a| a == "--fork-session"));
+    }
+
+    #[test]
     fn an_unattended_turn_never_stops_to_ask() {
         let harness = ClaudeHarness::bare("claude", "/work", "bypassPermissions");
-        let argv = harness.argv("s", &spec("", None), false);
+        let argv = harness.argv("s", &spec("", None), Opening::Fresh);
         let mode = argv
             .windows(2)
             .find(|w| w[0] == "--permission-mode")
