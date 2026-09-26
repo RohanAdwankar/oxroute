@@ -12,9 +12,9 @@ const OUT = process.env.OXROUTE_DEMO_OUT ?? "demo/out";
 /// The screen at 175% zoom, which is where this interface is read.
 const SCREEN = { width: 1280, height: 800 };
 
-/// Long enough to read the caption before the next thing happens. A film
-/// nobody can follow is a file, not a demo.
-const READ = 4200;
+/// Long enough to read the caption before the next thing happens, and no
+/// longer: a minute of film is what anyone will watch.
+const READ = 1200;
 
 const api = (path, body) =>
   fetch(`${API}${path}`, {
@@ -22,6 +22,17 @@ const api = (path, body) =>
     headers: body ? { "content-type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
   }).then((answer) => answer.json());
+
+const began = Date.now();
+const at = () => (Date.now() - began) / 1000;
+const cuts = [];
+/// Everything inside here is the agent thinking, which the film does not
+/// need to sit through.
+const waiting = async (work) => {
+  const from = at();
+  await work();
+  cuts.push([from, at()]);
+};
 
 let beat = 0;
 const shot = async (page, name) => {
@@ -88,7 +99,7 @@ const caption = async (text, hold = READ) => {
 };
 
 await page.goto(URL);
-await page.waitForTimeout(800);
+await page.waitForTimeout(500);
 
 // 1. Something arrives. With no Slack wired up this is the same POST a
 //    source would make.
@@ -122,8 +133,10 @@ const name = (await api("/api/state")).agents[0].name;
 await page.locator(`text=${name}`).first().click();
 await until(async () => (await page.locator("[data-composer]").count()) > 0);
 await caption("It works in the code and reports back here. Every tool call is on the timeline.", 0);
-await until(async () => (await api("/api/state")).agents[0].status !== "working");
-await page.waitForTimeout(800);
+await waiting(async () => {
+  await until(async () => (await api("/api/state")).agents[0].status !== "working");
+  await page.waitForTimeout(500);
+});
 await caption("It works in the code and reports back here. Every tool call is on the timeline.");
 await shot(page, "answer");
 
@@ -135,21 +148,21 @@ await composer.type("add a test for /health so this cannot regress");
 await caption("A thought you do not want to interrupt with: tab files it as work instead.");
 await composer.press("Tab");
 await until(async () => (await page.getByText("cannot regress").count()) > 0);
-await caption("It lands on the task list, and the list opens on what you just filed.");
+await caption("It lands on the task list, which opens on what you just filed.");
 await shot(page, "filed");
 
 // 5. The inbox is not only for what other people send: you write in it,
 //    it holds what you have not decided, and you can throw things away.
 await caption("The inbox holds everything undecided -- including what you think of yourself.");
 await page.locator('[aria-label="back to the fleet"]').click();
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 const note = page.getByPlaceholder("Something you thought of");
 await note.click();
-await note.type("the deploy script still points at the old port", { delay: 30 });
+await note.type("the deploy script still points at the old port", { delay: 12 });
 await page.waitForTimeout(500);
 await shot(page, "note");
 await note.press("Enter");
-await page.waitForTimeout(900);
+await page.waitForTimeout(500);
 
 await until(async () => (await page.getByText("Send this to").count()) > 0, 30);
 await caption("It comes straight back as something waiting on you, on the routing screen.");
@@ -163,7 +176,7 @@ if ((await tick.getAttribute("aria-checked")) !== "true") {
 await page.getByRole("button", { name: /^send to \d+ agent/ }).click();
 // The routing screen closes once the thing has somewhere to be.
 await until(async () => (await page.getByText("Send this to").count()) === 0, 60);
-await page.waitForTimeout(900);
+await page.waitForTimeout(500);
 await shot(page, "sent-to-existing");
 
 await caption("Not everything deserves an agent. Some of it you just throw away.");
@@ -175,9 +188,9 @@ await api("/api/signal", {
 });
 await until(async () => (await page.getByText("office is closed").count()) > 0, 60);
 await page.getByText("office is closed").first().click();
-await page.waitForTimeout(700);
+await page.waitForTimeout(450);
 await page.locator('[aria-label="discard"]').click();
-await page.waitForTimeout(900);
+await page.waitForTimeout(500);
 await caption("What is settled folds away under Done, still there if you want it.");
 await shot(page, "discarded");
 
@@ -186,20 +199,20 @@ await shot(page, "discarded");
 await caption("The task list is what is left to do, for you and for every agent.");
 if ((await page.locator("[data-composer]").count()) === 0) {
   await page.locator(`text=${name}`).first().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(450);
 }
 if ((await page.locator('[aria-label="Show or hide tasks"]').getAttribute("aria-pressed")) !== "true") {
   await page.locator('[aria-label="Show or hide tasks"]').click();
 }
-await page.waitForTimeout(800);
+await page.waitForTimeout(500);
 await shot(page, "tasks");
 
 await caption("Anyone can add to it -- here, from the fleet, outside any conversation.");
 await page.locator('[aria-label="back to the fleet"]').click();
-await page.waitForTimeout(700);
+await page.waitForTimeout(450);
 await page.getByPlaceholder("Add to the task list").click();
-await page.getByPlaceholder("Add to the task list").type("document the /health response in the README", { delay: 30 });
-await page.waitForTimeout(600);
+await page.getByPlaceholder("Add to the task list").type("document the /health response in the README", { delay: 12 });
+await page.waitForTimeout(400);
 await page.getByPlaceholder("Add to the task list").press("Enter");
 await until(async () => (await page.getByText("document the /health").count()) > 0, 60);
 await page.waitForTimeout(1000);
@@ -209,30 +222,34 @@ await caption("Give it to a session and it starts on it, without being asked twi
 await page
   .locator('[aria-label^="assign document the /health"]')
   .selectOption({ label: (await api("/api/state")).agents[0].name });
-await until(async () => (await api("/api/state")).agents[0].status === "working", 90);
+await waiting(async () => {
+  await until(async () => (await api("/api/state")).agents[0].status === "working", 90);
+});
 await page.locator(`text=${name}`).first().click();
-await page.waitForTimeout(1500);
+await page.waitForTimeout(1200);
 await shot(page, "picked-up");
 
 await caption("It works through the list and says what it did, task by task.", 0);
-await until(async () => {
-  const tasks = await api("/api/tasks");
-  return tasks.some((task) => task.text.startsWith("document the") && task.status === "done");
-}, 300);
-await page.waitForTimeout(1000);
+await waiting(async () => {
+  await until(async () => {
+    const tasks = await api("/api/tasks");
+    return tasks.some((task) => task.text.startsWith("document the") && task.status === "done");
+  }, 300);
+  await page.waitForTimeout(500);
+});
 await caption("An agent can say a task is done. Only you can say it is finished.");
 await shot(page, "done");
 
 await caption("Saying no puts the task above the composer, where there is room to answer it.");
 await page.getByRole("button", { name: "Not yet" }).first().click();
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 await shot(page, "not-yet");
 await page.keyboard.type("say what the commit field is for as well");
-await page.waitForTimeout(800);
+await page.waitForTimeout(500);
 await caption("What you type goes back to the agent, and the task is work again.");
 await shot(page, "correction");
 await page.keyboard.press("Escape");
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 
 // 7. Saying something by drawing it: the change to the picture is the
 //    message, and the file on disk changes with it.
@@ -253,16 +270,17 @@ await shot(page, "drawn");
 await page.locator("[data-composer]").fill("this is the endpoint ops are asking about");
 await caption("Send it: the file changes, and the agent is told to make the code match the picture.");
 await page.getByRole("button", { name: /Send the change/ }).first().click();
-await until(async () => (await api("/api/state")).agents[0].status === "working", 60);
-await page.waitForTimeout(1500);
-await caption("The agent is already working on it.");
+await waiting(async () => {
+  await until(async () => (await api("/api/state")).agents[0].status === "working", 60);
+  await page.waitForTimeout(500);
+});
 await shot(page, "sent");
 
 // 8. The other way to say it without words: mark up what is on the screen
 //    and hand that to the agent.
 await caption("Some things are easier pointed at than described.");
 await page.locator("[data-transcript]").evaluate((node) => node.scrollTo({ top: 0 }));
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 const marked = `${OUT}/marked.png`;
 // What the box should land on, in the screenshot that is about to be taken.
 const line = await page.getByText(/now returns/).first().boundingBox();
@@ -291,75 +309,62 @@ await page.mouse.move(from.x, from.y);
 await page.mouse.down();
 await page.mouse.move(to.x, to.y, { steps: 24 });
 await page.mouse.up();
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 
 // And a word next to it, because a box alone is a question.
 await page.getByRole("button", { name: "Text", exact: true }).last().click();
 const beside = onScreen(line.x, line.y + line.height + 40);
 await page.mouse.click(beside.x, beside.y);
 await page.waitForTimeout(400);
-await page.getByLabel("note on the picture").type("ops want this in the README too", { delay: 35 });
+await page.getByLabel("note on the picture").type("ops want this in the README too", { delay: 12 });
 await page.keyboard.press("Enter");
-await page.waitForTimeout(700);
-await caption("It goes to the agent as a picture, or tab files the drawing as work.");
+await page.waitForTimeout(450);
 await shot(page, "drawn-picture");
 
 await page.locator("[data-composer]").fill("copy this response into the README, exactly as it is");
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 await page.getByRole("button", { name: /Send the picture/ }).first().click();
-await until(async () => (await page.locator("img[src*='attachments']").count()) > 0, 90);
+await waiting(async () => {
+  await until(async () => (await page.locator("img[src*='attachments']").count()) > 0, 90);
+});
 await page.locator("[data-transcript]").evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
-await page.waitForTimeout(1800);
+await page.waitForTimeout(1200);
 await caption("The agent sees what you marked, in the conversation.");
 await shot(page, "picture-sent");
 
 // 9. Branching the work, and the two places a branch can land.
-await caption("Branch a session when the work forks.");
+await caption("Branch a session when the work forks -- here, or beside this one.");
 await page.locator('[aria-label$="options"]').first().click();
-await page.waitForTimeout(700);
-await caption("Here, or in a card beside this one.");
+await page.waitForTimeout(450);
 await shot(page, "fork");
 await page.keyboard.press("Escape");
-await page.waitForTimeout(600);
+await page.waitForTimeout(400);
 
 // 10. The one switch that changes what happens to everything next.
 await caption("Or let it route itself: auto sends each thing to the session it belongs to.");
 await page.locator('[aria-label="Auto route"]').click();
-await page.waitForTimeout(900);
+await page.waitForTimeout(500);
 await shot(page, "auto");
 await page.locator('[aria-label="Ask me first"]').click();
-await page.waitForTimeout(700);
+await page.waitForTimeout(450);
 
-// 11. What little there is to decide.
-await page.locator('[title="Settings"]').click();
-await page.waitForTimeout(700);
-await caption("Four settings, and no more.");
-await shot(page, "settings");
-await page.getByRole("button", { name: /Dark/ }).click();
-await page.waitForTimeout(700);
-await page.keyboard.press("Escape");
-await page.waitForTimeout(600);
-await caption("The same palette, read the other way round.");
-await shot(page, "dark");
-await page.locator('[title="Settings"]').click();
-await page.waitForTimeout(600);
-await page.getByRole("button", { name: /Light/ }).click();
-await page.waitForTimeout(600);
-await page.keyboard.press("Escape");
-await page.waitForTimeout(600);
-
-// 12. Everything said is searchable, including sessions that were never
+// 11. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
 await caption("Everything anyone said is searchable.", 0);
-await page.getByPlaceholder("Search sessions").type("health", { delay: 120 });
+await page.getByPlaceholder("Search sessions").type("health", { delay: 60 });
 await page.waitForTimeout(2000);
 await caption("Everything anyone said is searchable.");
 await caption("Find the line you remember, and land in the session that said it.");
 await shot(page, "search");
 await page.waitForTimeout(1200);
 
-await caption("One inbox, one fleet, one list of what is left.", 6000);
+await caption("One inbox, one fleet, one list of what is left.", 2200);
 await caption("", 0);
 
 await context.close();
 await browser.close();
+
+// The spans the film does not need, for whatever cuts them out.
+await import("node:fs").then(({ writeFileSync }) =>
+  writeFileSync(`${OUT}/cuts.json`, JSON.stringify(cuts)),
+);

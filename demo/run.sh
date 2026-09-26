@@ -105,4 +105,5 @@ wait_for "$OXROUTE_DAEMON/api/health"
 wait_for "$OXROUTE_DEMO_URL"
 
 node demo/walk.mjs
+node demo/cut.mjs
 echo "wrote $out"
