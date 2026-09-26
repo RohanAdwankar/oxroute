@@ -148,7 +148,7 @@ export function Fleet({
                 className="block w-full cursor-pointer border-b border-[#403b35] py-4 text-left last:border-b-0 hover:bg-[#292621]"
               >
                 <span className="flex items-center gap-2 text-[12px]">
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-[#68b89b] pulse" />
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-[#68b89b]" />
                   <span className="font-semibold text-[#f5f0e8]">{agent.name}</span>
                   <span className="text-[#888077]">{since(agent.updatedAt)} · {agent.model}</span>
                 </span>
@@ -297,9 +297,7 @@ function Card({
       {hint && <Hint at={hint} />}
       <div className="flex items-center gap-[10px]">
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete} ${
-            agent.status === "working" ? "pulse" : ""
-          }`}
+          className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete}`}
         />
         <button
           type="button"

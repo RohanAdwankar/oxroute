@@ -118,25 +118,3 @@ body {
 .quiet-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
-
-@keyframes oxroute-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-/* A working agent's dot breathes. It is the only motion in the interface,
-   which is what makes it readable at a glance. */
-.pulse {
-  animation: oxroute-pulse 2s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pulse {
-    animation: none;
-  }
-}

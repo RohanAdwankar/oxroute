@@ -336,7 +336,7 @@ export function AgentPanel({
         <span
           className={`h-2 w-2 rounded-full ${
             agent.status === "working"
-              ? "bg-ok pulse"
+              ? "bg-ok"
               : agent.status === "stalled"
                 ? "bg-hold"
                 : "bg-[#c9c1b5]"

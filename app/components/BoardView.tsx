@@ -488,9 +488,7 @@ function SessionCard({
     >
       <div className="flex min-w-0 items-center gap-2">
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete} ${
-            agent.status === "working" ? "pulse" : ""
-          }`}
+          className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete}`}
         />
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{agent.name}</span>
         <span className="tnum shrink-0 text-[10.5px] text-faint">{since(agent.updatedAt)}</span>
