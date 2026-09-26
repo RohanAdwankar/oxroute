@@ -253,6 +253,8 @@ export function AgentPanel({
     setMode("type");
   };
 
+  const working = agent.status === "working";
+
   const canSend =
     mode === "type"
       ? draft.trim().length > 0 || uploads.length > 0
@@ -725,25 +727,22 @@ export function AgentPanel({
             placeholder={PLACEHOLDER[mode]}
             className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />
-          {agent.status === "working" && mode === "type" ? (
+          {mode === "type" ? (
+            // One button, one arrow, whether the agent is busy or not. What
+            // changes is when it is picked up, which the agent's own state
+            // already says; a button that redraws itself underneath you
+            // reads as a different button.
             <SplitAction
-              label="Queue message"
-              icon="queue"
-              onClick={() => send(true)}
-              disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-              menu={[
-                { label: "Send now", icon: "send", onClick: () => send(false) },
-                { label: "Add to the task list", icon: "tasks", onClick: toTask },
-              ]}
-              variant="composer"
-            />
-          ) : mode === "type" ? (
-            <SplitAction
-              label="Send message"
+              label={working ? "Send — the agent is working, so it waits its turn" : "Send message"}
               icon="send"
-              onClick={() => send(false)}
+              onClick={() => send(working)}
               disabled={busy || !canSend}
-              menu={[{ label: "Add to the task list", icon: "tasks", onClick: toTask }]}
+              menu={[
+                ...(working
+                  ? [{ label: "Send now, into the turn", icon: "queue" as const, onClick: () => send(false) }]
+                  : []),
+                { label: "Add to the task list", icon: "tasks" as const, onClick: toTask },
+              ]}
               variant="composer"
             />
           ) : (
