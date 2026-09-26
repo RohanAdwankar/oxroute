@@ -229,7 +229,45 @@ await page.waitForTimeout(1500);
 await caption("The agent is already working on it.");
 await shot(page, "sent");
 
-// 7. Branching the work, and the two places a branch can land.
+// 7. The other way to say it without words: draw on a blank page, or on a
+//    screenshot, and send the picture.
+await caption("Or draw it. A circle round the thing you mean says more than a paragraph.");
+await page.locator('[aria-label="Attach images options"]').first().click();
+await page.waitForTimeout(500);
+await page.getByRole("menuitem", { name: /Draw/ }).click();
+await until(async () => (await page.locator('[aria-label="sketch"]').count()) > 0, 60);
+await page.waitForTimeout(800);
+await shot(page, "draw");
+
+// A hand-drawn arrow and a circle, at the speed a hand draws them.
+const sketch = await page.locator('[aria-label="sketch"]').boundingBox();
+const stroke = async (points) => {
+  await page.mouse.move(points[0].x, points[0].y);
+  await page.mouse.down();
+  for (const point of points.slice(1)) {
+    await page.mouse.move(point.x, point.y, { steps: 12 });
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+};
+const spot = (dx, dy) => ({ x: sketch.x + sketch.width * dx, y: sketch.y + sketch.height * dy });
+await stroke([spot(0.22, 0.34), spot(0.44, 0.34), spot(0.44, 0.56), spot(0.22, 0.56), spot(0.22, 0.34)]);
+await stroke([spot(0.5, 0.45), spot(0.68, 0.45)]);
+await stroke([spot(0.62, 0.39), spot(0.68, 0.45), spot(0.62, 0.51)]);
+await stroke([spot(0.7, 0.4), spot(0.86, 0.4), spot(0.86, 0.58), spot(0.7, 0.58), spot(0.7, 0.4)]);
+await caption("It goes to the agent as a picture, or tab files the drawing as work.");
+await shot(page, "drawn-picture");
+await page.locator("[data-composer]").fill("the health check belongs behind the router, not beside it");
+await page.waitForTimeout(600);
+await page.getByRole("button", { name: /Send the picture/ }).first().click();
+await until(async () => (await page.locator("img[src*='attachments']").count()) > 0, 90);
+// The picture lands at the end of the transcript; look at it.
+await page.locator("[data-transcript]").evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+await page.waitForTimeout(1500);
+await caption("The agent sees what you drew, in the conversation.");
+await shot(page, "picture-sent");
+
+// 8. Branching the work, and the two places a branch can land.
 await caption("Branch a session when the work forks.");
 await page.locator('[aria-label$="options"]').first().click();
 await page.waitForTimeout(700);
@@ -238,7 +276,7 @@ await shot(page, "fork");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
-// 8. What little there is to decide.
+// 9. What little there is to decide.
 await page.locator('[title="Settings"]').click();
 await page.waitForTimeout(700);
 await caption("Four settings, and no more.");
@@ -256,7 +294,7 @@ await page.waitForTimeout(600);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
 
-// 9. Everything said is searchable, including sessions that were never
+// 10. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
 await caption("Everything anyone said is searchable.", 0);
 await page.getByPlaceholder("Search sessions").type("health", { delay: 120 });
