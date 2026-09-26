@@ -105,6 +105,7 @@ export function TaskPanel({
   onUpdate,
   onHandOff,
   onCorrect,
+  onOpenAgent,
   onDelete,
 }: {
   tasks: TaskItem[];
@@ -128,6 +129,8 @@ export function TaskPanel({
   onHandOff: (task: TaskItem, fork: boolean) => void;
   /// Saying no to finished work: what is wrong goes to the agent.
   onCorrect: (task: TaskItem) => void;
+  /// Reading a task means opening the session doing it.
+  onOpenAgent: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -193,12 +196,23 @@ export function TaskPanel({
       ) : (
         <button
           type="button"
+          // A task is a piece of work someone is doing, so reading it means
+          // reading the conversation it is being done in. Changing the words
+          // is the rarer thing, and takes a second click.
           onClick={() => {
+            if (task.agentId) onOpenAgent(task.agentId);
+            else {
+              setEditing(task.id);
+              setEditDraft(task.text);
+            }
+          }}
+          onDoubleClick={() => {
             setEditing(task.id);
             setEditDraft(task.text);
           }}
           data-task-open
-          className={`block w-full cursor-text text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
+          title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
+          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
         >
           {task.text}
         </button>

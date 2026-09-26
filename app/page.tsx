@@ -1081,6 +1081,10 @@ export default function Home() {
             onUpdate={(task, note, approved) =>
               void run(() => api.updateTask(task, note, approved))
             }
+            onOpenAgent={(id) => {
+              clearRouting();
+              showAgent(id);
+            }}
             onCorrect={(task) => {
               if (!task.agentId) return say("Nobody has this task to correct");
               setCorrecting(task);
