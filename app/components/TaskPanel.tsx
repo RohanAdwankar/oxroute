@@ -28,11 +28,20 @@ const STATE_COLOR: Record<TaskStatus, string> = {
 };
 
 /** One task, and whether the keyboard is on it. */
-function Row({ focused, children }: { focused: boolean; children: React.ReactNode }) {
+function Row({
+  focused,
+  shown,
+  children,
+}: {
+  focused: boolean;
+  /// Just filed, somewhere down a long list: bring it where it can be seen.
+  shown: boolean;
+  children: React.ReactNode;
+}) {
   const row = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (focused) row.current?.scrollIntoView({ block: "nearest" });
-  }, [focused]);
+    if (focused || shown) row.current?.scrollIntoView({ block: "nearest" });
+  }, [focused, shown]);
   return (
     <div
       ref={row}
@@ -53,6 +62,7 @@ export function TaskPanel({
   onShowDone,
   cursor,
   active,
+  shown,
   agents,
   named,
   busy,
@@ -69,6 +79,8 @@ export function TaskPanel({
   onShowDone: () => void;
   cursor: number;
   active: boolean;
+  /// A task just filed from a composer, to be scrolled to once.
+  shown: string | null;
   /// The agents a task can be given to.
   agents: Agent[];
   /// Every agent, live or archived, for reading a name back.
@@ -105,7 +117,7 @@ export function TaskPanel({
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
     const mine = notes.filter((note) => note.taskId === task.id);
     const asking = pending?.task.id === task.id ? pending : null;
-    return <Row key={task.id} focused={active && at === cursor}>
+    return <Row key={task.id} focused={active && at === cursor} shown={task.id === shown}>
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
       {editing === task.id ? (

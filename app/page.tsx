@@ -25,7 +25,7 @@ import {
   setVimMode,
   subscribeVimMode,
 } from "./lib/keys";
-import type { Agent, AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
+import type { Agent, AgentView, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
 
 /** The screen, left to right. h and l step along it. */
 const COLUMNS = ["inbox", "fleet", "tasks"] as const;
@@ -86,6 +86,7 @@ export default function Home() {
   const [taskAt, setTaskAt] = useState(0);
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
+  const [shownTask, setShownTask] = useState<string | null>(null);
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
@@ -354,6 +355,19 @@ export default function Home() {
       }
     },
     [reload, complain],
+  );
+
+  /// Filing a task from a composer. It goes to the bottom of a long list,
+  /// so the list has to be open and looking at it, or nothing happened as
+  /// far as anyone can see.
+  const file = useCallback(
+    (work: () => Promise<TaskItem>) =>
+      run(async () => {
+        const task = await work();
+        showTasks(true);
+        setShownTask(task.id);
+      }),
+    [run, showTasks],
   );
 
   const toggleVim = useCallback(() => setVimMode(!getVimMode()), []);
@@ -893,7 +907,7 @@ export default function Home() {
                         void run(() => api.say(id, text, images, queued))
                       }
                       onTask={(text, images) =>
-                        void run(() => api.createTaskWithImages(text, id, images))
+                        void file(() => api.createTaskWithImages(text, id, images))
                       }
                       onSendDiagram={(edits, note, queued) =>
                         void run(async () => {
@@ -1009,7 +1023,7 @@ export default function Home() {
                 }
               />
             )}
-            <TaskComposer busy={busy} onTask={(text) => void run(() => api.createTask(text))} />
+            <TaskComposer busy={busy} onTask={(text) => void file(() => api.createTask(text))} />
           </div>
         )}
 
@@ -1048,6 +1062,7 @@ export default function Home() {
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
             active={focus === "tasks"}
+            shown={shownTask}
             agents={snapshot.agents}
             named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
