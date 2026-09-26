@@ -12,10 +12,12 @@ import { Icon, type IconName } from "./Icon";
 import { Markdown } from "./Markdown";
 import { SplitAction } from "./SplitAction";
 
+/// What the person said needs no label: it is the one that sits on the
+/// right, in its own tint.
+const MINE: EntryKind[] = ["you", "received"];
+
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
-  received: { label: "you", tone: "text-ok" },
   asked: { label: "asked", tone: "text-hold border-hold" },
-  you: { label: "you", tone: "text-merge" },
   forked: { label: "forked", tone: "text-merge border-merge" },
   forkedFrom: { label: "parent", tone: "text-merge border-merge" },
   merged: { label: "merged", tone: "text-merge border-merge" },
@@ -535,6 +537,7 @@ export function AgentPanel({
 
               const { entry } = item;
               const tag = TAG[entry.kind];
+              const mine = MINE.includes(entry.kind);
               return (
                 <div
                   key={entry.id}
@@ -544,8 +547,16 @@ export function AgentPanel({
                   <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
                     {minute(entry.at)}
                   </span>
-                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                    <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
+                  <div className={`flex min-w-0 flex-1 flex-col gap-[3px] ${mine ? "items-end" : ""}`}>
+                    <div
+                      className={[
+                        "flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words",
+                        // What you said, set apart and over to one side, so
+                        // scrolling back finds the question rather than the
+                        // answer that followed it.
+                        mine ? "max-w-[78%] rounded-[3px] bg-wash px-[13px] py-[9px]" : "",
+                      ].join(" ")}
+                    >
                       {tag && (
                         <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
                           {tag.label}
