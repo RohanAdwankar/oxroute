@@ -37,6 +37,7 @@ const EMPTY: Snapshot = {
   tasks: [],
   sources: [],
   models: [],
+  backends: [],
 };
 
 /**
@@ -737,6 +738,13 @@ export default function Home() {
                   {view ? (
                     <AgentPanel
                       view={view}
+                      can={
+                        snapshot.backends.find((b) => b.backend === view.agent.backend) ?? {
+                          backend: view.agent.backend,
+                          fork: false,
+                          merge: false,
+                        }
+                      }
                       busy={busy}
                       onBack={() => closePane(index)}
                       onSay={(text, images) => void run(() => api.say(id, text, images))}

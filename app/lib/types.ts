@@ -143,6 +143,14 @@ export interface Snapshot {
   tasks: TaskItem[];
   sources: string[];
   models: ModelInfo[];
+  backends: BackendInfo[];
+}
+
+/** What a harness can do, so the UI never has to name backends itself. */
+export interface BackendInfo {
+  backend: Backend;
+  fork: boolean;
+  merge: boolean;
 }
 
 export interface AgentView {

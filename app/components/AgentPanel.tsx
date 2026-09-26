@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
-import type { AgentView, Entry, EntryKind } from "../lib/types";
+import type { AgentView, BackendInfo, Entry, EntryKind } from "../lib/types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { SplitAction } from "./SplitAction";
@@ -51,6 +51,7 @@ function minute(at: number) {
  */
 export function AgentPanel({
   view,
+  can,
   onBack,
   onSay,
   onInterrupt,
@@ -65,6 +66,8 @@ export function AgentPanel({
   focusEntry,
 }: {
   view: AgentView;
+  /// What this agent's harness can do.
+  can: BackendInfo;
   onBack: () => void;
   onSay: (text: string, images: File[]) => void;
   onInterrupt: () => void;
@@ -272,19 +275,25 @@ export function AgentPanel({
           <Icon name={archived ? "restore" : "archive"} />
         </button>
         <SplitAction
-          label={agent.backend === "codex" ? "Fork in conversation" : "Only Codex can fork"}
+          label={can.fork ? "Fork in conversation" : `${agent.backend} cannot fork a session`}
           icon="fork"
           onClick={onForkLocal}
-          disabled={busy || agent.backend !== "codex"}
+          disabled={busy || !can.fork}
           menu={[{ label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack }]}
         />
         {onMerge && (
           <button
             type="button"
             onClick={onMerge}
-            disabled={busy || agent.status === "working"}
+            disabled={busy || agent.status === "working" || !can.merge}
             aria-label="merge into parent"
-            title={agent.status === "working" ? "Stop the active turn first" : "Merge into parent"}
+            title={
+              !can.merge
+                ? `${agent.backend} cannot fold a fork back in`
+                : agent.status === "working"
+                  ? "Stop the active turn first"
+                  : "Merge into parent"
+            }
             className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="merge" />
