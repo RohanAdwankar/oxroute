@@ -6,6 +6,10 @@ import type { NextConfig } from "next";
 const daemon = process.env.OXROUTE_DAEMON ?? "http://127.0.0.1:8787";
 
 const nextConfig: NextConfig = {
+  // The demo builds its own copy while a dev server is running in the same
+  // checkout, and two builds cannot share one output directory.
+  distDir: process.env.OXROUTE_DIST ?? ".next",
+
   // This repo keeps its own CLAUDE.md; Next's generated one would describe
   // the web UI as if it were the whole project.
   agentRules: false,

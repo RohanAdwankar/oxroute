@@ -190,7 +190,15 @@ See [MIGRATING.md](MIGRATING.md) for the switch itself.
 oxrouted                   # the daemon on its own: hub, Slack, HTTP + SSE
 oxroute                    # the terminal UI
 npm run dev                # the web UI, proxying /api to the daemon
+
+./demo/run.sh              # one pass through everything, filmed to demo/out
 ```
+
+`demo/run.sh` is the whole product in one run: a signal arrives, you route
+it, an agent answers, a reply is filed as a task instead of said, the task
+comes back done and is argued with, and the rest of the interface is opened
+on the way past. It brings up its own daemon, its own database and its own
+build, so it can run while you are working and change nothing you have.
 
 `deploy/oxroute-codex.service` owns the Codex app-server. `oxrouted` is a
 replaceable sidecar: it reconnects over loopback and restores any active turn

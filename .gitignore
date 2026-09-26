@@ -49,3 +49,5 @@ next-env.d.ts
 
 # local run state
 /.oxroute
+.next-demo/
+demo/out/
