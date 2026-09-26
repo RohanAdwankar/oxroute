@@ -179,31 +179,54 @@ await until(async () => (await page.getByText("cannot regress").count()) > 0);
 await caption("It lands on the task list, and the list opens on what you just filed.");
 await shot(page, "filed");
 
-// 5. The agent says it is done; a person decides whether it is. Saying no
-//    puts the task above the composer and you answer it there.
-const tasks = await api("/api/tasks");
-const filed = tasks.find((task) => task.text.startsWith("add a test"));
-await fetch(`${API}/api/tasks/${filed.id}`, {
-  method: "PUT",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    ...filed,
-    agentId: filed.agentId,
-    status: "done",
-    note: "added a test for the status code",
-  }),
-});
-await until(async () => (await page.getByRole("button", { name: "Not yet" }).count()) > 0);
-await caption("An agent can say it is done. Only you can say it is finished.");
+// 5. The list of what is left: a second thing written down from the fleet,
+//    an agent picking work up, and a person deciding when it is finished.
+await caption("The task list is what is left to do, for you and for every agent.");
+if ((await page.locator('[aria-label="Show or hide tasks"]').getAttribute("aria-pressed")) !== "true") {
+  await page.locator('[aria-label="Show or hide tasks"]').click();
+}
+await page.waitForTimeout(800);
+await shot(page, "tasks");
+
+await caption("Anyone can add to it -- here, from the fleet, outside any conversation.");
+await page.locator('[aria-label="back to the fleet"]').click();
+await page.waitForTimeout(700);
+await page.getByPlaceholder("Add to the task list").click();
+await page.getByPlaceholder("Add to the task list").type("document the /health response in the README", { delay: 30 });
+await page.waitForTimeout(600);
+await page.getByPlaceholder("Add to the task list").press("Enter");
+await until(async () => (await page.getByText("document the /health").count()) > 0, 60);
+await page.waitForTimeout(1000);
+await shot(page, "second-task");
+
+await caption("Give it to a session and it starts on it, without being asked twice.");
+await page
+  .locator('[aria-label^="assign document the /health"]')
+  .selectOption({ label: (await api("/api/state")).agents[0].name });
+await until(async () => (await api("/api/state")).agents[0].status === "working", 90);
+await page.locator(`text=${name}`).first().click();
+await page.waitForTimeout(1500);
+await shot(page, "picked-up");
+
+await caption("It works through the list and says what it did, task by task.", 0);
+await until(async () => {
+  const tasks = await api("/api/tasks");
+  return tasks.some((task) => task.text.startsWith("document the") && task.status === "done");
+}, 300);
+await page.waitForTimeout(1000);
+await caption("An agent can say a task is done. Only you can say it is finished.");
 await shot(page, "done");
-await page.getByRole("button", { name: "Not yet" }).first().click();
-await page.waitForTimeout(400);
+
 await caption("Saying no puts the task above the composer, where there is room to answer it.");
+await page.getByRole("button", { name: "Not yet" }).first().click();
+await page.waitForTimeout(600);
 await shot(page, "not-yet");
-await page.keyboard.type("the status code was never the problem — assert on the body");
+await page.keyboard.type("say what the commit field is for as well");
+await page.waitForTimeout(800);
 await caption("What you type goes back to the agent, and the task is work again.");
 await shot(page, "correction");
 await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 
 // 6. Saying something by drawing it: the change to the picture is the
 //    message, and the file on disk changes with it.
