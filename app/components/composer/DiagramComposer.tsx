@@ -131,22 +131,6 @@ export function DiagramComposer({
       </div>
     );
   }
-  // A diagram describes a codebase, and this session has none: a relative
-  // diagram path with no checkout to resolve it against lands in a
-  // directory that is nobody's, so there is nothing to offer to draw.
-  if (!base.exists && !base.rooted) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-        <p className="max-w-[56ch] text-[13px] leading-relaxed text-mid">
-          This session is not working in a checkout, so a diagram has
-          nowhere to live. Point <span className="tnum">[diagram] path</span> at
-          one file for every session to share, or start the session in a
-          repository.
-        </p>
-        <p className="tnum max-w-[56ch] text-[12px] text-faint">{base.file}</p>
-      </div>
-    );
-  }
   if (!base.exists) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
