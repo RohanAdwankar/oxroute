@@ -13,6 +13,8 @@
 //!   browser takes the same path, so no behaviour hides in one of them.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -194,6 +196,54 @@ pub struct Hub {
     /// One per agent, so its turns run in order.
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     naming: AsyncMutex<HashSet<String>>,
+    /// How far each agent has carried its own task list without being asked.
+    chains: AsyncMutex<HashMap<String, Chain>>,
+}
+
+/// What an agent has done to its task list while working through it.
+///
+/// The shape of the list is remembered rather than only a count, because
+/// the thing worth stopping on is a turn that moved nothing: an agent that
+/// cannot make progress will otherwise be asked to carry on forever.
+#[derive(Default, Clone)]
+pub struct Chain {
+    pub turns: u32,
+    pub shape: String,
+}
+
+/// How many turns an agent may take on its own before a person is asked.
+const CHAIN_LIMIT: u32 = 12;
+
+/// The shape of one agent's list: what it holds, and where each item stands.
+fn shape_of(tasks: &[TaskItem], agent_id: &str) -> String {
+    let mut lines: Vec<String> = tasks
+        .iter()
+        .filter(|task| task.agent_id == agent_id)
+        .map(|task| format!("{}:{}", task.id, task.status.as_str()))
+        .collect();
+    lines.sort();
+    lines.join(",")
+}
+
+/// Whether an agent should carry on by itself, and with what.
+///
+/// It carries on while it has work of its own still to do. Blocked and
+/// waiting-for-human are how an agent says it cannot go further, so they
+/// end the chain as surely as finishing does -- and so does a turn that
+/// left the list exactly as it found it.
+fn carry_on(tasks: &[TaskItem], agent_id: &str, chain: &Chain) -> Option<Vec<TaskItem>> {
+    let open: Vec<TaskItem> = tasks
+        .iter()
+        .filter(|task| task.agent_id == agent_id && task.status == TaskStatus::Incomplete)
+        .cloned()
+        .collect();
+    if open.is_empty() || chain.turns >= CHAIN_LIMIT {
+        return None;
+    }
+    if chain.turns > 0 && chain.shape == shape_of(tasks, agent_id) {
+        return None;
+    }
+    Some(open)
 }
 
 impl Hub {
@@ -214,6 +264,7 @@ impl Hub {
             live: AsyncMutex::new(HashMap::new()),
             locks: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
+            chains: AsyncMutex::new(HashMap::new()),
         })
     }
 
@@ -793,14 +844,18 @@ impl Hub {
 
     /// Type straight at an agent, from any surface, bypassing the inbox.
     pub async fn say_to(self: &Arc<Self>, agent_id: &str, text: &str) -> Result<()> {
-        self.say_to_with_images(agent_id, text, vec![]).await
+        self.say_to_with_images(agent_id, text, vec![], false).await
     }
 
+    /// `queued` holds the message back until the running turn ends instead of
+    /// folding it in, for when what you are saying is the next thing to do
+    /// rather than a correction to what is being done.
     pub async fn say_to_with_images(
         self: &Arc<Self>,
         agent_id: &str,
         text: &str,
         images: Vec<String>,
+        queued: bool,
     ) -> Result<()> {
         anyhow::ensure!(!text.trim().is_empty() || !images.is_empty(), "nothing to say");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
@@ -881,7 +936,7 @@ impl Hub {
             at: now(),
             root: false,
         };
-        if self.steer(&agent, &pseudo, inputs.clone(), false).await? {
+        if !queued && self.steer(&agent, &pseudo, inputs.clone(), false).await? {
             return Ok(());
         }
         self.clone().deliver_to(agent, inputs, None, target).await;
@@ -1028,16 +1083,19 @@ impl Hub {
 
     /// Branch an agent's history into a new agent and give it a source thread.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id).await
+        self.fork_agent(agent_id, true).await
     }
 
-    /// Branch an agent beside its parent in the web UI. It still gets a
-    /// source thread so the same conversation exists on both surfaces.
+    /// Branch an agent beside its parent in the web UI.
+    ///
+    /// No thread is opened for it: a pane is somewhere to work, and asking a
+    /// source for one is how forking came to need Slack to be configured at
+    /// all. Fork to a thread when the conversation is what you want.
     pub async fn fork_local(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_agent(agent_id).await
+        self.fork_agent(agent_id, false).await
     }
 
-    async fn fork_agent(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+    async fn fork_agent(self: &Arc<Self>, agent_id: &str, in_conversation: bool) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1067,25 +1125,36 @@ impl Hub {
             ..agent.clone()
         };
 
-        let binding = self.home_binding(agent_id);
-        let (source_name, conversation) = match binding {
-            Some(binding) => (binding.source, binding.conversation),
-            None => {
-                let (source, conversation, _) = self
-                    .dashboard_location()
-                    .context("no current source conversation")?;
-                (source, conversation)
-            }
+        // Where the fork's own conversation would go, if it has one. Asking
+        // for a thread and having nowhere to put it is a failure; a pane is
+        // somewhere to work either way, and a machine with no source
+        // configured can still fork.
+        let home = match self.home_binding(agent_id) {
+            Some(binding) => Some((binding.source, binding.conversation)),
+            None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
         };
-        let source = self
-            .source(&source_name)
-            .with_context(|| format!("source {source_name} is not configured"))?;
-        let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
-        forked.permalink = permalink;
-        self.store.save_agent(&forked)?;
+        let home = match home {
+            Some((name, conversation)) => match self.source(&name) {
+                Some(source) => Some((name, conversation, source)),
+                None if in_conversation => {
+                    anyhow::bail!("source {name} is not configured")
+                }
+                None => None,
+            },
+            None if in_conversation => anyhow::bail!("no current source conversation"),
+            None => None,
+        };
+
+        if let Some((source_name, conversation, source)) = home {
+            let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
+            forked.permalink = permalink;
+            self.store.save_agent(&forked)?;
+            self.store
+                .bind(&source_name, &conversation, &thread_key, &forked.id)?;
+        } else {
+            self.store.save_agent(&forked)?;
+        }
         self.store.copy_timeline(agent_id, &forked.id)?;
-        self.store
-            .bind(&source_name, &conversation, &thread_key, &forked.id)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
         self.record_fork(agent_id, &forked.id);
         self.emit(Event::Sync);
@@ -1362,13 +1431,45 @@ impl Hub {
              http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
              \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \
              \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
-             another task. This session's agent id is {}. Do not change tasks unless the \
-             user asks you to.",
+             another task. This session's agent id is {}. Keep your own tasks current as \
+             you work: mark one complete when it is done, and set it to blocked or \
+             waiting_for_human when you cannot go further, because that is how you say \
+             you have stopped. Every status change needs a \"note\" in the same request \
+             saying why, in three sentences or fewer -- as short as the commit that did \
+             it. Leave other agents' tasks alone unless you are asked.",
             self.config.listen,
             self.config.listen,
             agent.id,
         )));
 
+        // Agents share a working directory by default, and a fork always
+        // shares its parent's, so an agent can be one of several hands in
+        // one tree without anything having said so. What to do about it is
+        // its own judgement -- a worktree, or just looking before it
+        // commits -- but it cannot judge what it does not know.
+        let sharing: Vec<String> = self
+            .store
+            .agents(usize::MAX)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|other| other.id != agent.id && other.cwd == agent.cwd)
+            .map(|other| other.name)
+            .collect();
+        if !sharing.is_empty() {
+            inputs.push(TurnInput::text(format!(
+                "Other sessions are working in {}: {}. Whatever you do there, look at what \
+                 is already uncommitted before you commit, so you do not take work that is \
+                 not yours, and make a git worktree if you need a tree to yourself.",
+                agent.cwd,
+                sharing.join(", "),
+            )));
+        }
+
+        if signal.is_some() {
+            // Someone asked for something, so whatever the agent was
+            // carrying on with is no longer its own errand.
+            self.chains.lock().await.remove(&agent.id);
+        }
         if let Some(signal) = &signal {
             self.record(
                 &agent.id,
@@ -1482,7 +1583,61 @@ impl Hub {
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
         self.clone().name_agent(agent.id.clone(), turn.target.clone(), true);
+        self.clone().carry_on_with_tasks(agent.clone(), turn.target.clone()).await;
         Ok(())
+    }
+
+    /// Keep an agent going through its own task list.
+    ///
+    /// A turn that ends with work still open is not finished work, so the
+    /// agent is handed the rest of it rather than waiting to be asked. It
+    /// stops when the list is done, when everything left is blocked or
+    /// waiting on a person, or when a turn moves nothing -- and then a
+    /// person is told, because that is the interesting case.
+    ///
+    /// The future is erased because this sits inside a turn and starts
+    /// another: a turn that can start a turn is a type that contains itself.
+    fn carry_on_with_tasks(
+        self: Arc<Self>,
+        agent: Agent,
+        target: Option<Target>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+        let Ok(tasks) = self.store.tasks() else { return };
+        let mut chains = self.chains.lock().await;
+        let chain = chains.get(&agent.id).cloned().unwrap_or_default();
+        let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
+            chains.remove(&agent.id);
+            let stuck = tasks
+                .iter()
+                .filter(|task| task.agent_id == agent.id && task.status == TaskStatus::Incomplete)
+                .count();
+            if stuck > 0 && chain.turns > 0 {
+                self.emit(Event::Notice {
+                    text: format!("{} stopped with {stuck} task(s) still open", agent.name),
+                });
+            }
+            return;
+        };
+        chains.insert(
+            agent.id.clone(),
+            Chain { turns: chain.turns + 1, shape: shape_of(&tasks, &agent.id) },
+        );
+        drop(chains);
+
+        let list = open
+            .iter()
+            .map(|task| format!("- {} ({})", task.text, task.id))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let inputs = vec![TurnInput::text(format!(
+            "Your task list still has open work:\n{list}\n\nCarry on with it. Mark each \
+             one complete as you finish it. If something stops you, set that task to \
+             blocked -- naming the task it waits on -- or to waiting_for_human, and say \
+             what you need.",
+        ))];
+        self.deliver_to(agent, inputs, None, target).await;
+        })
     }
 
     /// A question answered off to the side, in parallel, without disturbing
@@ -1984,6 +2139,7 @@ impl Hub {
             messages: self.store.message_previews()?,
             inbox,
             tasks: self.store.tasks()?,
+            task_notes: self.store.task_notes()?,
             sources: self.sources.keys().cloned().collect(),
             models: self
                 .config
@@ -1996,6 +2152,20 @@ impl Hub {
                     backend: choice.backend,
                 })
                 .collect(),
+            backends: self
+                .harnesses
+                .values()
+                .map(|harness| {
+                    let can = harness.capabilities();
+                    BackendInfo {
+                        backend: harness.backend(),
+                        fork: can.fork,
+                        // Merging a fork means splicing what it said back
+                        // into its parent, which is what inject is.
+                        merge: can.inject,
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -2003,19 +2173,24 @@ impl Hub {
         self.store.tasks()
     }
 
-    pub fn create_task(&self, text: &str, agent_id: &str) -> Result<TaskItem> {
+    /// `images` are file names under the attachments directory: a task made
+    /// from a screenshot is often clearer than one made from a sentence.
+    pub fn create_task(&self, text: &str, agent_id: &str, images: Vec<String>) -> Result<TaskItem> {
         let text = text.trim();
-        anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
+        anyhow::ensure!(!text.is_empty() || !images.is_empty(), "a task cannot be empty");
         if !agent_id.is_empty() {
             anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
         }
         let at = now();
+        let last = self.store.tasks()?.iter().map(|task| task.position).fold(-1.0, f64::max);
         let task = TaskItem {
             id: new_id("task"),
             text: text.into(),
             status: TaskStatus::Incomplete,
             blocked_by_task_id: String::new(),
             agent_id: agent_id.into(),
+            position: last + 1.0,
+            images,
             created_at: at,
             updated_at: at,
         };
@@ -2024,6 +2199,11 @@ impl Hub {
         Ok(task)
     }
 
+    /// `note` is why the task moved, and a status change must bring one.
+    ///
+    /// Done, stuck and waiting are claims about work, and a claim nobody
+    /// accounted for is the thing this list kept producing: a row marked
+    /// complete with no way to tell what was complete about it.
     pub fn update_task(
         &self,
         id: &str,
@@ -2031,6 +2211,7 @@ impl Hub {
         status: TaskStatus,
         blocked_by_task_id: &str,
         agent_id: &str,
+        note: Option<&str>,
     ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
@@ -2039,7 +2220,16 @@ impl Hub {
         }
         let tasks = self.store.tasks()?;
         let current = tasks.iter().find(|task| task.id == id).context("no such task")?;
+        let note = note.map(str::trim).filter(|note| !note.is_empty());
+        anyhow::ensure!(
+            current.status == status || note.is_some(),
+            "moving a task to {} needs a note saying why -- a sentence or two, or the commit \
+             that did it",
+            status.as_str(),
+        );
         let created_at = current.created_at;
+        let position = current.position;
+        let current_status = current.status;
         validate_task_dependency(&tasks, id, status, blocked_by_task_id)?;
         let task = TaskItem {
             id: id.into(),
@@ -2047,12 +2237,119 @@ impl Hub {
             status,
             blocked_by_task_id: blocked_by_task_id.into(),
             agent_id: agent_id.into(),
+            position,
+            images: current.images.clone(),
             created_at,
             updated_at: now(),
         };
         self.store.save_task(&task)?;
+        if let Some(note) = note.filter(|_| current_status != status) {
+            self.add_task_note(id, note, "")?;
+        }
         self.emit(Event::Sync);
         Ok(task)
+    }
+
+    /// Put a task after another one, or at the top when `after` is empty.
+    ///
+    /// The queue is the order the list is read in, so moving a task is
+    /// saying what to do before what -- which is a judgement the list should
+    /// hold rather than make for itself out of timestamps.
+    pub fn move_task(&self, id: &str, after: Option<&str>) -> Result<Vec<TaskItem>> {
+        let mut tasks = self.store.tasks()?;
+        let from = tasks.iter().position(|task| task.id == id).context("no such task")?;
+        let moving = tasks.remove(from);
+        let to = match after {
+            Some(after) => {
+                let at = tasks
+                    .iter()
+                    .position(|task| task.id == after)
+                    .context("no task to put it after")?;
+                at + 1
+            }
+            None => 0,
+        };
+        tasks.insert(to, moving);
+        // Renumbering the whole list keeps the positions plain integers, and
+        // the list is short enough that saving it is not worth avoiding.
+        for (at, task) in tasks.iter_mut().enumerate() {
+            task.position = at as f64;
+            self.store.save_task(task)?;
+        }
+        self.emit(Event::Sync);
+        Ok(tasks)
+    }
+
+    /// Write down why a task is where it is.
+    pub fn add_task_note(&self, task_id: &str, text: &str, agent_id: &str) -> Result<TaskNote> {
+        let text = text.trim();
+        anyhow::ensure!(!text.is_empty(), "a note cannot be empty");
+        anyhow::ensure!(
+            self.store.tasks()?.iter().any(|task| task.id == task_id),
+            "no such task"
+        );
+        let note = TaskNote {
+            id: new_id("note"),
+            task_id: task_id.into(),
+            text: text.into(),
+            agent_id: agent_id.into(),
+            at: now(),
+        };
+        self.store.save_task_note(&note)?;
+        self.emit(Event::Sync);
+        Ok(note)
+    }
+
+    pub fn task_notes(&self) -> Result<Vec<TaskNote>> {
+        self.store.task_notes()
+    }
+
+    /// Give a task to an agent that does not exist yet.
+    ///
+    /// A task nobody is doing is work waiting for somebody, so the two ways
+    /// of finding one are here: start an agent on it, or branch the agent
+    /// that has it so the work can go two ways at once. Either way the task
+    /// moves with the decision, which is the point of making it from here
+    /// rather than assigning by hand afterwards.
+    pub async fn hand_off_task(
+        self: &Arc<Self>,
+        id: &str,
+        fork: bool,
+        model: Option<&str>,
+    ) -> Result<TaskItem> {
+        let tasks = self.store.tasks()?;
+        let task = tasks.iter().find(|task| task.id == id).context("no such task")?.clone();
+        let agent = if fork {
+            anyhow::ensure!(
+                !task.agent_id.is_empty(),
+                "a fork branches the agent that has the task, and nobody has this one"
+            );
+            self.fork_local(&task.agent_id).await?
+        } else {
+            let signal = Signal {
+                id: new_id("sig"),
+                source: "you".into(),
+                conversation: String::new(),
+                thread_key: String::new(),
+                external_id: new_id("msg"),
+                author: self.config.owner.clone(),
+                label: "task".into(),
+                text: task.text.clone(),
+                attachments: vec![],
+                at: now(),
+                root: true,
+            };
+            let agent = self.spawn(&signal, None, model, None).await?;
+            // Starting an agent for a task is asking it to do the task.
+            self.clone()
+                .deliver_to(agent.clone(), vec![TurnInput::text(&task.text)], None, None)
+                .await;
+            agent
+        };
+        let moved = TaskItem { agent_id: agent.id.clone(), updated_at: now(), ..task };
+        self.store.save_task(&moved)?;
+        self.emit(Event::Sync);
+        Ok(moved)
     }
 
     pub fn delete_task(&self, id: &str) -> Result<()> {
@@ -2216,6 +2513,8 @@ mod task_tests {
             status,
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
+            position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 1.0,
         }
@@ -2227,6 +2526,45 @@ mod task_tests {
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "").is_err());
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "a").is_err());
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "missing").is_err());
+    }
+
+    fn mine(id: &str, status: TaskStatus) -> TaskItem {
+        TaskItem { agent_id: "me".into(), ..task(id, status, "") }
+    }
+
+    #[test]
+    fn an_agent_carries_on_while_its_own_work_is_open() {
+        let tasks = [mine("a", TaskStatus::Incomplete), task("b", TaskStatus::Incomplete, "")];
+        let open = carry_on(&tasks, "me", &Chain::default()).expect("work of its own is open");
+        // Only its own: another agent's list is not its errand.
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, "a");
+    }
+
+    #[test]
+    fn saying_it_cannot_go_further_ends_the_chain() {
+        for stop in [TaskStatus::Complete, TaskStatus::Blocked, TaskStatus::WaitingForHuman] {
+            let tasks = [mine("a", stop)];
+            assert!(carry_on(&tasks, "me", &Chain::default()).is_none());
+        }
+    }
+
+    #[test]
+    fn a_turn_that_moves_nothing_ends_the_chain() {
+        let tasks = [mine("a", TaskStatus::Incomplete)];
+        let went_round = Chain { turns: 1, shape: shape_of(&tasks, "me") };
+        assert!(carry_on(&tasks, "me", &went_round).is_none());
+
+        // The same list, with that task now finished and another started.
+        let moved = [mine("a", TaskStatus::Complete), mine("b", TaskStatus::Incomplete)];
+        assert!(carry_on(&moved, "me", &went_round).is_some());
+    }
+
+    #[test]
+    fn a_chain_does_not_run_forever() {
+        let tasks = [mine("a", TaskStatus::Incomplete)];
+        let long = Chain { turns: CHAIN_LIMIT, shape: String::new() };
+        assert!(carry_on(&tasks, "me", &long).is_none());
     }
 
     #[test]
@@ -2255,8 +2593,21 @@ pub struct Snapshot {
     pub messages: HashMap<String, String>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
+    /// Why each task is where it is, oldest first.
+    pub task_notes: Vec<TaskNote>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
+    /// What each harness can do, so a surface can say why a control is off
+    /// rather than naming backends itself.
+    pub backends: Vec<BackendInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendInfo {
+    pub backend: Backend,
+    pub fork: bool,
+    pub merge: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

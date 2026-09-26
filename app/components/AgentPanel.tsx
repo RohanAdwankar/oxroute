@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clock, since } from "../lib/format";
-import type { AgentView, Entry, EntryKind } from "../lib/types";
+import type { AgentView, BackendInfo, Entry, EntryKind } from "../lib/types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { SplitAction } from "./SplitAction";
@@ -51,11 +51,14 @@ function minute(at: number) {
  */
 export function AgentPanel({
   view,
+  can,
   onBack,
   onSay,
+  onTask,
   onInterrupt,
   onForkSlack,
   onForkLocal,
+  onOpenBeside,
   onMerge,
   onOpenAgent,
   onRename,
@@ -65,11 +68,17 @@ export function AgentPanel({
   focusEntry,
 }: {
   view: AgentView;
+  /// What this agent's harness can do.
+  can: BackendInfo;
   onBack: () => void;
-  onSay: (text: string, images: File[]) => void;
+  onSay: (text: string, images: File[], queued: boolean) => void;
+  /// Put what is in the composer on the task list instead of saying it.
+  onTask: (text: string, images: File[]) => void;
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
+  /// Put another session beside this one, without branching it.
+  onOpenBeside: () => void;
   onMerge: (() => void) | null;
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
@@ -112,6 +121,14 @@ export function AgentPanel({
     else if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
   }, [tailRevision, agent.id, focusEntry]);
 
+  /// Hold the reader at the tail. The composer grows as you type, which
+  /// takes its height from the transcript, so what you were reading slides
+  /// under the box unless the scroll follows it down.
+  const pin = useCallback(() => {
+    const node = timeline.current;
+    if (node && following.current) node.scrollTo({ top: node.scrollHeight });
+  }, []);
+
   const addFiles = useCallback((files: File[]) => {
     const images = files.filter((file) => file.type.startsWith("image/"));
     setAttachmentError(images.length === files.length ? "" : "Only image files are supported.");
@@ -131,7 +148,8 @@ export function AgentPanel({
     input.style.height = "0px";
     input.style.height = `${Math.max(42, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
-  }, [draft]);
+    pin();
+  }, [draft, uploads, attachmentError, pin]);
 
   useEffect(() => () => {
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
@@ -140,8 +158,22 @@ export function AgentPanel({
   const send = (queued = agent.status === "working") => {
     const text = draft.trim();
     if ((!text && uploads.length === 0) || busy) return;
+    // What you just said is what you want to see, wherever you had scrolled
+    // to before saying it.
+    following.current = true;
     setDraft("");
-    onSay(queued ? `& ${text}`.trimEnd() : text, uploads.map((upload) => upload.file));
+    onSay(text, uploads.map((upload) => upload.file), queued);
+    uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
+    setUploads([]);
+    setAttachmentError("");
+  };
+
+  /// The same thing you would have said, kept as work to do instead.
+  const toTask = () => {
+    const text = draft.trim();
+    if ((!text && uploads.length === 0) || busy) return;
+    setDraft("");
+    onTask(text, uploads.map((upload) => upload.file));
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");
@@ -272,19 +304,28 @@ export function AgentPanel({
           <Icon name={archived ? "restore" : "archive"} />
         </button>
         <SplitAction
-          label={agent.backend === "codex" ? "Fork in conversation" : "Only Codex can fork"}
+          label={can.fork ? "Fork in conversation" : `${agent.backend} cannot fork a session`}
           icon="fork"
           onClick={onForkLocal}
-          disabled={busy || agent.backend !== "codex"}
-          menu={[{ label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack }]}
+          disabled={busy || !can.fork}
+          menu={[
+            { label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack },
+            { label: "Open another beside this", icon: "split", onClick: onOpenBeside },
+          ]}
         />
         {onMerge && (
           <button
             type="button"
             onClick={onMerge}
-            disabled={busy || agent.status === "working"}
+            disabled={busy || agent.status === "working" || !can.merge}
             aria-label="merge into parent"
-            title={agent.status === "working" ? "Stop the active turn first" : "Merge into parent"}
+            title={
+              !can.merge
+                ? `${agent.backend} cannot fold a fork back in`
+                : agent.status === "working"
+                  ? "Stop the active turn first"
+                  : "Merge into parent"
+            }
             className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="merge" />
@@ -500,20 +541,21 @@ export function AgentPanel({
               icon="queue"
               onClick={() => send(true)}
               disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-              menu={[{ label: "Send now", icon: "send", onClick: () => send(false) }]}
+              menu={[
+                { label: "Send now", icon: "send", onClick: () => send(false) },
+                { label: "Add to the task list", icon: "tasks", onClick: toTask },
+              ]}
               variant="composer"
             />
           ) : (
-            <button
-              type="button"
+            <SplitAction
+              label="Send message"
+              icon="send"
               onClick={() => send(false)}
               disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-              aria-label="send message"
-              title="Send message"
-              className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Icon name="send" />
-            </button>
+              menu={[{ label: "Add to the task list", icon: "tasks", onClick: toTask }]}
+              variant="composer"
+            />
           )}
         </div>
       </footer>

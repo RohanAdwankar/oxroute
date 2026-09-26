@@ -348,6 +348,9 @@ impl World {
 /// How the fake harness should behave for one test.
 #[derive(Clone, Copy)]
 struct Harnessed {
+    /// Whether a source is registered at all. A machine that only uses the
+    /// web UI has none, and that is not a broken machine.
+    source: bool,
     hang: bool,
     leave_artifacts: bool,
     can_steer: bool,
@@ -358,6 +361,7 @@ struct Harnessed {
 impl Default for Harnessed {
     fn default() -> Self {
         Harnessed {
+            source: true,
             hang: false,
             leave_artifacts: false,
             can_steer: true,
@@ -466,11 +470,13 @@ async fn build(mode: Mode, options: Harnessed) -> World {
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
     hub.with_harness(Arc::new(harness));
-    hub.with_source(Arc::new(FakeSource {
-        posts: posts.clone(),
-        next_thread: Mutex::new(0),
-        fail_open: fail_open.clone(),
-    }));
+    if options.source {
+        hub.with_source(Arc::new(FakeSource {
+            posts: posts.clone(),
+            next_thread: Mutex::new(0),
+            fail_open: fail_open.clone(),
+        }));
+    }
     hub.start().await.unwrap();
     hub.set_mode(mode).unwrap();
 
@@ -1368,7 +1374,7 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub
-        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()])
+        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()], false)
         .await
         .unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
@@ -1617,4 +1623,260 @@ async fn something_you_typed_carries_no_provenance_label() {
         .unwrap();
     // "you local" is two words saying nothing.
     assert_eq!(received.origin, "");
+}
+
+#[tokio::test]
+async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+
+    w.hub
+        .store
+        .save_task(&TaskItem {
+            id: "task_1".into(),
+            text: "scrub the tiles".into(),
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
+            agent_id: agent.id.clone(),
+            position: 0.0,
+            images: vec![],
+            created_at: now(),
+            updated_at: now(),
+        })
+        .unwrap();
+
+    w.hub.accept(signal("100.0", "101.0", "carry on")).await.unwrap();
+
+    // The turn that answers "carry on" is followed by one nobody asked for,
+    // because the agent still has work of its own.
+    assert!(
+        settle(|| w.calls.lock().unwrap().started.len() == 3).await,
+        "the agent stopped with its own work still open"
+    );
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[2].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(texts[0].contains("still has open work"));
+    assert!(texts[0].contains("scrub the tiles"));
+
+    // And it stops there: that turn left the list exactly as it found it,
+    // so asking again would only repeat itself.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 3);
+}
+
+#[tokio::test]
+async fn an_agent_with_nothing_open_is_left_alone() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+
+    for (id, status) in [
+        ("task_done", TaskStatus::Complete),
+        ("task_blocked", TaskStatus::WaitingForHuman),
+    ] {
+        w.hub
+            .store
+            .save_task(&TaskItem {
+                id: id.into(),
+                text: id.into(),
+                status,
+                blocked_by_task_id: String::new(),
+                agent_id: agent.id.clone(),
+                position: 0.0,
+                images: vec![],
+                created_at: now(),
+                updated_at: now(),
+            })
+            .unwrap();
+    }
+
+    w.hub.accept(signal("100.0", "101.0", "carry on")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 2);
+}
+
+#[tokio::test]
+async fn a_pane_fork_works_with_no_source_to_put_a_thread_in() {
+    let w = build(Mode::Auto, Harnessed { source: false, ..Harnessed::default() }).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let original = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    // A pane is somewhere to work; it does not need a conversation.
+    let child = w.hub.fork_local(&original).await.unwrap();
+    assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(original.as_str()));
+    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+
+    // Asking for the conversation, with nowhere to hold one, still fails.
+    assert!(w.hub.fork(&original).await.is_err());
+}
+
+#[tokio::test]
+async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
+    // A harness that can steer, and a turn long enough to steer into.
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to_with_images(&agent, "while you work", vec![], true).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+
+    // It ran as its own turn, and nothing was folded into the first one.
+    assert!(w.calls.lock().unwrap().steered.is_empty());
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    // The message arrives as written: queuing is said in the request, not
+    // smuggled into the text with a prefix.
+    assert_eq!(texts[0], "while you work");
+}
+
+#[tokio::test]
+async fn an_ordinary_message_still_folds_into_a_running_turn() {
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to(&agent, "actually, like this").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+}
+
+#[tokio::test]
+async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+
+    // Starting an agent on a task gives it the task, and the task follows.
+    let moved = w.hub.hand_off_task(&task.id, false, None).await.unwrap();
+    let agents = w.hub.store.agents(10).unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(moved.agent_id, agents[0].id);
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[0].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(texts[0], "paint the shed");
+
+    // Forking branches whoever has it, and the task goes to the branch.
+    let forked = w.hub.hand_off_task(&moved.id, true, None).await.unwrap();
+    assert_ne!(forked.agent_id, moved.agent_id);
+    assert_eq!(
+        w.hub.store.fork_parent(&forked.agent_id).unwrap().as_deref(),
+        Some(moved.agent_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_task_nobody_has_cannot_be_forked() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    // There is no session to branch, and inventing one would not be a fork.
+    assert!(w.hub.hand_off_task(&task.id, true, None).await.is_err());
+}
+
+#[tokio::test]
+async fn a_task_changes_status_only_with_a_note_saying_why() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+
+    // A claim about work with nothing said about it is refused.
+    assert!(w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", None)
+        .is_err());
+    assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Incomplete);
+
+    let done = w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"))
+        .unwrap();
+    assert_eq!(done.status, TaskStatus::Complete);
+    let notes = w.hub.task_notes().unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].task_id, task.id);
+    assert_eq!(notes[0].text, "painted in a1b2c3d");
+
+    // Editing anything else about a settled task needs no fresh account.
+    assert!(w
+        .hub
+        .update_task(&task.id, "paint the shed blue", TaskStatus::Complete, "", "", None)
+        .is_ok());
+    assert_eq!(w.hub.task_notes().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn notes_go_when_the_task_does() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    w.hub.add_task_note(&task.id, "started on it", "").unwrap();
+    assert_eq!(w.hub.task_notes().unwrap().len(), 1);
+
+    w.hub.delete_task(&task.id).unwrap();
+    assert!(w.hub.task_notes().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_agent_is_told_who_else_is_in_its_working_directory() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the first")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+
+    // Alone in the tree, there is nobody to mention.
+    let first = w.calls.lock().unwrap().started[0].1.clone();
+    let texts: Vec<&str> = first.iter().filter_map(TurnInput::as_text).collect();
+    assert!(!texts.iter().any(|text| text.contains("Other sessions are working in")));
+
+    // A second agent shares the workspace, so each is told about the other.
+    w.hub.accept(signal("200.0", "200.0", "the second")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let second = w.calls.lock().unwrap().started[1].1.clone();
+    let texts: Vec<&str> = second.iter().filter_map(TurnInput::as_text).collect();
+    let shared = texts
+        .iter()
+        .find(|text| text.contains("Other sessions are working in"))
+        .expect("the second agent was not told about the first");
+    assert!(shared.contains("the first"));
+    assert!(shared.contains("git worktree"));
+}
+
+#[tokio::test]
+async fn the_task_list_is_a_queue_that_can_be_rearranged() {
+    let w = world(Mode::Auto, false).await;
+    let order = || {
+        w.hub.tasks().unwrap().into_iter().map(|task| task.text).collect::<Vec<_>>()
+    };
+    for text in ["first", "second", "third"] {
+        w.hub.create_task(text, "", vec![]).unwrap();
+    }
+    // A new task joins the end of the queue rather than the front.
+    assert_eq!(order(), vec!["first", "second", "third"]);
+
+    // Moving one says what to do before what.
+    let third = w.hub.tasks().unwrap()[2].id.clone();
+    w.hub.move_task(&third, None).unwrap();
+    assert_eq!(order(), vec!["third", "first", "second"]);
+
+    let first = w.hub.tasks().unwrap()[1].id.clone();
+    let second = w.hub.tasks().unwrap()[2].id.clone();
+    w.hub.move_task(&first, Some(&second)).unwrap();
+    assert_eq!(order(), vec!["third", "second", "first"]);
+
+    // Editing a task leaves it where it is.
+    w.hub
+        .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None)
+        .unwrap();
+    assert_eq!(order(), vec!["third", "second, reworded", "first"]);
 }

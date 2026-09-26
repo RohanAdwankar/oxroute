@@ -391,6 +391,22 @@ impl TaskStatus {
     }
 }
 
+/// Why a task moved.
+///
+/// A status is a claim -- done, stuck, waiting -- and a claim with no
+/// account of itself is worth very little to whoever reads it next, so
+/// every change carries a short one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskNote {
+    pub id: String,
+    pub task_id: String,
+    pub text: String,
+    /// The agent that wrote it, empty when a person did.
+    pub agent_id: String,
+    pub at: f64,
+}
+
 /// One item in the shared task list. Empty agent and blocker IDs mean none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -400,6 +416,13 @@ pub struct TaskItem {
     pub status: TaskStatus,
     pub blocked_by_task_id: String,
     pub agent_id: String,
+    /// Where it sits in the queue. The list is read in this order, and a new
+    /// task lands at the end of it.
+    pub position: f64,
+    /// Pictures that came with it, as names under the attachments
+    /// directory. A screenshot is often the whole of what a task says.
+    #[serde(default)]
+    pub images: Vec<String>,
     pub created_at: f64,
     pub updated_at: f64,
 }
@@ -724,6 +747,8 @@ mod tests {
             status: TaskStatus::WaitingForHuman,
             blocked_by_task_id: String::new(),
             agent_id: "a".into(),
+            position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 2.0,
         };

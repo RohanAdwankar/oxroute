@@ -195,6 +195,12 @@ async fn serve() -> Result<()> {
         .route("/api/pin", post(pin))
         .route("/api/tasks", get(tasks).post(create_task))
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
+        .route("/api/tasks/{id}/hand-off", post(hand_off_task))
+        .route("/api/task-notes", get(task_notes))
+        .route("/api/tasks/{id}/notes", post(add_task_note))
+        .route("/api/tasks/{id}/move", post(move_task))
+        .route("/api/task-images", post(create_task_with_images))
+        .route("/api/attachments/{name}", get(attachment))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
@@ -396,13 +402,16 @@ async fn route(
 struct SayBody {
     agent: String,
     text: String,
+    /// Wait for the running turn rather than folding into it.
+    #[serde(default)]
+    queued: bool,
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
     if body.text.trim().is_empty() {
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
-    hub.say_to(&body.agent, &body.text).await?;
+    hub.say_to_with_images(&body.agent, &body.text, vec![], body.queued).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -412,36 +421,70 @@ async fn say_images(
 ) -> Result<Json<serde_json::Value>, Failed> {
     let mut agent = String::new();
     let mut text = String::new();
+    let mut queued = false;
     let mut images = Vec::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
-            Some("images") => {
-                let mimetype = field.content_type().unwrap_or_default().to_string();
-                if !mimetype.starts_with("image/") {
-                    return Err(Failed(anyhow::anyhow!("only image files are supported")));
-                }
-                let name = std::path::Path::new(field.file_name().unwrap_or("image"))
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("image");
-                let path = hub
-                    .config
-                    .attachments
-                    .join(format!("{}-{name}", oxroute_core::model::new_id("web")));
-                tokio::fs::write(&path, field.bytes().await?).await?;
-                images.push(path.to_string_lossy().to_string());
-            }
+            Some("queued") => queued = field.text().await? == "true",
+            Some("images") => images.push(keep_image(&hub, field).await?),
             _ => {}
         }
     }
     if agent.is_empty() {
         return Err(Failed(anyhow::anyhow!("an agent is required")));
     }
-    hub.say_to_with_images(&agent, &text, images).await?;
+    hub.say_to_with_images(&agent, &text, images, queued).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Write an uploaded picture into the attachments directory, and say where.
+///
+/// The name it is stored under is ours, not the browser's, so a file cannot
+/// name a place outside that directory or overwrite another upload.
+async fn keep_image(hub: &Arc<Hub>, field: axum::extract::multipart::Field<'_>) -> Result<String> {
+    let mimetype = field.content_type().unwrap_or_default().to_string();
+    anyhow::ensure!(mimetype.starts_with("image/"), "only image files are supported");
+    let given = std::path::Path::new(field.file_name().unwrap_or("image"))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("image");
+    let name = format!("{}-{given}", oxroute_core::model::new_id("web"));
+    let path = hub.config.attachments.join(&name);
+    tokio::fs::write(&path, field.bytes().await?).await?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Hand back a picture that came with a task.
+///
+/// Only a plain image file name: anything with a separator or a leading dot
+/// is refused before the disk is touched, so no name reaches outside the
+/// attachments directory.
+async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && std::path::Path::new(&name).file_name().and_then(|n| n.to_str()) == Some(name.as_str());
+    let kind = match name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase().as_str() {
+        _ if !plain => None,
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    };
+    let Some(kind) = kind else {
+        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
+    };
+    match tokio::fs::read(hub.config.attachments.join(&name)).await {
+        Ok(bytes) => Ok(Response::builder()
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .body(Body::from(bytes))?),
+        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -617,11 +660,88 @@ struct CreateTaskBody {
     agent_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandOffBody {
+    /// Branch the agent that has the task, rather than starting a new one.
+    #[serde(default)]
+    fork: bool,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+async fn hand_off_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<HandOffBody>,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    Ok(Json(hub.hand_off_task(&id, body.fork, body.model.as_deref()).await?))
+}
+
+#[derive(Deserialize)]
+struct NoteBody {
+    text: String,
+    /// The agent writing it; empty when a person is.
+    #[serde(default, rename = "agentId")]
+    agent_id: String,
+}
+
+async fn task_notes(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskNote>>, Failed> {
+    Ok(Json(hub.task_notes()?))
+}
+
+async fn add_task_note(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<NoteBody>,
+) -> Result<Json<oxroute_core::TaskNote>, Failed> {
+    Ok(Json(hub.add_task_note(&id, &body.text, &body.agent_id)?))
+}
+
+#[derive(Deserialize)]
+struct MoveTaskBody {
+    /// The task to put it after; absent means the top of the list.
+    #[serde(default)]
+    after: Option<String>,
+}
+
+async fn move_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<MoveTaskBody>,
+) -> Result<Json<Vec<oxroute_core::TaskItem>>, Failed> {
+    Ok(Json(hub.move_task(&id, body.after.as_deref())?))
+}
+
+/// A task made in a composer, with whatever was attached to it.
+async fn create_task_with_images(
+    State(hub): Hubs,
+    mut form: Multipart,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    let mut text = String::new();
+    let mut agent_id = String::new();
+    let mut images = Vec::new();
+    while let Some(field) = form.next_field().await? {
+        match field.name() {
+            Some("text") => text = field.text().await?,
+            Some("agentId") => agent_id = field.text().await?,
+            Some("images") => images.push(keep_image(&hub, field).await?),
+            _ => {}
+        }
+    }
+    let names = images
+        .iter()
+        .filter_map(|path| std::path::Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .collect();
+    Ok(Json(hub.create_task(&text, &agent_id, names)?))
+}
+
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.create_task(&body.text, &body.agent_id)?))
+    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![])?))
 }
 
 #[derive(Deserialize)]
@@ -629,6 +749,9 @@ async fn create_task(
 struct UpdateTaskBody {
     text: String,
     status: oxroute_core::TaskStatus,
+    /// Why it moved. Required when the status changes.
+    #[serde(default)]
+    note: Option<String>,
     #[serde(default)]
     blocked_by_task_id: String,
     #[serde(default)]
@@ -646,6 +769,7 @@ async fn update_task(
         body.status,
         &body.blocked_by_task_id,
         &body.agent_id,
+        body.note.as_deref(),
     )?))
 }
 

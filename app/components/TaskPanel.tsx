@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TaskRow } from "../lib/tasks";
-import type { Agent, TaskItem, TaskStatus } from "../lib/types";
+import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
+import { clock } from "../lib/format";
 import { Icon } from "./Icon";
 
 const STATES: { value: TaskStatus; label: string }[] = [
@@ -12,6 +13,10 @@ const STATES: { value: TaskStatus; label: string }[] = [
   { value: "waiting_for_human", label: "Waiting for human" },
   { value: "blocked", label: "Blocked" },
 ];
+
+/// Choosing one of these makes the agent rather than naming one.
+const NEW_AGENT = "new-agent";
+const FORK_AGENT = "fork-agent";
 
 const STATE_COLOR: Record<TaskStatus, string> = {
   incomplete: "text-mid",
@@ -42,35 +47,51 @@ function Row({ focused, children }: { focused: boolean; children: React.ReactNod
 export function TaskPanel({
   tasks,
   rows,
+  notes,
   onShowDone,
   cursor,
   active,
   agents,
+  named,
   currentAgent,
   busy,
   onClose,
   onCreate,
   onUpdate,
+  onHandOff,
   onDelete,
 }: {
   tasks: TaskItem[];
   /// The rows on screen, in order; the keyboard counts these.
   rows: TaskRow[];
+  /// Why each task is where it is, oldest first.
+  notes: TaskNote[];
   onShowDone: () => void;
   cursor: number;
   active: boolean;
+  /// The agents a task can be given to.
   agents: Agent[];
+  /// Every agent, live or archived, for reading a name back.
+  named: Agent[];
   currentAgent: string | null;
   busy: boolean;
   onClose: () => void;
   onCreate: (text: string, agent: string) => void;
-  onUpdate: (task: TaskItem) => void;
+  /// A status change carries why it changed.
+  onUpdate: (task: TaskItem, note?: string) => void;
+  /// Move a task to an agent that does not exist yet.
+  onHandOff: (task: TaskItem, fork: boolean) => void;
   onDelete: (id: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
+  /// A status waiting on its account of itself.
+  const [pending, setPending] = useState<{ task: TaskItem; status: TaskStatus } | null>(null);
+  const [why, setWhy] = useState("");
+  // Names cover archived sessions so a task assigned to one still reads,
+  // while only live agents can be chosen.
+  const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
   // A flowchart of things that do not depend on each other is a list with
@@ -82,6 +103,8 @@ export function TaskPanel({
 
   const row = (task: TaskItem, at: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
+    const mine = notes.filter((note) => note.taskId === task.id);
+    const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} focused={active && at === cursor}>
     <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
@@ -117,18 +140,64 @@ export function TaskPanel({
           {task.text}
         </button>
       )}
+      {task.images.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {task.images.map((image) => (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              key={image}
+              src={`/api/attachments/${encodeURIComponent(image)}`}
+              alt=""
+              className="max-h-28 rounded-[2px] border border-rule"
+            />
+          ))}
+        </div>
+      )}
+      {mine.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {mine.map((note) => (
+            <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
+              <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
+              {note.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {asking && (
+        <input
+          autoFocus
+          value={why}
+          placeholder={`Why ${STATES.find((s) => s.value === asking.status)?.label.toLowerCase()}? A sentence or a commit`}
+          onChange={(event) => setWhy(event.target.value)}
+          onBlur={() => setPending(null)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") return setPending(null);
+            if (event.key !== "Enter") return;
+            const note = why.trim();
+            if (!note) return;
+            const status = asking.status;
+            setPending(null);
+            onUpdate(
+              {
+                ...task,
+                status,
+                blockedByTaskId:
+                  status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
+              },
+              note,
+            );
+          }}
+          className="mt-2 w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
+        />
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <select
-          value={task.status}
+          value={asking ? asking.status : task.status}
           disabled={busy}
           aria-label={`status for ${task.text}`}
           onChange={(event) => {
-            const status = event.target.value as TaskStatus;
-            onUpdate({
-              ...task,
-              status,
-              blockedByTaskId: status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
-            });
+            setWhy("");
+            setPending({ task, status: event.target.value as TaskStatus });
           }}
           className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
         >
@@ -153,11 +222,23 @@ export function TaskPanel({
           value={task.agentId}
           disabled={busy}
           aria-label={`assign ${task.text}`}
-          onChange={(event) => onUpdate({ ...task, agentId: event.target.value })}
+          onChange={(event) => {
+            const to = event.target.value;
+            if (to === NEW_AGENT || to === FORK_AGENT) return onHandOff(task, to === FORK_AGENT);
+            onUpdate({ ...task, agentId: to });
+          }}
           className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-faint outline-none"
         >
           <option value="">Unassigned</option>
           {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+          {/* A task outlives the session that had it, and a value with no
+              option would read as unassigned and be lost on the next edit. */}
+          {task.agentId && !agents.some((agent) => agent.id === task.agentId) && (
+            <option value={task.agentId}>{names.get(task.agentId) ?? "a past session"} (archived)</option>
+          )}
+          {/* An agent that does not exist yet, made by choosing it. */}
+          <option value={NEW_AGENT}>Start a new agent on this</option>
+          {task.agentId && <option value={FORK_AGENT}>Fork {names.get(task.agentId) ?? "it"}</option>}
         </select>
       </div>
     </div>

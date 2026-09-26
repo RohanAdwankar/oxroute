@@ -68,6 +68,8 @@ export interface TaskItem {
   agentId: string;
   createdAt: number;
   updatedAt: number;
+  /** Pictures that came with it, as names under the attachments route. */
+  images: string[];
 }
 
 export interface InboxItem {
@@ -132,6 +134,16 @@ export interface ModelInfo {
   backend: Backend;
 }
 
+/** Why a task is where it is. */
+export interface TaskNote {
+  id: string;
+  taskId: string;
+  text: string;
+  /** The agent that wrote it; empty when a person did. */
+  agentId: string;
+  at: number;
+}
+
 export interface Snapshot {
   mode: Mode;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
@@ -141,8 +153,17 @@ export interface Snapshot {
   messages: Record<string, string>;
   inbox: InboxItem[];
   tasks: TaskItem[];
+  taskNotes: TaskNote[];
   sources: string[];
   models: ModelInfo[];
+  backends: BackendInfo[];
+}
+
+/** What a harness can do, so the UI never has to name backends itself. */
+export interface BackendInfo {
+  backend: Backend;
+  fork: boolean;
+  merge: boolean;
 }
 
 export interface AgentView {

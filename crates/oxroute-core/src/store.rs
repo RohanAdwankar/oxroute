@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskStatus,
+    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskNote, TaskStatus,
 };
 
 const SCHEMA: &str = r#"
@@ -104,9 +104,19 @@ CREATE TABLE IF NOT EXISTS tasks (
     status             TEXT NOT NULL DEFAULT 'incomplete',
     blocked_by_task_id TEXT NOT NULL DEFAULT '',
     agent_id           TEXT NOT NULL DEFAULT '',
+    position           REAL NOT NULL DEFAULT 0,
+    images             TEXT NOT NULL DEFAULT '[]',
     created_at         REAL NOT NULL,
     updated_at         REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_notes (
+    id       TEXT PRIMARY KEY,
+    task_id  TEXT NOT NULL,
+    text     TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '',
+    at       REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS task_notes_by_task ON task_notes (task_id, at);
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -160,6 +170,22 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if !task_columns.iter().any(|column| column == "blocked_by_task_id") {
         conn.execute("ALTER TABLE tasks ADD COLUMN blocked_by_task_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    if !task_columns.iter().any(|column| column == "images") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN images TEXT NOT NULL DEFAULT '[]'", [])?;
+    }
+    if !task_columns.iter().any(|column| column == "position") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN position REAL NOT NULL DEFAULT 0", [])?;
+        // Whatever order the list was read in is the order it had, so that
+        // is the order it keeps rather than shuffling on first sight.
+        conn.execute(
+            "UPDATE tasks SET position = (
+                 SELECT COUNT(*) FROM tasks AS earlier
+                 WHERE earlier.updated_at > tasks.updated_at
+                    OR (earlier.updated_at = tasks.updated_at AND earlier.id < tasks.id)
+             )",
+            [],
+        )?;
     }
     conn.execute("DROP INDEX IF EXISTS tasks_agent", [])?;
     conn.execute(
@@ -404,8 +430,9 @@ impl Store {
     pub fn tasks(&self) -> Result<Vec<TaskItem>> {
         self.with(|c| {
             let mut statement = c.prepare(
-                "SELECT id, text, status, blocked_by_task_id, agent_id, created_at, updated_at
-                 FROM tasks ORDER BY status = 'complete', updated_at DESC",
+                "SELECT id, text, status, blocked_by_task_id, agent_id, position, images,
+                        created_at, updated_at
+                 FROM tasks ORDER BY position, created_at",
             )?;
             let tasks = statement
                 .query_map([], |row| {
@@ -422,8 +449,11 @@ impl Store {
                         })?,
                         blocked_by_task_id: row.get(3)?,
                         agent_id: row.get(4)?,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
+                        position: row.get(5)?,
+                        images: serde_json::from_str(&row.get::<_, String>(6)?)
+                            .unwrap_or_default(),
+                        created_at: row.get(7)?,
+                        updated_at: row.get(8)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -431,13 +461,46 @@ impl Store {
         })
     }
 
+    pub fn task_notes(&self) -> Result<Vec<TaskNote>> {
+        self.with(|c| {
+            let mut statement = c.prepare(
+                "SELECT id, task_id, text, agent_id, at FROM task_notes ORDER BY at",
+            )?;
+            let notes = statement
+                .query_map([], |row| {
+                    Ok(TaskNote {
+                        id: row.get(0)?,
+                        task_id: row.get(1)?,
+                        text: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        at: row.get(4)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(notes)
+        })
+    }
+
+    pub fn save_task_note(&self, note: &TaskNote) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO task_notes (id, task_id, text, agent_id, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![note.id, note.task_id, note.text, note.agent_id, note.at],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn save_task(&self, task: &TaskItem) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO tasks (id, text, status, blocked_by_task_id, agent_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO tasks (id, text, status, blocked_by_task_id, agent_id, position,
+                     images, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(id) DO UPDATE SET text = excluded.text, status = excluded.status,
                      blocked_by_task_id = excluded.blocked_by_task_id,
+                     position = excluded.position, images = excluded.images,
                      agent_id = excluded.agent_id, updated_at = excluded.updated_at",
                 params![
                     task.id,
@@ -445,6 +508,8 @@ impl Store {
                     task.status.as_str(),
                     task.blocked_by_task_id,
                     task.agent_id,
+                    task.position,
+                    serde_json::to_string(&task.images)?,
                     task.created_at,
                     task.updated_at,
                 ],
@@ -461,6 +526,7 @@ impl Store {
                  WHERE blocked_by_task_id = ?1",
                 params![id, crate::model::now()],
             )?;
+            transaction.execute("DELETE FROM task_notes WHERE task_id = ?1", params![id])?;
             anyhow::ensure!(
                 transaction.execute("DELETE FROM tasks WHERE id = ?1", params![id])? == 1,
                 "no such task"
@@ -1221,6 +1287,8 @@ mod tests {
             status: TaskStatus::Incomplete,
             blocked_by_task_id: String::new(),
             agent_id: String::new(),
+            position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 1.0,
         };
@@ -1250,6 +1318,8 @@ mod tests {
             status,
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
+            position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 1.0,
         };

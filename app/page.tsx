@@ -35,8 +35,10 @@ const EMPTY: Snapshot = {
   messages: {},
   inbox: [],
   tasks: [],
+  taskNotes: [],
   sources: [],
   models: [],
+  backends: [],
 };
 
 /**
@@ -55,6 +57,8 @@ export default function Home() {
   const [open, setOpen] = useState<string | null>(null);
   const [panes, setPanes] = useState<string[]>([]);
   const [paneWidths, setPaneWidths] = useState<number[]>([]);
+  /// Which pane is waiting for a session to be opened beside it.
+  const [pairing, setPairing] = useState<number | null>(null);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -93,8 +97,16 @@ export default function Home() {
         lastInboxWidth.current = saved;
       }
       setWatch(window.localStorage.getItem("oxroute.watch") === "true");
+      setTasksOpen(window.localStorage.getItem("oxroute.tasks") === "true");
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  /// A column you left open is one you were using; it is still open when
+  /// you come back.
+  const showTasks = useCallback((open: boolean) => {
+    setTasksOpen(open);
+    window.localStorage.setItem("oxroute.tasks", String(open));
   }, []);
 
   const setInboxVisible = useCallback((open: boolean) => {
@@ -328,21 +340,27 @@ export default function Home() {
     setUrlAgent(next[0] ?? null);
   };
 
+  /// Put a session in its own pane beside the one at `index`, sharing that
+  /// pane's width with it.
+  const placeBeside = useCallback((index: number, agent: string) => {
+    setPanes((current) =>
+      current.includes(agent)
+        ? current
+        : [...current.slice(0, index + 1), agent, ...current.slice(index + 1)],
+    );
+    setPaneWidths((current) => {
+      const widths = [...current];
+      const split = (widths[index] ?? 1) / 2;
+      widths[index] = split;
+      widths.splice(index + 1, 0, split);
+      return widths;
+    });
+  }, []);
+
   const forkHere = (index: number, agent: string) =>
     run(async () => {
       const { agent: child } = await api.forkLocal(agent);
-      setPanes((current) => [
-        ...current.slice(0, index + 1),
-        child.id,
-        ...current.slice(index + 1),
-      ]);
-      setPaneWidths((current) => {
-        const widths = [...current];
-        const split = (widths[index] ?? 1) / 2;
-        widths[index] = split;
-        widths.splice(index + 1, 0, split);
-        return widths;
-      });
+      placeBeside(index, child.id);
     });
 
   const mergePane = (index: number, agent: string) =>
@@ -385,7 +403,7 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const tasks = taskRows(snapshot.tasks, panes.at(-1) ?? null, tasksDone);
+  const tasks = taskRows(snapshot.tasks, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
@@ -410,6 +428,19 @@ export default function Home() {
     },
     [snapshot.inbox],
   );
+
+  /// Choosing a card: somewhere to go, or -- while one is being picked to
+  /// sit beside an open session -- the companion.
+  const chooseAgent = (id: string) => {
+    if (pairing !== null) {
+      placeBeside(pairing, id);
+      setPairing(null);
+      setFocus("fleet");
+      return;
+    }
+    clearRouting();
+    showAgent(id);
+  };
 
   const pick = (item: InboxItem) => {
     const at = rows.findIndex((row) => row.kind === "item" && row.item.signal.id === item.signal.id);
@@ -476,14 +507,14 @@ export default function Home() {
       const step = (delta: number) => {
         const next = COLUMNS[Math.min(Math.max(COLUMNS.indexOf(focus) + delta, 0), COLUMNS.length - 1)];
         if (next === "inbox") setInboxVisible(true);
-        if (next === "tasks") setTasksOpen(true);
+        if (next === "tasks") showTasks(true);
         setFocus(next);
       };
       const stop = () => event.preventDefault();
       // With a pane open the fleet is not on screen, so the keys that act on
       // a card you can no longer see do nothing: reading an agent should not
       // be one letter away from swapping to another one.
-      const reading = open !== null && !selected;
+      const reading = open !== null && !selected && pairing === null;
 
       switch (event.key) {
         case "j":
@@ -497,6 +528,23 @@ export default function Home() {
         case "g":
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(0);
+        case "J":
+        case "K": {
+          if (focus !== "tasks") return;
+          stop();
+          const row = tasks[taskAt];
+          if (row?.kind !== "task") return;
+          const up = event.key === "K";
+          // The task it lands after: the one two places up when moving up,
+          // and the one immediately below when moving down.
+          const live = tasks.filter((entry) => entry.kind === "task").map((entry) => entry.task);
+          const at = live.findIndex((task) => task.id === row.task.id);
+          const to = up ? at - 1 : at + 1;
+          if (to < 0 || to >= live.length) return;
+          const after = up ? live[to - 1]?.id : live[to].id;
+          setTaskAt((current) => current + (up ? -1 : 1));
+          return void run(() => api.moveTask(row.task.id, after));
+        }
         case "G":
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
@@ -511,6 +559,7 @@ export default function Home() {
           return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
+          if (pairing !== null) return setPairing(null);
           if (open) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
@@ -550,10 +599,7 @@ export default function Home() {
             return sendTo(selected.signal.id, target as string[]);
           }
           const agent = fleet[fleetAt];
-          if (agent) {
-            clearRouting();
-            showAgent(agent.id);
-          }
+          if (agent) chooseAgent(agent.id);
           return;
         }
         case " ":
@@ -613,7 +659,7 @@ export default function Home() {
         stop();
         if (selected) return sendTo(selected.signal.id, [agent.id]);
         setFleetAt(at);
-        showAgent(agent.id);
+        chooseAgent(agent.id);
       }
     };
 
@@ -662,7 +708,7 @@ export default function Home() {
           })
         }
         tasksOpen={tasksOpen}
-        onTasks={() => setTasksOpen((current) => !current)}
+        onTasks={() => showTasks(!tasksOpen)}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -724,7 +770,7 @@ export default function Home() {
           </>
         ) : null}
 
-        {open ? (
+        {open && pairing === null ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
             {panes.map((id, index) => {
               const view = details[id];
@@ -737,18 +783,36 @@ export default function Home() {
                   {view ? (
                     <AgentPanel
                       view={view}
+                      can={
+                        snapshot.backends.find((b) => b.backend === view.agent.backend) ?? {
+                          backend: view.agent.backend,
+                          fork: false,
+                          merge: false,
+                        }
+                      }
                       busy={busy}
                       onBack={() => closePane(index)}
-                      onSay={(text, images) => void run(() => api.say(id, text, images))}
+                      onSay={(text, images, queued) =>
+                        void run(() => api.say(id, text, images, queued))
+                      }
+                      onTask={(text, images) =>
+                        void run(() => api.createTaskWithImages(text, id, images))
+                      }
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}
+                      onOpenBeside={() => setPairing(index)}
                       onMerge={
                         view.timeline.some((entry) => entry.kind === "forkedFrom")
                           ? () => void mergePane(index, id)
                           : null
                       }
-                      onOpenAgent={showAgent}
+                      onOpenAgent={(target) =>
+                        // A fork and its parent are usually side by side by
+                        // the time one links to the other. Following the
+                        // link should not throw that away.
+                        panes.includes(target) ? setUrlAgent(target) : showAgent(target)
+                      }
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
@@ -799,16 +863,14 @@ export default function Home() {
             messages={snapshot.messages}
             watch={watch && !showArchived && selected === null}
             routing={selected}
+            beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
             active={focus === "fleet"}
             vim={vim && !jump}
             onToggle={toggle}
-            onOpen={(id) => {
-              clearRouting();
-              showAgent(id);
-            }}
+            onOpen={chooseAgent}
             onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>
@@ -825,20 +887,25 @@ export default function Home() {
           <TaskPanel
             tasks={snapshot.tasks}
             rows={tasks}
+            notes={snapshot.taskNotes}
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
             active={focus === "tasks"}
-            agents={[...snapshot.agents, ...snapshot.archived].filter(
+            agents={snapshot.agents}
+            named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
             currentAgent={panes.at(-1) ?? null}
             busy={busy}
             onClose={() => {
-              setTasksOpen(false);
+              showTasks(false);
               setFocus("fleet");
             }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
-            onUpdate={(task) => void run(() => api.updateTask(task))}
+            onUpdate={(task, note) => void run(() => api.updateTask(task, note))}
+            onHandOff={(task, fork) =>
+              void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
+            }
             onDelete={(id) => void run(() => api.deleteTask(id))}
           />
         )}

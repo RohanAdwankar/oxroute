@@ -47,11 +47,13 @@ export const api = {
     post<Snapshot>("/api/route", { signal, action: "spawn", model }),
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
-  say: (agent: string, text: string, images: File[] = []) => {
-    if (images.length === 0) return post<unknown>("/api/say", { agent, text });
+  /// `queued` waits for the running turn instead of folding into it.
+  say: (agent: string, text: string, images: File[] = [], queued = false) => {
+    if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued });
     const form = new FormData();
     form.append("agent", agent);
     form.append("text", text);
+    form.append("queued", String(queued));
     images.forEach((image) => form.append("images", image));
     return call<unknown>("/api/say-images", { method: "POST", body: form });
   },
@@ -65,7 +67,23 @@ export const api = {
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
   createTask: (text: string, agentId = "") =>
     post<TaskItem>("/api/tasks", { text, agentId }),
-  updateTask: (task: TaskItem) =>
+  /// Hand a task to an agent that does not exist yet: a new one, or a fork
+  /// of whoever has it.
+  handOffTask: (id: string, fork: boolean, model?: string) =>
+    post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
+  /// A task made in a composer, with whatever was attached to it.
+  createTaskWithImages: (text: string, agentId: string, images: File[]) => {
+    const form = new FormData();
+    form.append("text", text);
+    form.append("agentId", agentId);
+    images.forEach((image) => form.append("images", image));
+    return call<TaskItem>("/api/task-images", { method: "POST", body: form });
+  },
+  /// Put a task after another one; no `after` means the top of the queue.
+  moveTask: (id: string, after?: string) =>
+    post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),
+  /// A status change carries why it changed.
+  updateTask: (task: TaskItem, note?: string) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -73,6 +91,7 @@ export const api = {
         status: task.status,
         blockedByTaskId: task.blockedByTaskId,
         agentId: task.agentId,
+        note,
       }),
     }),
   deleteTask: (id: string) =>
