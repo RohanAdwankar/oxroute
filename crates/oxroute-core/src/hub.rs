@@ -2231,7 +2231,16 @@ impl Hub {
 
     /// `images` are file names under the attachments directory: a task made
     /// from a screenshot is often clearer than one made from a sentence.
-    pub fn create_task(&self, text: &str, agent_id: &str, images: Vec<String>) -> Result<TaskItem> {
+    /// An agent with nothing running is told about work it has just been
+    /// given, because otherwise the task would sit there until somebody
+    /// happened to say something to it. An agent mid-turn is left alone:
+    /// it is handed whatever is open when that turn ends.
+    pub async fn create_task(
+        self: &Arc<Self>,
+        text: &str,
+        agent_id: &str,
+        images: Vec<String>,
+    ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty() || !images.is_empty(), "a task cannot be empty");
         if !agent_id.is_empty() {
@@ -2252,6 +2261,25 @@ impl Hub {
         };
         self.store.save_task(&task)?;
         self.emit(Event::Sync);
+
+        let idle = self
+            .store
+            .agent(agent_id)
+            .ok()
+            .flatten()
+            .is_some_and(|agent| agent.status != AgentStatus::Working);
+        if idle {
+            self.ask_quietly(
+                agent_id,
+                &format!(
+                    "A task was added to your list: {}\n\nStart on it. Mark it complete when \
+                     it is done, or blocked or waiting_for_human if you cannot go further.",
+                    task.text,
+                ),
+                "Given a task",
+            )
+            .await?;
+        }
         Ok(task)
     }
 

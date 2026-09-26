@@ -723,14 +723,14 @@ async fn create_task_with_images(
         .filter_map(|path| std::path::Path::new(path).file_name())
         .map(|name| name.to_string_lossy().to_string())
         .collect();
-    Ok(Json(hub.create_task(&text, &agent_id, names)?))
+    Ok(Json(hub.create_task(&text, &agent_id, names).await?))
 }
 
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![])?))
+    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![]).await?))
 }
 
 #[derive(Deserialize)]

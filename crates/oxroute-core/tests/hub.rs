@@ -1762,7 +1762,7 @@ async fn an_ordinary_message_still_folds_into_a_running_turn() {
 #[tokio::test]
 async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
 
     // Starting an agent on a task gives it the task, and the task follows.
     let moved = w.hub.hand_off_task(&task.id, false, None).await.unwrap();
@@ -1786,7 +1786,7 @@ async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
 #[tokio::test]
 async fn a_task_nobody_has_cannot_be_forked() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
     // There is no session to branch, and inventing one would not be a fork.
     assert!(w.hub.hand_off_task(&task.id, true, None).await.is_err());
 }
@@ -1794,7 +1794,7 @@ async fn a_task_nobody_has_cannot_be_forked() {
 #[tokio::test]
 async fn a_task_changes_status_only_with_a_note_saying_why() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
 
     // A claim about work with nothing said about it is refused.
     assert!(w
@@ -1824,7 +1824,7 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
 #[tokio::test]
 async fn notes_go_when_the_task_does() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
     w.hub.add_task_note(&task.id, "started on it", "").unwrap();
     assert_eq!(w.hub.task_notes().unwrap().len(), 1);
 
@@ -1863,7 +1863,7 @@ async fn the_task_list_is_a_queue_that_can_be_rearranged() {
         w.hub.tasks().unwrap().into_iter().map(|task| task.text).collect::<Vec<_>>()
     };
     for text in ["first", "second", "third"] {
-        w.hub.create_task(text, "", vec![]).unwrap();
+        w.hub.create_task(text, "", vec![]).await.unwrap();
     }
     // A new task joins the end of the queue rather than the front.
     assert_eq!(order(), vec!["first", "second", "third"]);
@@ -2051,4 +2051,54 @@ async fn a_question_the_interface_asks_does_not_look_like_one_you_asked() {
     assert_eq!(asked[0].text, "Asked for a diagram");
     assert!(!added.iter().any(|entry| entry.kind == EntryKind::You));
     assert!(!added.iter().any(|entry| entry.text.contains("at length")));
+}
+
+#[tokio::test]
+async fn work_given_to_an_idle_agent_sets_it_going() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let turns = w.calls.lock().unwrap().started.len();
+
+    w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+    // It is told about the work, and then carries on with it, so what
+    // matters is that the first turn it takes is about the task.
+    assert!(settle(|| w.calls.lock().unwrap().started.len() > turns).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[turns].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(texts[0].contains("paint the shed"));
+}
+
+#[tokio::test]
+async fn work_given_to_a_busy_agent_waits_for_the_turn_it_is_in() {
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(400), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    // Mid-turn: nothing is said now, because the turn that is running is
+    // handed whatever is open when it ends.
+    w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(texts[0].contains("still has open work"));
+}
+
+#[tokio::test]
+async fn a_task_nobody_has_starts_nothing() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let turns = w.calls.lock().unwrap().started.len();
+
+    w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), turns);
 }
