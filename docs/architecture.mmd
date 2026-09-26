@@ -1,35 +1,59 @@
 graph LR
-    slack[Slack]
-    webhook[Webhook]
+    slack[Slack source]
+    daemon[HTTP daemon]
     hub[Hub]
     store[Store]
+    model[Model]
+    config[Config]
+    harness[Harness trait]
     codex[Codex harness]
     claude[Claude Code harness]
-    daemon[HTTP daemon]
-    web[Web UI]
-    tui[Terminal UI]
+    rpc[Codex RPC]
+    progress[Progress]
+    naming[Naming]
     tags[Tags and boards]
     diagram[Diagram]
+    dashboard[Dashboard]
+    web[Web UI]
+    tui[Terminal UI]
 
     slack --> hub
-    webhook --> daemon
     web --> daemon
     tui --> daemon
     daemon --> hub
     daemon --> diagram
+    daemon --> config
     hub --> store
-    hub --> codex
-    hub --> claude
+    hub --> harness
     hub --> tags
+    hub --> progress
+    hub --> naming
+    hub --> dashboard
+    hub --> model
+    hub --> config
+    hub --> slack
+    harness --> codex
+    harness --> claude
+    codex --> rpc
+    store --> model
+    tags --> model
+    dashboard --> slack
+    diagram --> harness
 
 %% OXDRAW CODE slack crates/oxroute-core/src/source/slack.rs
-%% OXDRAW CODE webhook crates/oxroute-daemon/src/main.rs def:ingest
+%% OXDRAW CODE daemon crates/oxroute-daemon/src/main.rs def:ingest
 %% OXDRAW CODE hub crates/oxroute-core/src/hub.rs def:Hub
 %% OXDRAW CODE store crates/oxroute-core/src/store.rs def:Store
+%% OXDRAW CODE model crates/oxroute-core/src/model.rs def:Signal
+%% OXDRAW CODE config crates/oxroute-core/src/config.rs def:Config
+%% OXDRAW CODE harness crates/oxroute-core/src/agent/mod.rs def:Harness
 %% OXDRAW CODE codex crates/oxroute-core/src/agent/codex.rs
 %% OXDRAW CODE claude crates/oxroute-core/src/agent/claude.rs
-%% OXDRAW CODE daemon crates/oxroute-daemon/src/main.rs
-%% OXDRAW CODE web app/page.tsx
-%% OXDRAW CODE tui crates/oxroute-tui/src/main.rs
+%% OXDRAW CODE rpc crates/oxroute-core/src/rpc.rs
+%% OXDRAW CODE progress crates/oxroute-core/src/progress.rs
+%% OXDRAW CODE naming crates/oxroute-core/src/naming.rs
 %% OXDRAW CODE tags crates/oxroute-core/src/tags.rs def:arrange
 %% OXDRAW CODE diagram crates/oxroute-daemon/src/diagram.rs
+%% OXDRAW CODE dashboard crates/oxroute-core/src/dashboard.rs
+%% OXDRAW CODE web app/page.tsx
+%% OXDRAW CODE tui crates/oxroute-tui/src/main.rs
