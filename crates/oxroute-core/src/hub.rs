@@ -2393,8 +2393,8 @@ impl Hub {
     /// `approved` is a person signing off. An agent finishing its work says
     /// `Done`; whether the work is done is not the same question, and the
     /// answer to it belongs to whoever asked for the work.
-    pub fn update_task(
-        &self,
+    pub async fn update_task(
+        self: &Arc<Self>,
         id: &str,
         text: &str,
         status: TaskStatus,
@@ -2442,6 +2442,18 @@ impl Hub {
             self.add_task_note(id, note, "")?;
         }
         self.emit(Event::Sync);
+
+        // Work that has just become open is work to start. Unblocking a task
+        // is the same instruction as writing a new one, so it reaches an idle
+        // agent the same way rather than waiting for the next sweep.
+        if status == TaskStatus::Incomplete && current_status != status {
+            if let Ok(Some(agent)) = self.store.agent(&task.agent_id) {
+                if agent.status != AgentStatus::Working {
+                    let target = self.home_target(&agent.id).await;
+                    self.clone().carry_on_with_tasks(agent, target).await;
+                }
+            }
+        }
         Ok(task)
     }
 

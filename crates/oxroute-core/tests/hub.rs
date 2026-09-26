@@ -1812,12 +1812,14 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
     assert!(w
         .hub
         .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", None, true)
+        .await
         .is_err());
     assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Incomplete);
 
     let done = w
         .hub
         .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"), true)
+        .await
         .unwrap();
     assert_eq!(done.status, TaskStatus::Complete);
     let notes = w.hub.task_notes().unwrap();
@@ -1829,6 +1831,7 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
     assert!(w
         .hub
         .update_task(&task.id, "paint the shed blue", TaskStatus::Complete, "", "", None, true)
+        .await
         .is_ok());
     assert_eq!(w.hub.task_notes().unwrap().len(), 1);
 }
@@ -1893,6 +1896,7 @@ async fn the_task_list_is_a_queue_that_can_be_rearranged() {
     // Editing a task leaves it where it is.
     w.hub
         .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None, true)
+        .await
         .unwrap();
     assert_eq!(order(), vec!["third", "second, reworded", "first"]);
 }
@@ -2215,6 +2219,7 @@ async fn an_agent_says_done_and_a_person_says_complete() {
     let done = w
         .hub
         .update_task(&task.id, &task.text, TaskStatus::Done, "", "", Some("painted in a1b2c3d"), false)
+        .await
         .unwrap();
     assert_eq!(done.status, TaskStatus::Done);
 
@@ -2222,6 +2227,7 @@ async fn an_agent_says_done_and_a_person_says_complete() {
     assert!(w
         .hub
         .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("looks fine to me"), false)
+        .await
         .is_err());
     assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Done);
 
@@ -2229,8 +2235,68 @@ async fn an_agent_says_done_and_a_person_says_complete() {
     let approved = w
         .hub
         .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("approved"), true)
+        .await
         .unwrap();
     assert_eq!(approved.status, TaskStatus::Complete);
+}
+
+#[tokio::test]
+async fn work_that_becomes_open_again_is_handed_straight_back() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    // One task, blocked by a finished one, so the agent has nothing open and
+    // the carry-on loop leaves it alone.
+    let blocker = w.hub.create_task("buy the paint", &agent, vec![]).await.unwrap();
+    let waiting = w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+    w.hub
+        .update_task(
+            &waiting.id,
+            &waiting.text,
+            TaskStatus::Blocked,
+            &blocker.id,
+            &agent,
+            Some("no paint yet"),
+            false,
+        )
+        .await
+        .unwrap();
+    w.hub
+        .update_task(
+            &blocker.id,
+            &blocker.text,
+            TaskStatus::Complete,
+            "",
+            &agent,
+            Some("bought it"),
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status != AgentStatus::Working).await);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let turns = w.calls.lock().unwrap().started.len();
+
+    // Unblocking is the moment the work becomes work again.
+    w.hub
+        .update_task(
+            &waiting.id,
+            &waiting.text,
+            TaskStatus::Incomplete,
+            "",
+            &agent,
+            Some("the paint arrived"),
+            false,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        settle(|| w.calls.lock().unwrap().started.len() > turns).await,
+        "nothing was handed to the agent when the task opened",
+    );
 }
 
 #[tokio::test]
@@ -2242,6 +2308,7 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
     let task = w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
     w.hub
         .update_task(&task.id, &task.text, TaskStatus::Done, "", &agent, Some("painted it"), false)
+        .await
         .unwrap();
     let turns = w.calls.lock().unwrap().started.len();
 

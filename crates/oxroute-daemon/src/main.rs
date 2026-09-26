@@ -828,7 +828,8 @@ async fn update_task(
         &body.agent_id,
         body.note.as_deref(),
         body.approved,
-    )?))
+    )
+    .await?))
 }
 
 async fn delete_task(
