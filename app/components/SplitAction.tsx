@@ -57,10 +57,14 @@ export function SplitAction({
         title={hint ?? label}
         className={
           {
-            composer:
-              "flex h-[38px] w-[34px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
-            quiet:
-              "flex h-[38px] w-[34px] cursor-pointer items-center justify-center rounded-l-[3px] border border-edge bg-card text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+            composer: [
+              "flex h-[38px] cursor-pointer items-center justify-center border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+              menu.length > 0 ? "w-[34px] rounded-l-[3px]" : "w-[42px] rounded-[3px]",
+            ].join(" "),
+            quiet: [
+              "flex h-[38px] cursor-pointer items-center justify-center border border-edge bg-card text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              menu.length > 0 ? "w-[34px] rounded-l-[3px]" : "w-[42px] rounded-[3px]",
+            ].join(" "),
             toolbar:
               "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
@@ -68,6 +72,7 @@ export function SplitAction({
       >
         <Icon name={icon} />
       </button>
+      {menu.length > 0 && (
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -89,6 +94,7 @@ export function SplitAction({
       >
         <Icon name="chevronDown" size={11} />
       </button>
+      )}
       {open && (
         <div
           role="menu"

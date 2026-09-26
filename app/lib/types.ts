@@ -169,6 +169,8 @@ export interface BackendInfo {
   backend: Backend;
   fork: boolean;
   merge: boolean;
+  /** Whether a message can reach a turn already running. */
+  steer: boolean;
 }
 
 // -- tags and boards -------------------------------------------------------

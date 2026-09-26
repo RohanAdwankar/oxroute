@@ -2311,6 +2311,7 @@ impl Hub {
                         // Merging a fork means splicing what it said back
                         // into its parent, which is what inject is.
                         merge: can.inject,
+                        steer: can.steer,
                     }
                 })
                 .collect(),
@@ -2930,6 +2931,9 @@ pub struct BackendInfo {
     pub backend: Backend,
     pub fork: bool,
     pub merge: bool,
+    /// Whether something said mid-turn can reach the turn that is running.
+    /// Where it cannot, waiting and not waiting are the same act.
+    pub steer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

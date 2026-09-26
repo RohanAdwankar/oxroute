@@ -280,15 +280,37 @@ export function AgentPanel({
   };
 
   /// The same thing you would have said, kept as work to do instead.
-  const toTask = () => {
+  /// The same thing you would have said, kept as work instead -- including
+  /// a drawing, which until now only existed at the moment it was sent.
+  const toTask = async () => {
+    if (busy) return;
     const text = draft.trim();
-    if ((!text && uploads.length === 0) || busy) return;
+    const drawn = mode === "draw" ? await sketch.current?.export() : null;
+    const pictures = [...(drawn ? [drawn] : []), ...uploads.map((upload) => upload.file)];
+    if (!text && pictures.length === 0) return;
     setDraft("");
-    onTask(text, uploads.map((upload) => upload.file));
+    onTask(text, pictures);
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");
+    if (drawn) {
+      sketch.current?.clear();
+      setMode("type");
+    }
   };
+
+  // Drawing leaves the focus on the canvas, so tab is caught here as well
+  // as in the message box: after a sketch, that is where your hands are.
+  useEffect(() => {
+    if (mode !== "draw") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || event.shiftKey || isTyping(event.target)) return;
+      event.preventDefault();
+      void toTask();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const finishRename = () => {
     const name = nameDraft.trim();
@@ -668,9 +690,9 @@ export function AgentPanel({
               }
               // Tab files it instead: the same words, kept as work rather
               // than said now. There is nothing to tab to from here.
-              if (event.key === "Tab" && !event.shiftKey && mode === "type") {
+              if (event.key === "Tab" && !event.shiftKey && mode !== "diagram") {
                 event.preventDefault();
-                toTask();
+                void toTask();
               }
             }}
             rows={1}
@@ -685,15 +707,23 @@ export function AgentPanel({
             // reads as a different button.
             <SplitAction
               label="Send message"
-              hint={working ? "The agent is working, so this waits its turn" : "Send message"}
+              hint={
+                working
+                  ? can.steer
+                    ? "The agent is working, so this waits its turn"
+                    : "The agent is working; it will read this when the turn ends"
+                  : "Send message"
+              }
               icon="send"
               onClick={() => send(working)}
               disabled={busy || !canSend}
               menu={[
-                ...(working
+                // Only where it means something: a harness that cannot take
+                // input mid-turn makes "now" and "next" the same thing.
+                ...(working && can.steer
                   ? [{ label: "Send now, into the turn", icon: "queue" as const, onClick: () => send(false) }]
                   : []),
-                { label: "Add to the task list", icon: "tasks" as const, onClick: toTask },
+                { label: "Add to the task list", icon: "tasks" as const, onClick: () => void toTask() },
               ]}
               variant="composer"
             />
@@ -713,8 +743,8 @@ export function AgentPanel({
               icon="send"
               onClick={() => send(working)}
               disabled={busy || !canSend}
-              menu={
-                working
+              menu={[
+                ...(working && can.steer
                   ? [
                       {
                         label: "Send now, into the turn",
@@ -722,8 +752,13 @@ export function AgentPanel({
                         onClick: () => send(false),
                       },
                     ]
-                  : []
-              }
+                  : []),
+                // A drawn change is an edit to a file, and a task cannot
+                // carry one; a picture it can.
+                ...(mode === "draw"
+                  ? [{ label: "Add to the task list", icon: "tasks" as const, onClick: () => void toTask() }]
+                  : []),
+              ]}
               variant="composer"
             />
           )}
