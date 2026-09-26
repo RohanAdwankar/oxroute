@@ -56,6 +56,8 @@ export default function Home() {
   const [open, setOpen] = useState<string | null>(null);
   const [panes, setPanes] = useState<string[]>([]);
   const [paneWidths, setPaneWidths] = useState<number[]>([]);
+  /// Which pane is waiting for a session to be opened beside it.
+  const [pairing, setPairing] = useState<number | null>(null);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -337,21 +339,27 @@ export default function Home() {
     setUrlAgent(next[0] ?? null);
   };
 
+  /// Put a session in its own pane beside the one at `index`, sharing that
+  /// pane's width with it.
+  const placeBeside = useCallback((index: number, agent: string) => {
+    setPanes((current) =>
+      current.includes(agent)
+        ? current
+        : [...current.slice(0, index + 1), agent, ...current.slice(index + 1)],
+    );
+    setPaneWidths((current) => {
+      const widths = [...current];
+      const split = (widths[index] ?? 1) / 2;
+      widths[index] = split;
+      widths.splice(index + 1, 0, split);
+      return widths;
+    });
+  }, []);
+
   const forkHere = (index: number, agent: string) =>
     run(async () => {
       const { agent: child } = await api.forkLocal(agent);
-      setPanes((current) => [
-        ...current.slice(0, index + 1),
-        child.id,
-        ...current.slice(index + 1),
-      ]);
-      setPaneWidths((current) => {
-        const widths = [...current];
-        const split = (widths[index] ?? 1) / 2;
-        widths[index] = split;
-        widths.splice(index + 1, 0, split);
-        return widths;
-      });
+      placeBeside(index, child.id);
     });
 
   const mergePane = (index: number, agent: string) =>
@@ -492,7 +500,7 @@ export default function Home() {
       // With a pane open the fleet is not on screen, so the keys that act on
       // a card you can no longer see do nothing: reading an agent should not
       // be one letter away from swapping to another one.
-      const reading = open !== null && !selected;
+      const reading = open !== null && !selected && pairing === null;
 
       switch (event.key) {
         case "j":
@@ -520,6 +528,7 @@ export default function Home() {
           return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
+          if (pairing !== null) return setPairing(null);
           if (open) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
@@ -733,7 +742,7 @@ export default function Home() {
           </>
         ) : null}
 
-        {open ? (
+        {open && pairing === null ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
             {panes.map((id, index) => {
               const view = details[id];
@@ -761,12 +770,18 @@ export default function Home() {
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}
+                      onOpenBeside={() => setPairing(index)}
                       onMerge={
                         view.timeline.some((entry) => entry.kind === "forkedFrom")
                           ? () => void mergePane(index, id)
                           : null
                       }
-                      onOpenAgent={showAgent}
+                      onOpenAgent={(target) =>
+                        // A fork and its parent are usually side by side by
+                        // the time one links to the other. Following the
+                        // link should not throw that away.
+                        panes.includes(target) ? setUrlAgent(target) : showAgent(target)
+                      }
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
@@ -817,6 +832,7 @@ export default function Home() {
             messages={snapshot.messages}
             watch={watch && !showArchived && selected === null}
             routing={selected}
+            beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
@@ -824,6 +840,13 @@ export default function Home() {
             vim={vim && !jump}
             onToggle={toggle}
             onOpen={(id) => {
+              // Picked as a companion rather than as somewhere to go.
+              if (pairing !== null) {
+                placeBeside(pairing, id);
+                setPairing(null);
+                setFocus("fleet");
+                return;
+              }
               clearRouting();
               showAgent(id);
             }}
