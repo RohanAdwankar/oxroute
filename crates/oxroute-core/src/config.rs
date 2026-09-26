@@ -184,6 +184,22 @@ pub struct Config {
     pub diagram_path: String,
 }
 
+/// The repository a directory is in, if it is in one.
+///
+/// A checkout is what a diagram can describe and what its code links are
+/// relative to; a directory that is not in one has no architecture to draw.
+pub fn repository_of(from: &Path) -> Option<PathBuf> {
+    let mut here = from.to_path_buf();
+    loop {
+        if here.join(".git").exists() {
+            return Some(here);
+        }
+        if !here.pop() {
+            return None;
+        }
+    }
+}
+
 fn home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
@@ -406,15 +422,20 @@ impl Config {
         Self::load()
     }
 
-    /// An agent's architecture diagram: `diagram_path` under its working
-    /// directory, unless the setting is already absolute.
+    /// An agent's architecture diagram: `diagram_path` under the repository
+    /// it works in, unless the setting is already absolute.
+    ///
+    /// The repository rather than the working directory, because a diagram
+    /// describes a codebase and its code links are written relative to the
+    /// root -- an agent working in a subdirectory should find the same one
+    /// as an agent working at the top.
     pub fn diagram_for(&self, cwd: &str) -> PathBuf {
         let path = expand(&self.diagram_path);
         if path.is_absolute() {
             return path;
         }
-        let cwd = if cwd.is_empty() { self.workspace.as_str() } else { cwd };
-        expand(cwd).join(path)
+        let here = expand(if cwd.is_empty() { self.workspace.as_str() } else { cwd });
+        repository_of(&here).unwrap_or(here).join(path)
     }
 
     /// The workspace, as a path rather than as the string a person typed.
@@ -647,5 +668,51 @@ stall_timeout = 120.0
     #[test]
     fn free_space_on_a_real_path_is_plausible() {
         assert!(free_bytes(Path::new("/")) > 0);
+    }
+}
+
+#[cfg(test)]
+mod repository_tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_finds_the_repository_it_sits_in() {
+        let scratch = std::env::temp_dir().join(format!("oxroute-repo-{}", std::process::id()));
+        let deep = scratch.join("crates").join("thing").join("src");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(scratch.join(".git")).unwrap();
+
+        // From anywhere inside it, the root is the same place.
+        assert_eq!(repository_of(&deep).as_deref(), Some(scratch.as_path()));
+        assert_eq!(repository_of(&scratch).as_deref(), Some(scratch.as_path()));
+
+        // And a directory that is not in a checkout is not in one.
+        let loose = std::env::temp_dir().join(format!("oxroute-loose-{}", std::process::id()));
+        std::fs::create_dir_all(&loose).unwrap();
+        let found = repository_of(&loose);
+        assert!(
+            found.as_deref() != Some(loose.as_path()),
+            "a directory with no .git should not report itself as a repository"
+        );
+
+        std::fs::remove_dir_all(&scratch).ok();
+        std::fs::remove_dir_all(&loose).ok();
+    }
+
+    #[test]
+    fn a_diagram_belongs_to_the_repository_not_the_subdirectory() {
+        let scratch = std::env::temp_dir().join(format!("oxroute-diag-{}", std::process::id()));
+        let deep = scratch.join("crates").join("core");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(scratch.join(".git")).unwrap();
+
+        let config = Config::load_from(Path::new("/nonexistent/oxroute.toml"))
+            .expect("a config with nothing set");
+        assert_eq!(
+            config.diagram_for(&deep.to_string_lossy()),
+            scratch.join("docs/architecture.mmd"),
+            "a diagram belongs to the repository, not the directory below it",
+        );
+        std::fs::remove_dir_all(&scratch).ok();
     }
 }

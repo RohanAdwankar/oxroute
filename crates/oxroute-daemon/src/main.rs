@@ -949,12 +949,18 @@ fn diagram_of(hub: &Hub, id: &str) -> Result<(oxroute_core::Agent, std::path::Pa
     Ok((agent, path))
 }
 
+/// Where an agent's code is: the repository it works in, or failing that
+/// the directory it works in.
 fn workdir(hub: &Hub, agent: &oxroute_core::Agent) -> String {
-    if agent.cwd.is_empty() {
-        hub.config.workspace_path().display().to_string()
+    let here = if agent.cwd.is_empty() {
+        hub.config.workspace_path()
     } else {
-        agent.cwd.clone()
-    }
+        std::path::PathBuf::from(&agent.cwd)
+    };
+    oxroute_core::config::repository_of(&here)
+        .unwrap_or(here)
+        .display()
+        .to_string()
 }
 
 /// An agent's diagram as the composer draws it: the picture, and where
@@ -1066,6 +1072,15 @@ async fn diagram_create(
 ) -> Result<Json<serde_json::Value>, Failed> {
     let (agent, path) = diagram_of(&hub, &id)?;
     let root = workdir(&hub, &agent);
+    // A diagram describes a codebase. Asking an agent to draw one for a
+    // directory that is not a checkout produces a picture of nothing, with
+    // code links pointing at files that are not there.
+    if oxroute_core::config::repository_of(std::path::Path::new(&root)).is_none() {
+        return Err(Failed(anyhow::anyhow!(
+            "{root} is not a repository, so there is no architecture to draw. \
+             Point this session at a checkout, or set [diagram] path to one."
+        )));
+    }
     let request = diagram::create_request(&path, std::path::Path::new(&root), &body.about);
     let said = match body.about.trim() {
         "" => "Asked for a diagram of the architecture".to_string(),
