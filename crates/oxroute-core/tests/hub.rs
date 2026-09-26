@@ -1823,3 +1823,27 @@ async fn notes_go_when_the_task_does() {
     w.hub.delete_task(&task.id).unwrap();
     assert!(w.hub.task_notes().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn an_agent_is_told_who_else_is_in_its_working_directory() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the first")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+
+    // Alone in the tree, there is nobody to mention.
+    let first = w.calls.lock().unwrap().started[0].1.clone();
+    let texts: Vec<&str> = first.iter().filter_map(TurnInput::as_text).collect();
+    assert!(!texts.iter().any(|text| text.contains("Other sessions are working in")));
+
+    // A second agent shares the workspace, so each is told about the other.
+    w.hub.accept(signal("200.0", "200.0", "the second")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let second = w.calls.lock().unwrap().started[1].1.clone();
+    let texts: Vec<&str> = second.iter().filter_map(TurnInput::as_text).collect();
+    let shared = texts
+        .iter()
+        .find(|text| text.contains("Other sessions are working in"))
+        .expect("the second agent was not told about the first");
+    assert!(shared.contains("the first"));
+    assert!(shared.contains("git worktree"));
+}

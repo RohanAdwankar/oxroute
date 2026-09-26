@@ -1442,6 +1442,29 @@ impl Hub {
             agent.id,
         )));
 
+        // Agents share a working directory by default, and a fork always
+        // shares its parent's, so an agent can be one of several hands in
+        // one tree without anything having said so. What to do about it is
+        // its own judgement -- a worktree, or just looking before it
+        // commits -- but it cannot judge what it does not know.
+        let sharing: Vec<String> = self
+            .store
+            .agents(usize::MAX)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|other| other.id != agent.id && other.cwd == agent.cwd)
+            .map(|other| other.name)
+            .collect();
+        if !sharing.is_empty() {
+            inputs.push(TurnInput::text(format!(
+                "Other sessions are working in {}: {}. Whatever you do there, look at what \
+                 is already uncommitted before you commit, so you do not take work that is \
+                 not yours, and make a git worktree if you need a tree to yourself.",
+                agent.cwd,
+                sharing.join(", "),
+            )));
+        }
+
         if signal.is_some() {
             // Someone asked for something, so whatever the agent was
             // carrying on with is no longer its own errand.
