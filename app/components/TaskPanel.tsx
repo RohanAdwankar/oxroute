@@ -55,10 +55,7 @@ export function TaskPanel({
   active,
   agents,
   named,
-  currentAgent,
   busy,
-  onClose,
-  onCreate,
   onUpdate,
   onHandOff,
   onCorrect,
@@ -76,10 +73,7 @@ export function TaskPanel({
   agents: Agent[];
   /// Every agent, live or archived, for reading a name back.
   named: Agent[];
-  currentAgent: string | null;
   busy: boolean;
-  onClose: () => void;
-  onCreate: (text: string, agent: string) => void;
   /// A status change carries why it changed, and only a person approves.
   onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
   /// Move a task to an agent that does not exist yet.
@@ -88,7 +82,6 @@ export function TaskPanel({
   onCorrect: (task: TaskItem, text: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   /// A status waiting on its account of itself.
@@ -100,7 +93,6 @@ export function TaskPanel({
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
-  const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
   // A flowchart of things that do not depend on each other is a list with
   // extra steps, so it is drawn only once something is waiting on something.
@@ -319,42 +311,14 @@ export function TaskPanel({
   </Row>;
   };
 
-  const create = () => {
-    const text = draft.trim();
-    if (!text || busy) return;
-    onCreate(text, currentAgent ?? "");
-    setDraft("");
-  };
-
   return (
     <aside className="flex h-full w-full shrink-0 flex-col border-l border-rule bg-card">
-      <header className="flex h-[46px] shrink-0 items-center gap-3 border-b border-rule px-5">
-        <span className="text-[15px] font-semibold">Tasks</span>
-        <span className="flex-1" />
-        <button type="button" onClick={onClose} aria-label="close tasks" title="Close tasks" className="flex h-8 w-8 cursor-pointer items-center justify-center text-faint hover:text-ink">
-          <Icon name="collapse" />
-        </button>
-      </header>
-
-      <div className="flex shrink-0 gap-2 border-b border-rule p-4">
-        <input
-          data-task-input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") create();
-          }}
-          placeholder={currentAgent ? `Add task for ${currentName}` : "Add a task"}
-          className="min-w-0 flex-1 border-b border-edge bg-transparent px-1 py-2 text-[13px] outline-none placeholder:text-faint"
-        />
-        <button type="button" onClick={create} disabled={busy || !draft.trim()} aria-label="add task" title="Add task" className="flex h-9 w-9 cursor-pointer items-center justify-center text-ink disabled:cursor-not-allowed disabled:opacity-30">
-          <Icon name="plus" />
-        </button>
-      </div>
-
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
-          <p className="px-5 py-6 text-[12.5px] text-faint">No tasks yet.</p>
+          <p className="px-5 py-6 text-[12.5px] text-faint">
+            No tasks yet. Type in a conversation and choose &ldquo;add to the task
+            list&rdquo;, or press tab.
+          </p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -656,9 +656,7 @@ export default function Home() {
             if (row?.kind === "band") return setTasksDone((shown) => !shown);
             // The band is a row but not a task, so the two counts differ.
             const nth = tasks.slice(0, taskAt).filter((entry) => entry.kind === "task").length;
-            const edit = document.querySelectorAll<HTMLElement>("[data-task-open]")[nth];
-            if (edit) edit.click();
-            else document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
+            document.querySelectorAll<HTMLElement>("[data-task-open]")[nth]?.click();
             return;
           }
           // What is in front of you is a conversation, so enter starts
@@ -1035,13 +1033,7 @@ export default function Home() {
             named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
-            currentAgent={panes.at(-1) ?? null}
             busy={busy}
-            onClose={() => {
-              showTasks(false);
-              setFocus("fleet");
-            }}
-            onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
             onUpdate={(task, note, approved) =>
               void run(() => api.updateTask(task, note, approved))
             }
