@@ -2,11 +2,16 @@
 
 import { useEffect } from "react";
 
-import { type Theme } from "../lib/keys";
+import { type Theme, type Verbose } from "../lib/keys";
 
 const LOOK: { value: Theme; label: string; detail: string }[] = [
   { value: "light", label: "Light", detail: "Warm paper" },
   { value: "dark", label: "Dark", detail: "The same palette, read the other way round" },
+];
+
+const NOISE: { value: Verbose; label: string; detail: string }[] = [
+  { value: "off", label: "Off", detail: "Every tool call behind its toggle" },
+  { value: "on", label: "Verbose", detail: "The latest one stays in view" },
 ];
 
 const HINTS: { value: boolean; label: string; detail: string }[] = [
@@ -23,12 +28,16 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
 export function Settings({
   theme,
   onTheme,
+  verbose,
+  onVerbose,
   vim,
   onVim,
   onClose,
 }: {
   theme: Theme;
   onTheme: (next: Theme) => void;
+  verbose: Verbose;
+  onVerbose: (next: Verbose) => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -57,6 +66,13 @@ export function Settings({
           options={LOOK}
           chosen={theme}
           onChoose={onTheme}
+        />
+        <Choice
+          title="Tool calls"
+          detail="How much of what an agent is doing you see."
+          options={NOISE}
+          chosen={verbose}
+          onChoose={onVerbose}
         />
         <Choice
           title="Keyboard"

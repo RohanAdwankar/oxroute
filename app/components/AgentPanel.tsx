@@ -100,6 +100,7 @@ export function AgentPanel({
   onArchive,
   busy,
   focusEntry,
+  verbose,
   onSendDiagram,
   onCreateDiagram,
   say,
@@ -138,6 +139,9 @@ export function AgentPanel({
   onArchive: (archived: boolean) => void;
   busy: boolean;
   focusEntry: number | null;
+  /// Keep the call the agent is making now in view, rather than behind its
+  /// toggle with the rest.
+  verbose: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
   const [uploads, setUploads] = useState<Upload[]>([]);
@@ -565,17 +569,25 @@ export function AgentPanel({
           {view.timeline.length === 0 ? (
             <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
           ) : (
-            items.map((item) => {
+            items.map((item, at) => {
               if ("tools" in item) {
                 const first = item.tools[0];
+                // What it is doing right now is news; what it did twenty
+                // calls ago is history, and history stays folded.
+                const latest = verbose && at === items.length - 1 ? item.tools.at(-1) : null;
                 return (
                   <details key={`tools-${first.id}`} className="group border-b border-hair py-2">
                     <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
                       <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
                       <span className="w-2 text-center group-open:rotate-90">›</span>
-                      <span>
+                      <span className="shrink-0">
                         {item.tools.length} tool {item.tools.length === 1 ? "call" : "calls"}
                       </span>
+                      {latest && (
+                        <span className="min-w-0 truncate text-mid">
+                          {(latest.detail || latest.text).split("\n")[0]}
+                        </span>
+                      )}
                     </summary>
                     <div className="ml-[52px] mt-1 flex flex-col">
                       {item.tools.map((entry) => (

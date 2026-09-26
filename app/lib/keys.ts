@@ -171,6 +171,10 @@ function choice<T extends string>(key: string, attribute: string, values: readon
   };
 }
 
+/** Whether the call an agent is making right now stays in view. */
+export type Verbose = "off" | "on";
+export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);
+
 /** Paper or ink: the same palette, read the other way round. */
 export type Theme = "light" | "dark";
 export const theme = choice<Theme>("oxroute.theme", "theme", ["light", "dark"]);

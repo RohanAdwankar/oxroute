@@ -20,6 +20,7 @@ import {
   LETTERS,
   defaultVimMode,
   theme,
+  verbose,
   getVimMode,
   isTyping,
   setVimMode,
@@ -90,6 +91,7 @@ export default function Home() {
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
+  const loud = useSyncExternalStore(verbose.subscribe, verbose.get, verbose.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -796,6 +798,8 @@ export default function Home() {
         <Settings
           theme={tone}
           onTheme={theme.set}
+          verbose={loud}
+          onVerbose={verbose.set}
           vim={vim}
           onVim={setVimMode}
           onClose={() => setSettings(false)}
@@ -950,6 +954,7 @@ export default function Home() {
                         void run(() => api.archive(id, archived));
                       }}
                       focusEntry={panes.length === 1 ? focusEntry : null}
+                      verbose={loud === "on"}
                     />
                   ) : (
                     <div className="flex flex-1 items-center justify-center text-[12px] text-faint">
