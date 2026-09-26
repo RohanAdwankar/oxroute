@@ -213,6 +213,9 @@ pub struct Hub {
 pub struct Chain {
     pub turns: u32,
     pub shape: String,
+    /// Whether a person has already been told this chain gave up. Said once
+    /// per giving up, not once per look.
+    pub told: bool,
 }
 
 /// How many turns an agent may take on its own before a person is asked.
@@ -244,6 +247,8 @@ fn carry_on(tasks: &[TaskItem], agent_id: &str, chain: &Chain) -> Option<Vec<Tas
     if open.is_empty() || chain.turns >= CHAIN_LIMIT {
         return None;
     }
+    // The list has not moved since it was last handed over, so handing it
+    // over again would say the same thing to an agent that already heard it.
     if chain.turns > 0 && chain.shape == shape_of(tasks, agent_id) {
         return None;
     }
@@ -500,6 +505,7 @@ impl Hub {
                     }
                     Err(error) => tracing::error!(%error, "stall sweep failed"),
                 }
+                self.hand_out_open_work().await;
                 self.refresh_dashboard().await;
             }
         });
@@ -1651,6 +1657,23 @@ impl Hub {
     ///
     /// The future is erased because this sits inside a turn and starts
     /// another: a turn that can start a turn is a type that contains itself.
+    /// Hand every idle agent the work it has been given.
+    ///
+    /// A turn ending is not the only way an agent stops: it can be
+    /// interrupted, its turn can fail, or the daemon can restart under it.
+    /// An agent that is not running is an agent that could be doing its
+    /// tasks, so the list is offered to it wherever it stopped.
+    pub async fn hand_out_open_work(self: &Arc<Self>) {
+        let Ok(agents) = self.store.agents(usize::MAX) else { return };
+        for agent in agents {
+            if agent.status == AgentStatus::Working {
+                continue;
+            }
+            let target = self.home_target(&agent.id).await;
+            self.clone().carry_on_with_tasks(agent, target).await;
+        }
+    }
+
     fn carry_on_with_tasks(
         self: Arc<Self>,
         agent: Agent,
@@ -1661,12 +1684,13 @@ impl Hub {
         let mut chains = self.chains.lock().await;
         let chain = chains.get(&agent.id).cloned().unwrap_or_default();
         let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
-            chains.remove(&agent.id);
             let stuck = tasks
                 .iter()
                 .filter(|task| task.agent_id == agent.id && task.status == TaskStatus::Incomplete)
                 .count();
-            if stuck > 0 && chain.turns > 0 {
+            if stuck > 0 && chain.turns > 0 && !chain.told {
+                chains.insert(agent.id.clone(), Chain { told: true, ..chain.clone() });
+                drop(chains);
                 self.emit(Event::Notice {
                     text: format!("{} stopped with {stuck} task(s) still open", agent.name),
                 });
@@ -1675,7 +1699,11 @@ impl Hub {
         };
         chains.insert(
             agent.id.clone(),
-            Chain { turns: chain.turns + 1, shape: shape_of(&tasks, &agent.id) },
+            Chain {
+                turns: chain.turns + 1,
+                shape: shape_of(&tasks, &agent.id),
+                told: false,
+            },
         );
         drop(chains);
 
@@ -2743,7 +2771,7 @@ mod task_tests {
     #[test]
     fn a_turn_that_moves_nothing_ends_the_chain() {
         let tasks = [mine("a", TaskStatus::Incomplete)];
-        let went_round = Chain { turns: 1, shape: shape_of(&tasks, "me") };
+        let went_round = Chain { turns: 1, shape: shape_of(&tasks, "me"), told: false };
         assert!(carry_on(&tasks, "me", &went_round).is_none());
 
         // The same list, with that task now finished and another started.
@@ -2754,7 +2782,7 @@ mod task_tests {
     #[test]
     fn a_chain_does_not_run_forever() {
         let tasks = [mine("a", TaskStatus::Incomplete)];
-        let long = Chain { turns: CHAIN_LIMIT, shape: String::new() };
+        let long = Chain { turns: CHAIN_LIMIT, shape: String::new(), told: false };
         assert!(carry_on(&tasks, "me", &long).is_none());
     }
 

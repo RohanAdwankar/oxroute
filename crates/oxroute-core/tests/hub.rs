@@ -2102,3 +2102,60 @@ async fn a_task_nobody_has_starts_nothing() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(w.calls.lock().unwrap().started.len(), turns);
 }
+
+#[tokio::test]
+async fn an_agent_that_stopped_without_finishing_is_handed_its_work_again() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    // Work it was given while something else was running, so no turn ended
+    // with it open and nothing has offered it since.
+    w.hub
+        .store
+        .save_task(&TaskItem {
+            id: "task_left".into(),
+            text: "paint the shed".into(),
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
+            agent_id: agent.clone(),
+            position: 0.0,
+            images: vec![],
+            created_at: now(),
+            updated_at: now(),
+        })
+        .unwrap();
+    // And it is stalled, as a restart or an interrupt leaves it.
+    w.hub.store.stall_agent(&agent, "oxroute restarted", now()).unwrap();
+    let turns = w.calls.lock().unwrap().started.len();
+
+    w.hub.hand_out_open_work().await;
+    assert!(settle(|| w.calls.lock().unwrap().started.len() > turns).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[turns].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(texts[0].contains("paint the shed"));
+}
+
+#[tokio::test]
+async fn an_agent_is_not_pestered_about_a_list_that_has_not_moved() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+    // Let it be told, and let the chain that follows run itself out.
+    let mut settled = 0;
+    while settled != w.calls.lock().unwrap().started.len() {
+        settled = w.calls.lock().unwrap().started.len();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    // The fake never touches its task, so every later look finds the same
+    // list and says nothing.
+    for _ in 0..3 {
+        w.hub.hand_out_open_work().await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+    }
+    assert_eq!(w.calls.lock().unwrap().started.len(), settled);
+}
