@@ -199,6 +199,8 @@ async fn serve() -> Result<()> {
         .route("/api/task-notes", get(task_notes))
         .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/tasks/{id}/move", post(move_task))
+        .route("/api/task-images", post(create_task_with_images))
+        .route("/api/attachments/{name}", get(attachment))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
@@ -426,23 +428,7 @@ async fn say_images(
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
             Some("queued") => queued = field.text().await? == "true",
-            Some("images") => {
-                let mimetype = field.content_type().unwrap_or_default().to_string();
-                if !mimetype.starts_with("image/") {
-                    return Err(Failed(anyhow::anyhow!("only image files are supported")));
-                }
-                let name = std::path::Path::new(field.file_name().unwrap_or("image"))
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("image");
-                let path = hub
-                    .config
-                    .attachments
-                    .join(format!("{}-{name}", oxroute_core::model::new_id("web")));
-                tokio::fs::write(&path, field.bytes().await?).await?;
-                images.push(path.to_string_lossy().to_string());
-            }
+            Some("images") => images.push(keep_image(&hub, field).await?),
             _ => {}
         }
     }
@@ -451,6 +437,54 @@ async fn say_images(
     }
     hub.say_to_with_images(&agent, &text, images, queued).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Write an uploaded picture into the attachments directory, and say where.
+///
+/// The name it is stored under is ours, not the browser's, so a file cannot
+/// name a place outside that directory or overwrite another upload.
+async fn keep_image(hub: &Arc<Hub>, field: axum::extract::multipart::Field<'_>) -> Result<String> {
+    let mimetype = field.content_type().unwrap_or_default().to_string();
+    anyhow::ensure!(mimetype.starts_with("image/"), "only image files are supported");
+    let given = std::path::Path::new(field.file_name().unwrap_or("image"))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("image");
+    let name = format!("{}-{given}", oxroute_core::model::new_id("web"));
+    let path = hub.config.attachments.join(&name);
+    tokio::fs::write(&path, field.bytes().await?).await?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Hand back a picture that came with a task.
+///
+/// Only a plain image file name: anything with a separator or a leading dot
+/// is refused before the disk is touched, so no name reaches outside the
+/// attachments directory.
+async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && std::path::Path::new(&name).file_name().and_then(|n| n.to_str()) == Some(name.as_str());
+    let kind = match name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase().as_str() {
+        _ if !plain => None,
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    };
+    let Some(kind) = kind else {
+        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
+    };
+    match tokio::fs::read(hub.config.attachments.join(&name)).await {
+        Ok(bytes) => Ok(Response::builder()
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .body(Body::from(bytes))?),
+        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -679,11 +713,35 @@ async fn move_task(
     Ok(Json(hub.move_task(&id, body.after.as_deref())?))
 }
 
+/// A task made in a composer, with whatever was attached to it.
+async fn create_task_with_images(
+    State(hub): Hubs,
+    mut form: Multipart,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    let mut text = String::new();
+    let mut agent_id = String::new();
+    let mut images = Vec::new();
+    while let Some(field) = form.next_field().await? {
+        match field.name() {
+            Some("text") => text = field.text().await?,
+            Some("agentId") => agent_id = field.text().await?,
+            Some("images") => images.push(keep_image(&hub, field).await?),
+            _ => {}
+        }
+    }
+    let names = images
+        .iter()
+        .filter_map(|path| std::path::Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .collect();
+    Ok(Json(hub.create_task(&text, &agent_id, names)?))
+}
+
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.create_task(&body.text, &body.agent_id)?))
+    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![])?))
 }
 
 #[derive(Deserialize)]

@@ -54,6 +54,7 @@ export function AgentPanel({
   can,
   onBack,
   onSay,
+  onTask,
   onInterrupt,
   onForkSlack,
   onForkLocal,
@@ -71,6 +72,8 @@ export function AgentPanel({
   can: BackendInfo;
   onBack: () => void;
   onSay: (text: string, images: File[], queued: boolean) => void;
+  /// Put what is in the composer on the task list instead of saying it.
+  onTask: (text: string, images: File[]) => void;
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
@@ -160,6 +163,17 @@ export function AgentPanel({
     following.current = true;
     setDraft("");
     onSay(text, uploads.map((upload) => upload.file), queued);
+    uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
+    setUploads([]);
+    setAttachmentError("");
+  };
+
+  /// The same thing you would have said, kept as work to do instead.
+  const toTask = () => {
+    const text = draft.trim();
+    if ((!text && uploads.length === 0) || busy) return;
+    setDraft("");
+    onTask(text, uploads.map((upload) => upload.file));
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");
@@ -527,20 +541,21 @@ export function AgentPanel({
               icon="queue"
               onClick={() => send(true)}
               disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-              menu={[{ label: "Send now", icon: "send", onClick: () => send(false) }]}
+              menu={[
+                { label: "Send now", icon: "send", onClick: () => send(false) },
+                { label: "Add to the task list", icon: "tasks", onClick: toTask },
+              ]}
               variant="composer"
             />
           ) : (
-            <button
-              type="button"
+            <SplitAction
+              label="Send message"
+              icon="send"
               onClick={() => send(false)}
               disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
-              aria-label="send message"
-              title="Send message"
-              className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Icon name="send" />
-            </button>
+              menu={[{ label: "Add to the task list", icon: "tasks", onClick: toTask }]}
+              variant="composer"
+            />
           )}
         </div>
       </footer>

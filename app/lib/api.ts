@@ -71,6 +71,14 @@ export const api = {
   /// of whoever has it.
   handOffTask: (id: string, fork: boolean, model?: string) =>
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
+  /// A task made in a composer, with whatever was attached to it.
+  createTaskWithImages: (text: string, agentId: string, images: File[]) => {
+    const form = new FormData();
+    form.append("text", text);
+    form.append("agentId", agentId);
+    images.forEach((image) => form.append("images", image));
+    return call<TaskItem>("/api/task-images", { method: "POST", body: form });
+  },
   /// Put a task after another one; no `after` means the top of the queue.
   moveTask: (id: string, after?: string) =>
     post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),

@@ -68,6 +68,8 @@ export interface TaskItem {
   agentId: string;
   createdAt: number;
   updatedAt: number;
+  /** Pictures that came with it, as names under the attachments route. */
+  images: string[];
 }
 
 export interface InboxItem {

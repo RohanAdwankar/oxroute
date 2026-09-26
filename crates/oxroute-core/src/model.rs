@@ -419,6 +419,10 @@ pub struct TaskItem {
     /// Where it sits in the queue. The list is read in this order, and a new
     /// task lands at the end of it.
     pub position: f64,
+    /// Pictures that came with it, as names under the attachments
+    /// directory. A screenshot is often the whole of what a task says.
+    #[serde(default)]
+    pub images: Vec<String>,
     pub created_at: f64,
     pub updated_at: f64,
 }
@@ -744,6 +748,7 @@ mod tests {
             blocked_by_task_id: String::new(),
             agent_id: "a".into(),
             position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 2.0,
         };

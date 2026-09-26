@@ -2173,9 +2173,11 @@ impl Hub {
         self.store.tasks()
     }
 
-    pub fn create_task(&self, text: &str, agent_id: &str) -> Result<TaskItem> {
+    /// `images` are file names under the attachments directory: a task made
+    /// from a screenshot is often clearer than one made from a sentence.
+    pub fn create_task(&self, text: &str, agent_id: &str, images: Vec<String>) -> Result<TaskItem> {
         let text = text.trim();
-        anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
+        anyhow::ensure!(!text.is_empty() || !images.is_empty(), "a task cannot be empty");
         if !agent_id.is_empty() {
             anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
         }
@@ -2188,6 +2190,7 @@ impl Hub {
             blocked_by_task_id: String::new(),
             agent_id: agent_id.into(),
             position: last + 1.0,
+            images,
             created_at: at,
             updated_at: at,
         };
@@ -2235,6 +2238,7 @@ impl Hub {
             blocked_by_task_id: blocked_by_task_id.into(),
             agent_id: agent_id.into(),
             position,
+            images: current.images.clone(),
             created_at,
             updated_at: now(),
         };
@@ -2510,6 +2514,7 @@ mod task_tests {
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
             position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 1.0,
         }

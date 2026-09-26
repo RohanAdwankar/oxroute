@@ -1641,6 +1641,7 @@ async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
             blocked_by_task_id: String::new(),
             agent_id: agent.id.clone(),
             position: 0.0,
+            images: vec![],
             created_at: now(),
             updated_at: now(),
         })
@@ -1685,6 +1686,7 @@ async fn an_agent_with_nothing_open_is_left_alone() {
                 blocked_by_task_id: String::new(),
                 agent_id: agent.id.clone(),
                 position: 0.0,
+                images: vec![],
                 created_at: now(),
                 updated_at: now(),
             })
@@ -1756,7 +1758,7 @@ async fn an_ordinary_message_still_folds_into_a_running_turn() {
 #[tokio::test]
 async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "").unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
 
     // Starting an agent on a task gives it the task, and the task follows.
     let moved = w.hub.hand_off_task(&task.id, false, None).await.unwrap();
@@ -1780,7 +1782,7 @@ async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
 #[tokio::test]
 async fn a_task_nobody_has_cannot_be_forked() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "").unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
     // There is no session to branch, and inventing one would not be a fork.
     assert!(w.hub.hand_off_task(&task.id, true, None).await.is_err());
 }
@@ -1788,7 +1790,7 @@ async fn a_task_nobody_has_cannot_be_forked() {
 #[tokio::test]
 async fn a_task_changes_status_only_with_a_note_saying_why() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "").unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
 
     // A claim about work with nothing said about it is refused.
     assert!(w
@@ -1818,7 +1820,7 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
 #[tokio::test]
 async fn notes_go_when_the_task_does() {
     let w = world(Mode::Auto, false).await;
-    let task = w.hub.create_task("paint the shed", "").unwrap();
+    let task = w.hub.create_task("paint the shed", "", vec![]).unwrap();
     w.hub.add_task_note(&task.id, "started on it", "").unwrap();
     assert_eq!(w.hub.task_notes().unwrap().len(), 1);
 
@@ -1857,7 +1859,7 @@ async fn the_task_list_is_a_queue_that_can_be_rearranged() {
         w.hub.tasks().unwrap().into_iter().map(|task| task.text).collect::<Vec<_>>()
     };
     for text in ["first", "second", "third"] {
-        w.hub.create_task(text, "").unwrap();
+        w.hub.create_task(text, "", vec![]).unwrap();
     }
     // A new task joins the end of the queue rather than the front.
     assert_eq!(order(), vec!["first", "second", "third"]);

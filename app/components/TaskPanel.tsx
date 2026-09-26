@@ -140,6 +140,19 @@ export function TaskPanel({
           {task.text}
         </button>
       )}
+      {task.images.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {task.images.map((image) => (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              key={image}
+              src={`/api/attachments/${encodeURIComponent(image)}`}
+              alt=""
+              className="max-h-28 rounded-[2px] border border-rule"
+            />
+          ))}
+        </div>
+      )}
       {mine.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
           {mine.map((note) => (
@@ -218,6 +231,11 @@ export function TaskPanel({
         >
           <option value="">Unassigned</option>
           {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+          {/* A task outlives the session that had it, and a value with no
+              option would read as unassigned and be lost on the next edit. */}
+          {task.agentId && !agents.some((agent) => agent.id === task.agentId) && (
+            <option value={task.agentId}>{names.get(task.agentId) ?? "a past session"} (archived)</option>
+          )}
           {/* An agent that does not exist yet, made by choosing it. */}
           <option value={NEW_AGENT}>Start a new agent on this</option>
           {task.agentId && <option value={FORK_AGENT}>Fork {names.get(task.agentId) ?? "it"}</option>}

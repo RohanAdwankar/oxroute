@@ -795,6 +795,9 @@ export default function Home() {
                       onSay={(text, images, queued) =>
                         void run(() => api.say(id, text, images, queued))
                       }
+                      onTask={(text, images) =>
+                        void run(() => api.createTaskWithImages(text, id, images))
+                      }
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}
