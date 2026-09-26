@@ -768,19 +768,23 @@ async fn create_task_with_images(
     Ok(Json(hub.create_task(&text, &agent_id, names).await?))
 }
 
-#[derive(Deserialize)]
-struct CorrectionBody {
-    text: String,
-}
-
-/// Saying no to finished work: the agent hears why, and the task is work
-/// again.
+/// Saying no to finished work, with whatever you drew or dropped on it:
+/// the words go to the agent the way anything said in the composer does.
 async fn correct_task(
     State(hub): Hubs,
     Path(id): Path<String>,
-    Json(body): Json<CorrectionBody>,
+    mut form: Multipart,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.correct_task(&id, &body.text).await?))
+    let mut text = String::new();
+    let mut images = Vec::new();
+    while let Some(field) = form.next_field().await? {
+        match field.name() {
+            Some("text") => text = field.text().await?,
+            Some("images") => images.push(keep_image(&hub, field).await?),
+            _ => {}
+        }
+    }
+    Ok(Json(hub.correct_task(&id, &text, images).await?))
 }
 
 async fn create_task(

@@ -2471,7 +2471,12 @@ impl Hub {
     /// Saying no to finished work is not a status change, it is a sentence
     /// about what is still wrong -- so it goes to the agent as a message,
     /// and the task goes back to being work.
-    pub async fn correct_task(self: &Arc<Self>, id: &str, text: &str) -> Result<TaskItem> {
+    pub async fn correct_task(
+        self: &Arc<Self>,
+        id: &str,
+        text: &str,
+        images: Vec<String>,
+    ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "say what is wrong with it");
         let tasks = self.store.tasks()?;
@@ -2484,7 +2489,13 @@ impl Hub {
             ..task.clone()
         };
         self.store.save_task(&back)?;
-        self.say_to(&task.agent_id, &format!("About \"{}\": {text}", task.text)).await?;
+        self.say_to_with_images(
+            &task.agent_id,
+            &format!("About \"{}\": {text}", task.text),
+            images,
+            false,
+        )
+        .await?;
         self.emit(Event::Sync);
         Ok(back)
     }

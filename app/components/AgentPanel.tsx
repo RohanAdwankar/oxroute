@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
 import { isTyping } from "../lib/keys";
-import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind } from "../lib/types";
+import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, TaskItem } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { draftFor, keepDraft } from "../lib/drafts";
@@ -87,6 +87,9 @@ export function AgentPanel({
   onBack,
   onSay,
   onTask,
+  correcting,
+  onCorrect,
+  onStopCorrecting,
   onInterrupt,
   onForkSlack,
   onForkLocal,
@@ -112,6 +115,10 @@ export function AgentPanel({
   onSay: (text: string, images: File[], queued: boolean) => void;
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => void;
+  /// Work you said "not yet" to: what you type next is the correction.
+  correcting: TaskItem | null;
+  onCorrect: (text: string, images: File[]) => void;
+  onStopCorrecting: () => void;
   /** Draw instead of describe: the edits become the message. */
   onSendDiagram: (edits: DiagramEdit[], note: string, queued: boolean) => void;
   onCreateDiagram: (about: string) => void;
@@ -281,11 +288,18 @@ export function AgentPanel({
     // to before saying it.
     following.current = true;
     setDraft("");
-    onSay(text, uploads.map((upload) => upload.file), queued);
+    const pictures = uploads.map((upload) => upload.file);
+    if (correcting) onCorrect(text, pictures);
+    else onSay(text, pictures, queued);
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");
   };
+
+  // Arguing with finished work puts your hands in the box it is argued in.
+  useEffect(() => {
+    if (correcting) composer.current?.focus();
+  }, [correcting]);
 
   /// The same thing you would have said, kept as work to do instead.
   /// The same thing you would have said, kept as work instead -- including
@@ -639,6 +653,20 @@ export function AgentPanel({
             </button>
           </div>
         )}
+        {correcting && (
+          <div className="flex items-center gap-2 px-[var(--pane-x)] pt-[6px] text-[11.5px] text-faint">
+            <Icon name="quote" size={13} />
+            <span className="min-w-0 flex-1 truncate text-mid">Not yet: {correcting.text}</span>
+            <button
+              type="button"
+              onClick={onStopCorrecting}
+              title="Say it to the agent instead"
+              className="cursor-pointer px-1 hover:text-ink"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {draggingImages && (
           <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop images to attach</p>
         )}
@@ -719,7 +747,7 @@ export function AgentPanel({
             }}
             rows={1}
             data-composer
-            placeholder={PLACEHOLDER[mode]}
+            placeholder={correcting ? "What is still wrong?" : PLACEHOLDER[mode]}
             className="min-h-[var(--cell)] flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
           />
           {mode === "type" ? (

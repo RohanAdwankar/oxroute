@@ -87,6 +87,8 @@ export default function Home() {
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
   const [shownTask, setShownTask] = useState<string | null>(null);
+  /// Finished work you have said "not yet" to, answered in its composer.
+  const [correcting, setCorrecting] = useState<TaskItem | null>(null);
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
@@ -909,6 +911,13 @@ export default function Home() {
                       onTask={(text, images) =>
                         void file(() => api.createTaskWithImages(text, id, images))
                       }
+                      correcting={correcting?.agentId === id ? correcting : null}
+                      onStopCorrecting={() => setCorrecting(null)}
+                      onCorrect={(text, images) => {
+                        const task = correcting;
+                        setCorrecting(null);
+                        if (task) void run(() => api.correctTask(task.id, text, images));
+                      }}
                       onSendDiagram={(edits, note, queued) =>
                         void run(async () => {
                           await api.sendDiagram(id, edits, note, queued);
@@ -1071,7 +1080,11 @@ export default function Home() {
             onUpdate={(task, note, approved) =>
               void run(() => api.updateTask(task, note, approved))
             }
-            onCorrect={(task, text) => void run(() => api.correctTask(task.id, text))}
+            onCorrect={(task) => {
+              if (!task.agentId) return say("Nobody has this task to correct");
+              setCorrecting(task);
+              if (!panes.includes(task.agentId)) showAgent(task.agentId);
+            }}
             onHandOff={(task, fork) =>
               void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
             }

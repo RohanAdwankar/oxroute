@@ -2233,7 +2233,20 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
         .unwrap();
     let turns = w.calls.lock().unwrap().started.len();
 
-    let back = w.hub.correct_task(&task.id, "the trim is still bare").await.unwrap();
+    // Saying what is wrong is saying something, so it can carry a picture
+    // of what is wrong with it.
+    let shown = w.hub.config.attachments.join("trim.png");
+    std::fs::create_dir_all(&w.hub.config.attachments).unwrap();
+    std::fs::write(&shown, b"png").unwrap();
+    let back = w
+        .hub
+        .correct_task(
+            &task.id,
+            "the trim is still bare",
+            vec![shown.to_string_lossy().to_string()],
+        )
+        .await
+        .unwrap();
 
     // It is work again, the agent was told why, and the reason is kept.
     assert_eq!(back.status, TaskStatus::Incomplete);
@@ -2250,6 +2263,12 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
         })
         .await,
         "the agent was never told what was wrong",
+    );
+    assert!(
+        w.calls.lock().unwrap().started[turns..].iter().any(|(_, inputs)| inputs
+            .iter()
+            .any(|input| matches!(input, TurnInput::LocalImage { path } if path.ends_with("trim.png")))),
+        "the picture never went with it",
     );
     assert!(w
         .hub

@@ -91,7 +91,7 @@ export function TaskPanel({
   /// Move a task to an agent that does not exist yet.
   onHandOff: (task: TaskItem, fork: boolean) => void;
   /// Saying no to finished work: what is wrong goes to the agent.
-  onCorrect: (task: TaskItem, text: string) => void;
+  onCorrect: (task: TaskItem) => void;
   onDelete: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -99,9 +99,6 @@ export function TaskPanel({
   /// A status waiting on its account of itself.
   const [pending, setPending] = useState<{ task: TaskItem; status: TaskStatus } | null>(null);
   const [why, setWhy] = useState("");
-  /// A task whose finished work is being argued with.
-  const [correcting, setCorrecting] = useState<string | null>(null);
-  const [correction, setCorrection] = useState("");
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
@@ -171,48 +168,26 @@ export function TaskPanel({
         </button>
       )}
       {task.status === "done" && (
-        <div className="mt-2 flex flex-col gap-2">
-          {correcting === task.id ? (
-            <input
-              autoFocus
-              value={correction}
-              placeholder="What is still wrong? The agent gets this and picks it back up"
-              onChange={(event) => setCorrection(event.target.value)}
-              onBlur={() => setCorrecting(null)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") return setCorrecting(null);
-                if (event.key !== "Enter") return;
-                const text = correction.trim();
-                if (!text) return;
-                setCorrecting(null);
-                setCorrection("");
-                onCorrect(task, text);
-              }}
-              className="w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
-            />
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
-                className="flex h-7 cursor-pointer items-center rounded-[3px] bg-ink px-3 text-[11.5px] font-semibold text-paper disabled:opacity-40"
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setCorrection("");
-                  setCorrecting(task.id);
-                }}
-                className="flex h-7 cursor-pointer items-center rounded-[3px] border border-edge px-3 text-[11.5px] text-mid hover:text-ink disabled:opacity-40"
-              >
-                Not yet
-              </button>
-            </div>
-          )}
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
+            className="flex h-7 cursor-pointer items-center rounded-[3px] bg-ink px-3 text-[11.5px] font-semibold text-paper disabled:opacity-40"
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            // Saying what is still wrong is saying something to the agent,
+            // so it is said in the composer: room to write, and somewhere
+            // to drop a picture of what you mean.
+            onClick={() => onCorrect(task)}
+            className="flex h-7 cursor-pointer items-center rounded-[3px] border border-edge px-3 text-[11.5px] text-mid hover:text-ink disabled:opacity-40"
+          >
+            Not yet
+          </button>
         </div>
       )}
       {task.images.length > 0 && (

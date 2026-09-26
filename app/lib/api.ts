@@ -97,8 +97,15 @@ export const api = {
   moveTask: (id: string, after?: string) =>
     post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),
   /// Saying no to finished work: the agent hears why, and it is work again.
-  correctTask: (id: string, text: string) =>
-    post<TaskItem>(`/api/tasks/${encodeURIComponent(id)}/correction`, { text }),
+  correctTask: (id: string, text: string, images: File[] = []) => {
+    const form = new FormData();
+    form.append("text", text);
+    images.forEach((image) => form.append("images", image));
+    return call<TaskItem>(`/api/tasks/${encodeURIComponent(id)}/correction`, {
+      method: "POST",
+      body: form,
+    });
+  },
   /// A status change carries why it changed, and only a person approves.
   updateTask: (task: TaskItem, note?: string, approved = false) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
