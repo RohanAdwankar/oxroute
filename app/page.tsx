@@ -846,7 +846,9 @@ export default function Home() {
                           say("Sent the drawn change");
                         })
                       }
-                      onCreateDiagram={() => void run(() => api.createDiagram(id))}
+                      onCreateDiagram={(about) =>
+                        void run(() => api.createDiagram(id, about))
+                      }
                       say={say}
                       tags={snapshot.tags[id] ?? []}
                       knownTags={knownTags}

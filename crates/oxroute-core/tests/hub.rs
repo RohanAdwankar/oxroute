@@ -2023,3 +2023,32 @@ async fn every_turn_tells_the_agent_how_to_tag_itself() {
     assert!(told.contains(&format!("/api/agents/{agent}/tags")), "{told}");
     assert!(told.contains("/api/boards"));
 }
+
+#[tokio::test]
+async fn a_question_the_interface_asks_does_not_look_like_one_you_asked() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let before = w.hub.timeline(&agent, usize::MAX).unwrap().len();
+
+    w.hub
+        .ask_quietly(&agent, "Draw the architecture, at length", "Asked for a diagram")
+        .await
+        .unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+
+    // The agent was asked in full.
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(texts[0], "Draw the architecture, at length");
+
+    // The conversation says one was asked, not what the form said.
+    let added: Vec<Entry> =
+        w.hub.timeline(&agent, usize::MAX).unwrap().into_iter().skip(before).collect();
+    let asked: Vec<&Entry> = added.iter().filter(|entry| entry.kind == EntryKind::Notice).collect();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].text, "Asked for a diagram");
+    assert!(!added.iter().any(|entry| entry.kind == EntryKind::You));
+    assert!(!added.iter().any(|entry| entry.text.contains("at length")));
+}

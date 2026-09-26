@@ -133,8 +133,9 @@ export const api = {
     post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
   sendDiagram: (agent: string, edits: DiagramEdit[], note: string) =>
     post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, { edits, note }),
-  createDiagram: (agent: string) =>
-    post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, {}),
+  /// `about` narrows what to draw; empty asks for the whole architecture.
+  createDiagram: (agent: string, about = "") =>
+    post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, { about }),
   renderDiagram: (source: string, added: string[] = []) =>
     post<{ svg: string }>("/api/diagram/render", { source, added }),
 };

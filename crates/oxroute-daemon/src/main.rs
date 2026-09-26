@@ -1013,14 +1013,26 @@ async fn diagram_send(
 
 /// A repository with no diagram yet: ask its agent to draw one, in the
 /// format the composer reads.
+#[derive(Deserialize)]
+struct CreateDiagramBody {
+    /// What to draw. Empty means the whole architecture.
+    #[serde(default)]
+    about: String,
+}
+
 async fn diagram_create(
     State(hub): Hubs,
     Path(id): Path<String>,
+    Json(body): Json<CreateDiagramBody>,
 ) -> Result<Json<serde_json::Value>, Failed> {
     let (agent, path) = diagram_of(&hub, &id)?;
     let root = workdir(&hub, &agent);
-    hub.say_to(&id, &diagram::create_request(&path, std::path::Path::new(&root)))
-        .await?;
+    let request = diagram::create_request(&path, std::path::Path::new(&root), &body.about);
+    let said = match body.about.trim() {
+        "" => "Asked for a diagram of the architecture".to_string(),
+        about => format!("Asked for a diagram of {about}"),
+    };
+    hub.ask_quietly(&id, &request, &said).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

@@ -110,7 +110,7 @@ export function AgentPanel({
   onTask: (text: string, images: File[]) => void;
   /** Draw instead of describe: the edits become the message. */
   onSendDiagram: (edits: DiagramEdit[], note: string) => void;
-  onCreateDiagram: () => void;
+  onCreateDiagram: (about: string) => void;
   say: (text: string) => void;
   tags: string[];
   knownTags: string[];
@@ -449,8 +449,8 @@ export function AgentPanel({
           agentId={agent.id}
           edits={edits}
           onEdits={setEdits}
-          onCreate={() => {
-            onCreateDiagram();
+          onCreate={(about) => {
+            onCreateDiagram(about);
             setMode("type");
           }}
           say={say}

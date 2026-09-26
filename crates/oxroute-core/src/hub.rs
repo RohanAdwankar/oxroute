@@ -947,6 +947,23 @@ impl Hub {
         Ok(())
     }
 
+    /// Ask an agent something without putting the asking in the conversation.
+    ///
+    /// Some questions are the interface talking rather than a person: the
+    /// words are a form to fill in, and printing them would bury the answer
+    /// they are there to produce. The timeline still says one was asked, so
+    /// an answer never arrives out of nowhere.
+    pub async fn ask_quietly(self: &Arc<Self>, agent_id: &str, text: &str, said: &str) -> Result<()> {
+        anyhow::ensure!(!text.trim().is_empty(), "nothing to ask");
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        self.record(&agent.id, EntryKind::Notice, said, "", "");
+        let target = self.home_target(&agent.id).await;
+        self.clone()
+            .deliver_to(agent, vec![TurnInput::text(text)], None, target)
+            .await;
+        Ok(())
+    }
+
     // -- directives ------------------------------------------------------
 
     async fn apply_directive(

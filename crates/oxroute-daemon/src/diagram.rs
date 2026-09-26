@@ -432,9 +432,14 @@ pub fn write(path: &Path, contents: &str) -> Result<()> {
 
 /// What an agent is asked when its repository has no diagram yet: draw
 /// one, in the format this reads, so the next change can be drawn.
-pub fn create_request(path: &Path, root: &Path) -> String {
+/// `about` narrows what to draw. Empty means the whole of it.
+pub fn create_request(path: &Path, root: &Path, about: &str) -> String {
+    let subject = match about.trim() {
+        "" => "the architecture of the code".to_string(),
+        about => format!("{about}, in the code"),
+    };
     format!(
-        "Draw the architecture of the code under {root} as a diagram at {path}, so changes \
+        "Draw {subject} under {root} as a diagram at {path}, so changes \
          to it can be drawn instead of described.\n\n\
          Write Mermaid: `graph LR`, one box per component a person would name (ten to twenty), \
          and an arrow from each component to what it depends on. Box ids are letters, digits \
@@ -442,6 +447,7 @@ pub fn create_request(path: &Path, root: &Path) -> String {
          Under the diagram, add one line per box saying where its code is, relative to {root}:\n\n\
          %% OXDRAW CODE <box> <path> [def:<main symbol>]\n\n\
          This is oxdraw's format; `oxdraw --input {path}` opens it.\n",
+        subject = subject,
         root = root.display(),
         path = path.display(),
     )
@@ -642,9 +648,16 @@ mod tests {
 
     #[test]
     fn asking_for_a_diagram_asks_for_one_this_can_read_back() {
-        let text = create_request(Path::new("/r/docs/architecture.mmd"), Path::new("/r"));
+        let text = create_request(Path::new("/r/docs/architecture.mmd"), Path::new("/r"), "");
         assert!(text.contains("/r/docs/architecture.mmd"));
         assert!(text.contains("%% OXDRAW CODE <box> <path>"));
+        assert!(text.contains("the architecture of the code"));
+
+        // Said what it should cover, the request says that instead.
+        let narrowed =
+            create_request(Path::new("/r/docs/architecture.mmd"), Path::new("/r"), "how a turn runs");
+        assert!(narrowed.contains("how a turn runs"));
+        assert!(narrowed.contains("%% OXDRAW CODE <box> <path>"));
         // A diagram written the way the request says reads here.
         let example = "graph LR\n    web[Web]\n    api[API]\n    web --> api\n\n%% OXDRAW CODE api src/api.rs def:Api\n";
         let file = DiagramFile::parse(example).unwrap();

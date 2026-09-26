@@ -59,7 +59,8 @@ export function DiagramComposer({
   agentId: string;
   edits: DiagramEdit[];
   onEdits: (update: (current: DiagramEdit[]) => DiagramEdit[]) => void;
-  onCreate: () => void;
+  /// `about` narrows what to draw; empty asks for the whole architecture.
+  onCreate: (about: string) => void;
   say: (text: string) => void;
   busy: boolean;
 }) {
@@ -68,6 +69,8 @@ export function DiagramComposer({
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
+  /// What a diagram asked for should cover. Empty asks for all of it.
+  const [about, setAbout] = useState("");
   const [draft, setDraft] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [room, setRoom] = useState({ width: 0, height: 0 });
@@ -136,15 +139,26 @@ export function DiagramComposer({
           <br />
           <span className="tnum text-[12px] text-ink">{base.file}</span>
         </p>
-        <button
-          type="button"
-          onClick={onCreate}
-          disabled={busy}
-          className="flex h-9 cursor-pointer items-center gap-2 rounded-[3px] bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-40"
-        >
-          <Icon name="diagram" size={14} />
-          Ask the agent to draw one
-        </button>
+        <div className="flex w-full max-w-[52ch] items-center gap-2">
+          <input
+            value={about}
+            onChange={(event) => setAbout(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !busy) onCreate(about);
+            }}
+            placeholder="Of what? The whole thing, unless you say"
+            className="h-9 min-w-0 flex-1 border-b border-edge bg-transparent px-1 text-[13px] outline-none placeholder:text-faint"
+          />
+          <button
+            type="button"
+            onClick={() => onCreate(about)}
+            disabled={busy}
+            className="flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[3px] bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-40"
+          >
+            <Icon name="diagram" size={14} />
+            Ask the agent to draw one
+          </button>
+        </div>
       </div>
     );
   }
