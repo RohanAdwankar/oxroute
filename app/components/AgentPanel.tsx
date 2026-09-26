@@ -8,6 +8,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
+import { draftFor, keepDraft } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -131,7 +132,7 @@ export function AgentPanel({
   busy: boolean;
   focusEntry: number | null;
 }) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => draftFor(view.agent.id));
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [draggingImages, setDraggingImages] = useState(false);
@@ -152,6 +153,8 @@ export function AgentPanel({
   const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
   const items = compactTimeline(view.timeline);
+
+  useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
 
   /// Every question you asked, in order, so a question can lead to the one
   /// before or after it without reading everything in between.

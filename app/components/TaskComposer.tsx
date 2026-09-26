@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { draftFor, keepDraft } from "../lib/drafts";
 import { SplitAction } from "./SplitAction";
 
 /**
@@ -11,6 +12,9 @@ import { SplitAction } from "./SplitAction";
  * one to say it to out here, so the words go on the task list and wait to
  * be handed to an agent.
  */
+/// There is one of these, so it needs one name to be kept under.
+const FLEET = "the fleet";
+
 export function TaskComposer({
   busy,
   onTask,
@@ -18,7 +22,9 @@ export function TaskComposer({
   busy: boolean;
   onTask: (text: string) => void;
 }) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => draftFor(FLEET));
+
+  useEffect(() => keepDraft(FLEET, draft), [draft]);
 
   const file = () => {
     const text = draft.trim();
