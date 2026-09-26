@@ -575,8 +575,9 @@ export default function Home() {
       // be one letter away from swapping to another one.
       const reading = open !== null && !selected && pairing === null;
 
-      // Digits are a count waiting for the motion they belong to.
-      if (/^[0-9]$/.test(event.key) && (event.key !== "0" || typed.current)) {
+      // Digits are a count waiting for the motion they belong to -- and
+      // only in the mode that has motions.
+      if (vim && /^[0-9]$/.test(event.key) && (event.key !== "0" || typed.current)) {
         stop();
         typed.current += event.key;
         return;
