@@ -58,7 +58,12 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
-    settings: <><circle cx="8" cy="8" r="2.4" /><path d="M8 1.6v1.7M8 12.7v1.7M14.4 8h-1.7M3.3 8H1.6M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2M12.5 12.5l-1.2-1.2M4.7 4.7 3.5 3.5" /></>,
+    settings: (
+      <g transform="scale(.6667)" strokeWidth="2.25">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </g>
+    ),
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
     split: <><rect x="1.5" y="3" width="5.5" height="10" /><rect x="9" y="3" width="5.5" height="10" /></>,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,

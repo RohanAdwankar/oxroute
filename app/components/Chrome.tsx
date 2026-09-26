@@ -73,12 +73,12 @@ export function Chrome({
           icon="terminal"
         />
         {snapshot.boards.map((board) => (
-          <ViewTab
+          <Cell
             key={board.id}
-            label={board.name}
-            icon="board"
-            active={activeBoard === board.id}
             onClick={() => onBoard(board.id)}
+            pressed={activeBoard === board.id}
+            label={`Show ${board.name}`}
+            icon="board"
           />
         ))}
         <Cell onClick={onNewBoard} label="New board" icon="plus" />
@@ -128,38 +128,6 @@ function Cell({
       ].join(" ")}
     >
       <Icon name={icon} size={14} />
-    </button>
-  );
-}
-
-/**
- * One entry in the view switch. Views carry names, so these are words; the
- * fleet is the view every install has.
- */
-function ViewTab({
-  label,
-  icon,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon: IconName;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      title={`Show ${label}`}
-      className={[
-        "flex cursor-pointer items-center gap-[6px] border-r border-rule px-[14px] text-[12.5px] transition-colors",
-        active ? "bg-wash text-ink" : "text-mid hover:text-ink",
-      ].join(" ")}
-    >
-      <Icon name={icon} size={14} />
-      {label}
     </button>
   );
 }
