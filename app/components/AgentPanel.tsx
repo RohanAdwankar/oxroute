@@ -328,7 +328,7 @@ export function AgentPanel({
         addFiles(Array.from(event.dataTransfer.files));
       }}
     >
-      <div className="flex min-h-[63px] shrink-0 flex-wrap items-center gap-x-[14px] gap-y-1 border-b border-rule px-5 py-2">
+      <div className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-[14px] gap-y-1 border-b border-rule px-5 py-2">
         <button
           type="button"
           onClick={onBack}
@@ -390,6 +390,13 @@ export function AgentPanel({
           {view.delivery}
         </span>
 
+        <TagEditor
+          tags={tags}
+          known={knownTags}
+          busy={busy}
+          onAdd={(tag) => onTag(tagChange(tag))}
+          onRemove={(tag) => onTag({ remove: [tag] })}
+        />
         <span className="flex-1" />
 
         {agent.permalink && (
@@ -452,16 +459,6 @@ export function AgentPanel({
         >
           <Icon name="stop" />
         </button>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2 border-b border-hair px-5 py-[6px]">
-        <TagEditor
-          tags={tags}
-          known={knownTags}
-          busy={busy}
-          onAdd={(tag) => onTag(tagChange(tag))}
-          onRemove={(tag) => onTag({ remove: [tag] })}
-        />
       </div>
 
       {mode === "diagram" && (
@@ -573,7 +570,7 @@ export function AgentPanel({
       )}
 
       <footer
-        className={`flex shrink-0 flex-col gap-2 border-t px-7 py-4 ${
+        className={`flex shrink-0 flex-col gap-2 border-t px-7 py-[10px] ${
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >

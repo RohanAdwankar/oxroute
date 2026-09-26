@@ -50,7 +50,7 @@ export function Inbox({
 
   return (
     <aside className="flex h-full w-full flex-col bg-card">
-      <div className="flex h-[63px] shrink-0 items-center border-b border-rule px-[18px]">
+      <div className="flex h-[46px] shrink-0 items-center border-b border-rule px-[18px]">
         <span className="text-[14px] font-semibold">Inbox</span>
         <span className="flex-1" />
         <span className="text-[11.5px] text-faint">

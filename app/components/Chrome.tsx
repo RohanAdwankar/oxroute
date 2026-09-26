@@ -46,7 +46,7 @@ export function Chrome({
   onSearchContinue: (agent: string) => void;
 }) {
   return (
-    <header className="flex min-h-[63px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule bg-card px-5 py-2">
+    <header className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule bg-card px-5 py-2">
       <div className="flex" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
