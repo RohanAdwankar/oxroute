@@ -1089,6 +1089,8 @@ mod tests {
             status,
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
+            position: 0.0,
+            images: vec![],
             created_at: 1.0,
             updated_at: 1.0,
         }
