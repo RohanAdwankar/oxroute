@@ -83,6 +83,7 @@ export default function Home() {
   const [taskAt, setTaskAt] = useState(0);
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
+  const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
@@ -106,6 +107,8 @@ export default function Home() {
       }
       setWatch(window.localStorage.getItem("oxroute.watch") === "true");
       setTasksOpen(window.localStorage.getItem("oxroute.tasks") === "true");
+      const tasksAt = Number(window.localStorage.getItem("oxroute.taskWidth"));
+      if (tasksAt >= 260) setTaskWidth(tasksAt);
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -124,6 +127,13 @@ export default function Home() {
       inboxWidthRef.current = lastInboxWidth.current;
     }
   }, []);
+
+  /// How wide the task column is, within what is readable and what fits.
+  const resizeTasks = (width: number) => {
+    const next = Math.min(Math.max(width, 260), Math.max(window.innerWidth - 360, 260));
+    setTaskWidth(next);
+    return next;
+  };
 
   const resizeInbox = (width: number) => {
     const next = Math.min(Math.max(width, 0), 600);
@@ -997,6 +1007,33 @@ export default function Home() {
         )}
 
         {tasksOpen && (
+          <>
+            <div
+              role="separator"
+              aria-label="resize tasks"
+              aria-orientation="vertical"
+              tabIndex={0}
+              onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  resizeTasks(window.innerWidth - event.clientX);
+                }
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                window.localStorage.setItem("oxroute.taskWidth", String(taskWidth));
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                event.preventDefault();
+                const width = resizeTasks(taskWidth + (event.key === "ArrowLeft" ? 20 : -20));
+                window.localStorage.setItem("oxroute.taskWidth", String(width));
+              }}
+              className="group relative w-px shrink-0 cursor-col-resize outline-none focus:bg-band"
+            >
+              <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
+            </div>
+            <div className="shrink-0 overflow-hidden" style={{ width: taskWidth }}>
           <TaskPanel
             tasks={snapshot.tasks}
             rows={tasks}
@@ -1024,6 +1061,8 @@ export default function Home() {
             }
             onDelete={(id) => void run(() => api.deleteTask(id))}
           />
+            </div>
+          </>
         )}
       </div>
     </main>

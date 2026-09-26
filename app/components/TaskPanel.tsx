@@ -327,11 +327,9 @@ export function TaskPanel({
   };
 
   return (
-    <aside className="flex w-[min(430px,calc(100vw-32px))] shrink-0 flex-col border-l border-rule bg-card">
+    <aside className="flex h-full w-full shrink-0 flex-col border-l border-rule bg-card">
       <header className="flex h-[63px] shrink-0 items-center gap-3 border-b border-rule px-5">
-        <Icon name="tasks" />
         <span className="text-[15px] font-semibold">Tasks</span>
-        <span className="text-[11px] text-faint">{tasks.filter((task) => task.status !== "complete").length} open</span>
         <span className="flex-1" />
         <button type="button" onClick={onClose} aria-label="close tasks" title="Close tasks" className="flex h-8 w-8 cursor-pointer items-center justify-center text-faint hover:text-ink">
           <Icon name="collapse" />
