@@ -752,6 +752,17 @@ mod tests {
 mod repository {
     use super::*;
 
+    /// Drawing on the diagram this repository ships: a box can be added to
+    /// a real file, not only to the ones written for a test.
+    #[test]
+    fn a_box_can_be_added_to_the_diagram_this_repository_ships() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let file = DiagramFile::read(&root.join("docs/architecture.mmd")).unwrap();
+        let edits = [Edit::AddNode { id: "sketch".into(), label: "a new box".into() }];
+        assert!(draw(&file, &edits).is_ok(), "the change should draw");
+        assert!(rewrite(&file, &edits).unwrap().contains("a new box"));
+    }
+
     /// The diagram this repository ships describes this repository. If a
     /// file it points at moves, the diagram is wrong, and so is this test.
     #[test]

@@ -238,9 +238,10 @@ export interface DiagramEdge {
 
 /** An agent's architecture diagram, as the composer draws it. */
 export type DiagramPayload =
-  | { exists: false; file: string; modified: number }
+  | { exists: false; repository: boolean; file: string; modified: number }
   | {
       exists: true;
+      repository: boolean;
       file: string;
       modified: number;
       svg: string;

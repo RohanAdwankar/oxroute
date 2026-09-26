@@ -131,6 +131,20 @@ export function DiagramComposer({
       </div>
     );
   }
+  // A diagram describes a codebase, and this session is not in one: the
+  // file would land in a directory that is nobody's repository, so there
+  // is nothing here to draw and nothing to offer.
+  if (!base.exists && !base.repository) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
+        <p className="max-w-[56ch] text-[13px] leading-relaxed text-mid">
+          This session is not working in a repository, so there is no
+          architecture to draw.
+        </p>
+        <p className="tnum max-w-[56ch] text-[12px] text-faint">{base.file}</p>
+      </div>
+    );
+  }
   if (!base.exists) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
