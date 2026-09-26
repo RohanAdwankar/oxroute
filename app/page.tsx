@@ -9,6 +9,7 @@ import { Help } from "./components/Help";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
+import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
 import { taskRows } from "./lib/tasks";
@@ -36,6 +37,8 @@ const EMPTY: Snapshot = {
   inbox: [],
   tasks: [],
   taskNotes: [],
+  tags: {},
+  boards: [],
   sources: [],
   models: [],
   backends: [],
@@ -71,6 +74,8 @@ export default function Home() {
   const [help, setHelp] = useState(false);
   const [jump, setJump] = useState(false);
   const [watch, setWatch] = useState(false);
+  // Which board the main column shows when no agent is open. Null is the fleet.
+  const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
   const [focus, setFocus] = useState<Column>("inbox");
   const [inboxAt, setInboxAt] = useState(0);
@@ -157,6 +162,20 @@ export default function Home() {
     window.history.pushState(null, "", url);
   }, []);
 
+  const showBoard = useCallback(
+    (id: string | null) => {
+      showAgent(null);
+      setRouting(null);
+      setTicked(new Set());
+      setBoardId(id);
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("board", id);
+      else url.searchParams.delete("board");
+      window.history.replaceState(null, "", url);
+    },
+    [showAgent],
+  );
+
   const complain = useCallback(
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
@@ -165,6 +184,7 @@ export default function Home() {
   useEffect(() => {
     const restore = () => {
       const url = new URL(window.location.href);
+      setBoardId(url.searchParams.get("board"));
       const agent = url.searchParams.get("agent");
       setOpen(agent);
       setPanes(agent ? [agent] : []);
@@ -406,6 +426,8 @@ export default function Home() {
   const tasks = taskRows(snapshot.tasks, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
+  const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
+  const knownTags = [...new Set(Object.values(snapshot.tags).flat())].sort();
   const clearRouting = () => {
     setRouting(null);
     setTicked(new Set());
@@ -486,6 +508,18 @@ export default function Home() {
       // not act: n started an agent and m changed how everything routes.
       // Arrows, enter, escape and tab are nobody's typing, and stay.
       if (!vim && LETTERS.has(event.key)) return;
+
+      // A board owns the main column. The fleet's keys would drive cards
+      // nobody can see, so only the ones that reach elsewhere still work.
+      if (
+        activeBoard &&
+        !selected &&
+        !open &&
+        focus === "fleet" &&
+        !["h", "l", "Tab", "Escape", "i", "/", "m", "v", "?", "f"].includes(event.key)
+      ) {
+        return;
+      }
 
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here =
@@ -709,6 +743,14 @@ export default function Home() {
         }
         tasksOpen={tasksOpen}
         onTasks={() => showTasks(!tasksOpen)}
+        activeBoard={activeBoard?.id ?? null}
+        onBoard={showBoard}
+        onNewBoard={() =>
+          void run(async () => {
+            const board = await api.createBoard({});
+            showBoard(board.id);
+          })
+        }
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -798,6 +840,17 @@ export default function Home() {
                       onTask={(text, images) =>
                         void run(() => api.createTaskWithImages(text, id, images))
                       }
+                      onSendDiagram={(edits, note) =>
+                        void run(async () => {
+                          await api.sendDiagram(id, edits, note);
+                          say("Sent the drawn change");
+                        })
+                      }
+                      onCreateDiagram={() => void run(() => api.createDiagram(id))}
+                      say={say}
+                      tags={snapshot.tags[id] ?? []}
+                      knownTags={knownTags}
+                      onTag={(change) => void run(() => api.tag(id, change))}
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}
@@ -849,6 +902,21 @@ export default function Home() {
               );
             })}
           </div>
+        ) : activeBoard && !selected ? (
+          <BoardView
+            key={activeBoard.id}
+            board={activeBoard}
+            snapshot={snapshot}
+            revision={revision}
+            busy={busy}
+            run={run}
+            say={say}
+            onDeleted={() => showBoard(null)}
+            onOpenAgent={(id) => {
+              clearRouting();
+              showAgent(id);
+            }}
+          />
         ) : (
           <Fleet
             agents={showArchived ? snapshot.archived : snapshot.agents}
@@ -861,6 +929,7 @@ export default function Home() {
             models={snapshot.models}
             defaultModel={snapshot.defaultModel}
             messages={snapshot.messages}
+            tags={snapshot.tags}
             watch={watch && !showArchived && selected === null}
             routing={selected}
             beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}

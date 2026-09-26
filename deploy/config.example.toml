@@ -99,3 +99,12 @@ label = "Astra"
 # Refuse new work below this much free disk, rather than running out of
 # space halfway through a write.
 # min_free_bytes = 536870912
+
+# -- drawing a message ----------------------------------------------------
+#
+# An agent's composer can send a drawn change to its architecture diagram
+# instead of a description. This is where that diagram is: relative to the
+# agent's working directory, or absolute. oxdraw opens the same file.
+#
+# [diagram]
+# path = "docs/architecture.mmd"

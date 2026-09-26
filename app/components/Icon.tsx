@@ -4,8 +4,10 @@ export type IconName =
   | "attach"
   | "auto"
   | "back"
+  | "board"
   | "chevronDown"
   | "collapse"
+  | "diagram"
   | "discard"
   | "expand"
   | "external"
@@ -14,17 +16,20 @@ export type IconName =
   | "keyboard"
   | "merge"
   | "open"
+  | "pen"
   | "pin"
   | "play"
   | "plus"
   | "quote"
   | "queue"
+  | "refresh"
   | "restore"
   | "send"
   | "split"
   | "stop"
   | "tasks"
   | "terminal"
+  | "text"
   | "thread";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
@@ -34,8 +39,10 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     attach: <path d="M6 8.5 10.5 4a2.1 2.1 0 0 1 3 3L7 13.5a3.2 3.2 0 0 1-4.5-4.5L9 2.5" />,
     auto: <><path d="m8 1 1.2 3.8L13 6l-3.8 1.2L8 11 6.8 7.2 3 6l3.8-1.2Z" /><path d="m13 11 .6 1.8 1.4.7-1.4.7L13 16l-.6-1.8-1.4-.7 1.4-.7Z" /></>,
     back: <path d="m10.5 3-5 5 5 5M5.5 8H15" />,
+    board: <><rect x="1.5" y="2.5" width="3.5" height="11" rx=".5" /><rect x="6.25" y="2.5" width="3.5" height="7" rx=".5" /><rect x="11" y="2.5" width="3.5" height="9" rx=".5" /></>,
     chevronDown: <path d="m3 6 5 5 5-5" />,
     collapse: <path d="m10 3-5 5 5 5" />,
+    diagram: <><rect x="1.5" y="2" width="5" height="3.5" rx=".5" /><rect x="9.5" y="2" width="5" height="3.5" rx=".5" /><rect x="5.5" y="10.5" width="5" height="3.5" rx=".5" /><path d="M4 5.5v2.5h8V5.5M8 8v2.5" /></>,
     discard: <><path d="M3 5h10M6 5V3h4v2M5 5l.6 9h4.8l.6-9" /></>,
     expand: <path d="m6 3 5 5-5 5" />,
     external: <><path d="M9 3h4v4M13 3 7 9" /><path d="M12 9v4H3V4h4" /></>,
@@ -44,10 +51,12 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     keyboard: <><rect x="1.5" y="3" width="13" height="10" rx="1" /><path d="M4 6h.01M7 6h.01M10 6h.01M13 6h.01M4 9h.01M7 9h5" /></>,
     merge: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" /><circle cx="8" cy="13" r="1.5" /><path d="M5 4.5v2A3.5 3.5 0 0 0 8 10v1.5M11 4.5v2A3.5 3.5 0 0 1 8 10" /></>,
     open: <path d="m6 3 5 5-5 5M2 8h9" />,
+    pen: <><path d="M11 2.5 13.5 5 6 12.5l-3.3.8.8-3.3Z" /><path d="m9.5 4 2.5 2.5" /></>,
     pin: <path d="M5 2h6l-1 4 2 2v1H9v5l-1 1-1-1V9H4V8l2-2Z" fill="currentColor" stroke="none" />,
     play: <path d="m5 3 8 5-8 5Z" />,
     plus: <path d="M8 2v12M2 8h12" />,
     quote: <path d="M3 4h4v4H5a3 3 0 0 1-3 3M10 4h4v4h-2a3 3 0 0 1-3 3" />,
+    refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
@@ -55,6 +64,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,
     tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
     terminal: <><path d="m3 4 4 4-4 4M9 12h4" /></>,
+    text: <path d="M3 4h10M3 8h10M3 12h6" />,
     thread: <><path d="M2 3h9v7H6l-3 3v-3H2z" /><path d="M8 6h6v6h-2v2l-2-2H8" /></>,
   };
 

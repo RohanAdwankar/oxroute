@@ -105,6 +105,43 @@ Full parity, because the point is that you can switch and not notice:
 New on top of that: the inbox, the two other surfaces, the harness seam, and
 `/mode`.
 
+## Tags, boards, and three ways to say something
+
+**Tags.** A session carries tags: `key:value` like `stage:idea`,
+`priority:p2` or `project:agents`, or a bare word like `urgent`. Set them from
+a session's header, with `tag stage:idea` or `untag urgent` in its Slack
+thread, or let the agent do it — every turn tells it how, over the same API.
+Nothing in oxroute knows what any tag means.
+
+**Boards.** A board is a saved way of arranging tagged sessions: a key for the
+columns, a key for the rows, the order of each, keys offered as filters and the
+values selected, and a key to sort by. With both columns and rows set it is a
+grid — project themes down the side, stages across the top — and every card
+sits in the cell its two tags name. Dragging a card to another cell sets those
+two tags. Make as many boards as you like from the `+` in the top bar; each is
+stored in the daemon, so every surface sees the same one, and an agent can
+make or rearrange a board through `/api/boards` just as it tags itself.
+
+**Type, Diagram, Draw.** An agent's composer has three modes. Type is a
+message. The other two are for when a picture says it better:
+
+* **Diagram** opens the architecture diagram of the agent's repository —
+  `docs/architecture.mmd` under its working directory unless `[diagram] path`
+  says otherwise — in oxdraw's format, where each box records where its code
+  lives with a `%% OXDRAW CODE <box> <path>` line. Add a box, draw a
+  dependency, rename or remove one, and send: the diagram is rewritten and the
+  agent gets a brief on what changed and where that code is, so it makes the
+  code match. The timeline shows the change as the diagram, new boxes in
+  green. A repository with no diagram yet gets a button that asks the agent to
+  draw one. `docs/architecture.mmd` is this repository, drawn that way.
+* **Draw** marks up a picture: a screenshot taken from the browser, a pasted
+  or dropped image, or a blank page. Pen, box, arrow and text, in one red.
+  Sending attaches the result to whatever was typed, and the timeline shows it.
+
+All of it is behaviour in the daemon — `/api/agents/{id}/tags`,
+`/api/boards`, `/api/agents/{id}/diagram/…` — so every surface can grow it.
+`crates/oxroute-core/src/tags.rs` is the whole of what a board is.
+
 ## Two seams
 
 **Sources** (`source/mod.rs`) need five things: run, reply, post a status you
@@ -184,6 +221,7 @@ that can reach it can run commands as you. Reach it over an SSH tunnel.
 ```
 crates/oxroute-core/       the library everything else is a client of
   model.rs                 the nouns, and the words a person can type
+  tags.rs                  tags on sessions, and boards arranged by them
   store.rs                 durable state, SQLite
   hub.rs                   the only module that knows about both seams
   source/{mod,slack}.rs    where signals come from
@@ -195,8 +233,11 @@ crates/oxroute-core/       the library everything else is a client of
   tests/hub.rs             the tests that matter
 
 crates/oxroute-daemon/     HTTP + SSE in front of the hub
+  diagram.rs               an agent's diagram: preview, rewrite, brief it
 crates/oxroute-tui/        ratatui, a client of that API
 app/                       Next.js, a client of that API
+  components/composer/     drawing a message: the diagram editor and the sketch
+docs/architecture.mmd      this repository as an oxdraw diagram
 deploy/                    systemd units, install script, Slack manifest
 ```
 
@@ -210,7 +251,7 @@ on the protocol. `app/lib/types.ts` is hand-written and pinned by a test in
 against the app-server protocol; the Claude Code harness, run against the
 binary — spawn, answer, resume, remember; the inbox, the bindings, the turn
 lifecycle, steering, forking, side questions, artifacts, naming, the
-dashboard, the migration; 67 tests, of which 20 drive the hub end to end
+dashboard, the migration, tags and boards, drawn messages; 142 tests, of which 44 drive the hub end to end
 against a fake harness.
 
 **Not yet**: Codex is exercised by tests and by the bot this is a port of, but

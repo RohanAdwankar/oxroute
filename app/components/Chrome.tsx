@@ -22,6 +22,9 @@ export function Chrome({
   onWatch,
   tasksOpen,
   onTasks,
+  activeBoard,
+  onBoard,
+  onNewBoard,
   onSearchOpen,
   onSearchContinue,
 }: {
@@ -36,6 +39,9 @@ export function Chrome({
   onWatch: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
+  activeBoard: string | null;
+  onBoard: (id: string | null) => void;
+  onNewBoard: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
 }) {
@@ -114,6 +120,37 @@ export function Chrome({
         <Icon name="terminal" />
       </button>
 
+      <nav className="flex" aria-label="boards">
+        <ViewTab
+          label="Fleet"
+          icon="terminal"
+          active={activeBoard === null}
+          first
+          last={false}
+          onClick={() => onBoard(null)}
+        />
+        {snapshot.boards.map((board) => (
+          <ViewTab
+            key={board.id}
+            label={board.name}
+            icon="board"
+            active={activeBoard === board.id}
+            first={false}
+            last={false}
+            onClick={() => onBoard(board.id)}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={onNewBoard}
+          aria-label="new board"
+          title="New board"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink"
+        >
+          <Icon name="plus" size={14} />
+        </button>
+      </nav>
+
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
       <div className="flex-1" />
@@ -124,6 +161,43 @@ export function Chrome({
         </span>
       )}
     </header>
+  );
+}
+
+/**
+ * One entry in the view switch. Views carry names, so these are words; the
+ * fleet is the view every install has.
+ */
+function ViewTab({
+  label,
+  icon,
+  active,
+  first,
+  last,
+  onClick,
+}: {
+  label: string;
+  icon: IconName;
+  active: boolean;
+  first: boolean;
+  last: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        "flex h-8 cursor-pointer items-center gap-[6px] border px-3 text-[12.5px] transition-colors",
+        first ? "rounded-l-[3px]" : "border-l-0",
+        last ? "rounded-r-[3px]" : "",
+        active ? "border-edge bg-wash text-ink" : "border-rule text-mid hover:text-ink",
+      ].join(" ")}
+    >
+      <Icon name={icon} size={14} />
+      {label}
+    </button>
   );
 }
 

@@ -202,6 +202,10 @@ pub enum Directive {
     Rename(String),
     /// Select the model for subsequent turns.
     Model(String),
+    /// `tag stage:idea priority:p2`: add tags to this thread's session.
+    Tag(Vec<String>),
+    /// `untag urgent stage`: take tags off, or every value of a key.
+    Untag(Vec<String>),
 }
 
 /// What is left of a message once a directive has been taken off the front.
@@ -277,6 +281,15 @@ pub fn parse_message(raw: &str, in_thread: bool, has_files: bool, models: &[&str
         "btw" | "/btw" => {
             parsed.side = true;
             parsed.text = tail.to_string();
+        }
+        "tag" | "untag" => {
+            let words: Vec<String> = tail.split_whitespace().map(str::to_string).collect();
+            parsed.directive = Some(if head == "tag" {
+                Directive::Tag(words)
+            } else {
+                Directive::Untag(words)
+            });
+            parsed.text = String::new();
         }
         _ => {}
     }
@@ -685,6 +698,20 @@ mod tests {
             parse_message("rename \"ship the migration\"", true, false, MODELS).directive,
             Some(Directive::Rename("ship the migration".into()))
         );
+    }
+
+    #[test]
+    fn tag_and_untag_take_words_in_a_thread_and_nothing_at_the_top() {
+        assert_eq!(
+            parse_message("tag stage:idea  priority:p2", true, false, MODELS).directive,
+            Some(Directive::Tag(vec!["stage:idea".into(), "priority:p2".into()]))
+        );
+        assert_eq!(
+            parse_message("Untag urgent", true, false, MODELS).directive,
+            Some(Directive::Untag(vec!["urgent".into()]))
+        );
+        // A new thread saying "tag" is a message, not a command.
+        assert_eq!(parse_message("tag stage:idea", false, false, MODELS).directive, None);
     }
 
     #[test]

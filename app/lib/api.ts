@@ -1,6 +1,20 @@
 "use client";
 
-import type { Agent, AgentView, Backend, ConversationLine, DaemonEvent, Mode, SearchResults, Snapshot, TaskItem } from "./types";
+import type {
+  Agent,
+  AgentView,
+  Arranged,
+  Backend,
+  Board,
+  ConversationLine,
+  DaemonEvent,
+  DiagramEdit,
+  DiagramPayload,
+  Mode,
+  SearchResults,
+  Snapshot,
+  TaskItem,
+} from "./types";
 
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
@@ -97,6 +111,32 @@ export const api = {
   deleteTask: (id: string) =>
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
+
+  // Tags and boards. A board is its settings; moving a card is tagging it.
+  tag: (agent: string, change: { add?: string[]; remove?: string[]; set?: string[] }) =>
+    post<string[]>(`/api/agents/${encodeURIComponent(agent)}/tags`, change),
+  createBoard: (board: Partial<Board> = {}) => post<Board>("/api/boards", board),
+  updateBoard: (board: Board) =>
+    call<Board>(`/api/boards/${encodeURIComponent(board.id)}`, {
+      method: "PUT",
+      body: JSON.stringify(board),
+    }),
+  deleteBoard: (id: string) =>
+    call<unknown>(`/api/boards/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  arrange: (id: string) => call<Arranged>(`/api/boards/${encodeURIComponent(id)}`),
+  moveCard: (board: string, agent: string, column: string | null, row: string | null) =>
+    post<string[]>(`/api/boards/${encodeURIComponent(board)}/move`, { agent, column, row }),
+
+  // Drawing a message instead of typing one.
+  diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),
+  previewDiagram: (agent: string, edits: DiagramEdit[]) =>
+    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
+  sendDiagram: (agent: string, edits: DiagramEdit[], note: string) =>
+    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, { edits, note }),
+  createDiagram: (agent: string) =>
+    post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, {}),
+  renderDiagram: (source: string, added: string[] = []) =>
+    post<{ svg: string }>("/api/diagram/render", { source, added }),
 };
 
 /**

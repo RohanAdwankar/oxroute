@@ -5,6 +5,7 @@ import { useState } from "react";
 import { clip, since } from "../lib/format";
 import { hintFor } from "../lib/keys";
 import { Icon } from "./Icon";
+import { TagChip } from "./Tags";
 import {
   deliveryOf,
   type Agent,
@@ -40,6 +41,7 @@ export function Fleet({
   models,
   defaultModel,
   messages,
+  tags,
   watch,
   routing,
   beside,
@@ -62,6 +64,7 @@ export function Fleet({
   models: ModelInfo[];
   defaultModel: string;
   messages: Record<string, string>;
+  tags: Record<string, string[]>;
   watch: boolean;
   routing: InboxItem | null;
   /// The name of the session a companion is being picked for, if one is.
@@ -168,6 +171,7 @@ export function Fleet({
                 key={agent.id}
                 agent={agent}
                 preview={messages[agent.id]}
+                tags={tags[agent.id] ?? []}
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id}
@@ -252,6 +256,7 @@ function Hint({ at }: { at: string }) {
 function Card({
   agent,
   preview,
+  tags,
   routing,
   ticked,
   suggested,
@@ -263,6 +268,7 @@ function Card({
 }: {
   agent: Agent;
   preview?: string;
+  tags: string[];
   routing: boolean;
   ticked: boolean;
   suggested: boolean;
@@ -347,7 +353,15 @@ function Card({
         {agent.status} {since(agent.updatedAt)} · {agent.backend}
       </div>
 
-      <p className="mt-[14px] line-clamp-4 text-[13px] leading-[1.55] text-mid">
+      {tags.length > 0 && (
+        <div className="mt-[8px] ml-[18px] flex max-h-[22px] flex-wrap gap-[4px] overflow-hidden">
+          {tags.map((tag) => (
+            <TagChip key={tag} tag={tag} quiet />
+          ))}
+        </div>
+      )}
+
+      <p className={`mt-[12px] text-[13px] leading-[1.55] text-mid ${tags.length > 0 ? "line-clamp-3" : "line-clamp-4"}`}>
         {preview || agent.stallReason || agent.model}
       </p>
 

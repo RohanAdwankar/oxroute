@@ -35,6 +35,7 @@ use crate::naming;
 use crate::progress::{Progress, MAX_BYTES};
 use crate::source::{Posted, Source, SourceEvent};
 use crate::store::{ActiveTurn, Store};
+use crate::tags::{self, Arranged, Board};
 
 const ERROR_REPLY: &str = "That request could not be completed.";
 const LOW_STORAGE_REPLY: &str = "Disk is critically low. This request was not started.";
@@ -44,6 +45,9 @@ const PROGRESS_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 const DASHBOARD_KEY: &str = "dashboard";
 const MODE_KEY: &str = "mode";
+/// How many sessions a board considers. Every live one, and more finished
+/// ones than the fleet shows: a board is where old work is still sorted.
+const BOARD_SESSIONS: usize = 1000;
 
 /// What to do with a signal waiting in the inbox.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1003,6 +1007,24 @@ impl Hub {
                     Err(error) => format!("Could not fork: {error}"),
                 },
             },
+            Directive::Tag(add) | Directive::Untag(add) if add.is_empty() => {
+                "Use `tag stage:idea priority:p2`, or `untag urgent`.".into()
+            }
+            Directive::Tag(add) => match bound {
+                None => "This thread is not connected to an agent.".into(),
+                Some(id) => format!("Tagged: {}", self.tag(id, &add, &[], &[])?.join(" ")),
+            },
+            Directive::Untag(remove) => match bound {
+                None => "This thread is not connected to an agent.".into(),
+                Some(id) => {
+                    let now = self.tag(id, &[], &remove, &[])?;
+                    if now.is_empty() {
+                        "No tags left.".into()
+                    } else {
+                        format!("Tagged: {}", now.join(" "))
+                    }
+                }
+            },
             Directive::Rename(title) => {
                 if title.is_empty() {
                     "Use `rename \"<new title>\"`.".into()
@@ -1155,6 +1177,8 @@ impl Hub {
             self.store.save_agent(&forked)?;
         }
         self.store.copy_timeline(agent_id, &forked.id)?;
+        // A branch of the work sits where the work sits, until someone says not.
+        self.store.set_tags(&forked.id, &self.store.tags(agent_id)?)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
         self.record_fork(agent_id, &forked.id);
         self.emit(Event::Sync);
@@ -1440,6 +1464,19 @@ impl Hub {
             self.config.listen,
             self.config.listen,
             agent.id,
+        )));
+        inputs.push(TurnInput::text(format!(
+            "This session carries tags such as stage:idea or priority:p2; boards in oxroute \
+             arrange sessions into columns by them. To change this session's tags, POST \
+             http://{listen}/api/agents/{id}/tags with {{\"set\": [...], \"add\": [...], \
+             \"remove\": [...]}} -- set replaces any tag with the same key. Boards are \
+             GET/POST http://{listen}/api/boards and PUT/DELETE \
+             http://{listen}/api/boards/<id>, as {{\"name\", \"columns\": key, \"columnOrder\": \
+             [values], \"rows\": key, \"rowOrder\": [values], \"filters\": [keys], \
+             \"selected\": [tags], \"sort\": key}}. Tag this session when asked, and keep a \
+             tag like stage: true as the work moves on.",
+            listen = self.config.listen,
+            id = agent.id,
         )));
 
         // Agents share a working directory by default, and a fork always
@@ -2140,6 +2177,8 @@ impl Hub {
             inbox,
             tasks: self.store.tasks()?,
             task_notes: self.store.task_notes()?,
+            tags: self.store.all_tags()?,
+            boards: self.store.boards()?,
             sources: self.sources.keys().cloned().collect(),
             models: self
                 .config
@@ -2356,6 +2395,113 @@ impl Hub {
         self.store.delete_task(id)?;
         self.emit(Event::Sync);
         Ok(())
+    }
+
+    // -- tags and boards -------------------------------------------------
+
+    /// Change a session's tags. `set` replaces every tag with the same key;
+    /// `add` keeps them; `remove` takes a tag, or a bare key takes all of
+    /// that key. Returns the tags as they now are.
+    pub fn tag(
+        &self,
+        agent_id: &str,
+        add: &[String],
+        remove: &[String],
+        set: &[String],
+    ) -> Result<Vec<String>> {
+        anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
+        for raw in add.iter().chain(set) {
+            anyhow::ensure!(
+                tags::normalize(raw).is_some(),
+                "`{raw}` is not a tag: a word, or key:value, up to {} characters",
+                tags::MAX_TAG
+            );
+        }
+        let now = tags::change(&self.store.tags(agent_id)?, add, remove, set);
+        self.store.set_tags(agent_id, &now)?;
+        self.emit(Event::Sync);
+        Ok(now)
+    }
+
+    pub fn boards(&self) -> Result<Vec<Board>> {
+        self.store.boards()
+    }
+
+    pub fn create_board(&self, board: Board) -> Result<Board> {
+        let at = now();
+        let board = Board {
+            id: new_id("board"),
+            created_at: at,
+            updated_at: at,
+            ..board
+        }
+        .cleaned();
+        let board = if board.name.is_empty() {
+            Board { name: format!("Board {}", self.store.boards()?.len() + 1), ..board }
+        } else {
+            board
+        };
+        self.store.save_board(&board)?;
+        self.emit(Event::Sync);
+        Ok(board)
+    }
+
+    /// Replace a board's settings. Whoever rearranges it -- a person or an
+    /// agent -- sends the whole board, so there is one way to change it.
+    pub fn update_board(&self, id: &str, board: Board) -> Result<Board> {
+        let current = self.store.board(id)?.context("no such board")?;
+        let board = Board {
+            id: current.id,
+            created_at: current.created_at,
+            updated_at: now(),
+            ..board
+        }
+        .cleaned();
+        let board = if board.name.is_empty() { Board { name: current.name, ..board } } else { board };
+        self.store.save_board(&board)?;
+        self.emit(Event::Sync);
+        Ok(board)
+    }
+
+    pub fn delete_board(&self, id: &str) -> Result<()> {
+        self.store.delete_board(id)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
+    /// A board laid out over every session that is not archived.
+    pub fn arrange(&self, id: &str) -> Result<Arranged> {
+        let board = self.store.board(id)?.context("no such board")?;
+        let agents = self.store.agents(BOARD_SESSIONS)?;
+        Ok(tags::arrange(&board, &agents, &self.store.all_tags()?))
+    }
+
+    /// Drag a card to a cell: set the board's column tag and row tag to the
+    /// cell's values, or take one off for the lane of sessions without it.
+    /// A board with no rows ignores `row`, and one with no columns `column`.
+    pub fn move_card(
+        &self,
+        id: &str,
+        agent_id: &str,
+        column: Option<&str>,
+        row: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let board = self.store.board(id)?.context("no such board")?;
+        anyhow::ensure!(
+            !board.columns.is_empty() || !board.rows.is_empty(),
+            "this board has no columns or rows to move between"
+        );
+        let (mut set, mut remove) = (Vec::new(), Vec::new());
+        for (key, value) in [(&board.columns, column), (&board.rows, row)] {
+            if key.is_empty() {
+                continue;
+            }
+            match value.filter(|v| !v.is_empty()) {
+                Some(value) => set.push(format!("{key}:{value}")),
+                None => remove.push(key.clone()),
+            }
+        }
+        self.tag(agent_id, &[], &remove, &set)
     }
 
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
@@ -2595,6 +2741,13 @@ pub struct Snapshot {
     pub tasks: Vec<TaskItem>,
     /// Why each task is where it is, oldest first.
     pub task_notes: Vec<TaskNote>,
+    /// Agent id -> its tags. Defaulted, like `boards`, so a client talking
+    /// to an older daemon still reads a snapshot.
+    #[serde(default)]
+    pub tags: HashMap<String, Vec<String>>,
+    /// Every board, in tab order.
+    #[serde(default)]
+    pub boards: Vec<Board>,
     pub sources: Vec<String>,
     pub models: Vec<ModelInfo>,
     /// What each harness can do, so a surface can say why a control is off

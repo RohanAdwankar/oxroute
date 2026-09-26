@@ -81,6 +81,8 @@ struct FileConfig {
     codex: FileCodex,
     #[serde(default)]
     claude: FileClaude,
+    #[serde(default)]
+    diagram: FileDiagram,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +132,12 @@ struct FileCodex {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FileDiagram {
+    path: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileClaude {
     permission_mode: Option<String>,
 }
@@ -170,6 +178,10 @@ pub struct Config {
     /// here on purpose: it runs commands on a machine you own.
     pub owner: String,
     pub listen: String,
+    /// Where an agent's architecture diagram is, relative to its working
+    /// directory unless absolute. Drawing a change to it is a way to message
+    /// the agent.
+    pub diagram_path: String,
 }
 
 fn home() -> PathBuf {
@@ -383,12 +395,26 @@ impl Config {
             listen: pick(&["OXROUTE_LISTEN"], file.listen, || {
                 "127.0.0.1:8787".into()
             }),
+            diagram_path: pick(&["OXROUTE_DIAGRAM_PATH"], file.diagram.path, || {
+                "docs/architecture.mmd".into()
+            }),
         })
     }
 
     /// Kept so existing callers and the Slack bot's env file still work.
     pub fn from_env() -> Result<Self> {
         Self::load()
+    }
+
+    /// An agent's architecture diagram: `diagram_path` under its working
+    /// directory, unless the setting is already absolute.
+    pub fn diagram_for(&self, cwd: &str) -> PathBuf {
+        let path = expand(&self.diagram_path);
+        if path.is_absolute() {
+            return path;
+        }
+        let cwd = if cwd.is_empty() { self.workspace.as_str() } else { cwd };
+        expand(cwd).join(path)
     }
 
     /// The workspace, as a path rather than as the string a person typed.
@@ -487,6 +513,7 @@ mod tests {
             "OXROUTE_CLAUDE_PERMISSION_MODE",
             "OXROUTE_SLACK_APP_TOKEN",
             "SLACK_APP_TOKEN",
+            "OXROUTE_DIAGRAM_PATH",
         ] {
             std::env::remove_var(name);
         }
@@ -601,6 +628,20 @@ stall_timeout = 120.0
             .unwrap_err()
             .to_string();
         assert!(error.contains("owner"), "{error}");
+    }
+
+    #[test]
+    fn the_diagram_is_under_each_agent_unless_the_path_is_absolute() {
+        let _guard = exclusive();
+        std::env::set_var("OXROUTE_OWNER", "me");
+        let config = Config::load_from(Path::new("/nonexistent/x.toml")).unwrap();
+        // The default is the one this repository keeps.
+        assert_eq!(config.diagram_path, "docs/architecture.mmd");
+        assert_eq!(config.diagram_for("/x"), Path::new("/x/docs/architecture.mmd"));
+        let path = write("diagram", "owner = \"me\"\n\n[diagram]\npath = \"/srv/arch.mmd\"\n");
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.diagram_for("/x"), Path::new("/srv/arch.mmd"));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

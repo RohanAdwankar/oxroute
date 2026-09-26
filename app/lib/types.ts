@@ -154,6 +154,10 @@ export interface Snapshot {
   inbox: InboxItem[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];
+  /** Agent id -> its tags. */
+  tags: Record<string, string[]>;
+  /** Every board, in tab order. */
+  boards: Board[];
   sources: string[];
   models: ModelInfo[];
   backends: BackendInfo[];
@@ -165,6 +169,98 @@ export interface BackendInfo {
   fork: boolean;
   merge: boolean;
 }
+
+// -- tags and boards -------------------------------------------------------
+
+/**
+ * A saved arrangement of sessions by their tags. `columns` and `rows` are
+ * tag keys; with both set the board is a grid. See `crates/oxroute-core/src/tags.rs`.
+ */
+export interface Board {
+  id: string;
+  name: string;
+  columns: string;
+  columnOrder: string[];
+  rows: string;
+  rowOrder: string[];
+  /** Keys offered as filters. */
+  filters: string[];
+  /** Tags a card must have: any within a key, all across keys. */
+  selected: string[];
+  /** A key to sort cards by; empty for most recent first. */
+  sort: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BoardRow {
+  /** Null is the row of sessions without the row key. */
+  value: string | null;
+  /** Agent ids per cell, lined up with `Arranged.columns`. */
+  cells: string[][];
+}
+
+export interface Arranged {
+  board: Board;
+  /** Column values; null is the column of sessions without the key. */
+  columns: (string | null)[];
+  rows: BoardRow[];
+  sessions: Record<string, Agent>;
+  /** Every key in use, with its values. */
+  values: Record<string, string[]>;
+  /** Bare tags in use. */
+  plain: string[];
+  shown: number;
+  total: number;
+}
+
+export interface CodeRef {
+  file: string;
+  lines: string | null;
+  symbol: string | null;
+}
+
+export interface DiagramNode {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  code: CodeRef | null;
+  change: "added" | "renamed" | null;
+}
+
+export interface DiagramEdge {
+  from: string;
+  to: string;
+  label: string | null;
+  added: boolean;
+}
+
+/** An agent's architecture diagram, as the composer draws it. */
+export type DiagramPayload =
+  | { exists: false; file: string; modified: number }
+  | {
+      exists: true;
+      file: string;
+      modified: number;
+      svg: string;
+      width: number;
+      height: number;
+      nodes: DiagramNode[];
+      edges: DiagramEdge[];
+      /** Boxes a pending edit takes away. */
+      removed: string[];
+    };
+
+/** A pending change to a diagram, held here until it is applied. */
+export type DiagramEdit =
+  | { op: "addNode"; id: string; label: string }
+  | { op: "addEdge"; from: string; to: string; label?: string }
+  | { op: "rename"; id: string; label: string }
+  | { op: "removeNode"; id: string }
+  | { op: "removeEdge"; from: string; to: string };
 
 export interface AgentView {
   agent: Agent;

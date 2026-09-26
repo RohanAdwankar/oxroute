@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
-import type { AgentView, BackendInfo, Entry, EntryKind } from "../lib/types";
-import { Icon } from "./Icon";
+import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind } from "../lib/types";
+import { DiagramComposer } from "./composer/DiagramComposer";
+import { Sketch, type SketchHandle } from "./composer/Sketch";
+import { TagEditor, tagChange } from "./Tags";
+import { Icon, type IconName } from "./Icon";
 import { Markdown } from "./Markdown";
 import { SplitAction } from "./SplitAction";
 
@@ -20,6 +24,30 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
 };
 
 type TimelineItem = { entry: Entry } | { tools: Entry[] };
+/** Three ways to tell an agent something: say it, redraw the architecture, or mark up a picture. */
+type Mode = "type" | "diagram" | "draw";
+
+const MODES: { mode: Mode; label: string; icon: IconName }[] = [
+  { mode: "type", label: "Type", icon: "text" },
+  { mode: "diagram", label: "Diagram", icon: "diagram" },
+  { mode: "draw", label: "Draw", icon: "pen" },
+];
+
+const PLACEHOLDER: Record<Mode, string> = {
+  type: "Message",
+  diagram: "Anything the agent should know about this change",
+  draw: "What should change here?",
+};
+
+/** `…\n\nAttached: a.png, b.png` is how the daemon records sent images. */
+function splitAttached(text: string): { body: string; names: string[] } {
+  const match = text.match(/(?:^|\n\n)Attached: (.+)$/);
+  if (!match || match.index === undefined) return { body: text, names: [] };
+  return {
+    body: text.slice(0, match.index),
+    names: match[1].split(", ").map((name) => name.trim()).filter(Boolean),
+  };
+}
 type Upload = { file: File; preview: string };
 type QuoteMenu = { text: string; x: number; y: number };
 
@@ -66,6 +94,12 @@ export function AgentPanel({
   onArchive,
   busy,
   focusEntry,
+  onSendDiagram,
+  onCreateDiagram,
+  say,
+  tags,
+  knownTags,
+  onTag,
 }: {
   view: AgentView;
   /// What this agent's harness can do.
@@ -74,6 +108,13 @@ export function AgentPanel({
   onSay: (text: string, images: File[], queued: boolean) => void;
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => void;
+  /** Draw instead of describe: the edits become the message. */
+  onSendDiagram: (edits: DiagramEdit[], note: string) => void;
+  onCreateDiagram: () => void;
+  say: (text: string) => void;
+  tags: string[];
+  knownTags: string[];
+  onTag: (change: { add?: string[]; remove?: string[]; set?: string[] }) => void;
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
@@ -94,8 +135,13 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<QuoteMenu | null>(null);
+  const [mode, setMode] = useState<Mode>("type");
+  const [edits, setEdits] = useState<DiagramEdit[]>([]);
+  const [sketchReady, setSketchReady] = useState(false);
+  const sketch = useRef<SketchHandle>(null);
   const { agent } = view;
   const timeline = useRef<HTMLDivElement>(null);
+  const timelineBody = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const previousAgent = useRef(agent.id);
   const picker = useRef<HTMLInputElement>(null);
@@ -129,6 +175,18 @@ export function AgentPanel({
     if (node && following.current) node.scrollTo({ top: node.scrollHeight });
   }, []);
 
+  // A picture or a drawn diagram arrives after the scroll that revealed it,
+  // and grows the timeline under the reader. Keep following the tail.
+  useEffect(() => {
+    const body = timelineBody.current;
+    if (!body) return;
+    const observer = new ResizeObserver(() => {
+      if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [agent.id]);
+
   const addFiles = useCallback((files: File[]) => {
     const images = files.filter((file) => file.type.startsWith("image/"));
     setAttachmentError(images.length === files.length ? "" : "Only image files are supported.");
@@ -155,7 +213,40 @@ export function AgentPanel({
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
   }, []);
 
+  const sendDrawn = async () => {
+    if (busy) return;
+    const text = draft.trim();
+    if (mode === "diagram") {
+      if (edits.length === 0) return;
+      onSendDiagram(edits, text);
+      setEdits([]);
+    } else {
+      const picture = await sketch.current?.export();
+      if (!picture) return;
+      // A picture drawn while an agent is working waits its turn, like
+      // anything else said then.
+      onSay(text, [picture, ...uploads.map((upload) => upload.file)], agent.status === "working");
+      uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
+      setUploads([]);
+      sketch.current?.clear();
+    }
+    setDraft("");
+    // Back to the timeline, where what was just sent shows up.
+    setMode("type");
+  };
+
+  const canSend =
+    mode === "type"
+      ? draft.trim().length > 0 || uploads.length > 0
+      : mode === "diagram"
+        ? edits.length > 0
+        : sketchReady;
+
   const send = (queued = agent.status === "working") => {
+    if (mode !== "type") {
+      void sendDrawn();
+      return;
+    }
     const text = draft.trim();
     if ((!text && uploads.length === 0) || busy) return;
     // What you just said is what you want to see, wherever you had scrolled
@@ -343,8 +434,34 @@ export function AgentPanel({
         </button>
       </div>
 
+      <div className="flex shrink-0 items-center gap-2 border-b border-hair px-5 py-[6px]">
+        <TagEditor
+          tags={tags}
+          known={knownTags}
+          busy={busy}
+          onAdd={(tag) => onTag(tagChange(tag))}
+          onRemove={(tag) => onTag({ remove: [tag] })}
+        />
+      </div>
+
+      {mode === "diagram" && (
+        <DiagramComposer
+          agentId={agent.id}
+          edits={edits}
+          onEdits={setEdits}
+          onCreate={() => {
+            onCreateDiagram();
+            setMode("type");
+          }}
+          say={say}
+          busy={busy}
+        />
+      )}
+      {mode === "draw" && <Sketch ref={sketch} onChange={setSketchReady} say={say} />}
+
       <div
         ref={timeline}
+        hidden={mode !== "type"}
         onContextMenu={(event) => {
           const selection = window.getSelection();
           const text = selection?.toString().trim() ?? "";
@@ -363,84 +480,86 @@ export function AgentPanel({
         data-transcript
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2"
       >
-        {view.timeline.length === 0 ? (
-          <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
-        ) : (
-          items.map((item) => {
-            if ("tools" in item) {
-              const first = item.tools[0];
-              return (
-                <details key={`tools-${first.id}`} className="group border-b border-hair py-2">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                    <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
-                    <span className="w-2 text-center group-open:rotate-90">›</span>
-                    <span>
-                      {item.tools.length} tool {item.tools.length === 1 ? "call" : "calls"}
-                    </span>
-                  </summary>
-                  <div className="ml-[52px] mt-1 flex flex-col">
-                    {item.tools.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid"
-                      >
-                        {entry.text !== "Command" && (
-                          <span className="mr-2 text-faint">{entry.text}</span>
-                        )}
-                        <div className="break-words whitespace-pre-wrap">
-                          {entry.detail || entry.text}
-                        </div>
-                        {entry.output && (
-                          <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
-                            {entry.output}
-                          </pre>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              );
-            }
-
-            const { entry } = item;
-            const tag = TAG[entry.kind];
-            return (
-              <div
-                key={entry.id}
-                data-entry={entry.id}
-                className={`flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0 ${entry.id === focusEntry ? "bg-band" : ""}`}
-              >
-                <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
-                  {minute(entry.at)}
-                </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
-                    {tag && (
-                      <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
-                        {tag.label}
+        <div ref={timelineBody}>
+          {view.timeline.length === 0 ? (
+            <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
+          ) : (
+            items.map((item) => {
+              if ("tools" in item) {
+                const first = item.tools[0];
+                return (
+                  <details key={`tools-${first.id}`} className="group border-b border-hair py-2">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
+                      <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
+                      <span className="w-2 text-center group-open:rotate-90">›</span>
+                      <span>
+                        {item.tools.length} tool {item.tools.length === 1 ? "call" : "calls"}
                       </span>
-                    )}
-                    <Markdown>{entry.text}</Markdown>
+                    </summary>
+                    <div className="ml-[52px] mt-1 flex flex-col">
+                      {item.tools.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid"
+                        >
+                          {entry.text !== "Command" && (
+                            <span className="mr-2 text-faint">{entry.text}</span>
+                          )}
+                          <div className="break-words whitespace-pre-wrap">
+                            {entry.detail || entry.text}
+                          </div>
+                          {entry.output && (
+                            <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
+                              {entry.output}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                );
+              }
+
+              const { entry } = item;
+              const tag = TAG[entry.kind];
+              return (
+                <div
+                  key={entry.id}
+                  data-entry={entry.id}
+                  className={`flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0 ${entry.id === focusEntry ? "bg-band" : ""}`}
+                >
+                  <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
+                    {minute(entry.at)}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                    <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
+                      {tag && (
+                        <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
+                          {tag.label}
+                        </span>
+                      )}
+                      {entry.kind === "you" ? <YouSaid text={entry.text} /> : <Markdown>{entry.text}</Markdown>}
+                    </div>
+                    {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
+                    {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenAgent(entry.detail)}
+                        aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
+                        title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
+                        className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
+                      >
+                        <Icon name="open" size={13} />
+                      </button>
+                    ) : entry.detail ? (
+                      <span className="text-[11px] text-faint">{entry.detail}</span>
+                    ) : null}
                   </div>
-                  {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
-                  {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
-                    <button
-                      type="button"
-                      onClick={() => onOpenAgent(entry.detail)}
-                      aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
-                      title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
-                      className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
-                    >
-                      <Icon name="open" size={13} />
-                    </button>
-                  ) : entry.detail ? (
-                    <span className="text-[11px] text-faint">{entry.detail}</span>
-                  ) : null}
                 </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
+        </div>
       </div>
 
       {quoteMenu && (
@@ -464,6 +583,26 @@ export function AgentPanel({
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
+        <div className="flex items-center gap-1" role="group" aria-label="how to say it">
+          {MODES.map((option) => (
+            <button
+              key={option.mode}
+              type="button"
+              aria-pressed={mode === option.mode}
+              onClick={() => setMode(option.mode)}
+              className={[
+                "flex h-7 cursor-pointer items-center gap-[6px] rounded-[3px] px-[10px] text-[12px]",
+                mode === option.mode ? "bg-wash text-ink" : "text-faint hover:text-mid",
+              ].join(" ")}
+            >
+              <Icon name={option.icon} size={13} />
+              {option.label}
+              {option.mode === "diagram" && edits.length > 0 && (
+                <span className="tnum text-[10.5px] text-ok">{edits.length}</span>
+              )}
+            </button>
+          ))}
+        </div>
         {draggingImages && <p className="text-[11px] text-drop">Drop images to attach</p>}
         {uploads.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -532,10 +671,10 @@ export function AgentPanel({
             }}
             rows={1}
             data-composer
-            placeholder="Message"
+            placeholder={PLACEHOLDER[mode]}
             className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />
-          {agent.status === "working" ? (
+          {agent.status === "working" && mode === "type" ? (
             <SplitAction
               label="Queue message"
               icon="queue"
@@ -547,18 +686,121 @@ export function AgentPanel({
               ]}
               variant="composer"
             />
-          ) : (
+          ) : mode === "type" ? (
             <SplitAction
               label="Send message"
               icon="send"
               onClick={() => send(false)}
-              disabled={busy || (draft.trim().length === 0 && uploads.length === 0)}
+              disabled={busy || !canSend}
               menu={[{ label: "Add to the task list", icon: "tasks", onClick: toTask }]}
               variant="composer"
             />
+          ) : (
+            // A drawing is made at the moment it is sent, so there is
+            // nothing yet to put on the task list: one button, one meaning.
+            <button
+              type="button"
+              onClick={() => send(false)}
+              disabled={busy || !canSend}
+              aria-label={mode === "diagram" ? "send the drawn change" : "send the picture"}
+              title={mode === "diagram" ? "Send the change" : "Send the picture"}
+              className="flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="send" />
+            </button>
           )}
         </div>
       </footer>
     </section>
+  );
+}
+
+/**
+ * Something you sent. A drawn diagram change shows as the diagram, and a
+ * picture as the picture, with the words the agent got one click away.
+ */
+function YouSaid({ text }: { text: string }) {
+  if (text.includes("```mermaid")) return <DiagramMessage text={text} />;
+  const { body, names } = splitAttached(text);
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      {body.trim() && <Markdown>{body}</Markdown>}
+      {names.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {names.map((name) => (
+            <AttachedImage key={name} name={name} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttachedImage({ name }: { name: string }) {
+  const [missing, setMissing] = useState(false);
+  const url = `/api/attachments/${encodeURIComponent(name)}`;
+  if (missing) return <span className="text-[12px] text-faint">{name}</span>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" title={name}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={name}
+        onError={() => setMissing(true)}
+        className="max-h-64 max-w-[min(520px,100%)] rounded-[3px] border border-rule"
+      />
+    </a>
+  );
+}
+
+function DiagramMessage({ text }: { text: string }) {
+  const source = text.match(/```mermaid\n([\s\S]*?)```/)?.[1] ?? "";
+  // The boxes this change added, coloured the way the editor showed them.
+  const added = [...text.matchAll(/^- New component `(\w+)`/gm)].map((match) => match[1]).join(",");
+  const [svg, setSvg] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.renderDiagram(source, added ? added.split(",") : []).then(
+      (drawn) => live && setSvg(drawn.svg),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [source, added]);
+  const lines = text.split("\n");
+  const changes = lines.filter((line) => line.startsWith("- ")).map((line) => line.slice(2));
+  const firstChange = lines.findIndex((line) => line.startsWith("- "));
+  const note = lines.slice(1, firstChange < 0 ? 1 : firstChange).join("\n").trim();
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <span className="flex items-center gap-2 text-[13px] text-mid">
+        <Icon name="diagram" size={14} />
+        Drew a change to the architecture
+      </span>
+      {note && <Markdown>{note}</Markdown>}
+      <ul className="flex flex-col gap-[2px] text-[13.5px] leading-[1.45]">
+        {changes.map((change, index) => (
+          <li key={index} className="flex gap-2">
+            <span className="text-ok">+</span>
+            <span className="min-w-0">
+              <Markdown>{change}</Markdown>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {svg && (
+        <div
+          className="max-w-[560px] rounded-[3px] border border-rule bg-[#fbf9f6] [&>svg]:h-auto [&>svg]:w-full"
+          dangerouslySetInnerHTML={{ __html: svg.replace(/^<\?xml[^>]*>\s*/, "") }}
+        />
+      )}
+      <details className="text-[12.5px] text-mid">
+        <summary className="cursor-pointer text-faint hover:text-mid">What the agent was told</summary>
+        <div className="mt-2 text-[13px]">
+          <Markdown>{text}</Markdown>
+        </div>
+      </details>
+    </div>
   );
 }

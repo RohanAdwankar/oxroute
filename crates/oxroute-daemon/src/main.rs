@@ -33,6 +33,8 @@ use oxroute_core::hub::Routing;
 use oxroute_core::source::slack::SlackSource;
 use oxroute_core::{Config, Hub, Store};
 
+mod diagram;
+
 const INBOX_LIMIT: usize = 200;
 const TIMELINE_LIMIT: usize = 500;
 const SEARCH_LIMIT: usize = 200;
@@ -135,6 +137,11 @@ fn doctor() -> Result<()> {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    println!(
+        "diagram         {} (in each agent's directory: {})",
+        config.diagram_path,
+        config.diagram_for("").display()
+    );
     match oxroute_core::migrate::legacy_database() {
         Some(path) => println!("codex-slack     {} (run `oxrouted migrate`)", path.display()),
         None => println!("codex-slack     nothing to import"),
@@ -200,9 +207,21 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/tasks/{id}/move", post(move_task))
         .route("/api/task-images", post(create_task_with_images))
-        .route("/api/attachments/{name}", get(attachment))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
+        .route("/api/agents/{id}/tags", get(tags).post(change_tags))
+        .route("/api/boards", get(boards).post(create_board))
+        .route(
+            "/api/boards/{id}",
+            get(arrange).put(update_board).delete(delete_board),
+        )
+        .route("/api/boards/{id}/move", post(move_card))
+        .route("/api/agents/{id}/diagram", get(diagram_view))
+        .route("/api/agents/{id}/diagram/preview", post(diagram_preview))
+        .route("/api/agents/{id}/diagram/send", post(diagram_send))
+        .route("/api/agents/{id}/diagram/create", post(diagram_create))
+        .route("/api/diagram/render", post(diagram_render))
+        .route("/api/attachments/{name}", get(attachment))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
@@ -455,36 +474,6 @@ async fn keep_image(hub: &Arc<Hub>, field: axum::extract::multipart::Field<'_>) 
     let path = hub.config.attachments.join(&name);
     tokio::fs::write(&path, field.bytes().await?).await?;
     Ok(path.to_string_lossy().to_string())
-}
-
-/// Hand back a picture that came with a task.
-///
-/// Only a plain image file name: anything with a separator or a leading dot
-/// is refused before the disk is touched, so no name reaches outside the
-/// attachments directory.
-async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
-    let plain = !name.is_empty()
-        && !name.starts_with('.')
-        && !name.contains(['/', '\\'])
-        && std::path::Path::new(&name).file_name().and_then(|n| n.to_str()) == Some(name.as_str());
-    let kind = match name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase().as_str() {
-        _ if !plain => None,
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    };
-    let Some(kind) = kind else {
-        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
-    };
-    match tokio::fs::read(hub.config.attachments.join(&name)).await {
-        Ok(bytes) => Ok(Response::builder()
-            .header(header::CONTENT_TYPE, kind)
-            .header(header::CACHE_CONTROL, "private, max-age=86400")
-            .body(Body::from(bytes))?),
-        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
-    }
 }
 
 #[derive(Deserialize)]
@@ -794,6 +783,300 @@ async fn mode(
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
+// -- tags and boards ---------------------------------------------------------
+
+async fn tags(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<String>>, Failed> {
+    hub.store.agent(&id)?.context("no such agent").map_err(Failed)?;
+    Ok(Json(hub.store.tags(&id)?))
+}
+
+#[derive(Deserialize)]
+struct TagsBody {
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<String>,
+    /// Replaces any tag with the same key.
+    #[serde(default)]
+    set: Vec<String>,
+}
+
+async fn change_tags(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<TagsBody>,
+) -> Result<Json<Vec<String>>, Failed> {
+    Ok(Json(hub.tag(&id, &body.add, &body.remove, &body.set)?))
+}
+
+async fn boards(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::tags::Board>>, Failed> {
+    Ok(Json(hub.boards()?))
+}
+
+/// A board as sent: every setting is optional, so `{"name": "Ideas"}` or
+/// `{"columns": "stage"}` alone makes one.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardBody {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    columns: String,
+    #[serde(default)]
+    column_order: Vec<String>,
+    #[serde(default)]
+    rows: String,
+    #[serde(default)]
+    row_order: Vec<String>,
+    #[serde(default)]
+    filters: Vec<String>,
+    #[serde(default)]
+    selected: Vec<String>,
+    #[serde(default)]
+    sort: String,
+}
+
+impl From<BoardBody> for oxroute_core::tags::Board {
+    fn from(body: BoardBody) -> Self {
+        oxroute_core::tags::Board {
+            id: String::new(),
+            name: body.name,
+            columns: body.columns,
+            column_order: body.column_order,
+            rows: body.rows,
+            row_order: body.row_order,
+            filters: body.filters,
+            selected: body.selected,
+            sort: body.sort,
+            created_at: 0.0,
+            updated_at: 0.0,
+        }
+    }
+}
+
+async fn create_board(
+    State(hub): Hubs,
+    Json(body): Json<BoardBody>,
+) -> Result<Json<oxroute_core::tags::Board>, Failed> {
+    Ok(Json(hub.create_board(body.into())?))
+}
+
+async fn update_board(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<BoardBody>,
+) -> Result<Json<oxroute_core::tags::Board>, Failed> {
+    Ok(Json(hub.update_board(&id, body.into())?))
+}
+
+async fn delete_board(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    hub.delete_board(&id)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn arrange(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<oxroute_core::tags::Arranged>, Failed> {
+    Ok(Json(hub.arrange(&id)?))
+}
+
+/// A card dropped on a cell. Each value is null for the lane of sessions
+/// without that key.
+#[derive(Deserialize)]
+struct MoveBody {
+    agent: String,
+    #[serde(default)]
+    column: Option<String>,
+    #[serde(default)]
+    row: Option<String>,
+}
+
+async fn move_card(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<MoveBody>,
+) -> Result<Json<Vec<String>>, Failed> {
+    Ok(Json(hub.move_card(&id, &body.agent, body.column.as_deref(), body.row.as_deref())?))
+}
+
+/// An agent's diagram: where it is, and the directory its code is in.
+fn diagram_of(hub: &Hub, id: &str) -> Result<(oxroute_core::Agent, std::path::PathBuf)> {
+    let agent = hub.store.agent(id)?.context("no such agent")?;
+    let path = hub.config.diagram_for(&agent.cwd);
+    Ok((agent, path))
+}
+
+fn workdir(hub: &Hub, agent: &oxroute_core::Agent) -> String {
+    if agent.cwd.is_empty() {
+        hub.config.workspace_path().display().to_string()
+    } else {
+        agent.cwd.clone()
+    }
+}
+
+/// An agent's diagram as the composer draws it: the picture, and where
+/// every box is so a click on the picture can find it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagramPayload {
+    /// False when the agent's repository has no diagram yet. The rest is
+    /// then empty, and the composer offers to have the agent draw one.
+    exists: bool,
+    file: String,
+    #[serde(flatten)]
+    drawn: Option<diagram::Drawn>,
+    /// Seconds since the epoch the file last changed. The agent editing it
+    /// changes this, which is how the composer knows to redraw.
+    modified: f64,
+}
+
+fn diagram_payload(hub: &Hub, id: &str, edits: &[diagram::Edit]) -> Result<DiagramPayload> {
+    let (_, path) = diagram_of(hub, id)?;
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Ok(DiagramPayload {
+            exists: false,
+            file: path.display().to_string(),
+            drawn: None,
+            modified: 0.0,
+        });
+    };
+    let file = diagram::DiagramFile::read(&path)?;
+    Ok(DiagramPayload {
+        exists: true,
+        file: path.display().to_string(),
+        drawn: Some(diagram::draw(&file, edits)?),
+        modified: metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or_default(),
+    })
+}
+
+async fn diagram_view(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<DiagramPayload>, Failed> {
+    Ok(Json(diagram_payload(&hub, &id, &[])?))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    #[serde(default)]
+    edits: Vec<diagram::Edit>,
+}
+
+async fn diagram_preview(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<PreviewBody>,
+) -> Result<Json<DiagramPayload>, Failed> {
+    Ok(Json(diagram_payload(&hub, &id, &body.edits)?))
+}
+
+#[derive(Deserialize)]
+struct SendBody {
+    edits: Vec<diagram::Edit>,
+    #[serde(default)]
+    note: String,
+}
+
+/// Draw a change instead of describing it: write it into the diagram, then
+/// send the agent a brief on what changed and where that code is.
+///
+/// The file is written first. A diagram that changed with nobody told is
+/// visible and easy to recover; an agent told about a change the file does
+/// not have would be building to a spec that does not exist.
+async fn diagram_send(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<SendBody>,
+) -> Result<Json<DiagramPayload>, Failed> {
+    if body.edits.is_empty() {
+        return Err(Failed(anyhow::anyhow!("there are no changes to send")));
+    }
+    let (agent, path) = diagram_of(&hub, &id)?;
+    let root = workdir(&hub, &agent);
+    let file = diagram::DiagramFile::read(&path)?;
+    let brief = diagram::describe(&file, &body.edits, &path, std::path::Path::new(&root), &body.note)?;
+    diagram::write(&path, &diagram::rewrite(&file, &body.edits)?)?;
+    hub.say_to(&id, &brief).await.map_err(|error| {
+        Failed(error.context("the diagram is saved, but the agent could not be told"))
+    })?;
+    Ok(Json(diagram_payload(&hub, &id, &[])?))
+}
+
+/// A repository with no diagram yet: ask its agent to draw one, in the
+/// format the composer reads.
+async fn diagram_create(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let (agent, path) = diagram_of(&hub, &id)?;
+    let root = workdir(&hub, &agent);
+    hub.say_to(&id, &diagram::create_request(&path, std::path::Path::new(&root)))
+        .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct RenderBody {
+    source: String,
+    /// Boxes the change added, coloured as the editor showed them.
+    #[serde(default)]
+    added: Vec<String>,
+}
+
+/// Draw a diagram someone sent, for the timeline to show as a picture.
+async fn diagram_render(Json(body): Json<RenderBody>) -> Result<Json<serde_json::Value>, Failed> {
+    let file = diagram::DiagramFile::parse(&body.source)?;
+    Ok(Json(json!({ "svg": diagram::draw_marked(&file, &body.added)?.svg })))
+}
+
+/// An image sent from a surface, so the timeline can show what was sent.
+///
+/// Only a bare file name inside the attachments directory: anything with a
+/// separator, or a leading dot, is refused before the disk is touched.
+async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
+    let Some(kind) = image_type(&name) else {
+        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
+    };
+    match tokio::fs::read(hub.config.attachments.join(&name)).await {
+        Ok(bytes) => Ok(Response::builder()
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .body(Body::from(bytes))?),
+        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
+    }
+}
+
+/// The content type of an attachment worth serving, or `None`.
+///
+/// Only a bare image file name: anything with a separator or a leading dot
+/// is refused before the disk is touched, so no name reaches outside the
+/// attachments directory.
+fn image_type(name: &str) -> Option<&'static str> {
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && std::path::Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name);
+    if !plain {
+        return None;
+    }
+    match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -808,6 +1091,15 @@ mod tests {
             agent_id: String::new(),
             created_at: 1.0,
             updated_at: 1.0,
+        }
+    }
+
+    #[test]
+    fn only_a_bare_image_name_is_served_from_attachments() {
+        assert_eq!(image_type("web-msg_1-sketch.png"), Some("image/png"));
+        assert_eq!(image_type("photo.JPG"), Some("image/jpeg"));
+        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.png", "notes.txt", ""] {
+            assert_eq!(image_type(refused), None, "{refused} was served");
         }
     }
 

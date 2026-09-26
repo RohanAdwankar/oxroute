@@ -15,6 +15,7 @@
 //! | [`source`]  | where signals come from; Slack is the one wired up   |
 //! | [`agent`]   | the harnesses: Codex and Claude Code                 |
 //! | [`hub`]     | the only thing that knows about both sides           |
+//! | [`tags`]    | tags on sessions, and boards arranged by them         |
 //! | [`progress`]| what a running turn looks like to a person watching  |
 //! | [`migrate`] | moving in from the Slack bot this replaces           |
 //!
@@ -33,6 +34,7 @@ pub mod progress;
 pub mod rpc;
 pub mod source;
 pub mod store;
+pub mod tags;
 
 pub use config::{Config, Mode};
 pub use hub::{Hub, Routing, Snapshot};
