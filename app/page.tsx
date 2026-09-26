@@ -529,8 +529,10 @@ export default function Home() {
             return;
           }
           // What is in front of you is a conversation, so enter starts
-          // typing in it rather than reopening a card you cannot see.
-          if (reading) {
+          // typing in it rather than reopening a card you cannot see. Only
+          // when the middle column has the emphasis: an open pane must not
+          // answer for a column you have moved away from.
+          if (focus === "fleet" && reading) {
             document.querySelector<HTMLTextAreaElement>("[data-composer]")?.focus();
             return;
           }
