@@ -67,6 +67,10 @@ export const api = {
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
   createTask: (text: string, agentId = "") =>
     post<TaskItem>("/api/tasks", { text, agentId }),
+  /// Hand a task to an agent that does not exist yet: a new one, or a fork
+  /// of whoever has it.
+  handOffTask: (id: string, fork: boolean, model?: string) =>
+    post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
   updateTask: (task: TaskItem) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
       method: "PUT",

@@ -1750,3 +1750,35 @@ async fn an_ordinary_message_still_folds_into_a_running_turn() {
     assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
     assert_eq!(w.calls.lock().unwrap().started.len(), 1);
 }
+
+#[tokio::test]
+async fn a_task_can_be_handed_to_an_agent_that_does_not_exist_yet() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "").unwrap();
+
+    // Starting an agent on a task gives it the task, and the task follows.
+    let moved = w.hub.hand_off_task(&task.id, false, None).await.unwrap();
+    let agents = w.hub.store.agents(10).unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(moved.agent_id, agents[0].id);
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[0].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(texts[0], "paint the shed");
+
+    // Forking branches whoever has it, and the task goes to the branch.
+    let forked = w.hub.hand_off_task(&moved.id, true, None).await.unwrap();
+    assert_ne!(forked.agent_id, moved.agent_id);
+    assert_eq!(
+        w.hub.store.fork_parent(&forked.agent_id).unwrap().as_deref(),
+        Some(moved.agent_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_task_nobody_has_cannot_be_forked() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "").unwrap();
+    // There is no session to branch, and inventing one would not be a fork.
+    assert!(w.hub.hand_off_task(&task.id, true, None).await.is_err());
+}

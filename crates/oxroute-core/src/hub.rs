@@ -2199,6 +2199,54 @@ impl Hub {
         Ok(task)
     }
 
+    /// Give a task to an agent that does not exist yet.
+    ///
+    /// A task nobody is doing is work waiting for somebody, so the two ways
+    /// of finding one are here: start an agent on it, or branch the agent
+    /// that has it so the work can go two ways at once. Either way the task
+    /// moves with the decision, which is the point of making it from here
+    /// rather than assigning by hand afterwards.
+    pub async fn hand_off_task(
+        self: &Arc<Self>,
+        id: &str,
+        fork: bool,
+        model: Option<&str>,
+    ) -> Result<TaskItem> {
+        let tasks = self.store.tasks()?;
+        let task = tasks.iter().find(|task| task.id == id).context("no such task")?.clone();
+        let agent = if fork {
+            anyhow::ensure!(
+                !task.agent_id.is_empty(),
+                "a fork branches the agent that has the task, and nobody has this one"
+            );
+            self.fork_local(&task.agent_id).await?
+        } else {
+            let signal = Signal {
+                id: new_id("sig"),
+                source: "you".into(),
+                conversation: String::new(),
+                thread_key: String::new(),
+                external_id: new_id("msg"),
+                author: self.config.owner.clone(),
+                label: "task".into(),
+                text: task.text.clone(),
+                attachments: vec![],
+                at: now(),
+                root: true,
+            };
+            let agent = self.spawn(&signal, None, model, None).await?;
+            // Starting an agent for a task is asking it to do the task.
+            self.clone()
+                .deliver_to(agent.clone(), vec![TurnInput::text(&task.text)], None, None)
+                .await;
+            agent
+        };
+        let moved = TaskItem { agent_id: agent.id.clone(), updated_at: now(), ..task };
+        self.store.save_task(&moved)?;
+        self.emit(Event::Sync);
+        Ok(moved)
+    }
+
     pub fn delete_task(&self, id: &str) -> Result<()> {
         self.store.delete_task(id)?;
         self.emit(Event::Sync);

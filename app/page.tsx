@@ -869,7 +869,8 @@ export default function Home() {
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
             active={focus === "tasks"}
-            agents={[...snapshot.agents, ...snapshot.archived].filter(
+            agents={snapshot.agents}
+            named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
             currentAgent={panes.at(-1) ?? null}
@@ -880,6 +881,9 @@ export default function Home() {
             }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
             onUpdate={(task) => void run(() => api.updateTask(task))}
+            onHandOff={(task, fork) =>
+              void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
+            }
             onDelete={(id) => void run(() => api.deleteTask(id))}
           />
         )}

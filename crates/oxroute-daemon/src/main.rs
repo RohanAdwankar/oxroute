@@ -195,6 +195,7 @@ async fn serve() -> Result<()> {
         .route("/api/pin", post(pin))
         .route("/api/tasks", get(tasks).post(create_task))
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
+        .route("/api/tasks/{id}/hand-off", post(hand_off_task))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
@@ -620,6 +621,24 @@ struct CreateTaskBody {
     text: String,
     #[serde(default)]
     agent_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandOffBody {
+    /// Branch the agent that has the task, rather than starting a new one.
+    #[serde(default)]
+    fork: bool,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+async fn hand_off_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<HandOffBody>,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    Ok(Json(hub.hand_off_task(&id, body.fork, body.model.as_deref()).await?))
 }
 
 async fn create_task(

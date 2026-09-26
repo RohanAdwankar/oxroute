@@ -13,6 +13,10 @@ const STATES: { value: TaskStatus; label: string }[] = [
   { value: "blocked", label: "Blocked" },
 ];
 
+/// Choosing one of these makes the agent rather than naming one.
+const NEW_AGENT = "new-agent";
+const FORK_AGENT = "fork-agent";
+
 const STATE_COLOR: Record<TaskStatus, string> = {
   incomplete: "text-mid",
   complete: "text-ok",
@@ -46,11 +50,13 @@ export function TaskPanel({
   cursor,
   active,
   agents,
+  named,
   currentAgent,
   busy,
   onClose,
   onCreate,
   onUpdate,
+  onHandOff,
   onDelete,
 }: {
   tasks: TaskItem[];
@@ -59,18 +65,25 @@ export function TaskPanel({
   onShowDone: () => void;
   cursor: number;
   active: boolean;
+  /// The agents a task can be given to.
   agents: Agent[];
+  /// Every agent, live or archived, for reading a name back.
+  named: Agent[];
   currentAgent: string | null;
   busy: boolean;
   onClose: () => void;
   onCreate: (text: string, agent: string) => void;
   onUpdate: (task: TaskItem) => void;
+  /// Move a task to an agent that does not exist yet.
+  onHandOff: (task: TaskItem, fork: boolean) => void;
   onDelete: (id: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const names = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
+  // Names cover archived sessions so a task assigned to one still reads,
+  // while only live agents can be chosen.
+  const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
   const currentName = currentAgent ? names.get(currentAgent) ?? "this session" : "";
   const graphVersion = tasks.map((task) => task.updatedAt).join("-");
   // A flowchart of things that do not depend on each other is a list with
@@ -153,11 +166,18 @@ export function TaskPanel({
           value={task.agentId}
           disabled={busy}
           aria-label={`assign ${task.text}`}
-          onChange={(event) => onUpdate({ ...task, agentId: event.target.value })}
+          onChange={(event) => {
+            const to = event.target.value;
+            if (to === NEW_AGENT || to === FORK_AGENT) return onHandOff(task, to === FORK_AGENT);
+            onUpdate({ ...task, agentId: to });
+          }}
           className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-faint outline-none"
         >
           <option value="">Unassigned</option>
           {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+          {/* An agent that does not exist yet, made by choosing it. */}
+          <option value={NEW_AGENT}>Start a new agent on this</option>
+          {task.agentId && <option value={FORK_AGENT}>Fork {names.get(task.agentId) ?? "it"}</option>}
         </select>
       </div>
     </div>
