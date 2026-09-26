@@ -428,6 +428,19 @@ export default function Home() {
     [snapshot.inbox],
   );
 
+  /// Choosing a card: somewhere to go, or -- while one is being picked to
+  /// sit beside an open session -- the companion.
+  const chooseAgent = (id: string) => {
+    if (pairing !== null) {
+      placeBeside(pairing, id);
+      setPairing(null);
+      setFocus("fleet");
+      return;
+    }
+    clearRouting();
+    showAgent(id);
+  };
+
   const pick = (item: InboxItem) => {
     const at = rows.findIndex((row) => row.kind === "item" && row.item.signal.id === item.signal.id);
     if (at >= 0) setInboxAt(at);
@@ -568,10 +581,7 @@ export default function Home() {
             return sendTo(selected.signal.id, target as string[]);
           }
           const agent = fleet[fleetAt];
-          if (agent) {
-            clearRouting();
-            showAgent(agent.id);
-          }
+          if (agent) chooseAgent(agent.id);
           return;
         }
         case " ":
@@ -631,7 +641,7 @@ export default function Home() {
         stop();
         if (selected) return sendTo(selected.signal.id, [agent.id]);
         setFleetAt(at);
-        showAgent(agent.id);
+        chooseAgent(agent.id);
       }
     };
 
@@ -839,17 +849,7 @@ export default function Home() {
             active={focus === "fleet"}
             vim={vim && !jump}
             onToggle={toggle}
-            onOpen={(id) => {
-              // Picked as a companion rather than as somewhere to go.
-              if (pairing !== null) {
-                placeBeside(pairing, id);
-                setPairing(null);
-                setFocus("fleet");
-                return;
-              }
-              clearRouting();
-              showAgent(id);
-            }}
+            onOpen={chooseAgent}
             onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>

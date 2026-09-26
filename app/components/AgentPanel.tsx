@@ -57,6 +57,7 @@ export function AgentPanel({
   onInterrupt,
   onForkSlack,
   onForkLocal,
+  onOpenBeside,
   onMerge,
   onOpenAgent,
   onRename,
@@ -73,6 +74,8 @@ export function AgentPanel({
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
+  /// Put another session beside this one, without branching it.
+  onOpenBeside: () => void;
   onMerge: (() => void) | null;
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
@@ -291,7 +294,10 @@ export function AgentPanel({
           icon="fork"
           onClick={onForkLocal}
           disabled={busy || !can.fork}
-          menu={[{ label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack }]}
+          menu={[
+            { label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack },
+            { label: "Open another beside this", icon: "split", onClick: onOpenBeside },
+          ]}
         />
         {onMerge && (
           <button

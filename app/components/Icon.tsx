@@ -21,6 +21,7 @@ export type IconName =
   | "queue"
   | "restore"
   | "send"
+  | "split"
   | "stop"
   | "tasks"
   | "terminal"
@@ -50,6 +51,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
+    split: <><rect x="1.5" y="3" width="5.5" height="10" /><rect x="9" y="3" width="5.5" height="10" /></>,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,
     tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
     terminal: <><path d="m3 4 4 4-4 4M9 12h4" /></>,
