@@ -13,6 +13,8 @@
 //!   browser takes the same path, so no behaviour hides in one of them.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -194,6 +196,54 @@ pub struct Hub {
     /// One per agent, so its turns run in order.
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     naming: AsyncMutex<HashSet<String>>,
+    /// How far each agent has carried its own task list without being asked.
+    chains: AsyncMutex<HashMap<String, Chain>>,
+}
+
+/// What an agent has done to its task list while working through it.
+///
+/// The shape of the list is remembered rather than only a count, because
+/// the thing worth stopping on is a turn that moved nothing: an agent that
+/// cannot make progress will otherwise be asked to carry on forever.
+#[derive(Default, Clone)]
+pub struct Chain {
+    pub turns: u32,
+    pub shape: String,
+}
+
+/// How many turns an agent may take on its own before a person is asked.
+const CHAIN_LIMIT: u32 = 12;
+
+/// The shape of one agent's list: what it holds, and where each item stands.
+fn shape_of(tasks: &[TaskItem], agent_id: &str) -> String {
+    let mut lines: Vec<String> = tasks
+        .iter()
+        .filter(|task| task.agent_id == agent_id)
+        .map(|task| format!("{}:{}", task.id, task.status.as_str()))
+        .collect();
+    lines.sort();
+    lines.join(",")
+}
+
+/// Whether an agent should carry on by itself, and with what.
+///
+/// It carries on while it has work of its own still to do. Blocked and
+/// waiting-for-human are how an agent says it cannot go further, so they
+/// end the chain as surely as finishing does -- and so does a turn that
+/// left the list exactly as it found it.
+fn carry_on(tasks: &[TaskItem], agent_id: &str, chain: &Chain) -> Option<Vec<TaskItem>> {
+    let open: Vec<TaskItem> = tasks
+        .iter()
+        .filter(|task| task.agent_id == agent_id && task.status == TaskStatus::Incomplete)
+        .cloned()
+        .collect();
+    if open.is_empty() || chain.turns >= CHAIN_LIMIT {
+        return None;
+    }
+    if chain.turns > 0 && chain.shape == shape_of(tasks, agent_id) {
+        return None;
+    }
+    Some(open)
 }
 
 impl Hub {
@@ -214,6 +264,7 @@ impl Hub {
             live: AsyncMutex::new(HashMap::new()),
             locks: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
+            chains: AsyncMutex::new(HashMap::new()),
         })
     }
 
@@ -1362,13 +1413,20 @@ impl Hub {
              http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
              \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \
              \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
-             another task. This session's agent id is {}. Do not change tasks unless the \
-             user asks you to.",
+             another task. This session's agent id is {}. Keep your own tasks current as \
+             you work: mark one complete when it is done, and set it to blocked or \
+             waiting_for_human when you cannot go further, because that is how you say \
+             you have stopped. Leave other agents' tasks alone unless you are asked.",
             self.config.listen,
             self.config.listen,
             agent.id,
         )));
 
+        if signal.is_some() {
+            // Someone asked for something, so whatever the agent was
+            // carrying on with is no longer its own errand.
+            self.chains.lock().await.remove(&agent.id);
+        }
         if let Some(signal) = &signal {
             self.record(
                 &agent.id,
@@ -1482,7 +1540,61 @@ impl Hub {
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
         self.clone().name_agent(agent.id.clone(), turn.target.clone(), true);
+        self.clone().carry_on_with_tasks(agent.clone(), turn.target.clone()).await;
         Ok(())
+    }
+
+    /// Keep an agent going through its own task list.
+    ///
+    /// A turn that ends with work still open is not finished work, so the
+    /// agent is handed the rest of it rather than waiting to be asked. It
+    /// stops when the list is done, when everything left is blocked or
+    /// waiting on a person, or when a turn moves nothing -- and then a
+    /// person is told, because that is the interesting case.
+    ///
+    /// The future is erased because this sits inside a turn and starts
+    /// another: a turn that can start a turn is a type that contains itself.
+    fn carry_on_with_tasks(
+        self: Arc<Self>,
+        agent: Agent,
+        target: Option<Target>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+        let Ok(tasks) = self.store.tasks() else { return };
+        let mut chains = self.chains.lock().await;
+        let chain = chains.get(&agent.id).cloned().unwrap_or_default();
+        let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
+            chains.remove(&agent.id);
+            let stuck = tasks
+                .iter()
+                .filter(|task| task.agent_id == agent.id && task.status == TaskStatus::Incomplete)
+                .count();
+            if stuck > 0 && chain.turns > 0 {
+                self.emit(Event::Notice {
+                    text: format!("{} stopped with {stuck} task(s) still open", agent.name),
+                });
+            }
+            return;
+        };
+        chains.insert(
+            agent.id.clone(),
+            Chain { turns: chain.turns + 1, shape: shape_of(&tasks, &agent.id) },
+        );
+        drop(chains);
+
+        let list = open
+            .iter()
+            .map(|task| format!("- {} ({})", task.text, task.id))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let inputs = vec![TurnInput::text(format!(
+            "Your task list still has open work:\n{list}\n\nCarry on with it. Mark each \
+             one complete as you finish it. If something stops you, set that task to \
+             blocked -- naming the task it waits on -- or to waiting_for_human, and say \
+             what you need.",
+        ))];
+        self.deliver_to(agent, inputs, None, target).await;
+        })
     }
 
     /// A question answered off to the side, in parallel, without disturbing
@@ -2227,6 +2339,45 @@ mod task_tests {
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "").is_err());
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "a").is_err());
         assert!(validate_task_dependency(&tasks, "a", TaskStatus::Blocked, "missing").is_err());
+    }
+
+    fn mine(id: &str, status: TaskStatus) -> TaskItem {
+        TaskItem { agent_id: "me".into(), ..task(id, status, "") }
+    }
+
+    #[test]
+    fn an_agent_carries_on_while_its_own_work_is_open() {
+        let tasks = [mine("a", TaskStatus::Incomplete), task("b", TaskStatus::Incomplete, "")];
+        let open = carry_on(&tasks, "me", &Chain::default()).expect("work of its own is open");
+        // Only its own: another agent's list is not its errand.
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, "a");
+    }
+
+    #[test]
+    fn saying_it_cannot_go_further_ends_the_chain() {
+        for stop in [TaskStatus::Complete, TaskStatus::Blocked, TaskStatus::WaitingForHuman] {
+            let tasks = [mine("a", stop)];
+            assert!(carry_on(&tasks, "me", &Chain::default()).is_none());
+        }
+    }
+
+    #[test]
+    fn a_turn_that_moves_nothing_ends_the_chain() {
+        let tasks = [mine("a", TaskStatus::Incomplete)];
+        let went_round = Chain { turns: 1, shape: shape_of(&tasks, "me") };
+        assert!(carry_on(&tasks, "me", &went_round).is_none());
+
+        // The same list, with that task now finished and another started.
+        let moved = [mine("a", TaskStatus::Complete), mine("b", TaskStatus::Incomplete)];
+        assert!(carry_on(&moved, "me", &went_round).is_some());
+    }
+
+    #[test]
+    fn a_chain_does_not_run_forever() {
+        let tasks = [mine("a", TaskStatus::Incomplete)];
+        let long = Chain { turns: CHAIN_LIMIT, shape: String::new() };
+        assert!(carry_on(&tasks, "me", &long).is_none());
     }
 
     #[test]

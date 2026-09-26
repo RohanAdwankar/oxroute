@@ -1618,3 +1618,73 @@ async fn something_you_typed_carries_no_provenance_label() {
     // "you local" is two words saying nothing.
     assert_eq!(received.origin, "");
 }
+
+#[tokio::test]
+async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+
+    w.hub
+        .store
+        .save_task(&TaskItem {
+            id: "task_1".into(),
+            text: "scrub the tiles".into(),
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
+            agent_id: agent.id.clone(),
+            created_at: now(),
+            updated_at: now(),
+        })
+        .unwrap();
+
+    w.hub.accept(signal("100.0", "101.0", "carry on")).await.unwrap();
+
+    // The turn that answers "carry on" is followed by one nobody asked for,
+    // because the agent still has work of its own.
+    assert!(
+        settle(|| w.calls.lock().unwrap().started.len() == 3).await,
+        "the agent stopped with its own work still open"
+    );
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[2].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(texts[0].contains("still has open work"));
+    assert!(texts[0].contains("scrub the tiles"));
+
+    // And it stops there: that turn left the list exactly as it found it,
+    // so asking again would only repeat itself.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 3);
+}
+
+#[tokio::test]
+async fn an_agent_with_nothing_open_is_left_alone() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+
+    for (id, status) in [
+        ("task_done", TaskStatus::Complete),
+        ("task_blocked", TaskStatus::WaitingForHuman),
+    ] {
+        w.hub
+            .store
+            .save_task(&TaskItem {
+                id: id.into(),
+                text: id.into(),
+                status,
+                blocked_by_task_id: String::new(),
+                agent_id: agent.id.clone(),
+                created_at: now(),
+                updated_at: now(),
+            })
+            .unwrap();
+    }
+
+    w.hub.accept(signal("100.0", "101.0", "carry on")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 2);
+}
