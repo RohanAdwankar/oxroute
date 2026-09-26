@@ -5,20 +5,28 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
-import { Icon } from "./components/Icon";
+import { Help } from "./components/Help";
+import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
+import { inboxRows } from "./lib/inbox";
+import { taskRows } from "./lib/tasks";
 import {
   HINTS,
+  LETTERS,
   defaultVimMode,
   getVimMode,
   isTyping,
   setVimMode,
   subscribeVimMode,
 } from "./lib/keys";
-import type { AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
+import type { Agent, AgentView, InboxItem, Mode, Snapshot } from "./lib/types";
+
+/** The screen, left to right. h and l step along it. */
+const COLUMNS = ["inbox", "fleet", "tasks"] as const;
+type Column = (typeof COLUMNS)[number];
 
 const EMPTY: Snapshot = {
   mode: "ask",
@@ -56,22 +64,30 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxWidth, setInboxWidth] = useState(340);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [jump, setJump] = useState(false);
   const [watch, setWatch] = useState(false);
   // Which board the main column shows when no agent is open. Null is the fleet.
   const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
-  const [focus, setFocus] = useState<"inbox" | "fleet">("inbox");
+  const [focus, setFocus] = useState<Column>("inbox");
   const [inboxAt, setInboxAt] = useState(0);
   const [fleetAt, setFleetAt] = useState(0);
+  const [taskAt, setTaskAt] = useState(0);
+  const [inboxDone, setInboxDone] = useState(false);
+  const [tasksDone, setTasksDone] = useState(false);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
   const paneArea = useRef<HTMLDivElement>(null);
   const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
+  // A signal the inbox cursor should land on as soon as the daemon reports it.
+  const landOn = useRef<string | null>(null);
+  const firstLoad = useRef(true);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -81,7 +97,6 @@ export default function Home() {
         inboxWidthRef.current = saved;
         lastInboxWidth.current = saved;
       }
-      setInboxOpen(window.localStorage.getItem("oxroute.inboxOpen") !== "false");
       setWatch(window.localStorage.getItem("oxroute.watch") === "true");
     });
     return () => window.cancelAnimationFrame(frame);
@@ -89,7 +104,6 @@ export default function Home() {
 
   const setInboxVisible = useCallback((open: boolean) => {
     setInboxOpen(open);
-    window.localStorage.setItem("oxroute.inboxOpen", String(open));
     if (open) {
       setInboxWidth(lastInboxWidth.current);
       inboxWidthRef.current = lastInboxWidth.current;
@@ -123,6 +137,8 @@ export default function Home() {
 
   const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
+    // Opening an agent is walking into it: the keys act on it from here.
+    if (id) setFocus("fleet");
     setPanes(id ? [id] : []);
     setPaneWidths(id ? [1] : []);
     setFocusEntry(entry ?? null);
@@ -225,20 +241,54 @@ export default function Home() {
     [reload, say],
   );
 
+  // The fleet is passed in rather than read from state, so a snapshot that
+  // has only just arrived can open the question it brought with it.
+  const openRouting = useCallback(
+    (item: InboxItem, agents: Agent[]) => {
+      showAgent(null);
+      setRouting(item.signal.id);
+      setTicked(new Set(item.suggested ? [item.suggested] : []));
+      setFocus("fleet");
+      // Start on the agent this thread already belongs to, if it has one.
+      const at = agents.findIndex((a) => a.id === item.suggested);
+      setFleetAt(at >= 0 ? at : 0);
+    },
+    [showAgent],
+  );
+
   useEffect(() => {
     let live = true;
     api.snapshot().then(
       (next) => {
         if (!live) return;
         setSnapshot(next);
+        // Nothing to decide, nothing to read: the column earns its width by
+        // having something waiting in it.
+        if (firstLoad.current) {
+          firstLoad.current = false;
+          setInboxVisible(next.inbox.some((item) => item.state === "waiting"));
+        }
         setReady(true);
+        // Something you just typed in is a decision you are about to make, so
+        // it opens as one: the enter that adds it lands on the routing
+        // question, and the agent's hint letter finishes the job.
+        const landed = inboxRows(next.inbox, false).findIndex(
+          (row) => row.kind === "item" && row.item.signal.id === landOn.current,
+        );
+        if (landed < 0) return;
+        landOn.current = null;
+        compose.current?.blur();
+        setInboxAt(landed);
+        const row = inboxRows(next.inbox, false)[landed];
+        if (row.kind === "item" && row.item.state === "waiting") openRouting(row.item, next.agents);
+        else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
     );
     return () => {
       live = false;
     };
-  }, [revision, complain]);
+  }, [revision, complain, openRouting, setInboxVisible]);
 
   useEffect(() => {
     if (panes.length === 0) return;
@@ -351,6 +401,12 @@ export default function Home() {
     setPaneWidths(next);
   };
 
+  // Both columns as they are drawn, so the keyboard counts the rows on
+  // screen rather than the data behind them.
+  const rows = inboxRows(snapshot.inbox, inboxDone);
+
+  const tasks = taskRows(snapshot.tasks, panes.at(-1) ?? null, tasksDone);
+
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
   const knownTags = [...new Set(Object.values(snapshot.tags).flat())].sort();
@@ -359,8 +415,26 @@ export default function Home() {
     setTicked(new Set());
   };
 
+  // Deciding one signal is rarely deciding only one, so a settled question
+  // hands you the next one waiting instead of dropping you back at the
+  // fleet. The cursor lands on it the moment the daemon confirms it, which
+  // is the same path a signal you typed in takes.
+  const settled = useCallback(
+    (signalId: string) => () => {
+      setRouting(null);
+      setTicked(new Set());
+      const at = snapshot.inbox.findIndex((item) => item.signal.id === signalId);
+      const waiting = snapshot.inbox.filter(
+        (item) => item.state === "waiting" && item.signal.id !== signalId,
+      );
+      const next = waiting.find((item) => snapshot.inbox.indexOf(item) > at) ?? waiting[0];
+      if (next) landOn.current = next.signal.id;
+    },
+    [snapshot.inbox],
+  );
+
   const pick = (item: InboxItem) => {
-    const at = snapshot.inbox.findIndex((i) => i.signal.id === item.signal.id);
+    const at = rows.findIndex((row) => row.kind === "item" && row.item.signal.id === item.signal.id);
     if (at >= 0) setInboxAt(at);
     if (item.state !== "waiting") {
       // A settled item is history. Jump to where it went.
@@ -371,29 +445,16 @@ export default function Home() {
       }
       return;
     }
-    openRouting(item);
+    openRouting(item, snapshot.agents);
   };
 
   // Routing a signal, from wherever the keyboard or the mouse asked.
   const sendTo = useCallback(
     (signalId: string, agentIds: string[]) => {
       if (agentIds.length === 0) return;
-      void run(() => api.routeExisting(signalId, agentIds), clearRouting);
+      void run(() => api.routeExisting(signalId, agentIds), settled(signalId));
     },
-    [run],
-  );
-
-  const openRouting = useCallback(
-    (item: InboxItem) => {
-      showAgent(null);
-      setRouting(item.signal.id);
-      setTicked(new Set(item.suggested ? [item.suggested] : []));
-      setFocus("fleet");
-      // Start on the agent this thread already belongs to, if it has one.
-      const at = snapshot.agents.findIndex((a) => a.id === item.suggested);
-      setFleetAt(at >= 0 ? at : 0);
-    },
-    [snapshot.agents, showAgent],
+    [run, settled],
   );
 
   const toggle = (id: string) =>
@@ -412,26 +473,51 @@ export default function Home() {
         return;
       }
 
-      // A view owns the main column. The fleet's keys would drive cards
+      // With the hints off this is a mouse interface, so a bare letter must
+      // not act: n started an agent and m changed how everything routes.
+      // Arrows, enter, escape and tab are nobody's typing, and stay.
+      if (!vim && LETTERS.has(event.key)) return;
+
+      // A board owns the main column. The fleet's keys would drive cards
       // nobody can see, so only the ones that reach elsewhere still work.
       if (
         activeBoard &&
         !selected &&
         !open &&
         focus === "fleet" &&
-        !["h", "Tab", "Escape", "i", "/", "m", "v"].includes(event.key)
+        !["h", "l", "Tab", "Escape", "i", "/", "m", "v", "?", "f"].includes(event.key)
       ) {
         return;
       }
 
-      const inbox = snapshot.inbox;
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
-      const here = focus === "inbox" ? inbox.length : fleet.length;
+      const here =
+        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : tasks.length;
       const move = (delta: number) => {
-        const setAt = focus === "inbox" ? setInboxAt : setFleetAt;
+        // In an open agent the middle column is a conversation, not a list,
+        // so moving in it means reading it.
+        if (focus === "fleet" && reading) {
+          document.querySelector("[data-transcript]")?.scrollBy({ top: delta * 90 });
+          return;
+        }
+        const setAt =
+          focus === "inbox" ? setInboxAt : focus === "fleet" ? setFleetAt : setTaskAt;
         setAt((current) => Math.min(Math.max(current + delta, 0), Math.max(here - 1, 0)));
       };
+      // h and l walk the screen: inbox, what you are working on, tasks. A
+      // column you step into opens, because a column you cannot see is not
+      // somewhere you can be.
+      const step = (delta: number) => {
+        const next = COLUMNS[Math.min(Math.max(COLUMNS.indexOf(focus) + delta, 0), COLUMNS.length - 1)];
+        if (next === "inbox") setInboxVisible(true);
+        if (next === "tasks") setTasksOpen(true);
+        setFocus(next);
+      };
       const stop = () => event.preventDefault();
+      // With a pane open the fleet is not on screen, so the keys that act on
+      // a card you can no longer see do nothing: reading an agent should not
+      // be one letter away from swapping to another one.
+      const reading = open !== null && !selected;
 
       switch (event.key) {
         case "j":
@@ -443,7 +529,6 @@ export default function Home() {
           stop();
           return move(-1);
         case "g":
-          if (!vim) return;
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(0);
         case "G":
@@ -451,14 +536,13 @@ export default function Home() {
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));
         case "h":
           stop();
-          setInboxVisible(true);
-          return setFocus("inbox");
+          return step(-1);
         case "l":
           stop();
-          return setFocus("fleet");
+          return step(1);
         case "Tab":
           stop();
-          return setFocus((at) => (at === "inbox" ? "fleet" : "inbox"));
+          return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
           if (open) return showAgent(null);
@@ -466,9 +550,31 @@ export default function Home() {
           return setFocus("inbox");
         case "Enter": {
           stop();
+          if (focus === "tasks") {
+            // Enter opens whatever the cursor is on, and with an empty
+            // column the only thing to open is the box that fills it.
+            const row = tasks[taskAt];
+            if (row?.kind === "band") return setTasksDone((shown) => !shown);
+            // The band is a row but not a task, so the two counts differ.
+            const nth = tasks.slice(0, taskAt).filter((entry) => entry.kind === "task").length;
+            const edit = document.querySelectorAll<HTMLElement>("[data-task-open]")[nth];
+            if (edit) edit.click();
+            else document.querySelector<HTMLInputElement>("[data-task-input]")?.focus();
+            return;
+          }
+          // What is in front of you is a conversation, so enter starts
+          // typing in it rather than reopening a card you cannot see. Only
+          // when the middle column has the emphasis: an open pane must not
+          // answer for a column you have moved away from.
+          if (focus === "fleet" && reading) {
+            document.querySelector<HTMLTextAreaElement>("[data-composer]")?.focus();
+            return;
+          }
           if (focus === "inbox") {
-            const item = inbox[inboxAt];
-            if (item) pick(item);
+            const row = rows[inboxAt];
+            // The band over the settled items opens; an item is a decision.
+            if (row?.kind === "band") return setInboxDone((shown) => !shown);
+            if (row) pick(row.item);
             return;
           }
           if (selected) {
@@ -491,12 +597,17 @@ export default function Home() {
         case "d":
           if (!selected) return;
           stop();
-          return void run(() => api.discard(selected.signal.id), clearRouting);
+          return void run(() => api.discard(selected.signal.id), settled(selected.signal.id));
         case "n": {
+          if (reading) return;
           stop();
-          const item = selected ?? inbox[inboxAt];
+          const under = rows[inboxAt];
+          const item = selected ?? (under?.kind === "item" ? under.item : undefined);
           if (item && item.state === "waiting") {
-            void run(() => api.routeSpawn(item.signal.id, snapshot.defaultModel), clearRouting);
+            void run(
+              () => api.routeSpawn(item.signal.id, snapshot.defaultModel),
+              settled(item.signal.id),
+            );
           }
           return;
         }
@@ -506,24 +617,37 @@ export default function Home() {
         case "v":
           stop();
           return toggleVim();
+        case "?":
+          stop();
+          return setHelp((open) => !open);
+        case "f":
+          // Everything reachable wears a letter, so nothing here has to be
+          // remembered.
+          stop();
+          return setJump(true);
         case "i":
         case "/":
           stop();
-          compose.current?.focus();
+          // The box may be behind a collapsed column; asking for it opens it.
+          setInboxVisible(true);
+          setFocus("inbox");
+          window.requestAnimationFrame(() => compose.current?.focus());
           return;
         default:
           break;
       }
 
-      // A hint letter sends the selected signal straight to that agent.
-      // One keystroke, which is the point of the mode.
-      if (vim && selected) {
-        const at = HINTS.indexOf(event.key as (typeof HINTS)[number]);
+      // A letter goes to the agent it is drawn on: it sends the signal being
+      // routed, or, with nothing to route, it opens that agent. One
+      // keystroke either way, which is the point of the mode.
+      if (vim && !reading) {
+        const at = HINTS.indexOf(event.key);
         const agent = at >= 0 ? fleet[at] : undefined;
-        if (agent) {
-          stop();
-          sendTo(selected.signal.id, [agent.id]);
-        }
+        if (!agent) return;
+        stop();
+        if (selected) return sendTo(selected.signal.id, [agent.id]);
+        setFleetAt(at);
+        showAgent(agent.id);
       }
     };
 
@@ -554,10 +678,14 @@ export default function Home() {
 
   return (
     <main className="flex h-full flex-col">
+      {help && <Help onClose={() => setHelp(false)} />}
+      {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
+        inboxOpen={inboxOpen}
+        onInbox={() => setInboxVisible(!inboxOpen)}
         vim={vim}
         onVim={toggleVim}
         watch={watch}
@@ -590,6 +718,8 @@ export default function Home() {
             <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
               <Inbox
                 items={snapshot.inbox}
+                rows={rows}
+                onShowDone={() => setInboxDone((shown) => !shown)}
                 agents={snapshot.agents}
                 selected={routing}
                 onSelect={pick}
@@ -597,7 +727,11 @@ export default function Home() {
                 cursor={inboxAt}
                 active={focus === "inbox"}
                 composeRef={compose}
-                onNote={(text) => void run(() => api.note(text))}
+                onNote={(text) =>
+                  void run(async () => {
+                    landOn.current = (await api.note(text)).signal;
+                  })
+                }
                 onCollapse={() => setInboxVisible(false)}
               />
             </div>
@@ -630,17 +764,7 @@ export default function Home() {
               <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
             </div>
           </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setInboxVisible(true)}
-            aria-label="open inbox"
-            title="open inbox"
-            className="absolute top-1/2 left-0 z-10 flex h-9 w-8 -translate-y-1/2 cursor-pointer items-center justify-center border border-l-0 border-rule bg-card text-faint hover:text-ink"
-          >
-            <Icon name="expand" />
-          </button>
-        )}
+        ) : null}
 
         {open ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
@@ -747,7 +871,8 @@ export default function Home() {
             ticked={ticked}
             busy={busy}
             cursor={fleetAt}
-            vim={vim && selected !== null}
+            active={focus === "fleet"}
+            vim={vim && !jump}
             onToggle={toggle}
             onOpen={(id) => {
               clearRouting();
@@ -757,10 +882,10 @@ export default function Home() {
             onSend={() => selected && sendTo(selected.signal.id, [...ticked])}
             onSpawn={(model) =>
               selected &&
-              void run(() => api.routeSpawn(selected.signal.id, model), clearRouting)
+              void run(() => api.routeSpawn(selected.signal.id, model), settled(selected.signal.id))
             }
             onDiscard={() =>
-              selected && void run(() => api.discard(selected.signal.id), clearRouting)
+              selected && void run(() => api.discard(selected.signal.id), settled(selected.signal.id))
             }
           />
         )}
@@ -768,12 +893,19 @@ export default function Home() {
         {tasksOpen && (
           <TaskPanel
             tasks={snapshot.tasks}
+            rows={tasks}
+            onShowDone={() => setTasksDone((shown) => !shown)}
+            cursor={taskAt}
+            active={focus === "tasks"}
             agents={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
             currentAgent={panes.at(-1) ?? null}
             busy={busy}
-            onClose={() => setTasksOpen(false)}
+            onClose={() => {
+              setTasksOpen(false);
+              setFocus("fleet");
+            }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
             onUpdate={(task) => void run(() => api.updateTask(task))}
             onDelete={(id) => void run(() => api.deleteTask(id))}

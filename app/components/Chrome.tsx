@@ -14,6 +14,8 @@ export function Chrome({
   snapshot,
   notice,
   onMode,
+  inboxOpen,
+  onInbox,
   vim,
   onVim,
   watch,
@@ -29,6 +31,8 @@ export function Chrome({
   snapshot: Snapshot;
   notice: string | null;
   onMode: (mode: Mode) => void;
+  inboxOpen: boolean;
+  onInbox: () => void;
   vim: boolean;
   onVim: () => void;
   watch: boolean;
@@ -59,6 +63,20 @@ export function Chrome({
           onClick={() => onMode("auto")}
         />
       </div>
+
+      <button
+        type="button"
+        onClick={onInbox}
+        aria-pressed={inboxOpen}
+        aria-label="toggle inbox"
+        title="Inbox"
+        className={[
+          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
+          inboxOpen ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
+        ].join(" ")}
+      >
+        <Icon name="inbox" />
+      </button>
 
       <button
         type="button"

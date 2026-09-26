@@ -434,6 +434,7 @@ export function AgentPanel({
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
           setQuoteMenu(null);
         }}
+        data-transcript
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2"
       >
         <div ref={timelineBody}>
@@ -626,6 +627,7 @@ export function AgentPanel({
               }
             }}
             rows={1}
+            data-composer
             placeholder={PLACEHOLDER[mode]}
             className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />

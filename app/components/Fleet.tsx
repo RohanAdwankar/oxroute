@@ -53,6 +53,7 @@ export function Fleet({
   onDiscard,
   busy,
   cursor,
+  active,
   vim,
 }: {
   agents: Agent[];
@@ -75,6 +76,8 @@ export function Fleet({
   busy: boolean;
   /// Which card the keyboard is on.
   cursor: number;
+  /// True when the keyboard is driving this column.
+  active: boolean;
   /// Show the one-key hints. Off means the mouse is doing the work.
   vim: boolean;
 }) {
@@ -164,7 +167,7 @@ export function Fleet({
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id}
-                focused={index === cursor}
+                focused={active && index === cursor}
                 hint={vim ? hintFor(index) : null}
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}
@@ -194,8 +197,9 @@ export function Fleet({
               onClick={() => onSpawn(chosen)}
               aria-label="start a new agent"
               title="Start a new agent"
-              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
+              className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
             >
+              {vim && <Hint at="n" />}
               <Icon name="plus" />
             </button>
             <select
@@ -218,13 +222,26 @@ export function Fleet({
             onClick={onDiscard}
             aria-label="discard"
             title="Discard"
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
+            className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
           >
+            {vim && <Hint at="d" />}
             <Icon name="discard" />
           </button>
         </footer>
       )}
     </section>
+  );
+}
+
+/** The letter that does this, in the same badge wherever it appears. */
+function Hint({ at }: { at: string }) {
+  return (
+    <span
+      aria-hidden
+      className="tnum absolute -top-2 -left-2 flex h-[22px] min-w-[22px] items-center justify-center rounded-[3px] bg-ink px-1 text-[12px] font-semibold text-paper"
+    >
+      {at}
+    </span>
   );
 }
 
@@ -269,14 +286,7 @@ function Card({
         dimmed ? "opacity-[0.42]" : "opacity-100",
       ].join(" ")}
     >
-      {hint && (
-        <span
-          aria-hidden
-          className="tnum absolute -top-2 -left-2 flex h-[22px] min-w-[22px] items-center justify-center rounded-[3px] bg-ink px-1 text-[12px] font-semibold text-paper"
-        >
-          {hint}
-        </span>
-      )}
+      {hint && <Hint at={hint} />}
       <div className="flex items-center gap-[10px]">
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete} ${

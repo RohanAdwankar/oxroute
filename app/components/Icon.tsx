@@ -12,6 +12,7 @@ export type IconName =
   | "expand"
   | "external"
   | "fork"
+  | "inbox"
   | "keyboard"
   | "merge"
   | "open"
@@ -45,6 +46,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     expand: <path d="m6 3 5 5-5 5" />,
     external: <><path d="M9 3h4v4M13 3 7 9" /><path d="M12 9v4H3V4h4" /></>,
     fork: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="13" r="1.5" /><circle cx="5" cy="13" r="1.5" /><path d="M5 4.5v7M5 7h3a3 3 0 0 1 3 3v1.5" /></>,
+    inbox: <><path d="M2.5 9.5H6l1 2h2l1-2h3.5" /><path d="M4 3h8l2 6.5V13H2V9.5z" /></>,
     keyboard: <><rect x="1.5" y="3" width="13" height="10" rx="1" /><path d="M4 6h.01M7 6h.01M10 6h.01M13 6h.01M4 9h.01M7 9h5" /></>,
     merge: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" /><circle cx="8" cy="13" r="1.5" /><path d="M5 4.5v2A3.5 3.5 0 0 0 8 10v1.5M11 4.5v2A3.5 3.5 0 0 1 8 10" /></>,
     open: <path d="m6 3 5 5-5 5M2 8h9" />,
