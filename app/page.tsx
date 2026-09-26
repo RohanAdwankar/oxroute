@@ -781,7 +781,13 @@ export default function Home() {
     <main className="flex h-full flex-col">
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
-        <Settings density={density} onDensity={setDensity} onClose={() => setSettings(false)} />
+        <Settings
+          density={density}
+          onDensity={setDensity}
+          vim={vim}
+          onVim={setVimMode}
+          onClose={() => setSettings(false)}
+        />
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
@@ -790,8 +796,6 @@ export default function Home() {
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
         inboxOpen={inboxOpen}
         onInbox={() => setInboxVisible(!inboxOpen)}
-        vim={vim}
-        onVim={toggleVim}
         tasksOpen={tasksOpen}
         onTasks={() => showTasks(!tasksOpen)}
         onSettings={() => setSettings(true)}

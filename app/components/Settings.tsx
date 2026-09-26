@@ -9,6 +9,11 @@ const ROOM: { value: Density; label: string; detail: string }[] = [
   { value: "wide", label: "Wide", detail: "More air around everything" },
 ];
 
+const HINTS: { value: boolean; label: string; detail: string }[] = [
+  { value: true, label: "On", detail: "Letters on the cards, and j k h l to move (v)" },
+  { value: false, label: "Off", detail: "Typing only" },
+];
+
 /**
  * Everything there is to decide, which is not much on purpose.
  *
@@ -18,10 +23,14 @@ const ROOM: { value: Density; label: string; detail: string }[] = [
 export function Settings({
   density,
   onDensity,
+  vim,
+  onVim,
   onClose,
 }: {
   density: Density;
   onDensity: (next: Density) => void;
+  vim: boolean;
+  onVim: (next: boolean) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -48,6 +57,13 @@ export function Settings({
           options={ROOM}
           chosen={density}
           onChoose={onDensity}
+        />
+        <Choice
+          title="Keyboard"
+          detail="Whether the keys reach past what you are typing into."
+          options={HINTS}
+          chosen={vim}
+          onChoose={onVim}
         />
       </div>
     </div>

@@ -16,8 +16,6 @@ export function Chrome({
   onMode,
   inboxOpen,
   onInbox,
-  vim,
-  onVim,
   tasksOpen,
   onTasks,
   onSettings,
@@ -32,8 +30,6 @@ export function Chrome({
   onMode: (mode: Mode) => void;
   inboxOpen: boolean;
   onInbox: () => void;
-  vim: boolean;
-  onVim: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
   onSettings: () => void;
@@ -65,12 +61,6 @@ export function Chrome({
         pressed={inboxOpen}
         label="Show or hide the inbox"
         icon="inbox"
-      />
-      <Cell
-        onClick={onVim}
-        pressed={vim}
-        label="One-key hints on the cards (v)"
-        icon="keyboard"
       />
       <Cell onClick={onTasks} pressed={tasksOpen} label="Show or hide tasks" icon="tasks" />
       <Cell onClick={onSettings} label="Settings" icon="settings" />
