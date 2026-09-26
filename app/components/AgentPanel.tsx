@@ -707,10 +707,13 @@ export function AgentPanel({
             }}
             disabled={busy}
             aria-label="attach images"
-            title="Attach images — right click to draw"
-            className="relative flex h-[42px] w-[34px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:opacity-40"
+            title="Attach images — right click to draw or diagram"
+            className="relative flex h-[42px] w-[42px] cursor-pointer items-center justify-center gap-[1px] text-mid hover:text-ink disabled:opacity-40"
           >
             <Icon name="attach" />
+            {/* There is more here than the icon says, and a control with
+                nothing to show for it is a control nobody finds. */}
+            <Icon name="chevronDown" size={9} />
             {drawMenu && (
               <span
                 role="menu"
