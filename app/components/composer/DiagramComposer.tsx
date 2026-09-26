@@ -167,10 +167,12 @@ export function DiagramComposer({
   const byId = new Map<string, DiagramNode>([...base.nodes, ...shown.nodes].map((node) => [node.id, node]));
   const labelOf = (id: string) => byId.get(id)?.label ?? id;
   const node = selected ? shown.nodes.find((n) => n.id === selected) ?? null : null;
-  // The whole diagram in view: fit the width and the height, never blow it up much.
+  // The whole diagram in view: fit the width and the height. A diagram of
+  // four boxes should fill the space it has rather than sit in the middle of
+  // it, so this grows well past life size before it stops.
   const scale =
     shown.width > 0 && room.width > 0
-      ? Math.max(Math.min((room.width - 32) / shown.width, (room.height - 48) / shown.height, 1.25), 0.35)
+      ? Math.max(Math.min((room.width - 32) / shown.width, (room.height - 48) / shown.height, 2.5), 0.35)
       : 1;
   const edit = (next: DiagramEdit) => onEdits((current) => [...current, next]);
 
@@ -207,7 +209,7 @@ export function DiagramComposer({
     : [];
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={area}
         className="quiet-scroll min-h-0 min-w-0 flex-1 overflow-auto bg-paper p-4"
@@ -262,7 +264,7 @@ export function DiagramComposer({
         )}
       </div>
 
-      <aside className="quiet-scroll flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-rule bg-card">
+      <aside className="quiet-scroll flex max-h-[45%] shrink-0 flex-col overflow-y-auto border-t border-rule bg-card">
         <div className="border-b border-rule px-4 py-3">
           <div className="flex gap-2">
             <input
