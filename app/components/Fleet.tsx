@@ -43,7 +43,6 @@ export function Fleet({
   messages,
   tags,
   routing,
-  beside,
   ticked,
   onToggle,
   onOpen,
@@ -66,7 +65,6 @@ export function Fleet({
   tags: Record<string, string[]>;
   routing: InboxItem | null;
   /// The name of the session a companion is being picked for, if one is.
-  beside: string | null;
   ticked: Set<string>;
   onToggle: (id: string) => void;
   onOpen: (id: string) => void;
@@ -91,12 +89,7 @@ export function Fleet({
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="flex h-[var(--bar)] shrink-0 items-center gap-3 border-b border-rule px-[var(--pane-x)]">
-        {beside ? (
-          <>
-            <span className="shrink-0 text-[12px] text-faint">Open beside</span>
-            <span className="truncate text-[14px]">{beside}</span>
-          </>
-        ) : routing ? (
+        {routing ? (
           <>
             <span className="shrink-0 text-[12px] text-faint">Send this to</span>
             <span className="truncate text-[14px]">

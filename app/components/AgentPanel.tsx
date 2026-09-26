@@ -93,7 +93,6 @@ export function AgentPanel({
   onInterrupt,
   onFork,
   onForkBeside,
-  onOpenBeside,
   onMerge,
   onOpenAgent,
   onRename,
@@ -132,7 +131,6 @@ export function AgentPanel({
   /// Branch it and put the branch in a pane of its own, beside this one.
   onForkBeside: () => void;
   /// Put another session beside this one, without branching it.
-  onOpenBeside: () => void;
   onMerge: (() => void) | null;
   onOpenAgent: (id: string) => void;
   onRename: (name: string) => void;
@@ -494,10 +492,7 @@ export function AgentPanel({
           icon="fork"
           onClick={onFork}
           disabled={busy || !can.fork}
-          menu={[
-            { label: "Fork in a card beside this", icon: "split", onClick: onForkBeside },
-            { label: "Open another beside this", icon: "thread", onClick: onOpenBeside },
-          ]}
+          menu={[{ label: "Fork in a card beside this", icon: "split", onClick: onForkBeside }]}
         />
         {onMerge && (
           <button

@@ -63,8 +63,6 @@ export default function Home() {
   const [open, setOpen] = useState<string | null>(null);
   const [panes, setPanes] = useState<string[]>([]);
   const [paneWidths, setPaneWidths] = useState<number[]>([]);
-  /// Which pane is waiting for a session to be opened beside it.
-  const [pairing, setPairing] = useState<number | null>(null);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const [notice, setNotice] = useState<string | null>(null);
@@ -495,15 +493,7 @@ export default function Home() {
     [snapshot.inbox],
   );
 
-  /// Choosing a card: somewhere to go, or -- while one is being picked to
-  /// sit beside an open session -- the companion.
   const chooseAgent = (id: string) => {
-    if (pairing !== null) {
-      placeBeside(pairing, id);
-      setPairing(null);
-      setFocus("fleet");
-      return;
-    }
     clearRouting();
     showAgent(id);
   };
@@ -611,7 +601,7 @@ export default function Home() {
       // With a pane open the fleet is not on screen, so the keys that act on
       // a card you can no longer see do nothing: reading an agent should not
       // be one letter away from swapping to another one.
-      const reading = open !== null && !selected && pairing === null;
+      const reading = open !== null && !selected;
 
       // Digits are a count waiting for the motion they belong to -- and
       // only in the mode that has motions.
@@ -673,7 +663,6 @@ export default function Home() {
           return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
-          if (pairing !== null) return setPairing(null);
           if (open) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
@@ -891,7 +880,7 @@ export default function Home() {
           </>
         ) : null}
 
-        {open && pairing === null ? (
+        {open ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
             {panes.map((id, index) => {
               const view = details[id];
@@ -943,7 +932,6 @@ export default function Home() {
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onFork={() => void forkHere(index, id)}
                       onForkBeside={() => void forkBeside(index, id)}
-                      onOpenBeside={() => setPairing(index)}
                       onMerge={
                         view.timeline.some((entry) => entry.kind === "forkedFrom")
                           ? () => void mergePane(index, id)
@@ -1022,7 +1010,6 @@ export default function Home() {
                 messages={snapshot.messages}
                 tags={snapshot.tags}
                 routing={selected}
-                beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
                 ticked={ticked}
                 busy={busy}
                 cursor={fleetAt}
