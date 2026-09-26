@@ -14,7 +14,7 @@ const SCREEN = { width: 1280, height: 800 };
 
 /// Long enough to read the caption before the next thing happens. A film
 /// nobody can follow is a file, not a demo.
-const READ = 3200;
+const READ = 4200;
 
 const api = (path, body) =>
   fetch(`${API}${path}`, {
@@ -230,36 +230,44 @@ await caption("The agent is already working on it.");
 await shot(page, "sent");
 
 // 7. Branching the work, and the two places a branch can land.
-await caption("Branch a session when the work forks — here, or beside this one.");
+await caption("Branch a session when the work forks.");
 await page.locator('[aria-label$="options"]').first().click();
-await page.waitForTimeout(400);
+await page.waitForTimeout(700);
+await caption("Here, or in a card beside this one.");
 await shot(page, "fork");
 await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 
 // 8. What little there is to decide.
-await caption("Four settings, and no more.");
 await page.locator('[title="Settings"]').click();
-await page.waitForTimeout(400);
+await page.waitForTimeout(700);
+await caption("Four settings, and no more.");
 await shot(page, "settings");
 await page.getByRole("button", { name: /Dark/ }).click();
-await page.waitForTimeout(400);
+await page.waitForTimeout(700);
 await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 await caption("The same palette, read the other way round.");
 await shot(page, "dark");
 await page.locator('[title="Settings"]').click();
+await page.waitForTimeout(600);
 await page.getByRole("button", { name: /Light/ }).click();
+await page.waitForTimeout(600);
 await page.keyboard.press("Escape");
+await page.waitForTimeout(600);
 
 // 9. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
-await caption("Everything anyone said is searchable — jump back to the session by a line in it.", 0);
-await page.getByPlaceholder("Search sessions").fill("health");
-await page.waitForTimeout(1800);
-await caption("Everything anyone said is searchable — jump back to the session by a line in it.");
+await caption("Everything anyone said is searchable.", 0);
+await page.getByPlaceholder("Search sessions").type("health", { delay: 120 });
+await page.waitForTimeout(2000);
+await caption("Everything anyone said is searchable.");
+await caption("Find the line you remember, and land in the session that said it.");
 await shot(page, "search");
+await page.waitForTimeout(1200);
 
 await caption("", 0);
-await card("oxroute", "One inbox, one fleet, one list of what is left.", 3600);
+await card("oxroute", "One inbox, one fleet, one list of what is left.", 6000);
 
 await context.close();
 await browser.close();
