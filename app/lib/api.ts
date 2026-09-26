@@ -47,11 +47,13 @@ export const api = {
     post<Snapshot>("/api/route", { signal, action: "spawn", model }),
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
-  say: (agent: string, text: string, images: File[] = []) => {
-    if (images.length === 0) return post<unknown>("/api/say", { agent, text });
+  /// `queued` waits for the running turn instead of folding into it.
+  say: (agent: string, text: string, images: File[] = [], queued = false) => {
+    if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued });
     const form = new FormData();
     form.append("agent", agent);
     form.append("text", text);
+    form.append("queued", String(queued));
     images.forEach((image) => form.append("images", image));
     return call<unknown>("/api/say-images", { method: "POST", body: form });
   },

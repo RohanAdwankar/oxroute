@@ -844,14 +844,18 @@ impl Hub {
 
     /// Type straight at an agent, from any surface, bypassing the inbox.
     pub async fn say_to(self: &Arc<Self>, agent_id: &str, text: &str) -> Result<()> {
-        self.say_to_with_images(agent_id, text, vec![]).await
+        self.say_to_with_images(agent_id, text, vec![], false).await
     }
 
+    /// `queued` holds the message back until the running turn ends instead of
+    /// folding it in, for when what you are saying is the next thing to do
+    /// rather than a correction to what is being done.
     pub async fn say_to_with_images(
         self: &Arc<Self>,
         agent_id: &str,
         text: &str,
         images: Vec<String>,
+        queued: bool,
     ) -> Result<()> {
         anyhow::ensure!(!text.trim().is_empty() || !images.is_empty(), "nothing to say");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
@@ -932,7 +936,7 @@ impl Hub {
             at: now(),
             root: false,
         };
-        if self.steer(&agent, &pseudo, inputs.clone(), false).await? {
+        if !queued && self.steer(&agent, &pseudo, inputs.clone(), false).await? {
             return Ok(());
         }
         self.clone().deliver_to(agent, inputs, None, target).await;

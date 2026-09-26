@@ -69,7 +69,7 @@ export function AgentPanel({
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
-  onSay: (text: string, images: File[]) => void;
+  onSay: (text: string, images: File[], queued: boolean) => void;
   onInterrupt: () => void;
   onForkSlack: () => void;
   onForkLocal: () => void;
@@ -144,7 +144,7 @@ export function AgentPanel({
     const text = draft.trim();
     if ((!text && uploads.length === 0) || busy) return;
     setDraft("");
-    onSay(queued ? `& ${text}`.trimEnd() : text, uploads.map((upload) => upload.file));
+    onSay(text, uploads.map((upload) => upload.file), queued);
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
     setUploads([]);
     setAttachmentError("");

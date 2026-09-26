@@ -396,13 +396,16 @@ async fn route(
 struct SayBody {
     agent: String,
     text: String,
+    /// Wait for the running turn rather than folding into it.
+    #[serde(default)]
+    queued: bool,
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
     if body.text.trim().is_empty() {
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
-    hub.say_to(&body.agent, &body.text).await?;
+    hub.say_to_with_images(&body.agent, &body.text, vec![], body.queued).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -412,11 +415,13 @@ async fn say_images(
 ) -> Result<Json<serde_json::Value>, Failed> {
     let mut agent = String::new();
     let mut text = String::new();
+    let mut queued = false;
     let mut images = Vec::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
+            Some("queued") => queued = field.text().await? == "true",
             Some("images") => {
                 let mimetype = field.content_type().unwrap_or_default().to_string();
                 if !mimetype.starts_with("image/") {
@@ -440,7 +445,7 @@ async fn say_images(
     if agent.is_empty() {
         return Err(Failed(anyhow::anyhow!("an agent is required")));
     }
-    hub.say_to_with_images(&agent, &text, images).await?;
+    hub.say_to_with_images(&agent, &text, images, queued).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

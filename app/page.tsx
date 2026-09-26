@@ -747,7 +747,9 @@ export default function Home() {
                       }
                       busy={busy}
                       onBack={() => closePane(index)}
-                      onSay={(text, images) => void run(() => api.say(id, text, images))}
+                      onSay={(text, images, queued) =>
+                        void run(() => api.say(id, text, images, queued))
+                      }
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onForkSlack={() => void run(() => api.fork(id))}
                       onForkLocal={() => void forkHere(index, id)}

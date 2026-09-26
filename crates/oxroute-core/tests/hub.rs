@@ -1374,7 +1374,7 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub
-        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()])
+        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()], false)
         .await
         .unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
@@ -1709,4 +1709,44 @@ async fn a_pane_fork_works_with_no_source_to_put_a_thread_in() {
 
     // Asking for the conversation, with nowhere to hold one, still fails.
     assert!(w.hub.fork(&original).await.is_err());
+}
+
+#[tokio::test]
+async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
+    // A harness that can steer, and a turn long enough to steer into.
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to_with_images(&agent, "while you work", vec![], true).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+
+    // It ran as its own turn, and nothing was folded into the first one.
+    assert!(w.calls.lock().unwrap().steered.is_empty());
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    // The message arrives as written: queuing is said in the request, not
+    // smuggled into the text with a prefix.
+    assert_eq!(texts[0], "while you work");
+}
+
+#[tokio::test]
+async fn an_ordinary_message_still_folds_into_a_running_turn() {
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to(&agent, "actually, like this").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
 }
