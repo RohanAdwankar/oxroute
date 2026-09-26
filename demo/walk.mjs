@@ -258,42 +258,59 @@ await page.waitForTimeout(1500);
 await caption("The agent is already working on it.");
 await shot(page, "sent");
 
-// 8. The other way to say it without words: draw on a blank page, or on a
-//    screenshot, and send the picture.
-await caption("Or draw it. A circle round the thing you mean says more than a paragraph.");
+// 8. The other way to say it without words: mark up what is on the screen
+//    and hand that to the agent.
+await caption("Some things are easier pointed at than described.");
+await page.locator("[data-transcript]").evaluate((node) => node.scrollTo({ top: 0 }));
+await page.waitForTimeout(600);
+const marked = `${OUT}/marked.png`;
+// What the box should land on, in the screenshot that is about to be taken.
+const line = await page.getByText(/now returns/).first().boundingBox();
+await page.screenshot({ path: marked });
+
 await page.locator('[aria-label="Attach images options"]').first().click();
 await page.waitForTimeout(500);
 await page.getByRole("menuitem", { name: /Draw/ }).click();
 await until(async () => (await page.locator('[aria-label="sketch"]').count()) > 0, 60);
-await page.waitForTimeout(800);
+await caption("Draw on a screenshot of what you were just looking at.");
+await page.locator('[aria-label="image to draw on"]').setInputFiles(marked);
+await page.waitForTimeout(1500);
 await shot(page, "draw");
 
-// A hand-drawn arrow and a circle, at the speed a hand draws them.
 const sketch = await page.locator('[aria-label="sketch"]').boundingBox();
-const stroke = async (points) => {
-  await page.mouse.move(points[0].x, points[0].y);
-  await page.mouse.down();
-  for (const point of points.slice(1)) {
-    await page.mouse.move(point.x, point.y, { steps: 12 });
-  }
-  await page.mouse.up();
-  await page.waitForTimeout(250);
-};
+// The canvas holds the whole screen, so a place on the screen is the same
+// fraction of the canvas.
 const spot = (dx, dy) => ({ x: sketch.x + sketch.width * dx, y: sketch.y + sketch.height * dy });
-await stroke([spot(0.22, 0.34), spot(0.44, 0.34), spot(0.44, 0.56), spot(0.22, 0.56), spot(0.22, 0.34)]);
-await stroke([spot(0.5, 0.45), spot(0.68, 0.45)]);
-await stroke([spot(0.62, 0.39), spot(0.68, 0.45), spot(0.62, 0.51)]);
-await stroke([spot(0.7, 0.4), spot(0.86, 0.4), spot(0.86, 0.58), spot(0.7, 0.58), spot(0.7, 0.4)]);
+const onScreen = (x, y) => spot(x / SCREEN.width, y / SCREEN.height);
+
+// A box round the line being talked about, drawn at the speed a hand draws.
+await page.getByRole("button", { name: "Box", exact: true }).last().click();
+const from = onScreen(line.x - 10, line.y - 8);
+const to = onScreen(line.x + line.width + 10, line.y + line.height + 8);
+await page.mouse.move(from.x, from.y);
+await page.mouse.down();
+await page.mouse.move(to.x, to.y, { steps: 24 });
+await page.mouse.up();
+await page.waitForTimeout(600);
+
+// And a word next to it, because a box alone is a question.
+await page.getByRole("button", { name: "Text", exact: true }).last().click();
+const beside = onScreen(line.x, line.y + line.height + 40);
+await page.mouse.click(beside.x, beside.y);
+await page.waitForTimeout(400);
+await page.getByLabel("note on the picture").type("ops want this in the README too", { delay: 35 });
+await page.keyboard.press("Enter");
+await page.waitForTimeout(700);
 await caption("It goes to the agent as a picture, or tab files the drawing as work.");
 await shot(page, "drawn-picture");
-await page.locator("[data-composer]").fill("the health check belongs behind the router, not beside it");
+
+await page.locator("[data-composer]").fill("copy this response into the README, exactly as it is");
 await page.waitForTimeout(600);
 await page.getByRole("button", { name: /Send the picture/ }).first().click();
 await until(async () => (await page.locator("img[src*='attachments']").count()) > 0, 90);
-// The picture lands at the end of the transcript; look at it.
 await page.locator("[data-transcript]").evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
-await page.waitForTimeout(1500);
-await caption("The agent sees what you drew, in the conversation.");
+await page.waitForTimeout(1800);
+await caption("The agent sees what you marked, in the conversation.");
 await shot(page, "picture-sent");
 
 // 9. Branching the work, and the two places a branch can land.
