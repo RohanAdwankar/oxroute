@@ -58,7 +58,8 @@ export interface Agent {
   pinned: boolean;
 }
 
-export type TaskStatus = "incomplete" | "complete" | "waiting_for_human" | "blocked";
+/** `done` is the agent's claim; `complete` is a person agreeing with it. */
+export type TaskStatus = "incomplete" | "done" | "complete" | "waiting_for_human" | "blocked";
 
 export interface TaskItem {
   id: string;

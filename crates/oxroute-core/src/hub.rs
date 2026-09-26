@@ -1506,9 +1506,11 @@ impl Hub {
              another task. This session's agent id is {}. Keep your own tasks current as \
              you work: mark one complete when it is done, and set it to blocked or \
              waiting_for_human when you cannot go further, because that is how you say \
-             you have stopped. Every status change needs a \"note\" in the same request \
-             saying why, in three sentences or fewer -- as short as the commit that did \
-             it. Leave other agents' tasks alone unless you are asked.",
+             you have stopped. Finishing a task means setting it to \"done\", not \
+             \"complete\": complete is what a person marks it once they have looked. \
+             Every status change needs a \"note\" in the same request saying why, in \
+             three sentences or fewer -- as short as the commit that did it. Leave other \
+             agents' tasks alone unless you are asked.",
             self.config.listen,
             self.config.listen,
             agent.id,
@@ -2341,6 +2343,9 @@ impl Hub {
     /// Done, stuck and waiting are claims about work, and a claim nobody
     /// accounted for is the thing this list kept producing: a row marked
     /// complete with no way to tell what was complete about it.
+    /// `approved` is a person signing off. An agent finishing its work says
+    /// `Done`; whether the work is done is not the same question, and the
+    /// answer to it belongs to whoever asked for the work.
     pub fn update_task(
         &self,
         id: &str,
@@ -2349,6 +2354,7 @@ impl Hub {
         blocked_by_task_id: &str,
         agent_id: &str,
         note: Option<&str>,
+        approved: bool,
     ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
@@ -2357,6 +2363,11 @@ impl Hub {
         }
         let tasks = self.store.tasks()?;
         let current = tasks.iter().find(|task| task.id == id).context("no such task")?;
+        anyhow::ensure!(
+            status != TaskStatus::Complete || current.status == status || approved,
+            "a task is complete when a person says so: mark it done and it will be \
+             offered for approval",
+        );
         let note = note.map(str::trim).filter(|note| !note.is_empty());
         anyhow::ensure!(
             current.status == status || note.is_some(),
@@ -2415,6 +2426,29 @@ impl Hub {
         }
         self.emit(Event::Sync);
         Ok(tasks)
+    }
+
+    /// Send the agent a correction, and put its task back to work.
+    ///
+    /// Saying no to finished work is not a status change, it is a sentence
+    /// about what is still wrong -- so it goes to the agent as a message,
+    /// and the task goes back to being work.
+    pub async fn correct_task(self: &Arc<Self>, id: &str, text: &str) -> Result<TaskItem> {
+        let text = text.trim();
+        anyhow::ensure!(!text.is_empty(), "say what is wrong with it");
+        let tasks = self.store.tasks()?;
+        let task = tasks.iter().find(|task| task.id == id).context("no such task")?.clone();
+        anyhow::ensure!(!task.agent_id.is_empty(), "nobody has this task to correct");
+        self.add_task_note(id, text, "")?;
+        let back = TaskItem {
+            status: TaskStatus::Incomplete,
+            updated_at: now(),
+            ..task.clone()
+        };
+        self.store.save_task(&back)?;
+        self.say_to(&task.agent_id, &format!("About \"{}\": {text}", task.text)).await?;
+        self.emit(Event::Sync);
+        Ok(back)
     }
 
     /// Write down why a task is where it is.

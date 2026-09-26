@@ -1799,13 +1799,13 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
     // A claim about work with nothing said about it is refused.
     assert!(w
         .hub
-        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", None)
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", None, true)
         .is_err());
     assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Incomplete);
 
     let done = w
         .hub
-        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"))
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"), true)
         .unwrap();
     assert_eq!(done.status, TaskStatus::Complete);
     let notes = w.hub.task_notes().unwrap();
@@ -1816,7 +1816,7 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
     // Editing anything else about a settled task needs no fresh account.
     assert!(w
         .hub
-        .update_task(&task.id, "paint the shed blue", TaskStatus::Complete, "", "", None)
+        .update_task(&task.id, "paint the shed blue", TaskStatus::Complete, "", "", None, true)
         .is_ok());
     assert_eq!(w.hub.task_notes().unwrap().len(), 1);
 }
@@ -1880,7 +1880,7 @@ async fn the_task_list_is_a_queue_that_can_be_rearranged() {
 
     // Editing a task leaves it where it is.
     w.hub
-        .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None)
+        .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None, true)
         .unwrap();
     assert_eq!(order(), vec!["third", "second, reworded", "first"]);
 }
@@ -2192,4 +2192,69 @@ async fn stopping_waits_for_a_turn_and_gives_up_on_one_that_never_ends() {
     let waited = std::time::Instant::now();
     assert_eq!(w.hub.wait_for_turns(Duration::from_millis(600)).await, 1);
     assert!(waited.elapsed() >= Duration::from_millis(600));
+}
+
+#[tokio::test]
+async fn an_agent_says_done_and_a_person_says_complete() {
+    let w = world(Mode::Auto, false).await;
+    let task = w.hub.create_task("paint the shed", "", vec![]).await.unwrap();
+
+    // What an agent can do when it has finished.
+    let done = w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Done, "", "", Some("painted in a1b2c3d"), false)
+        .unwrap();
+    assert_eq!(done.status, TaskStatus::Done);
+
+    // And what it cannot: deciding that the work was any good.
+    assert!(w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("looks fine to me"), false)
+        .is_err());
+    assert_eq!(w.hub.tasks().unwrap()[0].status, TaskStatus::Done);
+
+    // A person looking at it can.
+    let approved = w
+        .hub
+        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("approved"), true)
+        .unwrap();
+    assert_eq!(approved.status, TaskStatus::Complete);
+}
+
+#[tokio::test]
+async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let task = w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+    w.hub
+        .update_task(&task.id, &task.text, TaskStatus::Done, "", &agent, Some("painted it"), false)
+        .unwrap();
+    let turns = w.calls.lock().unwrap().started.len();
+
+    let back = w.hub.correct_task(&task.id, "the trim is still bare").await.unwrap();
+
+    // It is work again, the agent was told why, and the reason is kept.
+    assert_eq!(back.status, TaskStatus::Incomplete);
+    // The correction reaches it; whether the carry-on loop also has
+    // something to say is not this test's business.
+    assert!(
+        settle(|| {
+            w.calls.lock().unwrap().started[turns..].iter().any(|(_, inputs)| {
+                inputs
+                    .iter()
+                    .filter_map(TurnInput::as_text)
+                    .any(|text| text.contains("the trim is still bare") && text.contains("paint the shed"))
+            })
+        })
+        .await,
+        "the agent was never told what was wrong",
+    );
+    assert!(w
+        .hub
+        .task_notes()
+        .unwrap()
+        .iter()
+        .any(|note| note.text == "the trim is still bare"));
 }

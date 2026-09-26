@@ -96,8 +96,11 @@ export const api = {
   /// Put a task after another one; no `after` means the top of the queue.
   moveTask: (id: string, after?: string) =>
     post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),
-  /// A status change carries why it changed.
-  updateTask: (task: TaskItem, note?: string) =>
+  /// Saying no to finished work: the agent hears why, and it is work again.
+  correctTask: (id: string, text: string) =>
+    post<TaskItem>(`/api/tasks/${encodeURIComponent(id)}/correction`, { text }),
+  /// A status change carries why it changed, and only a person approves.
+  updateTask: (task: TaskItem, note?: string, approved = false) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -106,6 +109,7 @@ export const api = {
         blockedByTaskId: task.blockedByTaskId,
         agentId: task.agentId,
         note,
+        approved,
       }),
     }),
   deleteTask: (id: string) =>

@@ -229,6 +229,7 @@ async fn serve() -> Result<()> {
         .route("/api/task-notes", get(task_notes))
         .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/tasks/{id}/move", post(move_task))
+        .route("/api/tasks/{id}/correction", post(correct_task))
         .route("/api/task-images", post(create_task_with_images))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
@@ -625,6 +626,7 @@ fn render_task_diagram(tasks: &[oxroute_core::TaskItem]) -> Result<String> {
         let id = format!("task_{index}");
         let state = match task.status {
             oxroute_core::TaskStatus::Incomplete => "incomplete",
+            oxroute_core::TaskStatus::Done => "done, for review",
             oxroute_core::TaskStatus::Complete => "complete",
             oxroute_core::TaskStatus::WaitingForHuman => "waiting for human",
             oxroute_core::TaskStatus::Blocked => "blocked",
@@ -641,6 +643,7 @@ fn render_task_diagram(tasks: &[oxroute_core::TaskItem]) -> Result<String> {
         });
         let (fill, stroke, color) = match task.status {
             oxroute_core::TaskStatus::Incomplete => ("#f7f4ef", "#81786d", "#28231f"),
+            oxroute_core::TaskStatus::Done => ("#f3eff9", "#8a4fc0", "#4b2a6b"),
             oxroute_core::TaskStatus::Complete => ("#e3eee8", "#2f886c", "#1e5c48"),
             oxroute_core::TaskStatus::WaitingForHuman => ("#f5ead7", "#b66a0a", "#7a4706"),
             oxroute_core::TaskStatus::Blocked => ("#f2dfdc", "#a6493d", "#6f3028"),
@@ -765,6 +768,21 @@ async fn create_task_with_images(
     Ok(Json(hub.create_task(&text, &agent_id, names).await?))
 }
 
+#[derive(Deserialize)]
+struct CorrectionBody {
+    text: String,
+}
+
+/// Saying no to finished work: the agent hears why, and the task is work
+/// again.
+async fn correct_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<CorrectionBody>,
+) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    Ok(Json(hub.correct_task(&id, &body.text).await?))
+}
+
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
@@ -780,6 +798,9 @@ struct UpdateTaskBody {
     /// Why it moved. Required when the status changes.
     #[serde(default)]
     note: Option<String>,
+    /// A person signing the work off. Only they can mark a task complete.
+    #[serde(default)]
+    approved: bool,
     #[serde(default)]
     blocked_by_task_id: String,
     #[serde(default)]
@@ -798,6 +819,7 @@ async fn update_task(
         &body.blocked_by_task_id,
         &body.agent_id,
         body.note.as_deref(),
+        body.approved,
     )?))
 }
 

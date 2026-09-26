@@ -1015,7 +1015,10 @@ export default function Home() {
               setFocus("fleet");
             }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
-            onUpdate={(task, note) => void run(() => api.updateTask(task, note))}
+            onUpdate={(task, note, approved) =>
+              void run(() => api.updateTask(task, note, approved))
+            }
+            onCorrect={(task, text) => void run(() => api.correctTask(task.id, text))}
             onHandOff={(task, fork) =>
               void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
             }

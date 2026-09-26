@@ -378,6 +378,9 @@ pub struct Agent {
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Incomplete,
+    /// The agent says it is finished. Whether it is finished is a person's
+    /// to decide, which is what `Complete` means.
+    Done,
     Complete,
     WaitingForHuman,
     Blocked,
@@ -387,6 +390,7 @@ impl TaskStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Incomplete => "incomplete",
+            Self::Done => "done",
             Self::Complete => "complete",
             Self::WaitingForHuman => "waiting_for_human",
             Self::Blocked => "blocked",
@@ -396,6 +400,7 @@ impl TaskStatus {
     pub fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
             "incomplete" => Ok(Self::Incomplete),
+            "done" => Ok(Self::Done),
             "complete" => Ok(Self::Complete),
             "waiting_for_human" => Ok(Self::WaitingForHuman),
             "blocked" => Ok(Self::Blocked),

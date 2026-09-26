@@ -9,6 +9,7 @@ import { Icon } from "./Icon";
 
 const STATES: { value: TaskStatus; label: string }[] = [
   { value: "incomplete", label: "Incomplete" },
+  { value: "done", label: "Done, for review" },
   { value: "complete", label: "Complete" },
   { value: "waiting_for_human", label: "Waiting for human" },
   { value: "blocked", label: "Blocked" },
@@ -20,6 +21,7 @@ const FORK_AGENT = "fork-agent";
 
 const STATE_COLOR: Record<TaskStatus, string> = {
   incomplete: "text-mid",
+  done: "text-merge",
   complete: "text-ok",
   waiting_for_human: "text-hold",
   blocked: "text-[#a6493d]",
@@ -59,6 +61,7 @@ export function TaskPanel({
   onCreate,
   onUpdate,
   onHandOff,
+  onCorrect,
   onDelete,
 }: {
   tasks: TaskItem[];
@@ -77,10 +80,12 @@ export function TaskPanel({
   busy: boolean;
   onClose: () => void;
   onCreate: (text: string, agent: string) => void;
-  /// A status change carries why it changed.
-  onUpdate: (task: TaskItem, note?: string) => void;
+  /// A status change carries why it changed, and only a person approves.
+  onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
   /// Move a task to an agent that does not exist yet.
   onHandOff: (task: TaskItem, fork: boolean) => void;
+  /// Saying no to finished work: what is wrong goes to the agent.
+  onCorrect: (task: TaskItem, text: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -89,6 +94,9 @@ export function TaskPanel({
   /// A status waiting on its account of itself.
   const [pending, setPending] = useState<{ task: TaskItem; status: TaskStatus } | null>(null);
   const [why, setWhy] = useState("");
+  /// A task whose finished work is being argued with.
+  const [correcting, setCorrecting] = useState<string | null>(null);
+  const [correction, setCorrection] = useState("");
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
@@ -157,6 +165,51 @@ export function TaskPanel({
         >
           {task.text}
         </button>
+      )}
+      {task.status === "done" && (
+        <div className="mt-2 flex flex-col gap-2">
+          {correcting === task.id ? (
+            <input
+              autoFocus
+              value={correction}
+              placeholder="What is still wrong? The agent gets this and picks it back up"
+              onChange={(event) => setCorrection(event.target.value)}
+              onBlur={() => setCorrecting(null)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") return setCorrecting(null);
+                if (event.key !== "Enter") return;
+                const text = correction.trim();
+                if (!text) return;
+                setCorrecting(null);
+                setCorrection("");
+                onCorrect(task, text);
+              }}
+              className="w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
+                className="flex h-7 cursor-pointer items-center rounded-[3px] bg-ink px-3 text-[11.5px] font-semibold text-paper disabled:opacity-40"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setCorrection("");
+                  setCorrecting(task.id);
+                }}
+                className="flex h-7 cursor-pointer items-center rounded-[3px] border border-edge px-3 text-[11.5px] text-mid hover:text-ink disabled:opacity-40"
+              >
+                Not yet
+              </button>
+            </div>
+          )}
+        </div>
       )}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
