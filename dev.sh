@@ -51,6 +51,27 @@ else
   echo "  set OXROUTE_CODEX_CLI to enable them"
 fi
 
+# A reload kills whatever turn is running, and a Claude Code session cannot
+# be picked up again afterwards: the answer it was in the middle of is lost
+# and the agent is left stalled, which looks like an agent that did the work
+# and then said nothing. So a new binary waits for the fleet to go quiet --
+# but not forever, or one stuck agent would mean no reloads at all.
+fleet_busy() {
+  curl -fs --max-time 2 "http://$OXROUTE_LISTEN/api/state" 2>/dev/null \
+    | grep -q '"status":"working"'
+}
+
+wait_for_quiet() {
+  local waited=0
+  while fleet_busy && [ "$waited" -lt 300 ]; do
+    [ "$waited" -eq 0 ] && echo "a turn is running; the new oxrouted is waiting for it"
+    sleep 2
+    waited=$((waited + 2))
+  done
+  [ "$waited" -ge 300 ] && echo "waited five minutes; reloading over the top of it"
+  return 0
+}
+
 watch_daemon() {
   local daemon signature next
   stop_daemon() {
@@ -68,6 +89,7 @@ watch_daemon() {
     if cargo build --quiet; then
       next=$(mtime target/debug/oxrouted)
       if [ "$next" != "$signature" ]; then
+        wait_for_quiet
         kill "$daemon" 2>/dev/null || true
         wait "$daemon" 2>/dev/null || true
         ./target/debug/oxrouted &
