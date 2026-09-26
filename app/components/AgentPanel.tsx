@@ -488,14 +488,14 @@ export function AgentPanel({
           <Icon name={archived ? "restore" : "archive"} size={14} />
         </button>
         <SplitAction
-          // A fork gets its own thread wherever this conversation lives, so
-          // the only thing left to choose is where you want to read it.
-          label={can.fork ? "Fork, and read it here" : `${agent.backend} cannot fork a session`}
+          // Where the fork opens is the choice; its own thread, wherever
+          // this conversation lives, comes with it either way.
+          label={can.fork ? "Fork in this card" : `${agent.backend} cannot fork a session`}
           icon="fork"
           onClick={onFork}
           disabled={busy || !can.fork}
           menu={[
-            { label: "Fork into a pane beside this", icon: "split", onClick: onForkBeside },
+            { label: "Fork in a card beside this", icon: "split", onClick: onForkBeside },
             { label: "Open another beside this", icon: "thread", onClick: onOpenBeside },
           ]}
         />
