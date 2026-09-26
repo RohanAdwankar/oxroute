@@ -224,7 +224,7 @@ export function AgentPanel({
     if (!input) return;
     input.style.height = "0px";
     const floor = Number.parseInt(
-      getComputedStyle(document.documentElement).getPropertyValue("--field"),
+      getComputedStyle(document.documentElement).getPropertyValue("--cell"),
       10,
     );
     input.style.height = `${Math.max(floor || 34, Math.min(input.scrollHeight, 160))}px`;
@@ -471,7 +471,6 @@ export function AgentPanel({
           icon="fork"
           onClick={onForkLocal}
           disabled={busy || !can.fork}
-          variant="strip"
           menu={[
             { label: "Fork to Slack thread", icon: "thread", onClick: onForkSlack },
             { label: "Open another beside this", icon: "split", onClick: onOpenBeside },
@@ -617,12 +616,12 @@ export function AgentPanel({
       )}
 
       <footer
-        className={`flex shrink-0 flex-col gap-2 border-t px-[var(--pane-x)] py-[6px] ${
+        className={`flex shrink-0 flex-col border-t ${
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
         {mode !== "type" && (
-          <div className="flex items-center gap-2 text-[11.5px] text-faint">
+          <div className="flex items-center gap-2 px-[var(--pane-x)] pt-[6px] text-[11.5px] text-faint">
             <Icon name={MODES.find((option) => option.mode === mode)?.icon ?? "pen"} size={13} />
             {MODES.find((option) => option.mode === mode)?.label}
             {mode === "diagram" && edits.length > 0 && (
@@ -637,9 +636,11 @@ export function AgentPanel({
             </button>
           </div>
         )}
-        {draggingImages && <p className="text-[11px] text-drop">Drop images to attach</p>}
+        {draggingImages && (
+          <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop images to attach</p>
+        )}
         {uploads.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 px-[var(--pane-x)] pt-[6px]">
             {uploads.map((upload) => (
               <span key={upload.preview} className="flex items-center gap-2 bg-band p-2 text-[11px] text-mid">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -661,8 +662,10 @@ export function AgentPanel({
             ))}
           </div>
         )}
-        {attachmentError && <p className="text-[11px] text-hold">{attachmentError}</p>}
-        <div className="flex items-end gap-[6px]">
+        {attachmentError && (
+          <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-hold">{attachmentError}</p>
+        )}
+        <div className="flex items-stretch">
           <input
             ref={picker}
             type="file"
@@ -684,7 +687,7 @@ export function AgentPanel({
               icon: option.icon,
               onClick: () => setMode(option.mode),
             }))}
-            variant="quiet"
+            up
           />
           <textarea
             ref={composer}
@@ -714,7 +717,7 @@ export function AgentPanel({
             rows={1}
             data-composer
             placeholder={PLACEHOLDER[mode]}
-            className="min-h-[var(--field)] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[6px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint focus:border-edge"
+            className="min-h-[var(--cell)] flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
           />
           {mode === "type" ? (
             // One button, one arrow, whether the agent is busy or not. What
@@ -741,7 +744,7 @@ export function AgentPanel({
                   : []),
                 { label: "Add to the task list", icon: "tasks" as const, onClick: () => void toTask() },
               ]}
-              variant="composer"
+              up
             />
           ) : (
             // A drawing is made at the moment it is sent, so there is
@@ -775,7 +778,7 @@ export function AgentPanel({
                   ? [{ label: "Add to the task list", icon: "tasks" as const, onClick: () => void toTask() }]
                   : []),
               ]}
-              variant="composer"
+              up
             />
           )}
         </div>

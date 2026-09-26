@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { Icon, type IconName } from "./Icon";
 
+/**
+ * A square that does one thing, with a chevron for the other ways to do it.
+ *
+ * It is the same square as everything else in a bar: no chip, no fill, no
+ * corner. What it does is on hover, because an icon alone does not say.
+ */
 export function SplitAction({
   label,
   hint,
@@ -11,7 +17,7 @@ export function SplitAction({
   onClick,
   disabled,
   menu,
-  variant = "toolbar",
+  up = false,
 }: {
   label: string;
   /// The longer sentence, when the label alone does not explain it.
@@ -20,10 +26,9 @@ export function SplitAction({
   onClick: () => void;
   disabled?: boolean;
   menu: { label: string; icon: IconName; onClick: () => void }[];
-  /// `quiet` is the composer button in a lighter weight: the same shape
-  /// and size, for something that sits beside the box rather than ending
-  /// the sentence.
-  variant?: "toolbar" | "composer" | "quiet" | "strip";
+  /// Whether the menu opens upward, for a square sitting on the bottom
+  /// edge where there is no screen left below it.
+  up?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -45,7 +50,7 @@ export function SplitAction({
   }, [open]);
 
   return (
-    <div ref={root} className={`relative flex ${variant === "strip" ? "items-stretch" : ""}`}>
+    <div ref={root} className="relative flex items-stretch">
       <button
         type="button"
         onClick={() => {
@@ -55,59 +60,30 @@ export function SplitAction({
         disabled={disabled}
         aria-label={label}
         title={hint ?? label}
-        className={
-          {
-            composer: [
-              "flex h-[var(--field)] cursor-pointer items-center justify-center border-y border-l border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
-              menu.length > 0 ? "w-[32px]" : "w-[38px] border-r rounded-r-[3px]",
-              "rounded-l-[3px]",
-            ].join(" "),
-            quiet: [
-              "flex h-[var(--field)] cursor-pointer items-center justify-center border-y border-l border-edge bg-card text-mid hover:text-ink rounded-l-[3px] disabled:cursor-not-allowed disabled:opacity-40",
-              menu.length > 0 ? "w-[32px]" : "w-[38px] border-r rounded-r-[3px]",
-            ].join(" "),
-            strip:
-              "flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-            toolbar:
-              "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-          }[variant]
-        }
+        className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <Icon name={icon} size={variant === "strip" ? 14 : 16} />
+        <Icon name={icon} size={14} />
       </button>
       {menu.length > 0 && (
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        disabled={disabled}
-        aria-label={`${label} options`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={`${label}: more ways`}
-        className={
-          {
-            composer:
-              "flex h-[var(--field)] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-l border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
-            quiet:
-              "flex h-[var(--field)] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-            strip:
-              "flex h-[var(--cell)] w-[18px] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-            toolbar:
-              "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
-          }[variant]
-        }
-      >
-        <Icon name="chevronDown" size={11} />
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          disabled={disabled}
+          aria-label={`${label} options`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title={`${label}: more ways`}
+          className="flex h-[var(--cell)] w-[18px] cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Icon name="chevronDown" size={11} />
+        </button>
       )}
       {open && (
         <div
           role="menu"
-          // The composer sits on the bottom edge, so its menu opens upward;
-          // below the button there is no screen left to draw it on.
           className={[
             "absolute right-0 z-30 min-w-max border border-rule bg-card p-1 shadow-[0_8px_24px_rgba(33,29,25,0.12)]",
-            variant === "toolbar" ? "top-full mt-1" : "bottom-full mb-1",
+            up ? "bottom-full mb-1" : "top-full mt-1",
           ].join(" ")}
         >
           {menu.map((item) => (

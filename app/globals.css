@@ -35,7 +35,6 @@
      interface is the same square. */
   --cell: 42px;
   --bar: var(--cell);
-  --field: 38px;
   --pane-x: 28px;
   --row-y: 9px;
   --said: 16.5px;
@@ -43,7 +42,6 @@
 
 html[data-density="compact"] {
   --cell: 34px;
-  --field: 34px;
   --pane-x: 20px;
   --row-y: 7px;
   --said: 15px;
