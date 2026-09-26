@@ -55,6 +55,40 @@ function Row({
   );
 }
 
+/**
+ * What has been said about a task, latest last.
+ *
+ * A long argument pushes every other task off the screen, so only the last
+ * two are kept in view and the rest are a click away.
+ */
+const RECENT = 2;
+
+function Notes({ notes }: { notes: TaskNote[] }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? notes : notes.slice(-RECENT);
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {notes.length > RECENT && (
+        <button
+          type="button"
+          onClick={() => setAll((open) => !open)}
+          className="cursor-pointer self-start text-[10.5px] text-faint hover:text-ink"
+        >
+          {all ? "Latest only" : `${notes.length - RECENT} earlier`}
+        </button>
+      )}
+      <ul className="flex flex-col gap-1">
+        {shown.map((note) => (
+          <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
+            <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
+            {note.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function TaskPanel({
   tasks,
   rows,
@@ -203,16 +237,7 @@ export function TaskPanel({
           ))}
         </div>
       )}
-      {mine.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1">
-          {mine.map((note) => (
-            <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
-              <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
-              {note.text}
-            </li>
-          ))}
-        </ul>
-      )}
+      {mine.length > 0 && <Notes notes={mine} />}
       {asking && (
         <input
           autoFocus
