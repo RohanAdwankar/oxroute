@@ -2180,12 +2180,14 @@ impl Hub {
             anyhow::ensure!(self.store.agent(agent_id)?.is_some(), "no such agent");
         }
         let at = now();
+        let last = self.store.tasks()?.iter().map(|task| task.position).fold(-1.0, f64::max);
         let task = TaskItem {
             id: new_id("task"),
             text: text.into(),
             status: TaskStatus::Incomplete,
             blocked_by_task_id: String::new(),
             agent_id: agent_id.into(),
+            position: last + 1.0,
             created_at: at,
             updated_at: at,
         };
@@ -2223,6 +2225,7 @@ impl Hub {
             status.as_str(),
         );
         let created_at = current.created_at;
+        let position = current.position;
         let current_status = current.status;
         validate_task_dependency(&tasks, id, status, blocked_by_task_id)?;
         let task = TaskItem {
@@ -2231,6 +2234,7 @@ impl Hub {
             status,
             blocked_by_task_id: blocked_by_task_id.into(),
             agent_id: agent_id.into(),
+            position,
             created_at,
             updated_at: now(),
         };
@@ -2240,6 +2244,36 @@ impl Hub {
         }
         self.emit(Event::Sync);
         Ok(task)
+    }
+
+    /// Put a task after another one, or at the top when `after` is empty.
+    ///
+    /// The queue is the order the list is read in, so moving a task is
+    /// saying what to do before what -- which is a judgement the list should
+    /// hold rather than make for itself out of timestamps.
+    pub fn move_task(&self, id: &str, after: Option<&str>) -> Result<Vec<TaskItem>> {
+        let mut tasks = self.store.tasks()?;
+        let from = tasks.iter().position(|task| task.id == id).context("no such task")?;
+        let moving = tasks.remove(from);
+        let to = match after {
+            Some(after) => {
+                let at = tasks
+                    .iter()
+                    .position(|task| task.id == after)
+                    .context("no task to put it after")?;
+                at + 1
+            }
+            None => 0,
+        };
+        tasks.insert(to, moving);
+        // Renumbering the whole list keeps the positions plain integers, and
+        // the list is short enough that saving it is not worth avoiding.
+        for (at, task) in tasks.iter_mut().enumerate() {
+            task.position = at as f64;
+            self.store.save_task(task)?;
+        }
+        self.emit(Event::Sync);
+        Ok(tasks)
     }
 
     /// Write down why a task is where it is.
@@ -2475,6 +2509,7 @@ mod task_tests {
             status,
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
+            position: 0.0,
             created_at: 1.0,
             updated_at: 1.0,
         }

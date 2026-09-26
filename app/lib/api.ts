@@ -71,6 +71,9 @@ export const api = {
   /// of whoever has it.
   handOffTask: (id: string, fork: boolean, model?: string) =>
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
+  /// Put a task after another one; no `after` means the top of the queue.
+  moveTask: (id: string, after?: string) =>
+    post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),
   /// A status change carries why it changed.
   updateTask: (task: TaskItem, note?: string) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {

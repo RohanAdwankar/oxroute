@@ -403,7 +403,7 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const tasks = taskRows(snapshot.tasks, panes.at(-1) ?? null, tasksDone);
+  const tasks = taskRows(snapshot.tasks, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const clearRouting = () => {
@@ -528,6 +528,23 @@ export default function Home() {
         case "g":
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(0);
+        case "J":
+        case "K": {
+          if (focus !== "tasks") return;
+          stop();
+          const row = tasks[taskAt];
+          if (row?.kind !== "task") return;
+          const up = event.key === "K";
+          // The task it lands after: the one two places up when moving up,
+          // and the one immediately below when moving down.
+          const live = tasks.filter((entry) => entry.kind === "task").map((entry) => entry.task);
+          const at = live.findIndex((task) => task.id === row.task.id);
+          const to = up ? at - 1 : at + 1;
+          if (to < 0 || to >= live.length) return;
+          const after = up ? live[to - 1]?.id : live[to].id;
+          setTaskAt((current) => current + (up ? -1 : 1));
+          return void run(() => api.moveTask(row.task.id, after));
+        }
         case "G":
           stop();
           return (focus === "inbox" ? setInboxAt : setFleetAt)(Math.max(here - 1, 0));

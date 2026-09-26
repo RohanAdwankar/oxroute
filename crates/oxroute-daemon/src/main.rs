@@ -198,6 +198,7 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}/hand-off", post(hand_off_task))
         .route("/api/task-notes", get(task_notes))
         .route("/api/tasks/{id}/notes", post(add_task_note))
+        .route("/api/tasks/{id}/move", post(move_task))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         // The web UI is served by Next on its own port in development and
@@ -661,6 +662,21 @@ async fn add_task_note(
     Json(body): Json<NoteBody>,
 ) -> Result<Json<oxroute_core::TaskNote>, Failed> {
     Ok(Json(hub.add_task_note(&id, &body.text, &body.agent_id)?))
+}
+
+#[derive(Deserialize)]
+struct MoveTaskBody {
+    /// The task to put it after; absent means the top of the list.
+    #[serde(default)]
+    after: Option<String>,
+}
+
+async fn move_task(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<MoveTaskBody>,
+) -> Result<Json<Vec<oxroute_core::TaskItem>>, Failed> {
+    Ok(Json(hub.move_task(&id, body.after.as_deref())?))
 }
 
 async fn create_task(

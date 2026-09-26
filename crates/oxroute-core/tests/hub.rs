@@ -1640,6 +1640,7 @@ async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
             status: TaskStatus::Incomplete,
             blocked_by_task_id: String::new(),
             agent_id: agent.id.clone(),
+            position: 0.0,
             created_at: now(),
             updated_at: now(),
         })
@@ -1683,6 +1684,7 @@ async fn an_agent_with_nothing_open_is_left_alone() {
                 status,
                 blocked_by_task_id: String::new(),
                 agent_id: agent.id.clone(),
+                position: 0.0,
                 created_at: now(),
                 updated_at: now(),
             })
@@ -1846,4 +1848,33 @@ async fn an_agent_is_told_who_else_is_in_its_working_directory() {
         .expect("the second agent was not told about the first");
     assert!(shared.contains("the first"));
     assert!(shared.contains("git worktree"));
+}
+
+#[tokio::test]
+async fn the_task_list_is_a_queue_that_can_be_rearranged() {
+    let w = world(Mode::Auto, false).await;
+    let order = || {
+        w.hub.tasks().unwrap().into_iter().map(|task| task.text).collect::<Vec<_>>()
+    };
+    for text in ["first", "second", "third"] {
+        w.hub.create_task(text, "").unwrap();
+    }
+    // A new task joins the end of the queue rather than the front.
+    assert_eq!(order(), vec!["first", "second", "third"]);
+
+    // Moving one says what to do before what.
+    let third = w.hub.tasks().unwrap()[2].id.clone();
+    w.hub.move_task(&third, None).unwrap();
+    assert_eq!(order(), vec!["third", "first", "second"]);
+
+    let first = w.hub.tasks().unwrap()[1].id.clone();
+    let second = w.hub.tasks().unwrap()[2].id.clone();
+    w.hub.move_task(&first, Some(&second)).unwrap();
+    assert_eq!(order(), vec!["third", "second", "first"]);
+
+    // Editing a task leaves it where it is.
+    w.hub
+        .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None)
+        .unwrap();
+    assert_eq!(order(), vec!["third", "second, reworded", "first"]);
 }

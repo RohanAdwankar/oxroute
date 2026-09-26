@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     status             TEXT NOT NULL DEFAULT 'incomplete',
     blocked_by_task_id TEXT NOT NULL DEFAULT '',
     agent_id           TEXT NOT NULL DEFAULT '',
+    position           REAL NOT NULL DEFAULT 0,
     created_at         REAL NOT NULL,
     updated_at         REAL NOT NULL
 );
@@ -168,6 +169,19 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if !task_columns.iter().any(|column| column == "blocked_by_task_id") {
         conn.execute("ALTER TABLE tasks ADD COLUMN blocked_by_task_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    if !task_columns.iter().any(|column| column == "position") {
+        conn.execute("ALTER TABLE tasks ADD COLUMN position REAL NOT NULL DEFAULT 0", [])?;
+        // Whatever order the list was read in is the order it had, so that
+        // is the order it keeps rather than shuffling on first sight.
+        conn.execute(
+            "UPDATE tasks SET position = (
+                 SELECT COUNT(*) FROM tasks AS earlier
+                 WHERE earlier.updated_at > tasks.updated_at
+                    OR (earlier.updated_at = tasks.updated_at AND earlier.id < tasks.id)
+             )",
+            [],
+        )?;
     }
     conn.execute("DROP INDEX IF EXISTS tasks_agent", [])?;
     conn.execute(
@@ -412,8 +426,9 @@ impl Store {
     pub fn tasks(&self) -> Result<Vec<TaskItem>> {
         self.with(|c| {
             let mut statement = c.prepare(
-                "SELECT id, text, status, blocked_by_task_id, agent_id, created_at, updated_at
-                 FROM tasks ORDER BY status = 'complete', updated_at DESC",
+                "SELECT id, text, status, blocked_by_task_id, agent_id, position, created_at,
+                        updated_at
+                 FROM tasks ORDER BY position, created_at",
             )?;
             let tasks = statement
                 .query_map([], |row| {
@@ -430,8 +445,9 @@ impl Store {
                         })?,
                         blocked_by_task_id: row.get(3)?,
                         agent_id: row.get(4)?,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
+                        position: row.get(5)?,
+                        created_at: row.get(6)?,
+                        updated_at: row.get(7)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -473,10 +489,12 @@ impl Store {
     pub fn save_task(&self, task: &TaskItem) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO tasks (id, text, status, blocked_by_task_id, agent_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO tasks (id, text, status, blocked_by_task_id, agent_id, position,
+                     created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET text = excluded.text, status = excluded.status,
                      blocked_by_task_id = excluded.blocked_by_task_id,
+                     position = excluded.position,
                      agent_id = excluded.agent_id, updated_at = excluded.updated_at",
                 params![
                     task.id,
@@ -484,6 +502,7 @@ impl Store {
                     task.status.as_str(),
                     task.blocked_by_task_id,
                     task.agent_id,
+                    task.position,
                     task.created_at,
                     task.updated_at,
                 ],
@@ -1261,6 +1280,7 @@ mod tests {
             status: TaskStatus::Incomplete,
             blocked_by_task_id: String::new(),
             agent_id: String::new(),
+            position: 0.0,
             created_at: 1.0,
             updated_at: 1.0,
         };
@@ -1290,6 +1310,7 @@ mod tests {
             status,
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
+            position: 0.0,
             created_at: 1.0,
             updated_at: 1.0,
         };
