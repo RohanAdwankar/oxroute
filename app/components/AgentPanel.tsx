@@ -385,7 +385,9 @@ export function AgentPanel({
       {/* One row, whatever the width: what cannot fit is cut, not wrapped,
           because a header that grows downwards takes the conversation's
           space to say what it already said. */}
-      <div className="flex h-[var(--bar)] shrink-0 items-center gap-x-[10px] overflow-hidden border-b border-rule pl-3">
+      {/* Nothing here overflows -- the parts that could truncate themselves --
+          and a menu dropping out of a button needs to be allowed out. */}
+      <div className="relative z-20 flex h-[var(--bar)] shrink-0 items-center gap-x-[10px] border-b border-rule pl-3">
         <button
           type="button"
           onClick={onBack}
