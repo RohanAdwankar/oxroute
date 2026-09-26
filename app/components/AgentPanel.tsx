@@ -572,44 +572,35 @@ export function AgentPanel({
             items.map((item, at) => {
               if ("tools" in item) {
                 const first = item.tools[0];
-                // What it is doing right now is news; what it did twenty
-                // calls ago is history, and history stays folded.
+                // What it is doing right now is news, and news is read in
+                // full; what it did twenty calls ago is history, and
+                // history stays folded.
                 const latest = verbose && at === items.length - 1 ? item.tools.at(-1) : null;
+                const folded = latest ? item.tools.slice(0, -1) : item.tools;
                 return (
-                  <details key={`tools-${first.id}`} className="group border-b border-hair py-2">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                      <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
-                      <span className="w-2 text-center group-open:rotate-90">›</span>
-                      <span className="shrink-0">
-                        {item.tools.length} tool {item.tools.length === 1 ? "call" : "calls"}
-                      </span>
-                      {latest && (
-                        <span className="min-w-0 truncate text-mid">
-                          {(latest.detail || latest.text).split("\n")[0]}
-                        </span>
-                      )}
-                    </summary>
-                    <div className="ml-[52px] mt-1 flex flex-col">
-                      {item.tools.map((entry) => (
-                        <div
-                          key={entry.id}
-                          className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid"
-                        >
-                          {entry.text !== "Command" && (
-                            <span className="mr-2 text-faint">{entry.text}</span>
-                          )}
-                          <div className="break-words whitespace-pre-wrap">
-                            {entry.detail || entry.text}
-                          </div>
-                          {entry.output && (
-                            <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
-                              {entry.output}
-                            </pre>
-                          )}
+                  <div key={`tools-${first.id}`} className="border-b border-hair py-2">
+                    {folded.length > 0 && (
+                      <details className="group">
+                        <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
+                          <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
+                          <span className="w-2 text-center group-open:rotate-90">›</span>
+                          <span className="shrink-0">
+                            {folded.length} tool {folded.length === 1 ? "call" : "calls"}
+                          </span>
+                        </summary>
+                        <div className="ml-[52px] mt-1 flex flex-col">
+                          {folded.map((entry) => (
+                            <ToolCall key={entry.id} entry={entry} />
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </details>
+                      </details>
+                    )}
+                    {latest && (
+                      <div className="ml-[52px] flex flex-col">
+                        <ToolCall entry={latest} />
+                      </div>
+                    )}
+                  </div>
                 );
               }
 
@@ -836,6 +827,21 @@ export function AgentPanel({
  * Something you sent. A drawn diagram change shows as the diagram, and a
  * picture as the picture, with the words the agent got one click away.
  */
+/// One tool call, whole: what it ran and whatever it printed.
+function ToolCall({ entry }: { entry: Entry }) {
+  return (
+    <div className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
+      {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
+      <div className="break-words whitespace-pre-wrap">{entry.detail || entry.text}</div>
+      {entry.output && (
+        <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
+          {entry.output}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 /// Anything anyone said: the words, and whatever came with them.
 function Said({ text }: { text: string }) {
   if (text.includes("```mermaid")) return <DiagramMessage text={text} />;
