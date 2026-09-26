@@ -210,6 +210,7 @@ async fn serve() -> Result<()> {
         .route("/api/events", get(events))
         .route("/api/agents/{id}", get(agent))
         .route("/api/search", get(search))
+        .route("/api/search/native", get(search_native))
         .route("/api/continue", post(continue_session))
         .route("/api/native-preview", get(native_preview))
         .route("/api/signal", post(ingest))
@@ -336,8 +337,17 @@ struct SearchQuery {
 async fn search(
     State(hub): Hubs,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<oxroute_core::SearchResults>, Failed> {
-    Ok(Json(hub.search(&query.q, SEARCH_LIMIT, SEARCH_LIMIT).await?))
+) -> Result<Json<Vec<oxroute_core::SearchGroup>>, Failed> {
+    Ok(Json(hub.search(&query.q, SEARCH_LIMIT)?))
+}
+
+/// The harnesses' own sessions, asked for separately so the list you are
+/// reading appears while they are still being looked for.
+async fn search_native(
+    State(hub): Hubs,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Vec<oxroute_core::NativeSession>>, Failed> {
+    Ok(Json(hub.search_native(&query.q, SEARCH_LIMIT).await?))
 }
 
 #[derive(Deserialize)]

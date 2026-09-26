@@ -909,9 +909,8 @@ async fn native_sessions_remain_searchable_after_they_are_added_to_oxroute() {
         updated_at: 42.0,
     });
 
-    let before = w.hub.search("fwgenie", 20, 20).await.unwrap();
-    assert_eq!(before.managed.len(), 1);
-    assert_eq!(before.other.len(), 1);
+    assert_eq!(w.hub.search("fwgenie", 20).unwrap().len(), 1);
+    assert_eq!(w.hub.search_native("fwgenie", 20).await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -959,7 +958,7 @@ async fn continuing_a_native_session_starts_a_fresh_agent_in_a_fresh_thread() {
     assert!(prompt.contains("~/.codex/sessions"));
     assert!(prompt.contains("Do not use web search"));
     assert_eq!(w.posts.lock().unwrap().threads, vec![prompt]);
-    assert_eq!(w.hub.search("fwgenie", 20, 20).await.unwrap().other.len(), 1);
+    assert_eq!(w.hub.search_native("fwgenie", 20).await.unwrap().len(), 1);
 }
 
 #[tokio::test]

@@ -577,12 +577,6 @@ pub struct NativeSession {
     pub updated_at: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchResults {
-    pub managed: Vec<SearchGroup>,
-    pub other: Vec<NativeSession>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

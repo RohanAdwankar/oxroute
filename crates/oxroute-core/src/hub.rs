@@ -186,6 +186,9 @@ impl Live {
     }
 }
 
+/// How long a search waits on a harness before showing what it has.
+const NATIVE_SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_millis(1500);
+
 pub struct Hub {
     pub config: Config,
     pub store: Arc<Store>,
@@ -2670,20 +2673,40 @@ impl Hub {
         self.store.timeline(agent_id, limit)
     }
 
-    pub async fn search(&self, query: &str, managed_limit: usize, native_limit: usize) -> Result<SearchResults> {
-        let managed = self.store.search(query, managed_limit)?;
-        let mut other = Vec::new();
-        for harness in self.harnesses.values() {
-            match harness.search_sessions(query, native_limit).await {
-                Ok(sessions) => {
-                    other.extend(sessions);
+    /// The sessions oxroute keeps, ranked by how well they answer the words
+    /// you typed. Local, and as fast as typing.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchGroup>> {
+        self.store.search(query, limit)
+    }
+
+    /// Sessions the harnesses have that oxroute never started.
+    ///
+    /// This reads whatever each harness keeps on disk, which can be half a
+    /// gigabyte of transcripts, so it is asked for separately and given a
+    /// deadline: the list you are reading must not wait on it.
+    pub async fn search_native(&self, query: &str, limit: usize) -> Result<Vec<NativeSession>> {
+        let asking = self.harnesses.values().map(|harness| async move {
+            match tokio::time::timeout(
+                NATIVE_SEARCH_DEADLINE,
+                harness.search_sessions(query, limit),
+            )
+            .await
+            {
+                Ok(Ok(sessions)) => sessions,
+                Ok(Err(error)) => {
+                    tracing::debug!(backend = %harness.backend(), %error, "native session search failed");
+                    vec![]
                 }
-                Err(error) => tracing::debug!(backend = %harness.backend(), %error, "native session search failed"),
+                Err(_) => {
+                    tracing::debug!(backend = %harness.backend(), "native session search timed out");
+                    vec![]
+                }
             }
-        }
-        other.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
-        other.truncate(native_limit);
-        Ok(SearchResults { managed, other })
+        });
+        let mut found: Vec<_> = futures_util::future::join_all(asking).await.concat();
+        found.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
+        found.truncate(limit);
+        Ok(found)
     }
 
     pub async fn continue_session(

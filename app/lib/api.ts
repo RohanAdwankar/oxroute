@@ -11,7 +11,8 @@ import type {
   DiagramEdit,
   DiagramPayload,
   Mode,
-  SearchResults,
+  SearchGroup,
+  NativeSession,
   Snapshot,
   TaskItem,
 } from "./types";
@@ -45,7 +46,10 @@ const post = <T,>(path: string, payload: unknown) =>
 
 export const api = {
   snapshot: () => call<Snapshot>("/api/state"),
-  search: (query: string) => call<SearchResults>(`/api/search?q=${encodeURIComponent(query)}`),
+  search: (query: string) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`),
+  /// The harnesses' own sessions, which take as long as they take.
+  searchNative: (query: string) =>
+    call<NativeSession[]>(`/api/search/native?q=${encodeURIComponent(query)}`),
   continueSession: (backend: Backend, sessionId: string) =>
     post<Agent>("/api/continue", { backend, sessionId }),
   nativePreview: (backend: Backend, sessionId: string) =>

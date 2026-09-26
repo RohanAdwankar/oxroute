@@ -341,6 +341,19 @@ fn collect_histories(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 fn read_session(path: &Path, query: Option<&str>) -> Result<Option<NativeSession>> {
+    // Most of a history directory has nothing to do with what was typed, and
+    // parsing every line of every transcript to find that out is the whole
+    // cost of a search. The bytes answer it first.
+    if let Some(query) = query {
+        let raw = fs::read(path)?;
+        if !raw
+            .to_ascii_lowercase()
+            .windows(query.len())
+            .any(|window| window == query.as_bytes())
+        {
+            return Ok(None);
+        }
+    }
     let file = File::open(path)?;
     let mut session_id = String::new();
     let mut cwd = String::new();

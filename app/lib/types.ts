@@ -118,11 +118,6 @@ export interface NativeSession {
   updatedAt: number;
 }
 
-export interface SearchResults {
-  managed: SearchGroup[];
-  other: NativeSession[];
-}
-
 export interface ConversationLine {
   role: string;
   text: string;

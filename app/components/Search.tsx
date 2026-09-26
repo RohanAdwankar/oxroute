@@ -4,21 +4,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { clock } from "../lib/format";
-import type { ConversationLine, NativeSession, SearchGroup, SearchResults } from "../lib/types";
+import type { ConversationLine, NativeSession, SearchGroup } from "../lib/types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
-const EMPTY: SearchResults = { managed: [], other: [] };
 type Choice =
   | { key: string; type: "managed"; result: SearchGroup }
   | { key: string; type: "native"; session: NativeSession };
+
+/// The part of an entry that actually contains what you typed. A row that
+/// says "Bash" tells you nothing; the command it ran might be the thing you
+/// remember.
+function matched(query: string, ...parts: (string | undefined)[]): string {
+  const wanted = query.trim().toLowerCase();
+  const present = parts.filter((part): part is string => Boolean(part));
+  return present.find((part) => part.toLowerCase().includes(wanted)) ?? present[0] ?? "";
+}
 
 export function Search({ onOpen, onContinue }: {
   onOpen: (agent: string, entry: number) => void;
   onContinue: (agent: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResults>(EMPTY);
+  const [managed, setManaged] = useState<SearchGroup[]>([]);
+  const [other, setOther] = useState<NativeSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(0);
@@ -28,17 +37,17 @@ export function Search({ onOpen, onContinue }: {
   const request = useRef(0);
   const previewRequest = useRef(0);
   const choices = useMemo<Choice[]>(() => [
-    ...results.managed.map((result) => ({
+    ...managed.map((result) => ({
       key: `managed:${result.destinations[0]?.agentId}:${result.destinations[0]?.entryId}`,
       type: "managed" as const,
       result,
     })),
-    ...results.other.map((session) => ({
+    ...other.map((session) => ({
       key: `native:${session.backend}:${session.sessionId}`,
       type: "native" as const,
       session,
     })),
-  ], [results]);
+  ], [managed, other]);
   const choice = choices[selected];
 
   useEffect(() => {
@@ -46,9 +55,12 @@ export function Search({ onOpen, onContinue }: {
     if (!term) return;
     const current = ++request.current;
     const timer = window.setTimeout(() => {
-      api.search(term).then((matches) => {
+      // Two questions with different answers in mind: what oxroute knows is
+      // local and instant, and the harnesses' own transcripts take as long
+      // as they take. Neither waits for the other.
+      api.search(term).then((hits) => {
         if (request.current !== current) return;
-        setResults(matches);
+        setManaged(hits);
         setSelected(0);
         setLoading(false);
       }, (reason) => {
@@ -56,6 +68,9 @@ export function Search({ onOpen, onContinue }: {
         setError(reason instanceof Error ? reason.message : String(reason));
         setLoading(false);
       });
+      api.searchNative(term).then((sessions) => {
+        if (request.current === current) setOther(sessions);
+      }, () => {});
     }, 150);
     return () => window.clearTimeout(timer);
   }, [query]);
@@ -69,7 +84,7 @@ export function Search({ onOpen, onContinue }: {
           const at = Math.max(view.timeline.findIndex((item) => item.id === entry), 0);
           return view.timeline.slice(Math.max(0, at - 5), at + 7).map((item) => ({
             role: item.kind === "said" ? "agent" : item.kind === "worked" ? "work" : "you",
-            text: item.text === "Command" ? item.detail : item.text || item.detail,
+            text: matched(query, item.text, item.detail, item.output),
           }));
         })
       : api.nativePreview(choice.session.backend, choice.session.sessionId);
@@ -77,7 +92,7 @@ export function Search({ onOpen, onContinue }: {
       (lines) => previewRequest.current === current && setPreview({ key: choice.key, lines }),
       () => previewRequest.current === current && setPreview({ key: choice.key, lines: [] }),
     );
-  }, [choice]);
+  }, [choice, query]);
 
   const activate = async (target: Choice | undefined) => {
     if (!target) return;
@@ -108,7 +123,8 @@ export function Search({ onOpen, onContinue }: {
         onChange={(event) => {
           const value = event.target.value;
           setQuery(value);
-          setResults(EMPTY);
+          setManaged([]);
+          setOther([]);
           setLoading(Boolean(value.trim()));
           setError("");
           if (!value.trim()) request.current += 1;
@@ -144,22 +160,22 @@ export function Search({ onOpen, onContinue }: {
               </p>
             ) : (
               <>
-                {results.managed.length > 0 && <Band>Oxroute sessions</Band>}
-                {results.managed.map((result, index) => (
+                {managed.length > 0 && <Band>Oxroute sessions</Band>}
+                {managed.map((result, index) => (
                   <ResultRow
                     key={choices[index].key}
                     selected={selected === index}
                     time={result.at}
-                    title={result.text || result.detail || result.origin}
+                    title={matched(query, result.text, result.detail, result.origin)}
                     detail={`${result.destinations[0].agentName}${result.destinations.length > 1 ? ` · ${result.destinations.length} forks` : ""}`}
                     action="Open"
                     onSelect={() => setSelected(index)}
                     onActivate={() => void activate(choices[index])}
                   />
                 ))}
-                {results.other.length > 0 && <Band>Other sessions</Band>}
-                {results.other.map((session, offset) => {
-                  const index = results.managed.length + offset;
+                {other.length > 0 && <Band>Other sessions</Band>}
+                {other.map((session, offset) => {
+                  const index = managed.length + offset;
                   return <ResultRow
                     key={choices[index].key}
                     selected={selected === index}
@@ -190,8 +206,18 @@ export function Search({ onOpen, onContinue }: {
                 <p className="py-4 text-[12px] text-faint">Loading context…</p>
               ) : preview.lines.length === 0 ? (
                 <p className="py-4 text-[12px] text-faint">No conversation context available.</p>
-              ) : preview.lines.map((line, index) => (
-                <div key={`${line.role}:${index}`} className="flex gap-3 border-b border-hair py-3 last:border-b-0">
+              ) : preview.lines.map((line, index) => {
+                const hit = line.text.toLowerCase().includes(query.trim().toLowerCase());
+                return (
+                <div
+                  key={`${line.role}:${index}`}
+                  ref={(node) => {
+                    if (hit) node?.scrollIntoView({ block: "center" });
+                  }}
+                  className={`flex gap-3 border-b border-hair py-3 last:border-b-0 ${
+                    hit ? "bg-mine" : ""
+                  }`}
+                >
                   <span className={`w-10 shrink-0 pt-0.5 text-[10.5px] ${line.role === "agent" ? "text-ok" : "text-faint"}`}>
                     {line.role}
                   </span>
@@ -199,7 +225,8 @@ export function Search({ onOpen, onContinue }: {
                     <Markdown>{line.text}</Markdown>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

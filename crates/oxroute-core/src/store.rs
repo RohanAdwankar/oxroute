@@ -1002,6 +1002,34 @@ impl Store {
 
     /// Search every timeline, collapsing rows copied through a fork into one
     /// result with a destination for each branch that contains it.
+    /// How well a hit answers the words you typed.
+    ///
+    /// You are looking for the session where something was said, so a
+    /// message outranks the output of a command that happened to print the
+    /// same word, and a whole word outranks a fragment of a longer one. A
+    /// hit counts once however often it repeats: a long log is not a better
+    /// answer than a sentence.
+    fn relevance(query: &str, group: &SearchGroup) -> i64 {
+        let query = query.to_lowercase();
+        let has = |hay: &str| i64::from(hay.to_lowercase().contains(&query));
+        let whole = |hay: &str| {
+            i64::from(
+                hay.to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .any(|word| word == query),
+            )
+        };
+        let spoken = matches!(
+            group.kind,
+            EntryKind::You | EntryKind::Said | EntryKind::Asked | EntryKind::Received
+        );
+        4 * whole(&group.text) + 2 * has(&group.text)
+            + whole(&group.detail)
+            + has(&group.detail)
+            + has(&group.origin)
+            + if spoken { 3 } else { 0 }
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchGroup>> {
         let query = query.trim();
         if query.is_empty() {
@@ -1045,9 +1073,10 @@ impl Store {
                  WHERE instr(lower(e.text), lower(?1)) > 0
                     OR instr(lower(e.detail), lower(?1)) > 0
                     OR instr(lower(e.origin), lower(?1)) > 0
-                 ORDER BY e.at DESC, e.id DESC",
+                 ORDER BY e.at DESC, e.id DESC
+                 LIMIT ?2",
             )?;
-            let rows = stmt.query_map(params![query], |row| {
+            let rows = stmt.query_map(params![query, (limit * 20) as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -1078,7 +1107,7 @@ impl Store {
                         agent_name,
                         entry_id,
                     });
-                } else if groups.len() < limit {
+                } else {
                     grouped.insert(key, groups.len());
                     groups.push(SearchGroup {
                         at,
@@ -1094,6 +1123,15 @@ impl Store {
                     });
                 }
             }
+            // The best match first, not merely the newest: you are looking
+            // for the session where something was said, and the words you
+            // remember are the evidence for which one that is.
+            groups.sort_by(|a, b| {
+                Self::relevance(query, b)
+                    .cmp(&Self::relevance(query, a))
+                    .then(b.at.total_cmp(&a.at))
+            });
+            groups.truncate(limit);
             Ok(groups)
         })
     }
@@ -1341,6 +1379,57 @@ mod tests {
         let back = store.agent("a1").unwrap().unwrap();
         assert_eq!(back.backend, Backend::Codex);
         assert_eq!(back.status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn a_search_answers_with_the_best_match_rather_than_the_newest() {
+        let store = Store::in_memory().unwrap();
+        store.save_agent(&agent("a1")).unwrap();
+        let old = now() - 100.0;
+        store
+            .add_entry(&agent("a1").id, old, EntryKind::You, "the ferry timetable changed", "", "")
+            .unwrap();
+        store
+            .add_entry(
+                &agent("a1").id,
+                now(),
+                EntryKind::You,
+                "booked the ferryboat museum instead",
+                "",
+                "",
+            )
+            .unwrap();
+
+        // Both contain the letters; only one is about the thing.
+        let found = store.search("ferry", 10).unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(
+            found[0].text.contains("timetable"),
+            "the whole word should win over a fragment of a longer one",
+        );
+    }
+
+    #[test]
+    fn a_search_answers_with_what_was_said_before_what_a_command_printed() {
+        let store = Store::in_memory().unwrap();
+        store.save_agent(&agent("a1")).unwrap();
+        // A log that says it many times, and a person who said it once.
+        store
+            .add_entry(
+                &agent("a1").id,
+                now(),
+                EntryKind::Worked,
+                "Bash",
+                "ferry ferry ferry ferry",
+                "",
+            )
+            .unwrap();
+        store
+            .add_entry(&agent("a1").id, now() - 50.0, EntryKind::You, "book the ferry", "", "")
+            .unwrap();
+
+        let found = store.search("ferry", 10).unwrap();
+        assert_eq!(found[0].text, "book the ferry", "a person outranks a transcript");
     }
 
     #[test]
