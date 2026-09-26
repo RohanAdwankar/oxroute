@@ -94,8 +94,16 @@ export default function Home() {
         lastInboxWidth.current = saved;
       }
       setWatch(window.localStorage.getItem("oxroute.watch") === "true");
+      setTasksOpen(window.localStorage.getItem("oxroute.tasks") === "true");
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  /// A column you left open is one you were using; it is still open when
+  /// you come back.
+  const showTasks = useCallback((open: boolean) => {
+    setTasksOpen(open);
+    window.localStorage.setItem("oxroute.tasks", String(open));
   }, []);
 
   const setInboxVisible = useCallback((open: boolean) => {
@@ -477,7 +485,7 @@ export default function Home() {
       const step = (delta: number) => {
         const next = COLUMNS[Math.min(Math.max(COLUMNS.indexOf(focus) + delta, 0), COLUMNS.length - 1)];
         if (next === "inbox") setInboxVisible(true);
-        if (next === "tasks") setTasksOpen(true);
+        if (next === "tasks") showTasks(true);
         setFocus(next);
       };
       const stop = () => event.preventDefault();
@@ -663,7 +671,7 @@ export default function Home() {
           })
         }
         tasksOpen={tasksOpen}
-        onTasks={() => setTasksOpen((current) => !current)}
+        onTasks={() => showTasks(!tasksOpen)}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -844,7 +852,7 @@ export default function Home() {
             currentAgent={panes.at(-1) ?? null}
             busy={busy}
             onClose={() => {
-              setTasksOpen(false);
+              showTasks(false);
               setFocus("fleet");
             }}
             onCreate={(text, agent) => void run(() => api.createTask(text, agent))}
