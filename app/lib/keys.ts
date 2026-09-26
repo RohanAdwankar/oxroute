@@ -171,10 +171,6 @@ function choice<T extends string>(key: string, attribute: string, values: readon
   };
 }
 
-/** How much room the interface takes: compact, or wide as it was. */
-export type Density = "compact" | "wide";
-export const density = choice<Density>("oxroute.density", "density", ["compact", "wide"]);
-
 /** Paper or ink: the same palette, read the other way round. */
 export type Theme = "light" | "dark";
 export const theme = choice<Theme>("oxroute.theme", "theme", ["light", "dark"]);

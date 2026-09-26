@@ -2,12 +2,7 @@
 
 import { useEffect } from "react";
 
-import { type Density, type Theme } from "../lib/keys";
-
-const ROOM: { value: Density; label: string; detail: string }[] = [
-  { value: "compact", label: "Compact", detail: "For a small screen, or a large zoom" },
-  { value: "wide", label: "Wide", detail: "More air around everything" },
-];
+import { type Theme } from "../lib/keys";
 
 const LOOK: { value: Theme; label: string; detail: string }[] = [
   { value: "light", label: "Light", detail: "Warm paper" },
@@ -26,16 +21,12 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
  * belongs in the interface itself.
  */
 export function Settings({
-  density,
-  onDensity,
   theme,
   onTheme,
   vim,
   onVim,
   onClose,
 }: {
-  density: Density;
-  onDensity: (next: Density) => void;
   theme: Theme;
   onTheme: (next: Theme) => void;
   vim: boolean;
@@ -60,13 +51,6 @@ export function Settings({
         className="w-full max-w-[420px] border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
-        <Choice
-          title="Room"
-          detail="How much room the interface takes."
-          options={ROOM}
-          chosen={density}
-          onChoose={onDensity}
-        />
         <Choice
           title="Look"
           detail="Which way round the palette reads."

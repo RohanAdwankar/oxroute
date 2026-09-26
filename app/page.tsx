@@ -19,7 +19,6 @@ import {
   HINTS,
   LETTERS,
   defaultVimMode,
-  density,
   theme,
   getVimMode,
   isTyping,
@@ -89,7 +88,6 @@ export default function Home() {
   const [tasksDone, setTasksDone] = useState(false);
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
-  const room = useSyncExternalStore(density.subscribe, density.get, density.fallback);
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
@@ -782,8 +780,6 @@ export default function Home() {
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
-          density={room}
-          onDensity={density.set}
           theme={tone}
           onTheme={theme.set}
           vim={vim}
