@@ -17,8 +17,9 @@ export function SplitAction({
   onClick: () => void;
   disabled?: boolean;
   menu: { label: string; icon: IconName; onClick: () => void }[];
-  /// `quiet` is composer height without the filled button: for something
-  /// that sits beside the box rather than ending the sentence.
+  /// `quiet` is the composer button in a lighter weight: the same shape
+  /// and size, for something that sits beside the box rather than ending
+  /// the sentence.
   variant?: "toolbar" | "composer" | "quiet";
 }) {
   const [open, setOpen] = useState(false);
@@ -56,7 +57,7 @@ export function SplitAction({
             composer:
               "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
             quiet:
-              "flex h-[42px] w-[26px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-edge bg-card text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
@@ -77,13 +78,13 @@ export function SplitAction({
             composer:
               "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
             quiet:
-              "flex h-[42px] w-[14px] cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
         }
       >
-        <Icon name="chevronDown" size={variant === "quiet" ? 9 : 11} />
+        <Icon name="chevronDown" size={11} />
       </button>
       {open && (
         <div
