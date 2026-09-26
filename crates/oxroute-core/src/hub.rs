@@ -86,6 +86,11 @@ struct Live {
     is_done: AtomicBool,
     status: Mutex<Option<String>>,
     answer: Mutex<Option<String>>,
+    /// What already went on the timeline as the turn streamed. The closing
+    /// frame repeats the last thing an agent said, and anything recorded in
+    /// between -- an attachment, a notice -- would hide that from a check
+    /// that only looked at the entry before it.
+    narrated: Mutex<HashSet<String>>,
     progress: Mutex<Progress>,
     artifacts: Mutex<HashSet<String>>,
     artifact_dir: PathBuf,
@@ -108,6 +113,7 @@ impl Live {
             is_done: AtomicBool::new(false),
             status: Mutex::new(None),
             answer: Mutex::new(None),
+            narrated: Mutex::new(HashSet::new()),
             progress: Mutex::new(Progress::new()),
             artifacts: Mutex::new(HashSet::new()),
             artifact_dir,
@@ -223,6 +229,25 @@ pub struct Chain {
 
 /// How many turns an agent may take on its own before a person is asked.
 const CHAIN_LIMIT: u32 = 12;
+
+/// Where an agent's last handed-out list is kept between runs.
+fn chain_key(agent_id: &str) -> String {
+    format!("chain:{agent_id}")
+}
+
+/// What to judge this sweep against.
+///
+/// The daemon forgets its chains when it restarts, and today it restarts
+/// often. Without the shape the last run wrote down, every restart hands
+/// every idle agent the same list again -- which reads, from the other end,
+/// as an agent repeating itself.
+fn chain_from(memory: Option<&Chain>, remembered: Option<String>) -> Chain {
+    match (memory, remembered) {
+        (Some(chain), _) => chain.clone(),
+        (None, Some(shape)) => Chain { turns: 1, shape, told: false },
+        (None, None) => Chain::default(),
+    }
+}
 
 /// The shape of one agent's list: what it holds, and where each item stands.
 fn shape_of(tasks: &[TaskItem], agent_id: &str) -> String {
@@ -613,6 +638,9 @@ impl Hub {
                 // the turn ends, so recording it here too would double it.
                 if !final_answer {
                     self.record(&agent_id, EntryKind::Said, &text, "", "");
+                    if let Some(turn) = self.live.lock().await.get(&agent_id) {
+                        turn.narrated.lock().unwrap().insert(text);
+                    }
                 }
             }
             HarnessEvent::Artifact { path, .. } => {
@@ -1631,11 +1659,10 @@ impl Hub {
         };
 
         // Claude Code's closing `result` frame usually repeats the last
-        // thing it said. Showing it twice makes the agent look confused.
-        let repeated = self
-            .store
-            .last_entry(&agent.id)?
-            .is_some_and(|last| last.kind == EntryKind::Said && last.text == answer);
+        // thing it said. Showing it twice makes the agent look confused, and
+        // it is the same answer whether or not an attachment was written
+        // down in between.
+        let repeated = turn.narrated.lock().unwrap().contains(&answer);
         if !repeated {
             self.record(&agent.id, EntryKind::Said, &answer, "", "");
         }
@@ -1693,7 +1720,10 @@ impl Hub {
         Box::pin(async move {
         let Ok(tasks) = self.store.tasks() else { return };
         let mut chains = self.chains.lock().await;
-        let chain = chains.get(&agent.id).cloned().unwrap_or_default();
+        let chain = chain_from(
+            chains.get(&agent.id),
+            self.store.get(&chain_key(&agent.id)).ok().flatten(),
+        );
         let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
             let stuck = tasks
                 .iter()
@@ -1708,15 +1738,13 @@ impl Hub {
             }
             return;
         };
+        let shape = shape_of(&tasks, &agent.id);
         chains.insert(
             agent.id.clone(),
-            Chain {
-                turns: chain.turns + 1,
-                shape: shape_of(&tasks, &agent.id),
-                told: false,
-            },
+            Chain { turns: chain.turns + 1, shape: shape.clone(), told: false },
         );
         drop(chains);
+        let _ = self.store.set(&chain_key(&agent.id), &shape);
 
         let list = open
             .iter()
@@ -2831,6 +2859,42 @@ fn validate_task_dependency(
         cursor = blockers.get(cursor).copied().unwrap_or_default();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod chains {
+    use super::*;
+
+    #[test]
+    fn a_restart_judges_against_the_list_it_last_handed_out() {
+        let tasks = vec![TaskItem {
+            id: "task_1".into(),
+            text: "paint the shed".into(),
+            status: TaskStatus::Incomplete,
+            blocked_by_task_id: String::new(),
+            agent_id: "a1".into(),
+            position: 0.0,
+            images: vec![],
+            created_at: 0.0,
+            updated_at: 0.0,
+        }];
+        let handed = shape_of(&tasks, "a1");
+
+        // Fresh, with nothing remembered: the agent has not been told.
+        let first = chain_from(None, None);
+        assert!(carry_on(&tasks, "a1", &first).is_some());
+
+        // After a restart, with the same list: it has, and saying it again
+        // is the agent repeating itself.
+        let after = chain_from(None, Some(handed));
+        assert!(carry_on(&tasks, "a1", &after).is_none());
+
+        // A list that moved since is news again: still work to do, but not
+        // the work that was handed over.
+        let mut moved = tasks.clone();
+        moved.push(TaskItem { id: "task_2".into(), text: "and the fence".into(), ..tasks[0].clone() });
+        assert!(carry_on(&moved, "a1", &chain_from(None, Some(shape_of(&tasks, "a1")))).is_some());
+    }
 }
 
 #[cfg(test)]
