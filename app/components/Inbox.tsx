@@ -180,7 +180,12 @@ function Band({
     );
   }
   return (
-    <button type="button" onClick={onClick} className={`${skin} cursor-pointer hover:text-ink`}>
+    <button
+      type="button"
+      onClick={onClick}
+      title="Show or hide what is settled"
+      className={`${skin} cursor-pointer hover:text-ink`}
+    >
       <span className={text}>{label}</span>
     </button>
   );

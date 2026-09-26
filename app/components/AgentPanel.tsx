@@ -222,7 +222,7 @@ export function AgentPanel({
     const input = composer.current;
     if (!input) return;
     input.style.height = "0px";
-    input.style.height = `${Math.max(42, Math.min(input.scrollHeight, 160))}px`;
+    input.style.height = `${Math.max(38, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
     pin();
   }, [draft, uploads, attachmentError, pin]);
@@ -328,7 +328,7 @@ export function AgentPanel({
         addFiles(Array.from(event.dataTransfer.files));
       }}
     >
-      <div className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-[14px] gap-y-1 border-b border-rule px-5 py-2">
+      <div className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-[10px] gap-y-1 border-b border-rule px-3 py-[6px]">
         <button
           type="button"
           onClick={onBack}
@@ -417,7 +417,7 @@ export function AgentPanel({
           disabled={busy || (!archived && agent.status === "working")}
           aria-label={archived ? "restore session" : "archive session"}
           title={!archived && agent.status === "working" ? "Stop the active turn first" : archived ? "Restore session" : "Archive session"}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-7 w-7 cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Icon name={archived ? "restore" : "archive"} />
         </button>
@@ -444,7 +444,7 @@ export function AgentPanel({
                   ? "Stop the active turn first"
                   : "Merge into parent"
             }
-            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] border border-merge text-merge hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="merge" />
           </button>
@@ -455,7 +455,7 @@ export function AgentPanel({
           disabled={busy || agent.status !== "working"}
           aria-label="stop the turn"
           title="Stop the turn"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Icon name="stop" />
         </button>
@@ -495,7 +495,7 @@ export function AgentPanel({
           setQuoteMenu(null);
         }}
         data-transcript
-        className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-2"
+        className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-5 py-2"
       >
         <div ref={timelineBody}>
           {view.timeline.length === 0 ? (
@@ -570,7 +570,7 @@ export function AgentPanel({
       )}
 
       <footer
-        className={`flex shrink-0 flex-col gap-2 border-t px-7 py-[10px] ${
+        className={`flex shrink-0 flex-col gap-2 border-t px-5 py-[9px] ${
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
@@ -615,7 +615,7 @@ export function AgentPanel({
           </div>
         )}
         {attachmentError && <p className="text-[11px] text-hold">{attachmentError}</p>}
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-2">
           <input
             ref={picker}
             type="file"
@@ -667,7 +667,7 @@ export function AgentPanel({
             rows={1}
             data-composer
             placeholder={PLACEHOLDER[mode]}
-            className="min-h-[42px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[10px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
+            className="min-h-[38px] flex-1 resize-none overflow-y-hidden rounded-[3px] border border-rule bg-paper px-3 py-[8px] text-[15.5px] outline-none placeholder:text-faint focus:border-edge"
           />
           {mode === "type" ? (
             // One button, one arrow, whether the agent is busy or not. What

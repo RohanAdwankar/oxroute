@@ -101,7 +101,7 @@ export function Search({ onOpen, onContinue }: {
   };
 
   return (
-    <div className="relative min-w-[180px] max-w-[520px] flex-1 basis-[260px]">
+    <div className="relative flex min-w-[180px] flex-1 basis-[260px] items-stretch">
       <input
         type="search"
         value={query}
@@ -132,7 +132,7 @@ export function Search({ onOpen, onContinue }: {
         }}
         placeholder="Search sessions"
         aria-label="search all sessions"
-        className="tnum w-full rounded-[3px] border border-rule bg-paper px-3 py-[7px] text-[12px] outline-none placeholder:text-faint focus:border-edge"
+        className="tnum w-full bg-card px-4 text-[12px] outline-none placeholder:text-faint focus:bg-paper"
       />
 
       {open && query.trim() && (

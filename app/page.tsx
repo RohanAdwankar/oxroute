@@ -73,7 +73,6 @@ export default function Home() {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const [jump, setJump] = useState(false);
-  const [watch, setWatch] = useState(false);
   // Which board the main column shows when no agent is open. Null is the fleet.
   const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
@@ -105,7 +104,6 @@ export default function Home() {
         inboxWidthRef.current = saved;
         lastInboxWidth.current = saved;
       }
-      setWatch(window.localStorage.getItem("oxroute.watch") === "true");
       setTasksOpen(window.localStorage.getItem("oxroute.tasks") === "true");
       const tasksAt = Number(window.localStorage.getItem("oxroute.taskWidth"));
       if (tasksAt >= 260) setTaskWidth(tasksAt);
@@ -786,13 +784,6 @@ export default function Home() {
         onInbox={() => setInboxVisible(!inboxOpen)}
         vim={vim}
         onVim={toggleVim}
-        watch={watch}
-        onWatch={() =>
-          setWatch((current) => {
-            window.localStorage.setItem("oxroute.watch", String(!current));
-            return !current;
-          })
-        }
         tasksOpen={tasksOpen}
         onTasks={() => showTasks(!tasksOpen)}
         activeBoard={activeBoard?.id ?? null}
@@ -984,7 +975,6 @@ export default function Home() {
             defaultModel={snapshot.defaultModel}
             messages={snapshot.messages}
             tags={snapshot.tags}
-            watch={watch && !showArchived && selected === null}
             routing={selected}
             beside={pairing === null ? null : details[panes[pairing]]?.agent.name ?? "it"}
             ticked={ticked}

@@ -55,9 +55,9 @@ export function SplitAction({
         className={
           {
             composer:
-              "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[38px] w-[34px] cursor-pointer items-center justify-center rounded-l-[3px] border border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
             quiet:
-              "flex h-[42px] w-[38px] cursor-pointer items-center justify-center rounded-l-[3px] border border-edge bg-card text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[38px] w-[34px] cursor-pointer items-center justify-center rounded-l-[3px] border border-edge bg-card text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
@@ -76,9 +76,9 @@ export function SplitAction({
         className={
           {
             composer:
-              "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[38px] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
             quiet:
-              "flex h-[42px] w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[38px] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]

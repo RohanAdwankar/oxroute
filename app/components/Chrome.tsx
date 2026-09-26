@@ -18,8 +18,6 @@ export function Chrome({
   onInbox,
   vim,
   onVim,
-  watch,
-  onWatch,
   tasksOpen,
   onTasks,
   activeBoard,
@@ -35,8 +33,6 @@ export function Chrome({
   onInbox: () => void;
   vim: boolean;
   onVim: () => void;
-  watch: boolean;
-  onWatch: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
   activeBoard: string | null;
@@ -46,87 +42,41 @@ export function Chrome({
   onSearchContinue: (agent: string) => void;
 }) {
   return (
-    <header className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule bg-card px-5 py-2">
-      <div className="flex" role="group" aria-label="routing mode">
+    <header className="flex min-h-[46px] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
+      <div className="flex items-stretch" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
           icon="ask"
           active={snapshot.mode === "ask"}
-          side="left"
           onClick={() => onMode("ask")}
         />
         <ModeButton
           label="Auto route"
           icon="auto"
           active={snapshot.mode === "auto"}
-          side="right"
           onClick={() => onMode("auto")}
         />
       </div>
 
-      <button
-        type="button"
+      <Cell
         onClick={onInbox}
-        aria-pressed={inboxOpen}
-        aria-label="toggle inbox"
-        title="Inbox"
-        className={[
-          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
-          inboxOpen ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
-        ].join(" ")}
-      >
-        <Icon name="inbox" />
-      </button>
-
-      <button
-        type="button"
+        pressed={inboxOpen}
+        label="Show or hide the inbox"
+        icon="inbox"
+      />
+      <Cell
         onClick={onVim}
-        aria-pressed={vim}
-        aria-label="toggle Vim navigation"
-        title="one-key hints on the agent cards (v)"
-        className={[
-          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
-          vim ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
-        ].join(" ")}
-      >
-        <Icon name="keyboard" />
-      </button>
+        pressed={vim}
+        label="One-key hints on the cards (v)"
+        icon="keyboard"
+      />
+      <Cell onClick={onTasks} pressed={tasksOpen} label="Show or hide tasks" icon="tasks" />
 
-      <button
-        type="button"
-        onClick={onTasks}
-        aria-pressed={tasksOpen}
-        aria-label="toggle tasks"
-        title="Tasks"
-        className={[
-          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
-          tasksOpen ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
-        ].join(" ")}
-      >
-        <Icon name="tasks" />
-      </button>
-
-      <button
-        type="button"
-        onClick={onWatch}
-        aria-pressed={watch}
-        aria-label="toggle watch mode"
-        title="Watch live agent commands"
-        className={[
-          "flex h-8 w-8 cursor-pointer items-center justify-center rounded-[3px] border",
-          watch ? "border-edge bg-wash text-ink" : "border-rule text-faint hover:text-mid",
-        ].join(" ")}
-      >
-        <Icon name="terminal" />
-      </button>
-
-      <nav className="flex" aria-label="boards">
+      <nav className="flex items-stretch" aria-label="boards">
         <ViewTab
           label="Fleet"
           icon="terminal"
           active={activeBoard === null}
-          first
-          last={false}
           onClick={() => onBoard(null)}
         />
         {snapshot.boards.map((board) => (
@@ -135,20 +85,10 @@ export function Chrome({
             label={board.name}
             icon="board"
             active={activeBoard === board.id}
-            first={false}
-            last={false}
             onClick={() => onBoard(board.id)}
           />
         ))}
-        <button
-          type="button"
-          onClick={onNewBoard}
-          aria-label="new board"
-          title="New board"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink"
-        >
-          <Icon name="plus" size={14} />
-        </button>
+        <Cell onClick={onNewBoard} label="New board" icon="plus" />
       </nav>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
@@ -165,6 +105,41 @@ export function Chrome({
 }
 
 /**
+ * One square in the top bar.
+ *
+ * The bar is a strip of cells sharing their edges rather than a row of
+ * chips on a background: fewer outlines, less air, and nothing to align.
+ * Every one says what it does on hover, because an icon alone does not.
+ */
+function Cell({
+  onClick,
+  pressed,
+  label,
+  icon,
+}: {
+  onClick: () => void;
+  pressed?: boolean;
+  label: string;
+  icon: IconName;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={pressed}
+      aria-label={label}
+      title={label}
+      className={[
+        "flex w-[38px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        pressed ? "bg-wash text-ink" : "text-faint hover:text-ink",
+      ].join(" ")}
+    >
+      <Icon name={icon} size={15} />
+    </button>
+  );
+}
+
+/**
  * One entry in the view switch. Views carry names, so these are words; the
  * fleet is the view every install has.
  */
@@ -172,15 +147,11 @@ function ViewTab({
   label,
   icon,
   active,
-  first,
-  last,
   onClick,
 }: {
   label: string;
   icon: IconName;
   active: boolean;
-  first: boolean;
-  last: boolean;
   onClick: () => void;
 }) {
   return (
@@ -188,11 +159,10 @@ function ViewTab({
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      title={`Show ${label}`}
       className={[
-        "flex h-8 cursor-pointer items-center gap-[6px] border px-3 text-[12.5px] transition-colors",
-        first ? "rounded-l-[3px]" : "border-l-0",
-        last ? "rounded-r-[3px]" : "",
-        active ? "border-edge bg-wash text-ink" : "border-rule text-mid hover:text-ink",
+        "flex cursor-pointer items-center gap-[6px] border-r border-rule px-[14px] text-[12.5px] transition-colors",
+        active ? "bg-wash text-ink" : "text-mid hover:text-ink",
       ].join(" ")}
     >
       <Icon name={icon} size={14} />
@@ -205,13 +175,11 @@ function ModeButton({
   label,
   icon,
   active,
-  side,
   onClick,
 }: {
   label: string;
   icon: IconName;
   active: boolean;
-  side: "left" | "right";
   onClick: () => void;
 }) {
   return (
@@ -222,11 +190,8 @@ function ModeButton({
       aria-label={label}
       title={label}
       className={[
-        "flex h-8 w-9 cursor-pointer items-center justify-center transition-colors",
-        side === "left" ? "rounded-l-[3px] border" : "rounded-r-[3px] border border-l-0",
-        active
-          ? "border-edge bg-wash text-ink"
-          : "border-rule bg-transparent text-mid hover:text-ink",
+        "flex w-[38px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        active ? "bg-wash text-ink" : "text-faint hover:text-ink",
       ].join(" ")}
     >
       <Icon name={icon} />

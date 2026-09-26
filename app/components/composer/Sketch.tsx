@@ -351,11 +351,13 @@ function ToolButton({
   onClick,
   active = false,
   disabled = false,
+  title,
   children,
 }: {
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -364,6 +366,7 @@ function ToolButton({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
+      title={title}
       className={[
         "cursor-pointer rounded-[3px] border px-[9px] py-[4px] text-[12px] disabled:cursor-default disabled:opacity-40",
         active ? "border-[#d23c2e] text-[#d23c2e]" : "border-rule text-mid hover:text-ink",

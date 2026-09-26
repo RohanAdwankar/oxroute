@@ -419,6 +419,7 @@ function LaneHead({
             type="button"
             onClick={onEarlier}
             aria-label={`move ${name} ${vertical ? "up" : "left"}`}
+            title={`Move ${name} ${vertical ? "up" : "left"}`}
             className="cursor-pointer px-1 text-[12px] text-faint hover:text-ink"
           >
             {vertical ? "↑" : "←"}
@@ -427,6 +428,7 @@ function LaneHead({
             type="button"
             onClick={onLater}
             aria-label={`move ${name} ${vertical ? "down" : "right"}`}
+            title={`Move ${name} ${vertical ? "down" : "right"}`}
             className="cursor-pointer px-1 text-[12px] text-faint hover:text-ink"
           >
             {vertical ? "↓" : "→"}

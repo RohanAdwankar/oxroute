@@ -411,16 +411,19 @@ export function DiagramComposer({
 function SmallButton({
   onClick,
   active = false,
+  title,
   children,
 }: {
   onClick: () => void;
   active?: boolean;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={[
         "cursor-pointer rounded-[3px] border px-[9px] py-[4px] text-[12px]",
         active ? "border-hold text-hold" : "border-rule text-mid hover:text-ink",

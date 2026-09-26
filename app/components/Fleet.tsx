@@ -42,7 +42,6 @@ export function Fleet({
   defaultModel,
   messages,
   tags,
-  watch,
   routing,
   beside,
   ticked,
@@ -65,7 +64,6 @@ export function Fleet({
   defaultModel: string;
   messages: Record<string, string>;
   tags: Record<string, string[]>;
-  watch: boolean;
   routing: InboxItem | null;
   /// The name of the session a companion is being picked for, if one is.
   beside: string | null;
@@ -88,7 +86,7 @@ export function Fleet({
   // belongs to exactly one.
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
-  const shown = watch ? agents.filter((agent) => agent.status === "working") : agents;
+  const shown = agents;
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
@@ -109,7 +107,7 @@ export function Fleet({
           </>
         ) : (
           <>
-            <span className="text-[15px] font-semibold">{showArchived ? "Archived" : watch ? "Watch" : "Fleet"}</span>
+            <span className="text-[15px] font-semibold">{showArchived ? "Archived" : "Fleet"}</span>
             <span className="text-[12.5px] text-faint">
               {shown.length === 0
                 ? showArchived ? "empty" : "nothing running"
@@ -134,31 +132,8 @@ export function Fleet({
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">
             {showArchived
               ? "No archived sessions."
-              : watch
-                ? "No agents are working."
-                : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
+              : "No agents yet. Message the Slack app, or pick something in the inbox and start an agent for it."}
           </p>
-        ) : watch ? (
-          <div className="min-h-full bg-[#1f1d1a] px-5 py-2 font-mono text-[#ded8cf]">
-            {shown.map((agent) => (
-              <button
-                key={agent.id}
-                type="button"
-                onClick={() => onOpen(agent.id)}
-                className="block w-full cursor-pointer border-b border-[#403b35] py-4 text-left last:border-b-0 hover:bg-[#292621]"
-              >
-                <span className="flex items-center gap-2 text-[12px]">
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-[#68b89b]" />
-                  <span className="font-semibold text-[#f5f0e8]">{agent.name}</span>
-                  <span className="text-[#888077]">{since(agent.updatedAt)} · {agent.model}</span>
-                </span>
-                <span className="mt-2 block whitespace-pre-wrap break-words text-[12px] leading-[1.6] text-[#bdb5aa]">
-                  <span className="mr-2 text-[#68b89b]">$</span>
-                  {agent.activity || "waiting for activity…"}
-                </span>
-              </button>
-            ))}
-          </div>
         ) : (
           <div
             className="grid content-start gap-5"
@@ -302,6 +277,7 @@ function Card({
         <button
           type="button"
           onClick={onOpen}
+          title={`Open ${agent.name}`}
           className="min-w-0 cursor-pointer truncate text-left text-[14.5px] font-semibold leading-tight hover:underline"
         >
           {agent.name}
@@ -325,6 +301,7 @@ function Card({
             role="checkbox"
             aria-checked={ticked}
             aria-label={`send to ${agent.name}`}
+            title={ticked ? `Do not send to ${agent.name}` : `Send to ${agent.name}`}
             onClick={onToggle}
             className={[
               "flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px]",
