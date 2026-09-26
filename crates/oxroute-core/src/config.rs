@@ -535,9 +535,10 @@ mod tests {
         std::fs::create_dir_all(scratch.join(".git")).unwrap();
 
         // Settings come from the environment, which the whole test binary
-        // shares, so this waits its turn like every other test that reads
-        // them.
-        let _guard = ENV.lock().unwrap_or_else(|held| held.into_inner());
+        // shares, so this waits its turn and starts from nothing like every
+        // other test that reads them.
+        let _guard = exclusive();
+        std::env::set_var("OXROUTE_OWNER", "me");
         let config = Config::load_from(Path::new("/nonexistent/oxroute.toml"))
             .expect("a config with nothing set");
         assert_eq!(
