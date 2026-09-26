@@ -2159,3 +2159,37 @@ async fn an_agent_is_not_pestered_about_a_list_that_has_not_moved() {
     }
     assert_eq!(w.calls.lock().unwrap().started.len(), settled);
 }
+
+#[tokio::test]
+async fn machinery_handing_over_work_leaves_no_line_behind() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let before = w.hub.timeline(&agent, usize::MAX).unwrap().len();
+
+    // No line asked for, none written: being given work is not something
+    // anybody said.
+    w.hub.ask_quietly(&agent, "carry on with this", "").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() > 1).await);
+    let added: Vec<Entry> =
+        w.hub.timeline(&agent, usize::MAX).unwrap().into_iter().skip(before).collect();
+    assert!(!added.iter().any(|entry| entry.kind == EntryKind::Notice));
+}
+
+#[tokio::test]
+async fn stopping_waits_for_a_turn_and_gives_up_on_one_that_never_ends() {
+    // Nothing running: there is nothing to wait for.
+    let quiet = world(Mode::Auto, false).await;
+    assert_eq!(quiet.hub.wait_for_turns(Duration::from_millis(500)).await, 0);
+
+    // A turn that never finishes is waited on, and then left.
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(w.hub.turns_in_flight().await, 1);
+    let waited = std::time::Instant::now();
+    assert_eq!(w.hub.wait_for_turns(Duration::from_millis(600)).await, 1);
+    assert!(waited.elapsed() >= Duration::from_millis(600));
+}

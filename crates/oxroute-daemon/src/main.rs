@@ -149,6 +149,29 @@ fn doctor() -> Result<()> {
     Ok(())
 }
 
+/// Whatever a supervisor uses to say stop. `dev.sh` sends a plain `kill`,
+/// which is SIGTERM, so listening only for ctrl-c meant every reload killed
+/// the daemon where it stood.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(term) => term,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 async fn serve() -> Result<()> {
     let config = Config::from_env()?;
     let store = Store::open(&config.database)
@@ -226,16 +249,32 @@ async fn serve() -> Result<()> {
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())
-        .with_state(hub);
+        .with_state(hub.clone());
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("binding {listen}"))?;
     tracing::info!("oxroute listening on http://{listen}");
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            stop_signal().await;
+            // A turn cannot be picked up again once this process is gone:
+            // the harness dies with it, the work it did stands, and the
+            // answer it was about to give is never recorded. So a restart
+            // waits for what is running -- which is what makes rebuilding
+            // during a turn survivable.
+            let running = hub.turns_in_flight().await;
+            if running > 0 {
+                tracing::info!("waiting for {running} turn(s) to finish before stopping");
+            }
+            let abandoned = hub.wait_for_turns(Duration::from_secs(180)).await;
+            if abandoned > 0 {
+                tracing::warn!("stopping with {abandoned} turn(s) still running");
+            }
             tracing::info!("shutting down");
+            // Open event streams would otherwise hold the door: the turns
+            // are done and every write is already committed.
+            std::process::exit(0);
         })
         .await?;
     Ok(())

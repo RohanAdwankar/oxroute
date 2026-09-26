@@ -289,6 +289,28 @@ impl Hub {
         hub.harnesses.insert(harness.backend(), harness);
     }
 
+    /// How many turns are running.
+    pub async fn turns_in_flight(&self) -> usize {
+        self.live.lock().await.len()
+    }
+
+    /// Wait for running turns to end, and say how many were still going.
+    ///
+    /// A turn that dies with the daemon cannot be picked up again: the work
+    /// it did stands, and the answer it was about to give is lost. So
+    /// stopping waits for them, but not past `limit` -- a turn that never
+    /// ends would otherwise mean a daemon that never stops.
+    pub async fn wait_for_turns(&self, limit: std::time::Duration) -> usize {
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            let running = self.turns_in_flight().await;
+            if running == 0 || std::time::Instant::now() >= deadline {
+                return running;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
@@ -957,12 +979,15 @@ impl Hub {
     ///
     /// Some questions are the interface talking rather than a person: the
     /// words are a form to fill in, and printing them would bury the answer
-    /// they are there to produce. The timeline still says one was asked, so
-    /// an answer never arrives out of nowhere.
+    /// they are there to produce. `said` is the line left behind, if any --
+    /// a button someone pressed is worth a note, the machinery handing an
+    /// agent its own list is not.
     pub async fn ask_quietly(self: &Arc<Self>, agent_id: &str, text: &str, said: &str) -> Result<()> {
         anyhow::ensure!(!text.trim().is_empty(), "nothing to ask");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
-        self.record(&agent.id, EntryKind::Notice, said, "", "");
+        if !said.is_empty() {
+            self.record(&agent.id, EntryKind::Notice, said, "", "");
+        }
         let target = self.home_target(&agent.id).await;
         self.clone()
             .deliver_to(agent, vec![TurnInput::text(text)], None, target)
@@ -2304,7 +2329,7 @@ impl Hub {
                      it is done, or blocked or waiting_for_human if you cannot go further.",
                     task.text,
                 ),
-                "Given a task",
+                "",
             )
             .await?;
         }
