@@ -115,6 +115,14 @@ export function AgentPanel({
     else if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
   }, [tailRevision, agent.id, focusEntry]);
 
+  /// Hold the reader at the tail. The composer grows as you type, which
+  /// takes its height from the transcript, so what you were reading slides
+  /// under the box unless the scroll follows it down.
+  const pin = useCallback(() => {
+    const node = timeline.current;
+    if (node && following.current) node.scrollTo({ top: node.scrollHeight });
+  }, []);
+
   const addFiles = useCallback((files: File[]) => {
     const images = files.filter((file) => file.type.startsWith("image/"));
     setAttachmentError(images.length === files.length ? "" : "Only image files are supported.");
@@ -134,7 +142,8 @@ export function AgentPanel({
     input.style.height = "0px";
     input.style.height = `${Math.max(42, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
-  }, [draft]);
+    pin();
+  }, [draft, uploads, attachmentError, pin]);
 
   useEffect(() => () => {
     uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
@@ -143,6 +152,9 @@ export function AgentPanel({
   const send = (queued = agent.status === "working") => {
     const text = draft.trim();
     if ((!text && uploads.length === 0) || busy) return;
+    // What you just said is what you want to see, wherever you had scrolled
+    // to before saying it.
+    following.current = true;
     setDraft("");
     onSay(text, uploads.map((upload) => upload.file), queued);
     uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
