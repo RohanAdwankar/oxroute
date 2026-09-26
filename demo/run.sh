@@ -17,21 +17,45 @@ out="$root/demo/out"
 rm -rf "$stage" "$out"
 mkdir -p "$stage/workspace" "$out"
 
-# A repository, because an agent that has nowhere to work is not a demo of
-# anything.
+# A small service to work on, because a demo of an agent needs code for it
+# to change. Everything here is the size it is so the film stays short.
 git init -q "$stage/workspace"
-printf 'the shed\n=======\n\nit needs painting.\n' > "$stage/workspace/README.md"
-# A diagram to draw on. The composer edits this file and tells the agent
-# what changed, so the demo needs one that is already there.
-mkdir -p "$stage/workspace/docs"
+mkdir -p "$stage/workspace/src" "$stage/workspace/docs"
+cat > "$stage/workspace/README.md" <<'MD'
+# parcels
+
+A small HTTP service. `/parcels` lists them, `/health` says whether it is up.
+MD
+cat > "$stage/workspace/src/server.js" <<'JS'
+const http = require("http");
+
+const parcels = [{ id: "p1", to: "Lisbon" }];
+
+const server = http.createServer((request, answer) => {
+  if (request.url === "/health") {
+    answer.writeHead(200);
+    answer.end();
+    return;
+  }
+  if (request.url === "/parcels") {
+    answer.writeHead(200, { "content-type": "application/json" });
+    answer.end(JSON.stringify(parcels));
+    return;
+  }
+  answer.writeHead(404);
+  answer.end();
+});
+
+server.listen(8080);
+JS
 cat > "$stage/workspace/docs/architecture.mmd" <<'MMD'
 flowchart TD
-  shed["the shed<br/>README.md"]
-  paint["the paint<br/>README.md"]
-  shed --> paint
+  server["server<br/>src/server.js"]
+  parcels["parcels<br/>src/server.js"]
+  server --> parcels
 MMD
-git -C "$stage/workspace" add README.md docs/architecture.mmd
-git -C "$stage/workspace" -c user.email=demo@oxroute -c user.name=demo commit -qm "the shed"
+git -C "$stage/workspace" add .
+git -C "$stage/workspace" -c user.email=demo@oxroute -c user.name=demo commit -qm "parcels"
 
 cp deploy/config.example.toml "$stage/config.toml"
 

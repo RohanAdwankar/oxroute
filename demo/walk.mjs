@@ -1,4 +1,4 @@
-// The walkthrough itself: one pass through oxroute, filmed.
+// The walkthrough itself: one pass through oxroute, filmed and captioned.
 //
 // It is driven through the interface rather than the API wherever the
 // interface is the point, because what this shows is what a person does.
@@ -11,6 +11,10 @@ const OUT = process.env.OXROUTE_DEMO_OUT ?? "demo/out";
 
 /// The screen at 175% zoom, which is where this interface is read.
 const SCREEN = { width: 1280, height: 800 };
+
+/// Long enough to read the caption before the next thing happens. A film
+/// nobody can follow is a file, not a demo.
+const READ = 3200;
 
 const api = (path, body) =>
   fetch(`${API}${path}`, {
@@ -27,11 +31,13 @@ const shot = async (page, name) => {
 
 /// Wait for something to become true, rather than for a length of time: an
 /// agent answers when it answers.
-const until = async (what, seconds = 180) => {
+const until = async (what, seconds = 300) => {
   for (let waited = 0; waited < seconds * 2; waited += 1) {
     if (await what()) return true;
     await new Promise((wake) => setTimeout(wake, 500));
   }
+  // A demo that gives up is worth a picture of where it stopped.
+  await page?.screenshot({ path: `${OUT}/99-stopped-here.png` }).catch(() => {});
   throw new Error("waited long enough");
 };
 
@@ -51,24 +57,104 @@ const context = await browser.newContext({
 });
 let page;
 page = await context.newPage();
+
+/// What is happening, in words, over the picture. Without this the film is
+/// a screen recording of someone else's afternoon.
+const caption = async (text, hold = READ) => {
+  await page.evaluate((words) => {
+    let banner = document.getElementById("demo-caption");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "demo-caption";
+      banner.style.cssText = [
+        "position:fixed",
+        "left:0",
+        "right:0",
+        "bottom:0",
+        "z-index:2147483647",
+        "background:rgba(20,17,14,0.92)",
+        "color:#f7f4ef",
+        "font:500 22px/1.4 ui-sans-serif,system-ui,sans-serif",
+        "padding:18px 28px",
+        "letter-spacing:0.1px",
+        "pointer-events:none",
+      ].join(";");
+      document.body.appendChild(banner);
+    }
+    banner.textContent = words;
+    banner.style.display = words ? "block" : "none";
+  }, text);
+  if (hold) await page.waitForTimeout(hold);
+};
+
+/// A card between chapters, so the film has somewhere to breathe.
+const card = async (title, line, hold = 3600) => {
+  await page.evaluate(
+    ({ title, line }) => {
+      let cover = document.getElementById("demo-card");
+      if (!cover) {
+        cover = document.createElement("div");
+        cover.id = "demo-card";
+        cover.style.cssText = [
+          "position:fixed",
+          "inset:0",
+          "z-index:2147483646",
+          "background:#141110",
+          "color:#f7f4ef",
+          "display:flex",
+          "flex-direction:column",
+          "align-items:center",
+          "justify-content:center",
+          "gap:14px",
+          "font-family:ui-sans-serif,system-ui,sans-serif",
+          "text-align:center",
+        ].join(";");
+        cover.innerHTML =
+          '<div id="demo-card-title" style="font-size:44px;font-weight:600"></div>' +
+          '<div id="demo-card-line" style="font-size:22px;color:#b0a598;max-width:44ch"></div>';
+        document.body.appendChild(cover);
+      }
+      cover.style.display = title ? "flex" : "none";
+      if (title) {
+        cover.querySelector("#demo-card-title").textContent = title;
+        cover.querySelector("#demo-card-line").textContent = line ?? "";
+      }
+    },
+    { title, line },
+  );
+  if (hold) await page.waitForTimeout(hold);
+};
+
 await page.goto(URL);
+await page.waitForTimeout(800);
+
+await card("oxroute", "Work arrives. You decide who does it. You watch it get done.");
+await card("");
 
 // 1. Something arrives. With no Slack wired up this is the same POST a
 //    source would make.
+await caption("A request arrives — from Slack, or anywhere that can post to oxroute.", 0);
 await api("/api/signal", {
   source: "demo",
   conversation: "C1",
-  user: "demo",
-  text: "the shed needs painting -- what colour did we agree on?",
+  user: "ops",
+  text: "the health endpoint returns 200 with an empty body. Make it report the version and the commit.",
 });
-await until(async () => (await page.locator("text=the shed needs painting").count()) > 0);
+// A fresh browser has no memory of the columns, and the inbox starts
+// folded away; the film is about what arrives in it.
+if ((await page.locator('[aria-label="Show or hide the inbox"]').getAttribute("aria-pressed")) !== "true") {
+  await page.locator('[aria-label="Show or hide the inbox"]').click();
+}
+await until(async () => (await page.getByText("empty body").count()) > 0, 30);
+await caption("A request arrives — from Slack, or anywhere that can post to oxroute.");
 await shot(page, "inbox");
 
 // 2. You decide where it goes, and a session starts on it.
-await page.locator("text=the shed needs painting").first().click();
-await page.waitForTimeout(500);
+await page.getByText("empty body").first().click();
+await caption("Nothing is routed behind your back. You pick who gets it.");
 await shot(page, "routing");
 await page.locator('[aria-label="start a new agent"]').click();
+await caption("A new agent starts on it, in the repository you pointed oxroute at.");
 await until(async () => (await api("/api/state")).agents.length > 0);
 await shot(page, "session");
 
@@ -76,23 +162,27 @@ await shot(page, "session");
 const name = (await api("/api/state")).agents[0].name;
 await page.locator(`text=${name}`).first().click();
 await until(async () => (await page.locator("[data-composer]").count()) > 0);
-await until(async () => (await api("/api/state")).agents[0].status !== "working", 300);
+await caption("It works in the code and reports back here. Every tool call is on the timeline.", 0);
+await until(async () => (await api("/api/state")).agents[0].status !== "working");
 await page.waitForTimeout(800);
+await caption("It works in the code and reports back here. Every tool call is on the timeline.");
 await shot(page, "answer");
 
 // 4. Not everything is worth saying now. Tab files it instead, and the
 //    list opens on what was just filed.
 const composer = page.locator("[data-composer]");
 await composer.click();
-await composer.type("check the paint colour against the tin in the garage");
+await composer.type("add a test for /health so this cannot regress");
+await caption("A thought you do not want to interrupt with: tab files it as work instead.");
 await composer.press("Tab");
-await until(async () => (await page.locator("text=check the paint colour").count()) > 0);
+await until(async () => (await page.getByText("cannot regress").count()) > 0);
+await caption("It lands on the task list, and the list opens on what you just filed.");
 await shot(page, "filed");
 
 // 5. The agent says it is done; a person decides whether it is. Saying no
 //    puts the task above the composer and you answer it there.
 const tasks = await api("/api/tasks");
-const filed = tasks.find((task) => task.text.startsWith("check the paint colour"));
+const filed = tasks.find((task) => task.text.startsWith("add a test"));
 await fetch(`${API}/api/tasks/${filed.id}`, {
   method: "PUT",
   headers: { "content-type": "application/json" },
@@ -100,56 +190,61 @@ await fetch(`${API}/api/tasks/${filed.id}`, {
     ...filed,
     agentId: filed.agentId,
     status: "done",
-    note: "checked it -- the tin says dove grey",
+    note: "added a test for the status code",
   }),
 });
 await until(async () => (await page.getByRole("button", { name: "Not yet" }).count()) > 0);
+await caption("An agent can say it is done. Only you can say it is finished.");
 await shot(page, "done");
 await page.getByRole("button", { name: "Not yet" }).first().click();
 await page.waitForTimeout(400);
+await caption("Saying no puts the task above the composer, where there is room to answer it.");
 await shot(page, "not-yet");
-await page.keyboard.type("the garage tin is last year's -- check the invoice");
+await page.keyboard.type("the status code was never the problem — assert on the body");
+await caption("What you type goes back to the agent, and the task is work again.");
 await shot(page, "correction");
 await page.keyboard.press("Escape");
 
 // 6. Saying something by drawing it: the change to the picture is the
 //    message, and the file on disk changes with it.
-await page.locator('[aria-label="Attach images"] ~ button, [aria-label="Attach images options"]').first().click();
-await page.waitForTimeout(300);
+await caption("Some things are quicker drawn than said.");
+await page.locator('[aria-label="Attach images options"]').first().click();
+await page.waitForTimeout(400);
 await page.getByRole("menuitem", { name: /Diagram/ }).click();
-// The picture is drawn by oxdraw on the daemon side, so wait for the
-// diagram itself rather than for the pane that will hold it.
 await until(async () => (await page.locator("text=Changes").count()) > 0, 60);
-await page.waitForTimeout(800);
+await caption("This is the architecture diagram in the repository, drawn from the file.");
 await shot(page, "diagram");
 
-// Drawing a box is the message: the file changes and the agent is told
-// what changed and why.
-await page.locator('[aria-label="new box label"]').fill("the invoice");
+await page.locator('[aria-label="new box label"]').fill("health check");
 await page.locator('[aria-label="add the box"]').click();
-await until(async () => (await page.locator("text=the invoice").count()) > 0, 60);
+await until(async () => (await page.locator("text=health check").count()) > 0, 60);
+await caption("Add a box. Nothing has been sent yet — it is a change you can still take back.");
 await shot(page, "drawn");
 
-// Sending it writes the file and tells the agent what changed.
-await page.locator("[data-composer]").fill("this is where the colour is written down");
+await page.locator("[data-composer]").fill("this is the endpoint ops are asking about");
+await caption("Send it: the file changes, and the agent is told to make the code match the picture.");
 await page.getByRole("button", { name: /Send the change/ }).first().click();
 await until(async () => (await api("/api/state")).agents[0].status === "working", 60);
 await page.waitForTimeout(1500);
+await caption("The agent is already working on it.");
 await shot(page, "sent");
 
 // 7. Branching the work, and the two places a branch can land.
+await caption("Branch a session when the work forks — here, or beside this one.");
 await page.locator('[aria-label$="options"]').first().click();
-await page.waitForTimeout(300);
+await page.waitForTimeout(400);
 await shot(page, "fork");
 await page.keyboard.press("Escape");
 
-// 8. The interface has two questions in it, and this is both of them.
+// 8. What little there is to decide.
+await caption("Four settings, and no more.");
 await page.locator('[title="Settings"]').click();
-await page.waitForTimeout(300);
+await page.waitForTimeout(400);
 await shot(page, "settings");
 await page.getByRole("button", { name: /Dark/ }).click();
-await page.waitForTimeout(300);
+await page.waitForTimeout(400);
 await page.keyboard.press("Escape");
+await caption("The same palette, read the other way round.");
 await shot(page, "dark");
 await page.locator('[title="Settings"]').click();
 await page.getByRole("button", { name: /Light/ }).click();
@@ -157,9 +252,14 @@ await page.keyboard.press("Escape");
 
 // 9. Everything said is searchable, including sessions that were never
 //    oxroute's to begin with.
-await page.getByPlaceholder("Search sessions").fill("shed");
-await page.waitForTimeout(1200);
+await caption("Everything anyone said is searchable — jump back to the session by a line in it.", 0);
+await page.getByPlaceholder("Search sessions").fill("health");
+await page.waitForTimeout(1800);
+await caption("Everything anyone said is searchable — jump back to the session by a line in it.");
 await shot(page, "search");
+
+await caption("", 0);
+await card("oxroute", "One inbox, one fleet, one list of what is left.", 3600);
 
 await context.close();
 await browser.close();
