@@ -852,7 +852,7 @@ function Said({ text }: { text: string }) {
       {names.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {names.map((name) => (
-            <AttachedImage key={name} name={name} />
+            <Attached key={name} name={name} />
           ))}
         </div>
       )}
@@ -948,19 +948,29 @@ const Message = memo(function Message({
       );
 });
 
-function AttachedImage({ name }: { name: string }) {
+/// What an agent handed back, shown the way it was made: a picture as a
+/// picture, a recording as something you can press play on.
+function Attached({ name }: { name: string }) {
   const [missing, setMissing] = useState(false);
   const url = `/api/attachments/${encodeURIComponent(name)}`;
+  const shape = "max-h-64 max-w-[min(520px,100%)] rounded-[3px] border border-rule";
   if (missing) return <span className="text-[12px] text-faint">{name}</span>;
+  if (/\.(mp4|m4v|webm|mov)$/i.test(name)) {
+    return (
+      <video
+        src={url}
+        controls
+        preload="metadata"
+        title={name}
+        onError={() => setMissing(true)}
+        className={shape}
+      />
+    );
+  }
   return (
     <a href={url} target="_blank" rel="noreferrer" title={name}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={name}
-        onError={() => setMissing(true)}
-        className="max-h-64 max-w-[min(520px,100%)] rounded-[3px] border border-rule"
-      />
+      <img src={url} alt={name} onError={() => setMissing(true)} className={shape} />
     </a>
   );
 }

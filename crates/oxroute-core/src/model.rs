@@ -830,3 +830,22 @@ mod tests {
         assert_eq!(agent.delivery(), Delivery::Start);
     }
 }
+
+/// What a browser can show inline, and the type to serve it as.
+///
+/// An agent that made a picture or a recording should have it appear where
+/// it was made, so this is the one list of what counts -- the hub keeps
+/// these, and the daemon serves them.
+pub fn viewable(name: &str) -> Option<&'static str> {
+    match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "mp4" | "m4v" => Some("video/mp4"),
+        "webm" => Some("video/webm"),
+        "mov" => Some("video/quicktime"),
+        _ => None,
+    }
+}

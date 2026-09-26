@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -1129,29 +1129,63 @@ async fn diagram_render(Json(body): Json<RenderBody>) -> Result<Json<serde_json:
     Ok(Json(json!({ "svg": diagram::draw_marked(&file, &body.added)?.svg })))
 }
 
-/// An image sent from a surface, so the timeline can show what was sent.
+/// Something sent to or handed back from a surface, so the timeline can
+/// show it: a picture, or a recording to press play on.
 ///
 /// Only a bare file name inside the attachments directory: anything with a
 /// separator, or a leading dot, is refused before the disk is touched.
-async fn attachment(State(hub): Hubs, Path(name): Path<String>) -> Result<Response, Failed> {
-    let Some(kind) = image_type(&name) else {
-        return Ok((StatusCode::NOT_FOUND, "no such image").into_response());
+async fn attachment(
+    State(hub): Hubs,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, Failed> {
+    let Some(kind) = attachment_type(&name) else {
+        return Ok((StatusCode::NOT_FOUND, "no such attachment").into_response());
     };
-    match tokio::fs::read(hub.config.attachments.join(&name)).await {
-        Ok(bytes) => Ok(Response::builder()
-            .header(header::CONTENT_TYPE, kind)
-            .header(header::CACHE_CONTROL, "private, max-age=86400")
-            .body(Body::from(bytes))?),
-        Err(_) => Ok((StatusCode::NOT_FOUND, "no such image").into_response()),
-    }
+    let Ok(bytes) = tokio::fs::read(hub.config.attachments.join(&name)).await else {
+        return Ok((StatusCode::NOT_FOUND, "no such attachment").into_response());
+    };
+    let whole = Response::builder()
+        .header(header::CONTENT_TYPE, kind)
+        .header(header::CACHE_CONTROL, "private, max-age=86400")
+        .header(header::ACCEPT_RANGES, "bytes");
+
+    // A video is watched by asking for parts of it. Without this a player
+    // can show the first frame and nothing else.
+    let Some(range) = headers.get(header::RANGE).and_then(|value| value.to_str().ok()) else {
+        return Ok(whole.body(Body::from(bytes))?);
+    };
+    let Some((from, to)) = wanted(range, bytes.len()) else {
+        return Ok((StatusCode::RANGE_NOT_SATISFIABLE, "no such range").into_response());
+    };
+    Ok(whole
+        .status(StatusCode::PARTIAL_CONTENT)
+        .header(
+            header::CONTENT_RANGE,
+            format!("bytes {from}-{to}/{}", bytes.len()),
+        )
+        .body(Body::from(bytes[from..=to].to_vec()))?)
+}
+
+/// The slice a player asked for, as `bytes=from-to`. An open end means the
+/// rest of the file.
+fn wanted(range: &str, size: usize) -> Option<(usize, usize)> {
+    let (from, to) = range.strip_prefix("bytes=")?.split_once('-')?;
+    let from: usize = from.parse().ok()?;
+    let to = match to.trim() {
+        "" => size.checked_sub(1)?,
+        end => end.parse().ok()?,
+    };
+    let to = to.min(size.checked_sub(1)?);
+    (from <= to).then_some((from, to))
 }
 
 /// The content type of an attachment worth serving, or `None`.
 ///
-/// Only a bare image file name: anything with a separator or a leading dot
-/// is refused before the disk is touched, so no name reaches outside the
-/// attachments directory.
-fn image_type(name: &str) -> Option<&'static str> {
+/// Only a bare file name: anything with a separator or a leading dot is
+/// refused before the disk is touched, so no name reaches outside the
+/// attachments directory. What is worth serving is the core's list.
+fn attachment_type(name: &str) -> Option<&'static str> {
     let plain = !name.is_empty()
         && !name.starts_with('.')
         && !name.contains(['/', '\\'])
@@ -1159,13 +1193,7 @@ fn image_type(name: &str) -> Option<&'static str> {
     if !plain {
         return None;
     }
-    match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        _ => None,
-    }
+    oxroute_core::model::viewable(name)
 }
 
 #[cfg(test)]
@@ -1188,12 +1216,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_bare_image_name_is_served_from_attachments() {
-        assert_eq!(image_type("web-msg_1-sketch.png"), Some("image/png"));
-        assert_eq!(image_type("photo.JPG"), Some("image/jpeg"));
-        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.png", "notes.txt", ""] {
-            assert_eq!(image_type(refused), None, "{refused} was served");
+    fn only_a_bare_name_of_something_showable_is_served_from_attachments() {
+        assert_eq!(attachment_type("web-msg_1-sketch.png"), Some("image/png"));
+        assert_eq!(attachment_type("photo.JPG"), Some("image/jpeg"));
+        assert_eq!(attachment_type("art_1-demo.mp4"), Some("video/mp4"));
+        assert_eq!(attachment_type("art_1-demo.webm"), Some("video/webm"));
+        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.mp4", "notes.txt", ""] {
+            assert_eq!(attachment_type(refused), None, "{refused} was served");
         }
+    }
+
+    /// A player asks for a slice at a time, and the last one runs off the end.
+    #[test]
+    fn a_range_is_read_as_the_slice_it_asks_for() {
+        assert_eq!(wanted("bytes=0-99", 500), Some((0, 99)));
+        assert_eq!(wanted("bytes=400-", 500), Some((400, 499)));
+        assert_eq!(wanted("bytes=0-999", 500), Some((0, 499)));
+        assert_eq!(wanted("bytes=500-600", 500), None);
+        assert_eq!(wanted("pages=1-2", 500), None);
     }
 
     #[test]
