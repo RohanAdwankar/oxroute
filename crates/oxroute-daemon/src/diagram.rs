@@ -367,12 +367,34 @@ fn draw_with(file: &DiagramFile, edits: &[Edit], added: &[String]) -> Result<Dra
     })
 }
 
+/// How the file indents its statements, so a rewrite gives it back.
+///
+/// oxdraw writes flush left. A file that was indented and comes back
+/// flattened is a one-line change that reads as a whole-file rewrite, and
+/// nobody can review that.
+fn indentation(source: &str) -> String {
+    source
+        .lines()
+        .skip(1)
+        .find(|line| !line.trim().is_empty() && !line.trim_start().starts_with("%%"))
+        .map(|line| line[..line.len() - line.trim_start().len()].to_string())
+        .unwrap_or_default()
+}
+
 /// The file with edits applied, in the shape oxdraw writes: the Mermaid,
 /// then the code map for every box still there, then the layout block.
 pub fn rewrite(file: &DiagramFile, edits: &[Edit]) -> Result<String> {
     let mut diagram = file.diagram.clone();
     apply(&mut diagram, edits)?;
-    let mut out = diagram.to_definition();
+    let indent = indentation(&file.source);
+    let mut out = String::new();
+    for (at, line) in diagram.to_definition().lines().enumerate() {
+        if at > 0 && !line.trim().is_empty() {
+            out.push_str(&indent);
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
 
     let keep_code: BTreeSet<String> = file
         .code
@@ -551,6 +573,25 @@ mod tests {
         assert_eq!(refs["hub"].lines.as_deref(), Some("1-40"));
         assert_eq!(refs["hub"].symbol.as_deref(), Some("Hub"));
         assert_eq!(refs["store"].file, "crates/oxroute-core/src/store.rs");
+    }
+
+    #[test]
+    fn a_rewrite_changes_only_the_lines_the_edit_changed() {
+        let file = DiagramFile::parse(FILE).unwrap();
+        let after = rewrite(&file, &add_cache()).unwrap();
+
+        // Drawing one box is a one-box change to the file. Anything else in
+        // it -- the indentation included -- is somebody else's line in a
+        // diff, and a diff nobody can read is a change nobody reviews.
+        // The code map has its own rules about what it keeps; this is about
+        // the drawing.
+        let gone: Vec<&str> = FILE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("%%"))
+            .filter(|line| !after.lines().any(|kept| kept == *line))
+            .collect();
+        assert!(gone.is_empty(), "the rewrite moved lines it was not asked to touch: {gone:?}");
+        assert!(after.contains("    cache[Board cache]"), "{after}");
     }
 
     #[test]
