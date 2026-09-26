@@ -16,6 +16,9 @@
   --color-band: #f4f0e9;
   --color-ok: #0f7a5c;
   --color-merge: #8a4fc0;
+  /* What you said, tinted towards the purple that means "a person did
+     this", light enough to read black text on. */
+  --color-mine: #f3eff9;
   --color-hold: #b06a10;
   --color-drop: #2f6fb0;
 

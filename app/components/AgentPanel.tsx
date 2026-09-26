@@ -542,21 +542,19 @@ export function AgentPanel({
                 <div
                   key={entry.id}
                   data-entry={entry.id}
-                  className={`flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0 ${entry.id === focusEntry ? "bg-band" : ""}`}
+                  className={[
+                    "flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0",
+                    // The whole row, so what you said is found by running
+                    // your eye down the column rather than reading it.
+                    mine ? "-mx-7 bg-mine px-7" : "",
+                    entry.id === focusEntry ? "bg-band" : "",
+                  ].join(" ")}
                 >
                   <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
                     {minute(entry.at)}
                   </span>
-                  <div className={`flex min-w-0 flex-1 flex-col gap-[3px] ${mine ? "items-end" : ""}`}>
-                    <div
-                      className={[
-                        "flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words",
-                        // What you said, set apart and over to one side, so
-                        // scrolling back finds the question rather than the
-                        // answer that followed it.
-                        mine ? "max-w-[78%] rounded-[3px] bg-wash px-[13px] py-[9px]" : "",
-                      ].join(" ")}
-                    >
+                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                    <div className="flex min-w-0 items-start gap-2 text-[16.5px] leading-[1.55] break-words">
                       {tag && (
                         <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
                           {tag.label}
