@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
@@ -153,6 +153,22 @@ export function AgentPanel({
   const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
   const items = compactTimeline(view.timeline);
+
+  /// Every question you asked, in order, so a question can lead to the one
+  /// before or after it without reading everything in between.
+  const asked = useMemo(
+    () => view.timeline.filter((entry) => MINE.includes(entry.kind)).map((entry) => entry.id),
+    [view.timeline],
+  );
+
+  /// Reading somewhere other than the tail, so streamed output stops
+  /// dragging the view back down.
+  const jumpTo = useCallback((id: number) => {
+    following.current = false;
+    timeline.current
+      ?.querySelector<HTMLElement>(`[data-entry="${id}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
@@ -546,7 +562,7 @@ export function AgentPanel({
                     "flex items-start gap-3 border-b border-hair py-[9px] last:border-b-0",
                     // The whole row, so what you said is found by running
                     // your eye down the column rather than reading it.
-                    mine ? "-mx-7 bg-mine px-7" : "",
+                    mine ? "group -mx-7 bg-mine px-7" : "",
                     entry.id === focusEntry ? "bg-band" : "",
                   ].join(" ")}
                 >
@@ -577,6 +593,28 @@ export function AgentPanel({
                       <span className="text-[11px] text-faint">{entry.detail}</span>
                     ) : null}
                   </div>
+                  {mine && asked.length > 1 && (
+                    <span className="flex shrink-0 items-center gap-[2px] opacity-0 transition-opacity group-hover:opacity-100">
+                      {(
+                        [
+                          ["the question before this", asked[asked.indexOf(entry.id) - 1], "rotate-180"],
+                          ["the question after this", asked[asked.indexOf(entry.id) + 1], ""],
+                        ] as const
+                      ).map(([label, to, turn]) => (
+                        <button
+                          key={label}
+                          type="button"
+                          disabled={to === undefined}
+                          onClick={() => to !== undefined && jumpTo(to)}
+                          aria-label={label}
+                          title={label}
+                          className={`flex h-6 w-6 cursor-pointer items-center justify-center text-faint hover:text-ink disabled:cursor-default disabled:opacity-25 ${turn}`}
+                        >
+                          <Icon name="chevronDown" size={12} />
+                        </button>
+                      ))}
+                    </span>
+                  )}
                 </div>
               );
             })
