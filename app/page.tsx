@@ -6,6 +6,7 @@ import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { Help } from "./components/Help";
+import { Settings } from "./components/Settings";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
@@ -16,6 +17,10 @@ import { taskRows } from "./lib/tasks";
 import {
   HINTS,
   LETTERS,
+  defaultDensity,
+  getDensity,
+  setDensity,
+  subscribeDensity,
   defaultVimMode,
   getVimMode,
   isTyping,
@@ -73,6 +78,7 @@ export default function Home() {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const [jump, setJump] = useState(false);
+  const [settings, setSettings] = useState(false);
   // Which board the main column shows when no agent is open. Null is the fleet.
   const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
@@ -84,6 +90,7 @@ export default function Home() {
   const [tasksDone, setTasksDone] = useState(false);
   const [taskWidth, setTaskWidth] = useState(430);
   const vim = useSyncExternalStore(subscribeVimMode, getVimMode, defaultVimMode);
+  const density = useSyncExternalStore(subscribeDensity, getDensity, defaultDensity);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -773,6 +780,9 @@ export default function Home() {
   return (
     <main className="flex h-full flex-col">
       {help && <Help onClose={() => setHelp(false)} />}
+      {settings && (
+        <Settings density={density} onDensity={setDensity} onClose={() => setSettings(false)} />
+      )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
         snapshot={snapshot}
@@ -784,6 +794,7 @@ export default function Home() {
         onVim={toggleVim}
         tasksOpen={tasksOpen}
         onTasks={() => showTasks(!tasksOpen)}
+        onSettings={() => setSettings(true)}
         activeBoard={activeBoard?.id ?? null}
         onBoard={showBoard}
         onNewBoard={() =>

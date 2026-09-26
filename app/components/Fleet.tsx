@@ -90,7 +90,7 @@ export function Fleet({
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-[46px] shrink-0 items-center gap-3 border-b border-rule px-7">
+      <div className="flex h-[var(--bar)] shrink-0 items-center gap-3 border-b border-rule px-[var(--pane-x)]">
         {beside ? (
           <>
             <span className="shrink-0 text-[12px] text-faint">Open beside</span>

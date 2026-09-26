@@ -20,6 +20,7 @@ export function Chrome({
   onVim,
   tasksOpen,
   onTasks,
+  onSettings,
   activeBoard,
   onBoard,
   onNewBoard,
@@ -35,6 +36,7 @@ export function Chrome({
   onVim: () => void;
   tasksOpen: boolean;
   onTasks: () => void;
+  onSettings: () => void;
   activeBoard: string | null;
   onBoard: (id: string | null) => void;
   onNewBoard: () => void;
@@ -42,7 +44,7 @@ export function Chrome({
   onSearchContinue: (agent: string) => void;
 }) {
   return (
-    <header className="flex min-h-[36px] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
+    <header className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
       <div className="flex items-stretch" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
@@ -71,6 +73,7 @@ export function Chrome({
         icon="keyboard"
       />
       <Cell onClick={onTasks} pressed={tasksOpen} label="Show or hide tasks" icon="tasks" />
+      <Cell onClick={onSettings} label="Settings" icon="settings" />
 
       <nav className="flex items-stretch" aria-label="boards">
         <Cell
@@ -130,7 +133,7 @@ function Cell({
       aria-label={label}
       title={label}
       className={[
-        "flex w-[34px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        "flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center border-r border-rule transition-colors",
         pressed ? "bg-wash text-ink" : "text-faint hover:text-ink",
       ].join(" ")}
     >
@@ -190,7 +193,7 @@ function ModeButton({
       aria-label={label}
       title={label}
       className={[
-        "flex w-[34px] cursor-pointer items-center justify-center border-r border-rule transition-colors",
+        "flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center border-r border-rule transition-colors",
         active ? "bg-wash text-ink" : "text-faint hover:text-ink",
       ].join(" ")}
     >

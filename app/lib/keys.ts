@@ -123,3 +123,53 @@ export function subscribeVimMode(listener: () => void): () => void {
     listeners.delete(listener);
   };
 }
+
+
+/**
+ * How much room the interface takes: "wide" as it was, "compact" with the
+ * air taken out.
+ *
+ * It is an attribute on the document rather than a prop threaded through
+ * every component, because every component that has a size wants it and
+ * none of them want to think about it.
+ */
+export type Density = "wide" | "compact";
+
+const DENSITY = "oxroute.density";
+let density: Density | null = null;
+const watchers = new Set<() => void>();
+
+export function getDensity(): Density {
+  if (density === null) {
+    try {
+      density = window.localStorage.getItem(DENSITY) === "wide" ? "wide" : "compact";
+    } catch {
+      density = "compact";
+    }
+    document.documentElement.dataset.density = density;
+  }
+  return density;
+}
+
+/** What the server renders, before any browser storage is readable. */
+export function defaultDensity(): Density {
+  return "compact";
+}
+
+export function setDensity(next: Density): void {
+  density = next;
+  document.documentElement.dataset.density = next;
+  try {
+    window.localStorage.setItem(DENSITY, next);
+  } catch {
+    /* a preference is a convenience, not state worth failing over */
+  }
+  for (const watcher of watchers) watcher();
+}
+
+export function subscribeDensity(watcher: () => void): () => void {
+  watchers.add(watcher);
+  return () => {
+    watchers.delete(watcher);
+  };
+}

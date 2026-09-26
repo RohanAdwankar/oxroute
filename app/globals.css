@@ -26,6 +26,29 @@
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* How much room the interface takes for itself. Wide is what it was;
+   compact is the same interface with the air taken out, for a small
+   screen or a large zoom. One attribute on the document decides, and
+   everything that has a size reads it from here. */
+:root {
+  /* A bar is as tall as the squares in it, so every control in the
+     interface is the same square. */
+  --cell: 42px;
+  --bar: var(--cell);
+  --field: 38px;
+  --pane-x: 28px;
+  --row-y: 9px;
+  --said: 16.5px;
+}
+
+html[data-density="compact"] {
+  --cell: 34px;
+  --field: 34px;
+  --pane-x: 20px;
+  --row-y: 7px;
+  --said: 15px;
+}
+
 html,
 body {
   height: 100%;

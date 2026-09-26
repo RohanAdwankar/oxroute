@@ -25,6 +25,7 @@ export type IconName =
   | "refresh"
   | "restore"
   | "send"
+  | "settings"
   | "split"
   | "stop"
   | "tasks"
@@ -47,8 +48,8 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     expand: <path d="m6 3 5 5-5 5" />,
     external: <><path d="M9 3h4v4M13 3 7 9" /><path d="M12 9v4H3V4h4" /></>,
     fork: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="13" r="1.5" /><circle cx="5" cy="13" r="1.5" /><path d="M5 4.5v7M5 7h3a3 3 0 0 1 3 3v1.5" /></>,
-    inbox: <><path d="M2.5 9.5H6l1 2h2l1-2h3.5" /><path d="M4 3h8l2 6.5V13H2V9.5z" /></>,
     keyboard: <><rect x="1.5" y="3" width="13" height="10" rx="1" /><path d="M4 6h.01M7 6h.01M10 6h.01M13 6h.01M4 9h.01M7 9h5" /></>,
+    inbox: <><path d="M2.5 9.5H6l1 2h2l1-2h3.5" /><path d="M4 3h8l2 6.5V13H2V9.5z" /></>,
     merge: <><circle cx="5" cy="3" r="1.5" /><circle cx="11" cy="3" r="1.5" /><circle cx="8" cy="13" r="1.5" /><path d="M5 4.5v2A3.5 3.5 0 0 0 8 10v1.5M11 4.5v2A3.5 3.5 0 0 1 8 10" /></>,
     open: <path d="m6 3 5 5-5 5M2 8h9" />,
     pen: <><path d="M11 2.5 13.5 5 6 12.5l-3.3.8.8-3.3Z" /><path d="m9.5 4 2.5 2.5" /></>,
@@ -59,6 +60,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
+    settings: <><circle cx="8" cy="8" r="2.4" /><path d="M8 1.6v1.7M8 12.7v1.7M14.4 8h-1.7M3.3 8H1.6M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2M12.5 12.5l-1.2-1.2M4.7 4.7 3.5 3.5" /></>,
     send: <path d="m2 2 12 6-12 6 2-6Zm2 6h6" />,
     split: <><rect x="1.5" y="3" width="5.5" height="10" /><rect x="9" y="3" width="5.5" height="10" /></>,
     stop: <rect x="3" y="3" width="10" height="10" rx="1" />,

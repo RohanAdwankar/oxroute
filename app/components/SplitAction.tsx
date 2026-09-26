@@ -58,16 +58,16 @@ export function SplitAction({
         className={
           {
             composer: [
-              "flex h-[34px] cursor-pointer items-center justify-center border-y border-l border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--field)] cursor-pointer items-center justify-center border-y border-l border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
               menu.length > 0 ? "w-[32px]" : "w-[38px] border-r rounded-r-[3px]",
               "rounded-l-[3px]",
             ].join(" "),
             quiet: [
-              "flex h-[34px] cursor-pointer items-center justify-center border-y border-l border-edge bg-card text-mid hover:text-ink rounded-l-[3px] disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--field)] cursor-pointer items-center justify-center border-y border-l border-edge bg-card text-mid hover:text-ink rounded-l-[3px] disabled:cursor-not-allowed disabled:opacity-40",
               menu.length > 0 ? "w-[32px]" : "w-[38px] border-r rounded-r-[3px]",
             ].join(" "),
             strip:
-              "flex w-[34px] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-8 cursor-pointer items-center justify-center rounded-l-[3px] border border-rule text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
@@ -87,11 +87,11 @@ export function SplitAction({
         className={
           {
             composer:
-              "flex h-[34px] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-l border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--field)] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-l border-l-paper/25 border-ink bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40",
             quiet:
-              "flex h-[34px] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--field)] w-5 cursor-pointer items-center justify-center rounded-r-[3px] border-y border-r border-edge bg-card text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             strip:
-              "flex w-[18px] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
+              "flex h-[var(--cell)] w-[18px] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
             toolbar:
               "flex h-8 w-6 cursor-pointer items-center justify-center rounded-r-[3px] border border-l-0 border-rule text-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40",
           }[variant]
