@@ -1,5 +1,5 @@
-# One minute of oxroute, recorded by oxdemo: a request arrives, an agent
-# does it, and the parts you steer it with along the way.
+# A minute of oxroute, recorded by oxdemo: three things arrive, two agents
+# get one each, and the rest is what you steer them with.
 #
 # demo/run.sh brings up a daemon and a build of the web UI on their own
 # ports first, against a scratch repository.
@@ -13,20 +13,29 @@ pace 0.9
 # The first frame is a browser that has just opened: wait for the daemon
 # to answer before pointing at anything.
 wait-for "Inbox" 30s
-say "Everything asking for you, in one place."
+say "Everything asking for you lands here."
 pause 1s
 
-say "A request arrives."
-click "css:[data-inbox-item]"
-
-say "You decide who does it."
+say "You decide who does what."
+click "the health endpoint returns 200"
 click "start a new agent"
-# The turn takes as long as it takes; none of it is in the film.
-skip 60s
-wait-for "css:article button:first-of-type" 240s
+
+say "The next one gets a session of its own."
+click "parcels come back in a random order"
+click "start a new agent"
+
+# The inbox has already moved on to the last one.
+say "And some of it deserves nobody."
+click "discard"
+pause 1s
+
+say "Two agents, each on their own piece of it."
+pause 2s
+# They take as long as they take; none of it is in the film.
+skip 150s
 
 say "It works in the code and reports back."
-click "css:article button:not([aria-label])"
+click "the health endpoint returns 200 with"
 wait-for "Message" 60s
 pause 2s
 
@@ -38,12 +47,14 @@ key Tab
 keys off
 
 say "Tab files it as work instead."
-pause 2s
+wait-for "add a test so this cannot regress" 60s
+pause 1s
 
-say "An agent can say it is done."
-click "Show or hide tasks"
-click "Show or hide tasks"
-skip 120s
+# The agent would get here on its own; the film does not wait for it. This
+# is the same call it makes when it finishes a task.
+say "An agent can say a task is done."
+eval "fetch('/api/tasks').then(r=>r.json()).then(ts=>{const t=ts.find(x=>x.text.startsWith('add a test'));return fetch('/api/tasks/'+t.id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({},t,{status:'done',note:'added the test'}))})})"
+wait-for "Not yet" 60s
 say "Only you can say it is finished."
 click "Not yet"
 
@@ -52,22 +63,24 @@ type "What is still wrong?" "assert on the body, not the status code"
 click "Send message"
 pause 1s
 
-say "Some things are quicker drawn."
+say "Some things are quicker drawn than said."
 click "Attach images options"
 click "Diagram"
 wait-for "Changes" 60s
 pause 1s
 
-say "Add a box, and the agent makes the code match."
+say "A box for the part that does not exist yet."
 type "New box" "health check"
 click "add the box"
+pause 1s
+
+say "Say what it hangs off, and send it."
+click "Depends on…"
+click "routes"
 pause 1s
 click "Send the change"
 pause 2s
 
-say "Everything anyone said is searchable."
-click "Search sessions"
-type "health"
+say "The agent makes the code match the picture."
 pause 2s
-
 say ""

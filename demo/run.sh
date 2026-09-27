@@ -17,8 +17,8 @@ out="${OXROUTE_DEMO_OUT:-$root/demo/out}"
 rm -rf "$stage" "$out"
 mkdir -p "$stage/workspace" "$out"
 
-# A small service to work on, because a demo of an agent needs code for it
-# to change. Everything here is the size it is so the film stays short.
+# A small service to work on, in a few files, because an architecture
+# diagram of one file is not an architecture.
 git init -q "$stage/workspace"
 mkdir -p "$stage/workspace/src" "$stage/workspace/docs"
 cat > "$stage/workspace/README.md" <<'MD'
@@ -28,10 +28,16 @@ A small HTTP service. `/parcels` lists them, `/health` says whether it is up.
 MD
 cat > "$stage/workspace/src/server.js" <<'JS'
 const http = require("http");
+const { route } = require("./routes");
 
-const parcels = [{ id: "p1", to: "Lisbon" }];
+const server = http.createServer(route);
+if (require.main === module) server.listen(process.env.PORT || 8080);
+module.exports = { server };
+JS
+cat > "$stage/workspace/src/routes.js" <<'JS'
+const { parcels } = require("./store");
 
-const server = http.createServer((request, answer) => {
+function route(request, answer) {
   if (request.url === "/health") {
     answer.writeHead(200);
     answer.end();
@@ -39,20 +45,39 @@ const server = http.createServer((request, answer) => {
   }
   if (request.url === "/parcels") {
     answer.writeHead(200, { "content-type": "application/json" });
-    answer.end(JSON.stringify(parcels));
+    answer.end(JSON.stringify(parcels()));
     return;
   }
   answer.writeHead(404);
   answer.end();
-});
+}
 
-server.listen(8080);
+module.exports = { route };
+JS
+cat > "$stage/workspace/src/store.js" <<'JS'
+const kept = [
+  { id: "p3", to: "Lisbon" },
+  { id: "p1", to: "Porto" },
+  { id: "p2", to: "Faro" },
+];
+
+function parcels() {
+  return kept;
+}
+
+module.exports = { parcels };
 JS
 cat > "$stage/workspace/docs/architecture.mmd" <<'MMD'
 flowchart TD
-  server["server<br/>src/server.js"]
-  parcels["parcels<br/>src/server.js"]
-  server --> parcels
+  server[server]
+  routes[routes]
+  store[store]
+  server --> routes
+  routes --> store
+
+%% OXDRAW CODE server src/server.js
+%% OXDRAW CODE routes src/routes.js
+%% OXDRAW CODE store src/store.js
 MMD
 git -C "$stage/workspace" add .
 git -C "$stage/workspace" -c user.email=demo@oxroute -c user.name=demo commit -qm "parcels"
