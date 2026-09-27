@@ -8,6 +8,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, TaskItem } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
+import { Code } from "./Code";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { useUploads } from "../lib/uploads";
 import { draftFor, keepDraft } from "../lib/drafts";
@@ -794,7 +795,9 @@ function ToolCall({ entry }: { entry: Entry }) {
       <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
       <div className="min-w-0 flex-1">
         {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
-        <div className="break-words whitespace-pre-wrap">{entry.detail || entry.text}</div>
+        <div className="break-words whitespace-pre-wrap">
+          <Code text={entry.detail || entry.text} />
+        </div>
         {entry.output && (
           <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
             {entry.output}

@@ -151,3 +151,48 @@ body {
 .quiet-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* What a highlighter marks, in the palette this interface already uses.
+   One rule per kind of token, rather than a theme from somewhere else. */
+.hljs-comment,
+.hljs-quote {
+  color: var(--color-faint);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name {
+  color: var(--color-merge);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta-string {
+  color: var(--color-ok);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+  color: var(--color-drop);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--color-hold);
+}
+
+.hljs-meta,
+.hljs-type,
+.hljs-params,
+.hljs-deletion {
+  color: var(--color-mid);
+}
