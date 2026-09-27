@@ -581,8 +581,8 @@ export function AgentPanel({
                   <div key={`tools-${first.id}`} className="border-b border-hair py-2">
                     {folded.length > 0 && (
                       <details className="group">
-                        <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                          <span className="w-[34px] shrink-0 tnum">
+                        <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
+                          <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">
                             {minute(folded.at(-1)?.at ?? first.at)}
                           </span>
                           <span className="w-2 text-center group-open:rotate-90">›</span>
@@ -590,7 +590,7 @@ export function AgentPanel({
                             {folded.length} tool {folded.length === 1 ? "call" : "calls"}
                           </span>
                         </summary>
-                        <div className="ml-[18px] mt-1 flex flex-col">
+                        <div className="mt-1 flex flex-col">
                           {folded.map((entry) => (
                             <ToolCall key={entry.id} entry={entry} />
                           ))}
@@ -598,7 +598,7 @@ export function AgentPanel({
                       </details>
                     )}
                     {latest && (
-                      <div className="ml-[18px] flex flex-col">
+                      <div className="flex flex-col">
                         <ToolCall entry={latest} />
                       </div>
                     )}
@@ -836,7 +836,7 @@ export function AgentPanel({
 /// happened, so this column is darker than the summary above it.
 function ToolCall({ entry }: { entry: Entry }) {
   return (
-    <div className="flex gap-2 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
+    <div className="flex gap-3 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
       <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
       <div className="min-w-0 flex-1">
         {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
@@ -904,7 +904,7 @@ const Message = memo(function Message({
             focused ? "bg-band" : "",
           ].join(" ")}
         >
-          <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-faint">
+          <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-mid">
             {minute(entry.at)}
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
