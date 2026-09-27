@@ -87,7 +87,7 @@ export function Fleet({
   const shown = agents;
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-[var(--bar)] shrink-0 items-center gap-3 border-b border-rule px-[var(--pane-x)]">
         {routing ? (
           <>

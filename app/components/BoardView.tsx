@@ -168,7 +168,7 @@ export function BoardView({
   const laneName = (key: string, value: string | null) => value ?? (key ? `No ${key}` : "All");
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-[var(--pane-x)] py-1">
         {name !== null ? (
           <input

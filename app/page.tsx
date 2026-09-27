@@ -1002,7 +1002,7 @@ export default function Home() {
             })}
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {activeBoard && !selected ? (
               <BoardView
                 key={activeBoard.id}
@@ -1050,7 +1050,12 @@ export default function Home() {
                 }
               />
             )}
-            <TaskComposer busy={busy} onTask={(text) => void file(() => api.createTask(text))} />
+            <TaskComposer
+              busy={busy}
+              onTask={(text, images) =>
+                void file(() => api.createTaskWithImages(text, "", images))
+              }
+            />
           </div>
         )}
 
