@@ -7,7 +7,7 @@
 url http://127.0.0.1:3100
 viewport 1440x900
 before "./seed.sh"
-theme size=52
+theme size=52 offset=116
 pace 0.9
 
 # The first frame is a browser that has just opened: wait for the daemon

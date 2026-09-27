@@ -12,7 +12,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 root="$PWD"
-stage="${OXROUTE_DEMO_STAGE:-$root/.oxroute/demo}"
+# Outside the repository and outside anyone's home directory: the film
+# shows the paths it works in, and a demo should not show yours.
+stage="${OXROUTE_DEMO_STAGE:-/tmp/oxroute-demo}"
 out="${OXROUTE_DEMO_OUT:-$root/demo/out}"
 rm -rf "$stage" "$out"
 mkdir -p "$stage/workspace" "$out"
