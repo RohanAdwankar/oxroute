@@ -934,9 +934,16 @@ impl Hub {
             (true, false) => format!("Attached: {image_names}"),
             (true, true) => unreachable!(),
         };
+        // A reaction is an annotation until you next speak, and then it rides
+        // along: the model is told what you thought of which line, once. It
+        // is prepended to what the harness receives rather than to the entry
+        // on the timeline, because the timeline already shows the reaction
+        // beside the line it belongs to, and you did not type this.
+        let preface = reaction_preface(&self.store.pending_reactions(&agent.id)?);
+        let spoken = format!("{preface}{text}");
         let mut inputs = Vec::with_capacity(images.len() + 1);
-        if !text.trim().is_empty() {
-            inputs.push(TurnInput::text(text));
+        if !spoken.trim().is_empty() {
+            inputs.push(TurnInput::text(&spoken));
         }
         inputs.extend(images.iter().cloned().map(|path| TurnInput::LocalImage { path }));
         self.record(&agent.id, EntryKind::You, &shown, "", "");
@@ -999,6 +1006,12 @@ impl Hub {
             at: now(),
             root: false,
         };
+        // Only once the turn is actually going: opening a thread can fail,
+        // and a reaction consumed by a message that never left would be
+        // silently lost.
+        if !preface.is_empty() {
+            self.store.mark_reactions_sent(&agent.id)?;
+        }
         if !queued && self.steer(&agent, &pseudo, inputs.clone(), false).await? {
             return Ok(());
         }
@@ -3056,4 +3069,73 @@ fn origin_of(signal: &Signal) -> String {
         bits.push(signal.label.clone());
     }
     bits.join(" ")
+}
+
+/// What to tell an agent about the lines you marked since you last spoke.
+/// Empty when there is nothing new, so the usual message is untouched.
+fn reaction_preface(pending: &[(String, String)]) -> String {
+    if pending.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("[Reactions I left since my last message:\n");
+    for (reaction, line) in pending {
+        let verdict = match reaction.as_str() {
+            "up" => "thumbs up",
+            "down" => "thumbs down",
+            other => other,
+        };
+        out.push_str(&format!("- {verdict} on: \"{}\"\n", snippet(line)));
+    }
+    out.push_str("]\n\n");
+    out
+}
+
+/// Enough of a line to recognise it, on one line, without pasting the whole
+/// answer back at the model that wrote it.
+fn snippet(text: &str) -> String {
+    const LIMIT: usize = 80;
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= LIMIT {
+        return flat;
+    }
+    let end = flat.char_indices().nth(LIMIT).map(|(at, _)| at).unwrap_or(flat.len());
+    format!("{}…", flat[..end].trim_end())
+}
+
+#[cfg(test)]
+mod reaction_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_marked_leaves_the_message_alone() {
+        assert_eq!(reaction_preface(&[]), "");
+    }
+
+    #[test]
+    fn a_preface_names_the_verdict_and_enough_of_the_line_to_place_it() {
+        let preface = reaction_preface(&[
+            ("down".into(), "The daemon binds to 0.0.0.0 so the phone can reach it".into()),
+            ("up".into(), "Reading the config from the env file".into()),
+        ]);
+        assert!(preface.starts_with("[Reactions I left since my last message:\n"));
+        assert!(preface.contains("- thumbs down on: \"The daemon binds to 0.0.0.0"));
+        assert!(preface.contains("- thumbs up on: \"Reading the config"));
+        // It has to end cleanly, or the message that follows runs into it.
+        assert!(preface.ends_with("]\n\n"));
+    }
+
+    #[test]
+    fn a_long_line_is_cut_rather_than_pasted_back_whole() {
+        let long = "word ".repeat(80);
+        let preface = reaction_preface(&[("up".into(), long.clone())]);
+        assert!(preface.len() < long.len());
+        assert!(preface.contains('…'));
+    }
+
+    #[test]
+    fn a_line_that_wraps_is_flattened_so_the_preface_stays_one_item_per_row() {
+        let preface = reaction_preface(&[("up".into(), "first\n\nsecond".into())]);
+        assert!(preface.contains("\"first second\""));
+        assert_eq!(preface.matches("- thumbs up").count(), 1);
+    }
 }

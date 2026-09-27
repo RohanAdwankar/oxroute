@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS entries (
     output   TEXT NOT NULL DEFAULT '',
     item_id  TEXT NOT NULL DEFAULT '',
     origin   TEXT NOT NULL DEFAULT '',
-    reaction TEXT NOT NULL DEFAULT ''
+    reaction TEXT NOT NULL DEFAULT '',
+    reaction_sent INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS entries_agent ON entries (agent_id, id);
 
@@ -169,6 +170,12 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if !columns.iter().any(|column| column == "reaction") {
         conn.execute("ALTER TABLE entries ADD COLUMN reaction TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    if !columns.iter().any(|column| column == "reaction_sent") {
+        conn.execute(
+            "ALTER TABLE entries ADD COLUMN reaction_sent INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS entries_item ON entries (agent_id, item_id)",
@@ -380,9 +387,41 @@ impl Store {
     /// simply shows nothing.
     pub fn set_entry_reaction(&self, entry_id: i64, reaction: &str) -> Result<()> {
         self.with(|c| {
+            // Changing your mind makes it unsent again: the agent heard the
+            // thumbs up, and now it should hear that it became a thumbs down.
             c.execute(
-                "UPDATE entries SET reaction = ?2 WHERE id = ?1",
+                "UPDATE entries SET reaction = ?2, reaction_sent = 0 WHERE id = ?1",
                 params![entry_id, reaction],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Reactions this agent has not been told about yet, oldest first, as
+    /// `(reaction, the line it sits on)`.
+    pub fn pending_reactions(&self, agent_id: &str) -> Result<Vec<(String, String)>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT reaction, text FROM entries
+                 WHERE agent_id = ?1 AND reaction <> '' AND reaction_sent = 0
+                 ORDER BY id",
+            )?;
+            let mut out = Vec::new();
+            for row in stmt.query_map(params![agent_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })? {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn mark_reactions_sent(&self, agent_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE entries SET reaction_sent = 1
+                 WHERE agent_id = ?1 AND reaction <> '' AND reaction_sent = 0",
+                params![agent_id],
             )?;
             Ok(())
         })
@@ -969,9 +1008,9 @@ impl Store {
     pub fn copy_timeline(&self, from: &str, to: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin, reaction)
-                 SELECT ?2, at, kind, text, detail, output, item_id, origin, reaction FROM entries
-                 WHERE agent_id = ?1 ORDER BY id",
+                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent)
+                 SELECT ?2, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent
+                 FROM entries WHERE agent_id = ?1 ORDER BY id",
                 params![from, to],
             )?;
             Ok(())
@@ -1636,6 +1675,41 @@ mod tests {
         store.set_entry_reaction(line.id, "").unwrap();
         assert_eq!(store.timeline("parent", 20).unwrap()[0].reaction, "");
         let _ = untouched;
+    }
+
+    #[test]
+    fn a_reaction_rides_along_with_the_next_message_and_only_once() {
+        let store = Store::in_memory().unwrap();
+        store.save_agent(&agent("a")).unwrap();
+        let line = store
+            .add_entry("a", 1.0, EntryKind::Said, "the answer", "", "")
+            .unwrap();
+
+        assert!(store.pending_reactions("a").unwrap().is_empty());
+
+        store.set_entry_reaction(line.id, "down").unwrap();
+        assert_eq!(
+            store.pending_reactions("a").unwrap(),
+            vec![("down".to_string(), "the answer".to_string())]
+        );
+
+        // Saying something delivers it, and saying something else does not
+        // deliver it again.
+        store.mark_reactions_sent("a").unwrap();
+        assert!(store.pending_reactions("a").unwrap().is_empty());
+        store.mark_reactions_sent("a").unwrap();
+        assert!(store.pending_reactions("a").unwrap().is_empty());
+
+        // Changing your mind is news again.
+        store.set_entry_reaction(line.id, "up").unwrap();
+        assert_eq!(
+            store.pending_reactions("a").unwrap(),
+            vec![("up".to_string(), "the answer".to_string())]
+        );
+
+        // Taking it back entirely leaves nothing to announce.
+        store.set_entry_reaction(line.id, "").unwrap();
+        assert!(store.pending_reactions("a").unwrap().is_empty());
     }
 
     #[test]
