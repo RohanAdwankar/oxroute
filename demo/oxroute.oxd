@@ -25,7 +25,7 @@ click "parcels come back in a random order"
 click "start a new agent"
 
 # The inbox has already moved on to the last one.
-say "Discard what needs no agent"
+say "Discard the rest"
 click "discard"
 pause 1s
 
@@ -46,7 +46,7 @@ keys on
 key Tab
 keys off
 
-say "Tab files it as a task instead of sending it"
+say "Tab files it as a task"
 wait-for "add a test so this cannot regress" 60s
 pause 1s
 
