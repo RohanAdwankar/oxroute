@@ -582,13 +582,15 @@ export function AgentPanel({
                     {folded.length > 0 && (
                       <details className="group">
                         <summary className="flex cursor-pointer list-none items-center gap-2 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                          <span className="w-[34px] shrink-0 tnum">{minute(first.at)}</span>
+                          <span className="w-[34px] shrink-0 tnum">
+                            {minute(folded.at(-1)?.at ?? first.at)}
+                          </span>
                           <span className="w-2 text-center group-open:rotate-90">›</span>
                           <span className="shrink-0">
                             {folded.length} tool {folded.length === 1 ? "call" : "calls"}
                           </span>
                         </summary>
-                        <div className="ml-[52px] mt-1 flex flex-col">
+                        <div className="ml-[18px] mt-1 flex flex-col">
                           {folded.map((entry) => (
                             <ToolCall key={entry.id} entry={entry} />
                           ))}
@@ -596,7 +598,7 @@ export function AgentPanel({
                       </details>
                     )}
                     {latest && (
-                      <div className="ml-[52px] flex flex-col">
+                      <div className="ml-[18px] flex flex-col">
                         <ToolCall entry={latest} />
                       </div>
                     )}
@@ -827,17 +829,24 @@ export function AgentPanel({
  * Something you sent. A drawn diagram change shows as the diagram, and a
  * picture as the picture, with the words the agent got one click away.
  */
-/// One tool call, whole: what it ran and whatever it printed.
+/// One tool call, whole: when it ran, what it ran, and whatever it printed.
+///
+/// The time carries the news. A group that is still being added to looks
+/// the same from one second to the next unless each call says when it
+/// happened, so this column is darker than the summary above it.
 function ToolCall({ entry }: { entry: Entry }) {
   return (
-    <div className="border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
-      {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
-      <div className="break-words whitespace-pre-wrap">{entry.detail || entry.text}</div>
-      {entry.output && (
-        <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
-          {entry.output}
-        </pre>
-      )}
+    <div className="flex gap-2 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
+      <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
+      <div className="min-w-0 flex-1">
+        {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
+        <div className="break-words whitespace-pre-wrap">{entry.detail || entry.text}</div>
+        {entry.output && (
+          <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
+            {entry.output}
+          </pre>
+        )}
+      </div>
     </div>
   );
 }
