@@ -13,7 +13,7 @@ pace 0.9
 # The first frame is a browser that has just opened: wait for the daemon
 # to answer before pointing at anything.
 wait-for "Inbox" 30s
-say "Requests land in the inbox"
+say "Slack and email land in one inbox"
 pause 1s
 
 say "Send this one to a new agent"
@@ -24,12 +24,22 @@ say "The next one to a second agent"
 click "parcels come back in a random order"
 click "start a new agent"
 
-# The inbox has already moved on to the last one.
+say "A third, on its own session"
+click "the parcels response needs a total count"
+click "start a new agent"
+
+# The inbox has already moved on to the next one.
+say "This one belongs to a session already running"
+click "send to the health endpoint returns 200 with"
+click "send to 1 agent"
+pause 1s
+
 say "Discard the rest"
+click "discard"
 click "discard"
 pause 1s
 
-say "Two agents, working at once"
+say "Three agents, working at once"
 pause 2s
 # They take as long as they take; none of it is in the film.
 skip 150s
