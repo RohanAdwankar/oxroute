@@ -13,74 +13,74 @@ pace 0.9
 # The first frame is a browser that has just opened: wait for the daemon
 # to answer before pointing at anything.
 wait-for "Inbox" 30s
-say "Everything asking for you lands here."
+say "Requests land in the inbox"
 pause 1s
 
-say "You decide who does what."
+say "Send this one to a new agent"
 click "the health endpoint returns 200"
 click "start a new agent"
 
-say "The next one gets a session of its own."
+say "The next one to a second agent"
 click "parcels come back in a random order"
 click "start a new agent"
 
 # The inbox has already moved on to the last one.
-say "And some of it deserves nobody."
+say "Discard what needs no agent"
 click "discard"
 pause 1s
 
-say "Two agents, each on their own piece of it."
+say "Two agents, working at once"
 pause 2s
 # They take as long as they take; none of it is in the film.
 skip 150s
 
-say "It works in the code and reports back."
+say "The agent edits the code and reports back"
 click "the health endpoint returns 200 with"
 wait-for "Message" 60s
 pause 2s
 
-say "Not worth saying now?"
+say "Type a follow-up"
 type "Message" "add a test so this cannot regress"
 # The one key worth seeing pressed.
 keys on
 key Tab
 keys off
 
-say "Tab files it as work instead."
+say "Tab files it as a task instead of sending it"
 wait-for "add a test so this cannot regress" 60s
 pause 1s
 
 # The agent would get here on its own; the film does not wait for it. This
 # is the same call it makes when it finishes a task.
-say "An agent can say a task is done."
+say "The agent marks the task done"
 eval "fetch('/api/tasks').then(r=>r.json()).then(ts=>{const t=ts.find(x=>x.text.startsWith('add a test'));return fetch('/api/tasks/'+t.id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({},t,{status:'done',note:'added the test'}))})})"
 wait-for "Not yet" 60s
-say "Only you can say it is finished."
+say "Approve it, or send it back"
 click "Not yet"
 
-say "You answer where there is room to."
+say "Not yet: say what is wrong"
 type "What is still wrong?" "assert on the body, not the status code"
 click "Send message"
 pause 1s
 
-say "Some things are quicker drawn than said."
+say "Open the architecture diagram"
 click "Attach images options"
 click "Diagram"
 wait-for "Changes" 60s
 pause 1s
 
-say "A box for the part that does not exist yet."
+say "Add a component"
 type "New box" "health check"
 click "add the box"
 pause 1s
 
-say "Say what it hangs off, and send it."
+say "Connect it, then send the change"
 click "Depends on…"
 click "routes"
 pause 1s
 click "Send the change"
 pause 2s
 
-say "The agent makes the code match the picture."
+say "The agent writes the code to match"
 pause 2s
 say ""
