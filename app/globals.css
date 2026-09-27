@@ -132,6 +132,60 @@ body {
   color: var(--color-mid);
 }
 
+/* Preflight strips heading size and weight, so an agent's `##` arrives
+   looking exactly like the paragraph under it. Restore the structure only:
+   a little weight and air, not a type scale. */
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  margin: 1em 0 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.message-markdown h1:first-child,
+.message-markdown h2:first-child,
+.message-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.message-markdown hr {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+}
+
+/* A table is data, not chrome: one rule under the head, none around the
+   cells, and its own scroller so a wide one cannot stretch the pane. */
+.message-markdown table {
+  display: block;
+  overflow-x: auto;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.55em 0 0;
+  border-collapse: collapse;
+}
+
+.message-markdown th,
+.message-markdown td {
+  padding: 0.3em 0.75em 0.3em 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-markdown th {
+  border-bottom: 1px solid var(--color-rule);
+  font-weight: 600;
+}
+
+.message-markdown td p,
+.message-markdown th p {
+  white-space: normal;
+}
+
 /* The scrollbars are inside dense panes; the default chrome is too loud
    against paper this warm. */
 .quiet-scroll {
