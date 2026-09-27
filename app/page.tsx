@@ -329,16 +329,29 @@ export default function Home() {
   useEffect(() => {
     if (panes.length === 0) return;
     let live = true;
-    Promise.all(panes.map((id) => api.agent(id))).then(
-      (views) => {
+    // One pane at a time: a session that is a moment from existing -- just
+    // spawned, or just forked -- must not blank the pane beside it. A pane
+    // that could not be read keeps asking, because the sync that would have
+    // asked again may never come: a dropped event stream leaves the pane
+    // saying "Loading session…" for as long as you look at it.
+    const fetchPanes = async () => {
+      for (let wait = 500; live; wait = Math.min(wait * 2, 8000)) {
+        const answers = await Promise.allSettled(panes.map((id) => api.agent(id)));
         if (!live) return;
-        setDetails((current) => ({
-          ...current,
-          ...Object.fromEntries(views.map((view) => [view.agent.id, view])),
-        }));
-      },
-      (error: unknown) => live && complain(error),
-    );
+        const views = answers.flatMap((answer) =>
+          answer.status === "fulfilled" ? [answer.value] : [],
+        );
+        if (views.length > 0) {
+          setDetails((current) => ({
+            ...current,
+            ...Object.fromEntries(views.map((view) => [view.agent.id, view])),
+          }));
+        }
+        if (views.length === panes.length) return;
+        await new Promise((again) => setTimeout(again, wait));
+      }
+    };
+    void fetchPanes();
     return () => {
       live = false;
     };

@@ -234,6 +234,7 @@ function Row({
       ref={row}
       type="button"
       onClick={() => onSelect(item)}
+      data-inbox-item
       aria-current={selected || focused}
       className={[
         "flex w-full cursor-pointer flex-col gap-[5px] border-b border-hair border-l-[3px] py-[13px] pr-[18px] pl-[15px] text-left",
