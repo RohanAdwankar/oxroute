@@ -55,7 +55,15 @@ function splitAttached(text: string): { body: string; names: string[] } {
     names: match[1].split(", ").map((name) => name.trim()).filter(Boolean),
   };
 }
-type QuoteMenu = { text: string; x: number; y: number };
+/// One right-click, two offers: quote what you selected, and react to the
+/// line you landed on. Either half can be absent.
+type LineMenu = { text: string; entry: number | null; reaction: string; x: number; y: number };
+
+const REACTIONS: { key: string; icon: IconName | null; label: string }[] = [
+  { key: "up", icon: "thumbUp", label: "Thumbs up" },
+  { key: "down", icon: "thumbDown", label: "Thumbs down" },
+  { key: "thanks", icon: null, label: "Thanks" },
+];
 
 function compactTimeline(entries: Entry[]): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -109,6 +117,7 @@ export function AgentPanel({
   tags,
   knownTags,
   onTag,
+  onReact,
 }: {
   view: AgentView;
   /// What this agent's harness can do.
@@ -128,6 +137,8 @@ export function AgentPanel({
   tags: string[];
   knownTags: string[];
   onTag: (change: { add?: string[]; remove?: string[]; set?: string[] }) => void;
+  /// An empty reaction clears whatever was there.
+  onReact: (entry: number, reaction: string) => void;
   onInterrupt: () => void;
   /// Branch this session and read the branch here, in this pane.
   onFork: () => void;
@@ -150,7 +161,7 @@ export function AgentPanel({
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
-  const [quoteMenu, setQuoteMenu] = useState<QuoteMenu | null>(null);
+  const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
   const [mode, setMode] = useState<Mode>("type");
   const [edits, setEdits] = useState<DiagramEdit[]>([]);
   const [sketchReady, setSketchReady] = useState(false);
@@ -527,13 +538,27 @@ export function AgentPanel({
         hidden={mode !== "type"}
         onContextMenu={(event) => {
           const selection = window.getSelection();
-          const text = selection?.toString().trim() ?? "";
           const selectedNode = selection?.rangeCount
             ? selection.getRangeAt(0).commonAncestorContainer
             : null;
-          if (!text || !selectedNode || !timeline.current?.contains(selectedNode)) return;
+          const text =
+            selectedNode && timeline.current?.contains(selectedNode)
+              ? (selection?.toString().trim() ?? "")
+              : "";
+          const row = (event.target as HTMLElement).closest("[data-entry]");
+          const id = row ? Number(row.getAttribute("data-entry")) : null;
+          const entry = id !== null && Number.isFinite(id) ? id : null;
+          // Nothing selected and nothing under the cursor means the browser's
+          // own menu is the more useful one.
+          if (!text && entry === null) return;
           event.preventDefault();
-          setQuoteMenu({ text, x: event.clientX, y: event.clientY });
+          setQuoteMenu({
+            text,
+            entry,
+            reaction: view.timeline.find((line) => line.id === entry)?.reaction ?? "",
+            x: event.clientX,
+            y: event.clientY,
+          });
         }}
         onScroll={(event) => {
           const node = event.currentTarget;
@@ -601,19 +626,59 @@ export function AgentPanel({
       </div>
 
       {quoteMenu && (
-        <button
-          type="button"
+        <div
           autoFocus
-          onBlur={() => setQuoteMenu(null)}
+          tabIndex={-1}
+          ref={(node) => node?.focus()}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setQuoteMenu(null);
+            }
+          }}
           onPointerDown={(event) => event.preventDefault()}
-          onClick={quoteSelection}
-          aria-label="quote reply"
-          title="Quote reply"
           style={{ left: quoteMenu.x, top: quoteMenu.y }}
-          className="fixed z-40 flex h-9 w-9 cursor-pointer items-center justify-center border border-edge bg-card text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] hover:bg-wash"
+          className="fixed z-40 flex border border-edge bg-card text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] outline-none"
         >
-          <Icon name="quote" />
-        </button>
+          {quoteMenu.text && (
+            <button
+              type="button"
+              onClick={quoteSelection}
+              aria-label="quote reply"
+              title="Quote reply"
+              className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash"
+            >
+              <Icon name="quote" />
+            </button>
+          )}
+          {quoteMenu.entry !== null &&
+            REACTIONS.map((choice) => {
+              const on = quoteMenu.reaction === choice.key;
+              return (
+                <button
+                  key={choice.key}
+                  type="button"
+                  // The same one again takes it back, so a misclick costs
+                  // one more click rather than a trip to a menu.
+                  onClick={() => {
+                    onReact(quoteMenu.entry as number, on ? "" : choice.key);
+                    setQuoteMenu(null);
+                  }}
+                  aria-label={choice.label}
+                  aria-pressed={on}
+                  title={choice.label}
+                  className={`flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash ${
+                    on ? "bg-band text-ink" : "text-mid"
+                  }`}
+                >
+                  {choice.icon ? (
+                    <Icon name={choice.icon} size={14} />
+                  ) : (
+                    <span className="text-[11px]">thanks</span>
+                  )}
+                </button>
+              );
+            })}
+        </div>
       )}
 
       <footer
@@ -873,6 +938,15 @@ const Message = memo(function Message({
               )}
               <Said text={entry.text} />
             </div>
+            {entry.reaction && (
+              <span className="flex items-center gap-1 text-[11px] text-mid">
+                {entry.reaction === "thanks" ? (
+                  "thanks"
+                ) : (
+                  <Icon name={entry.reaction === "down" ? "thumbDown" : "thumbUp"} size={12} />
+                )}
+              </span>
+            )}
             {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
             {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
               <button

@@ -542,6 +542,11 @@ pub struct Entry {
     /// Where it came from: `slack #infra @dana`.
     #[serde(default)]
     pub origin: String,
+    /// What you thought of it: `up`, `down`, `thanks`, or empty. One per
+    /// line, because a second opinion replaces the first rather than
+    /// piling up beside it.
+    #[serde(default)]
+    pub reaction: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

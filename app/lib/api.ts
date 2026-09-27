@@ -82,6 +82,9 @@ export const api = {
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
+  /// "" takes the reaction back. The daemon answers 204 and syncs, so the
+  /// pane redraws from the same event any other change arrives on.
+  react: (entry: number, reaction: string) => post<void>("/api/react", { entry, reaction }),
   createTask: (text: string, agentId = "") =>
     post<TaskItem>("/api/tasks", { text, agentId }),
   /// Hand a task to an agent that does not exist yet: a new one, or a fork

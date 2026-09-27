@@ -223,6 +223,7 @@ async fn serve() -> Result<()> {
         .route("/api/rename", post(rename))
         .route("/api/archive", post(archive))
         .route("/api/pin", post(pin))
+        .route("/api/react", post(react))
         .route("/api/tasks", get(tasks).post(create_task))
         .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/tasks/{id}/hand-off", post(hand_off_task))
@@ -587,6 +588,18 @@ async fn archive(
 ) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.archive(&body.agent, body.archived)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+#[derive(Deserialize)]
+struct ReactBody {
+    entry: i64,
+    /// `up`, `down`, `thanks`, or empty to take it back.
+    reaction: String,
+}
+
+async fn react(State(hub): Hubs, Json(body): Json<ReactBody>) -> Result<StatusCode, Failed> {
+    hub.react(body.entry, &body.reaction)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

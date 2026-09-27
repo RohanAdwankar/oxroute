@@ -950,6 +950,7 @@ export default function Home() {
                       tags={snapshot.tags[id] ?? []}
                       knownTags={knownTags}
                       onTag={(change) => void run(() => api.tag(id, change))}
+                      onReact={(entry, reaction) => void run(() => api.react(entry, reaction))}
                       onInterrupt={() => void run(() => api.interrupt(id))}
                       onFork={() => void forkHere(index, id)}
                       onForkBeside={() => void forkBeside(index, id)}

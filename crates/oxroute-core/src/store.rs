@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS entries (
     detail   TEXT NOT NULL DEFAULT '',
     output   TEXT NOT NULL DEFAULT '',
     item_id  TEXT NOT NULL DEFAULT '',
-    origin   TEXT NOT NULL DEFAULT ''
+    origin   TEXT NOT NULL DEFAULT '',
+    reaction TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS entries_agent ON entries (agent_id, id);
 
@@ -165,6 +166,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if !columns.iter().any(|column| column == "item_id") {
         conn.execute("ALTER TABLE entries ADD COLUMN item_id TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    if !columns.iter().any(|column| column == "reaction") {
+        conn.execute("ALTER TABLE entries ADD COLUMN reaction TEXT NOT NULL DEFAULT ''", [])?;
     }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS entries_item ON entries (agent_id, item_id)",
@@ -367,6 +371,19 @@ impl Store {
                 params![id, archived as i64],
             )?;
             anyhow::ensure!(changed == 1, "no such agent");
+            Ok(())
+        })
+    }
+
+    /// Empty clears it. Nothing validates the word here: the surfaces agree
+    /// on `up`, `down` and `thanks`, and a row that holds something else is
+    /// a row that simply shows nothing.
+    pub fn set_entry_reaction(&self, entry_id: i64, reaction: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE entries SET reaction = ?2 WHERE id = ?1",
+                params![entry_id, reaction],
+            )?;
             Ok(())
         })
     }
@@ -915,6 +932,7 @@ impl Store {
                 detail: detail.to_string(),
                 output: output.to_string(),
                 origin: origin.to_string(),
+                reaction: String::new(),
             })
         })
     }
@@ -939,7 +957,7 @@ impl Store {
             c.execute("UPDATE entries SET output = ?2 WHERE id = ?1", params![id, output])?;
             Ok(c
                 .query_row(
-                    "SELECT id, agent_id, at, kind, text, detail, output, origin
+                    "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction
                      FROM entries WHERE id = ?1",
                     params![id],
                     read_entry,
@@ -951,8 +969,8 @@ impl Store {
     pub fn copy_timeline(&self, from: &str, to: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin)
-                 SELECT ?2, at, kind, text, detail, output, item_id, origin FROM entries
+                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin, reaction)
+                 SELECT ?2, at, kind, text, detail, output, item_id, origin, reaction FROM entries
                  WHERE agent_id = ?1 ORDER BY id",
                 params![from, to],
             )?;
@@ -964,7 +982,7 @@ impl Store {
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, agent_id, at, kind, text, detail, output, origin FROM entries
+                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction FROM entries
                  WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
@@ -1341,6 +1359,7 @@ fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
         detail: row.get(5)?,
         output: row.get(6)?,
         origin: row.get(7)?,
+        reaction: row.get(8)?,
     })
 }
 
@@ -1584,6 +1603,39 @@ mod tests {
         assert_eq!(statuses["done"], TaskStatus::Complete);
         drop(store);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_reaction_survives_a_reread_and_a_fork_and_clears_when_taken_back() {
+        let store = Store::in_memory().unwrap();
+        for id in ["parent", "child"] {
+            store.save_agent(&agent(id)).unwrap();
+        }
+        let line = store
+            .add_entry("parent", 1.0, EntryKind::Said, "the answer", "", "")
+            .unwrap();
+        let untouched = store
+            .add_entry("parent", 2.0, EntryKind::Said, "another", "", "")
+            .unwrap();
+        assert_eq!(line.reaction, "");
+
+        store.set_entry_reaction(line.id, "up").unwrap();
+        let timeline = store.timeline("parent", 20).unwrap();
+        assert_eq!(timeline[0].reaction, "up");
+        // Only the line you pointed at.
+        assert_eq!(timeline[1].reaction, "");
+
+        // A second opinion replaces the first rather than joining it.
+        store.set_entry_reaction(line.id, "down").unwrap();
+        assert_eq!(store.timeline("parent", 20).unwrap()[0].reaction, "down");
+
+        // A fork reads the same history, so it reads the same reactions.
+        store.copy_timeline("parent", "child").unwrap();
+        assert_eq!(store.timeline("child", 20).unwrap()[0].reaction, "down");
+
+        store.set_entry_reaction(line.id, "").unwrap();
+        assert_eq!(store.timeline("parent", 20).unwrap()[0].reaction, "");
+        let _ = untouched;
     }
 
     #[test]

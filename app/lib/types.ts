@@ -91,6 +91,8 @@ export interface Entry {
   detail: string;
   output: string;
   origin: string;
+  /// "up", "down", "thanks", or "" for none.
+  reaction: string;
 }
 
 export interface SearchDestination {

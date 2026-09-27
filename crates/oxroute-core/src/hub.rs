@@ -1176,6 +1176,15 @@ impl Hub {
         Ok(())
     }
 
+    /// Mark one line of a timeline with what you thought of it. The same
+    /// reaction twice is how you take it back, which the surfaces do by
+    /// sending an empty string.
+    pub fn react(&self, entry_id: i64, reaction: &str) -> Result<()> {
+        self.store.set_entry_reaction(entry_id, reaction)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     pub fn pin(&self, agent_id: &str, pinned: bool) -> Result<()> {
         self.store.set_agent_pinned(agent_id, pinned)?;
         self.emit(Event::Sync);

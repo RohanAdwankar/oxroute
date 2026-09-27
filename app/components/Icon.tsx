@@ -30,7 +30,9 @@ export type IconName =
   | "tasks"
   | "terminal"
   | "text"
-  | "thread";
+  | "thread"
+  | "thumbDown"
+  | "thumbUp";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -54,6 +56,8 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     pin: <path d="M5 2h6l-1 4 2 2v1H9v5l-1 1-1-1V9H4V8l2-2Z" fill="currentColor" stroke="none" />,
     play: <path d="m5 3 8 5-8 5Z" />,
     plus: <path d="M8 2v12M2 8h12" />,
+    thumbUp: <><path d="M5 14V7l3.5-5 .8.5A2 2 0 0 1 10 4.2L9.2 7H13a1.4 1.4 0 0 1 1.3 1.8l-1.2 4.2a1.6 1.6 0 0 1-1.5 1H5Z" /><path d="M5 7H2v7h3" /></>,
+    thumbDown: <><path d="M11 2v7l-3.5 5-.8-.5A2 2 0 0 1 6 11.8L6.8 9H3a1.4 1.4 0 0 1-1.3-1.8l1.2-4.2A1.6 1.6 0 0 1 4.4 2H11Z" /><path d="M11 9h3V2h-3" /></>,
     quote: <path d="M3 4h4v4H5a3 3 0 0 1-3 3M10 4h4v4h-2a3 3 0 0 1-3 3" />,
     refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
