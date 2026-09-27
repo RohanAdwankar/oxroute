@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
 stage="${OXROUTE_DEMO_STAGE:-$root/.oxroute/demo}"
-out="$root/demo/out"
+out="${OXROUTE_DEMO_OUT:-$root/demo/out}"
 rm -rf "$stage" "$out"
 mkdir -p "$stage/workspace" "$out"
 
@@ -79,7 +79,7 @@ cargo build --quiet
 daemon=$!
 # Its own build, in its own output directory: a dev server may well be
 # running in this checkout already, and Next allows only one of those.
-export OXROUTE_DIST=".next-demo"
+export OXROUTE_DIST="${OXROUTE_DIST:-.next-demo}"
 npx next build > "$stage/build.log" 2>&1
 npx next start --port "$web_port" > "$stage/web.log" 2>&1 &
 web=$!
@@ -104,6 +104,12 @@ wait_for() {
 wait_for "$OXROUTE_DAEMON/api/health"
 wait_for "$OXROUTE_DEMO_URL"
 
-node demo/walk.mjs
-node demo/cut.mjs
+# oxdemo drives the browser: a cursor you can follow, captions, and the
+# waits cut out of the film rather than sat through.
+# The script names a URL; a take on its own ports gets its own copy of the
+# script with that URL in it, so two takes can film at once.
+take="$stage/oxroute.oxd"
+sed "s|^url .*|url $OXROUTE_DEMO_URL|" demo/oxroute.oxd > "$take"
+cp demo/seed.sh "$stage/seed.sh"
+oxdemo record "$take" --out "$out"
 echo "wrote $out"

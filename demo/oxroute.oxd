@@ -1,0 +1,73 @@
+# One minute of oxroute, recorded by oxdemo: a request arrives, an agent
+# does it, and the parts you steer it with along the way.
+#
+# demo/run.sh brings up a daemon and a build of the web UI on their own
+# ports first, against a scratch repository.
+
+url http://127.0.0.1:3100
+viewport 1440x900
+before "./seed.sh"
+theme size=52
+pace 0.9
+
+# The first frame is a browser that has just opened: wait for the daemon
+# to answer before pointing at anything.
+wait-for "Inbox" 30s
+say "Everything asking for you, in one place."
+pause 1s
+
+say "A request arrives."
+click "css:[data-inbox-item]"
+
+say "You decide who does it."
+click "start a new agent"
+# The turn takes as long as it takes; none of it is in the film.
+skip 60s
+wait-for "css:article button:first-of-type" 240s
+
+say "It works in the code and reports back."
+click "css:article button:not([aria-label])"
+wait-for "Message" 60s
+pause 2s
+
+say "Not worth saying now?"
+type "Message" "add a test so this cannot regress"
+# The one key worth seeing pressed.
+keys on
+key Tab
+keys off
+
+say "Tab files it as work instead."
+pause 2s
+
+say "An agent can say it is done."
+click "Show or hide tasks"
+click "Show or hide tasks"
+skip 120s
+say "Only you can say it is finished."
+click "Not yet"
+
+say "You answer where there is room to."
+type "What is still wrong?" "assert on the body, not the status code"
+click "Send message"
+pause 1s
+
+say "Some things are quicker drawn."
+click "Attach images options"
+click "Diagram"
+wait-for "Changes" 60s
+pause 1s
+
+say "Add a box, and the agent makes the code match."
+type "New box" "health check"
+click "add the box"
+pause 1s
+click "Send the change"
+pause 2s
+
+say "Everything anyone said is searchable."
+click "Search sessions"
+type "health"
+pause 2s
+
+say ""

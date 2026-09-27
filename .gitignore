@@ -51,3 +51,4 @@ next-env.d.ts
 /.oxroute
 .next-demo/
 demo/out/
+.next-take/
