@@ -7,7 +7,9 @@ import { clock, since } from "../lib/format";
 import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, TaskItem } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
+import { Attachments } from "./composer/Attachments";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
+import { useUploads } from "../lib/uploads";
 import { draftFor, keepDraft } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -52,7 +54,6 @@ function splitAttached(text: string): { body: string; names: string[] } {
     names: match[1].split(", ").map((name) => name.trim()).filter(Boolean),
   };
 }
-type Upload = { file: File; preview: string };
 type QuoteMenu = { text: string; x: number; y: number };
 
 function compactTimeline(entries: Entry[]): TimelineItem[] {
@@ -144,8 +145,7 @@ export function AgentPanel({
   verbose: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
-  const [uploads, setUploads] = useState<Upload[]>([]);
-  const [attachmentError, setAttachmentError] = useState("");
+  const pictures = useUploads();
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -161,7 +161,6 @@ export function AgentPanel({
   const previousAgent = useRef(agent.id);
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const uploadsRef = useRef<Upload[]>([]);
   const renameCancelled = useRef(false);
   const items = compactTimeline(view.timeline);
 
@@ -220,19 +219,6 @@ export function AgentPanel({
     return () => observer.disconnect();
   }, [agent.id]);
 
-  const addFiles = useCallback((files: File[]) => {
-    const images = files.filter((file) => file.type.startsWith("image/"));
-    setAttachmentError(images.length === files.length ? "" : "Only image files are supported.");
-    setUploads((current) => [
-      ...current,
-      ...images.map((file) => ({ file, preview: URL.createObjectURL(file) })),
-    ]);
-  }, []);
-
-  useEffect(() => {
-    uploadsRef.current = uploads;
-  }, [uploads]);
-
   useEffect(() => {
     const input = composer.current;
     if (!input) return;
@@ -244,11 +230,7 @@ export function AgentPanel({
     input.style.height = `${Math.max(floor || 34, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
     pin();
-  }, [draft, uploads, attachmentError, pin]);
-
-  useEffect(() => () => {
-    uploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.preview));
-  }, []);
+  }, [draft, pictures.uploads, pictures.error, pin]);
 
   /// A drawing is a message like any other, so it can wait for the turn
   /// that is running rather than landing in the middle of it.
@@ -262,9 +244,8 @@ export function AgentPanel({
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      onSay(text, [picture, ...uploads.map((upload) => upload.file)], queued);
-      uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
-      setUploads([]);
+      onSay(text, [picture, ...pictures.files], queued);
+      pictures.clear();
       sketch.current?.clear();
     }
     setDraft("");
@@ -276,7 +257,7 @@ export function AgentPanel({
 
   const canSend =
     mode === "type"
-      ? draft.trim().length > 0 || uploads.length > 0
+      ? draft.trim().length > 0 || pictures.uploads.length > 0
       : mode === "diagram"
         ? edits.length > 0
         : sketchReady;
@@ -287,17 +268,15 @@ export function AgentPanel({
       return;
     }
     const text = draft.trim();
-    if ((!text && uploads.length === 0) || busy) return;
+    if ((!text && pictures.uploads.length === 0) || busy) return;
     // What you just said is what you want to see, wherever you had scrolled
     // to before saying it.
     following.current = true;
     setDraft("");
-    const pictures = uploads.map((upload) => upload.file);
-    if (correcting) onCorrect(text, pictures);
-    else onSay(text, pictures, queued);
-    uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
-    setUploads([]);
-    setAttachmentError("");
+    const sent = pictures.files;
+    if (correcting) onCorrect(text, sent);
+    else onSay(text, sent, queued);
+    pictures.clear();
   };
 
   // Arguing with finished work puts your hands in the box it is argued in.
@@ -312,13 +291,11 @@ export function AgentPanel({
     if (busy) return;
     const text = draft.trim();
     const drawn = mode === "draw" ? await sketch.current?.export() : null;
-    const pictures = [...(drawn ? [drawn] : []), ...uploads.map((upload) => upload.file)];
-    if (!text && pictures.length === 0) return;
+    const filed = [...(drawn ? [drawn] : []), ...pictures.files];
+    if (!text && filed.length === 0) return;
     setDraft("");
-    onTask(text, pictures);
-    uploads.forEach((upload) => URL.revokeObjectURL(upload.preview));
-    setUploads([]);
-    setAttachmentError("");
+    onTask(text, filed);
+    pictures.clear();
     if (drawn) {
       sketch.current?.clear();
       setMode("type");
@@ -367,7 +344,7 @@ export function AgentPanel({
 
   return (
     <section
-      className="flex min-w-0 flex-1 flex-col"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -383,7 +360,7 @@ export function AgentPanel({
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         setDraggingImages(false);
-        addFiles(Array.from(event.dataTransfer.files));
+        pictures.add(Array.from(event.dataTransfer.files));
       }}
     >
       {/* One row, whatever the width: what cannot fit is cut, not wrapped,
@@ -673,35 +650,12 @@ export function AgentPanel({
             </button>
           </div>
         )}
-        {draggingImages && (
-          <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop images to attach</p>
-        )}
-        {uploads.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-[var(--pane-x)] pt-[6px]">
-            {uploads.map((upload) => (
-              <span key={upload.preview} className="flex items-center gap-2 bg-band p-2 text-[11px] text-mid">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={upload.preview} alt="" className="h-10 w-10 object-cover" />
-                <span className="max-w-48 truncate">{upload.file.name}</span>
-                <button
-                  type="button"
-                  aria-label={`remove ${upload.file.name}`}
-                  title={`Remove ${upload.file.name}`}
-                  onClick={() => {
-                    URL.revokeObjectURL(upload.preview);
-                    setUploads((current) => current.filter((item) => item !== upload));
-                  }}
-                  className="cursor-pointer px-1 text-faint hover:text-ink"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        {attachmentError && (
-          <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-hold">{attachmentError}</p>
-        )}
+        <Attachments
+          uploads={pictures.uploads}
+          error={pictures.error}
+          dragging={draggingImages}
+          onDrop={pictures.drop}
+        />
         <div className="flex items-stretch">
           <input
             ref={picker}
@@ -710,7 +664,7 @@ export function AgentPanel({
             multiple
             className="hidden"
             onChange={(event) => {
-              addFiles(Array.from(event.target.files ?? []));
+              pictures.add(Array.from(event.target.files ?? []));
               event.target.value = "";
             }}
           />
@@ -735,7 +689,7 @@ export function AgentPanel({
               const files = Array.from(event.clipboardData.files);
               if (files.length > 0) {
                 event.preventDefault();
-                addFiles(files);
+                pictures.add(files);
               }
             }}
             onKeyDown={(event) => {
