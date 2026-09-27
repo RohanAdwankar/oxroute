@@ -91,7 +91,7 @@ export interface Entry {
   detail: string;
   output: string;
   origin: string;
-  /// "up", "down", "thanks", or "" for none.
+  /// "up", "down", or "" for none.
   reaction: string;
 }
 

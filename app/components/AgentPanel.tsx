@@ -59,10 +59,9 @@ function splitAttached(text: string): { body: string; names: string[] } {
 /// line you landed on. Either half can be absent.
 type LineMenu = { text: string; entry: number | null; reaction: string; x: number; y: number };
 
-const REACTIONS: { key: string; icon: IconName | null; label: string }[] = [
+const REACTIONS: { key: string; icon: IconName; label: string }[] = [
   { key: "up", icon: "thumbUp", label: "Thumbs up" },
   { key: "down", icon: "thumbDown", label: "Thumbs down" },
-  { key: "thanks", icon: null, label: "Thanks" },
 ];
 
 function compactTimeline(entries: Entry[]): TimelineItem[] {
@@ -670,11 +669,7 @@ export function AgentPanel({
                     on ? "bg-band text-ink" : "text-mid"
                   }`}
                 >
-                  {choice.icon ? (
-                    <Icon name={choice.icon} size={14} />
-                  ) : (
-                    <span className="text-[11px]">thanks</span>
-                  )}
+                  <Icon name={choice.icon} size={14} />
                 </button>
               );
             })}
@@ -939,12 +934,8 @@ const Message = memo(function Message({
               <Said text={entry.text} />
             </div>
             {entry.reaction && (
-              <span className="flex items-center gap-1 text-[11px] text-mid">
-                {entry.reaction === "thanks" ? (
-                  "thanks"
-                ) : (
-                  <Icon name={entry.reaction === "down" ? "thumbDown" : "thumbUp"} size={12} />
-                )}
+              <span className="flex items-center text-mid">
+                <Icon name={entry.reaction === "down" ? "thumbDown" : "thumbUp"} size={12} />
               </span>
             )}
             {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}

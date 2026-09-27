@@ -593,7 +593,7 @@ async fn archive(
 #[derive(Deserialize)]
 struct ReactBody {
     entry: i64,
-    /// `up`, `down`, `thanks`, or empty to take it back.
+    /// `up`, `down`, or empty to take it back.
     reaction: String,
 }
 

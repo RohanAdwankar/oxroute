@@ -376,8 +376,8 @@ impl Store {
     }
 
     /// Empty clears it. Nothing validates the word here: the surfaces agree
-    /// on `up`, `down` and `thanks`, and a row that holds something else is
-    /// a row that simply shows nothing.
+    /// on `up` and `down`, and a row that holds something else is a row that
+    /// simply shows nothing.
     pub fn set_entry_reaction(&self, entry_id: i64, reaction: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
