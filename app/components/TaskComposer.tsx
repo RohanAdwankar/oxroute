@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { draftFor, keepDraft } from "../lib/drafts";
-import { useUploads } from "../lib/uploads";
+import { acceptsImageDrop, useUploads } from "../lib/uploads";
 import { Attachments } from "./composer/Attachments";
 import { SplitAction } from "./SplitAction";
 
@@ -42,16 +42,16 @@ export function TaskComposer({
   return (
     <footer
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!acceptsImageDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!acceptsImageDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDragging(false);
-        pictures.add(Array.from(event.dataTransfer.files));
+        void pictures.addFromDrop(event.dataTransfer);
       }}
       className={`flex shrink-0 flex-col border-t ${
         dragging ? "border-drop bg-wash" : "border-rule bg-card"

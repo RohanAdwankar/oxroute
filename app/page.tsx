@@ -15,6 +15,7 @@ import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
 import { taskRows } from "./lib/tasks";
+import { acceptsImageDrop } from "./lib/uploads";
 import {
   HINTS,
   LETTERS,
@@ -181,6 +182,20 @@ export default function Home() {
     // A message that stays forever stops being read.
     window.setTimeout(() => setNotice((current) => (current === text ? null : current)), 6000);
   }, []);
+
+  useEffect(() => {
+    const stopNavigation = (event: DragEvent) => {
+      if (event.defaultPrevented || !event.dataTransfer || !acceptsImageDrop(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.type === "drop") say("Drop images on a conversation to attach them");
+    };
+    window.addEventListener("dragover", stopNavigation);
+    window.addEventListener("drop", stopNavigation);
+    return () => {
+      window.removeEventListener("dragover", stopNavigation);
+      window.removeEventListener("drop", stopNavigation);
+    };
+  }, [say]);
 
   const reload = useCallback(() => setRevision((current) => current + 1), []);
 

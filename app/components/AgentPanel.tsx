@@ -11,7 +11,7 @@ import { Attachments } from "./composer/Attachments";
 import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
-import { useUploads } from "../lib/uploads";
+import { acceptsImageDrop, useUploads } from "../lib/uploads";
 import { draftFor, keepDraft } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -358,7 +358,7 @@ export function AgentPanel({
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!acceptsImageDrop(event.dataTransfer)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setDraggingImages(true);
@@ -369,10 +369,10 @@ export function AgentPanel({
         }
       }}
       onDrop={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!acceptsImageDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDraggingImages(false);
-        pictures.add(Array.from(event.dataTransfer.files));
+        void pictures.addFromDrop(event.dataTransfer);
       }}
     >
       {/* One row, whatever the width: what cannot fit is cut, not wrapped,
