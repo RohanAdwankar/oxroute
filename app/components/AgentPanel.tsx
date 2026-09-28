@@ -9,6 +9,7 @@ import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, TaskItem } 
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
 import { Code } from "./Code";
+import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { useUploads } from "../lib/uploads";
 import { draftFor, keepDraft } from "../lib/drafts";
@@ -859,9 +860,11 @@ function ToolCall({ entry }: { entry: Entry }) {
           <Code text={entry.detail || entry.text} />
         </div>
         {entry.output && (
-          <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
-            {entry.output}
-          </pre>
+          <Copyable>
+            <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
+              {entry.output}
+            </pre>
+          </Copyable>
         )}
       </div>
     </div>

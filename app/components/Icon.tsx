@@ -7,6 +7,7 @@ export type IconName =
   | "board"
   | "chevronDown"
   | "collapse"
+  | "copy"
   | "diagram"
   | "discard"
   | "expand"
@@ -32,7 +33,8 @@ export type IconName =
   | "text"
   | "thread"
   | "thumbDown"
-  | "thumbUp";
+  | "thumbUp"
+  | "tick";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -44,6 +46,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     board: <><rect x="1.5" y="2.5" width="3.5" height="11" rx=".5" /><rect x="6.25" y="2.5" width="3.5" height="7" rx=".5" /><rect x="11" y="2.5" width="3.5" height="9" rx=".5" /></>,
     chevronDown: <path d="m3 6 5 5 5-5" />,
     collapse: <path d="m10 3-5 5 5 5" />,
+    copy: <><rect x="5.5" y="5.5" width="8" height="8" rx="1" /><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" /></>,
     diagram: <><rect x="1.5" y="2" width="5" height="3.5" rx=".5" /><rect x="9.5" y="2" width="5" height="3.5" rx=".5" /><rect x="5.5" y="10.5" width="5" height="3.5" rx=".5" /><path d="M4 5.5v2.5h8V5.5M8 8v2.5" /></>,
     discard: <><path d="M3 5h10M6 5V3h4v2M5 5l.6 9h4.8l.6-9" /></>,
     expand: <path d="m6 3 5 5-5 5" />,
@@ -74,6 +77,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     tasks: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r="1" fill="currentColor" stroke="none" /></>,
     terminal: <><path d="m3 4 4 4-4 4M9 12h4" /></>,
     text: <path d="M3 4h10M3 8h10M3 12h6" />,
+    tick: <path d="M3 8.5 6.2 11.5 13 4.5" />,
     thread: <><path d="M2 3h9v7H6l-3 3v-3H2z" /><path d="M8 6h6v6h-2v2l-2-2H8" /></>,
   };
 

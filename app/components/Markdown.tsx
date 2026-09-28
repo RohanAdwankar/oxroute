@@ -1,5 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+
+import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 
 export function Markdown({ children }: { children: string }) {
@@ -13,6 +15,13 @@ export function Markdown({ children }: { children: string }) {
         // agent pastes is a command or a diff, and guessing beats grey.
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
+          // A fence is something you take: wrap it in the thing that lets
+          // you, rather than leaving the reader to select it by hand.
+          pre: ({ children, ...props }) => (
+            <Copyable>
+              <pre {...props}>{children}</pre>
+            </Copyable>
+          ),
           a: ({ children, ...props }) => (
             <a {...props} target="_blank" rel="noreferrer">
               {children}
