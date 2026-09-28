@@ -126,6 +126,14 @@ body {
   padding-left: 1.4em;
 }
 
+.message-markdown ul {
+  list-style-type: disc;
+}
+
+.message-markdown ol {
+  list-style-type: decimal;
+}
+
 .message-markdown blockquote {
   border-left: 2px solid var(--color-edge);
   padding-left: 0.75em;

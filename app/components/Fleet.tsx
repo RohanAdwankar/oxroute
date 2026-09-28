@@ -5,6 +5,7 @@ import { useState } from "react";
 import { clip, since } from "../lib/format";
 import { hintFor } from "../lib/keys";
 import { Icon } from "./Icon";
+import { Markdown } from "./Markdown";
 import { TagChip } from "./Tags";
 import {
   deliveryOf,
@@ -329,9 +330,9 @@ function Card({
         </div>
       )}
 
-      <p className={`mt-[12px] text-[13px] leading-[1.55] text-mid ${tags.length > 0 ? "line-clamp-3" : "line-clamp-4"}`}>
-        {preview || agent.stallReason || agent.model}
-      </p>
+      <div className={`mt-[12px] overflow-hidden text-[13px] leading-[1.55] text-mid ${tags.length > 0 ? "max-h-[60.5px]" : "max-h-[80.6px]"}`}>
+        <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
+      </div>
 
       <div className="flex-1" />
 
