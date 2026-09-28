@@ -1756,6 +1756,81 @@ async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
 }
 
 #[tokio::test]
+async fn a_message_reaches_a_harness_that_cannot_steer_without_waiting_for_the_turn() {
+    // The whole point of not queuing is to be heard now. A harness that
+    // cannot fold a message into its running turn leaves one way to do
+    // that, and waiting for the turn to finish is not it.
+    let w = build(
+        Mode::Auto,
+        Harnessed {
+            can_steer: false,
+            delay: Duration::from_secs(30),
+            ..Harnessed::default()
+        },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "something long")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to(&agent, "stop").await.unwrap();
+
+    // The running turn ended, and the message ran rather than waiting out
+    // the thirty seconds the first turn asked for.
+    assert!(settle(|| !w.calls.lock().unwrap().interrupted.is_empty()).await);
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let started = w.calls.lock().unwrap().started.clone();
+    let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(texts[0], "stop");
+}
+
+#[tokio::test]
+async fn queuing_still_waits_for_the_turn_it_was_queued_behind() {
+    // The opposite instruction has to keep working: saying "this is the next
+    // thing" must not end what is running.
+    let w = build(
+        Mode::Auto,
+        Harnessed {
+            can_steer: false,
+            delay: Duration::from_millis(300),
+            ..Harnessed::default()
+        },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to_with_images(&agent, "after you finish", vec![], true).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+}
+
+#[tokio::test]
+async fn a_task_handed_over_by_the_hub_says_so_on_the_timeline() {
+    // Work that starts for a reason nobody can see is work nobody can
+    // attribute when it turns out to have gone to the wrong agent.
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
+
+    assert!(
+        settle(|| {
+            w.hub
+                .timeline(&agent, 50)
+                .unwrap()
+                .iter()
+                .any(|entry| entry.kind == EntryKind::Notice && entry.text.contains("paint the shed"))
+        })
+        .await,
+        "the hand-over left no trace on the timeline",
+    );
+}
+
+#[tokio::test]
 async fn an_ordinary_message_still_folds_into_a_running_turn() {
     let w = build(
         Mode::Auto,

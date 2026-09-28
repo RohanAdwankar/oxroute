@@ -928,7 +928,12 @@ export default function Home() {
                         void run(() => api.say(id, text, images, queued))
                       }
                       onTask={(text, images) =>
-                        void file(() => api.createTaskWithImages(text, id, images))
+                        // Unassigned, like the one on the home screen. Typing
+                        // a task in a session's composer is about where your
+                        // hands were, not about who should do it, and the
+                        // assignment it used to infer was dispatched before
+                        // anyone could see -- let alone correct -- the guess.
+                        void file(() => api.createTaskWithImages(text, "", images))
                       }
                       correcting={correcting?.agentId === id ? correcting : null}
                       onStopCorrecting={() => setCorrecting(null)}

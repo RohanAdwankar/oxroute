@@ -1015,6 +1015,16 @@ impl Hub {
         if !queued && self.steer(&agent, &pseudo, inputs.clone(), false).await? {
             return Ok(());
         }
+        // Steering is how a message reaches a turn that is already running.
+        // Where the harness cannot do it, `deliver_to` waits on the agent's
+        // lock instead -- for as long as that turn decides to run -- so the
+        // message you least want to wait is the one that waits longest.
+        // "Stop" arriving fourteen minutes later is not a slow stop, it is a
+        // stop that did not happen. End the turn rather than queue behind
+        // it; `queued` is there for when waiting is what you meant.
+        if !queued {
+            let _ = self.interrupt(&agent.id).await;
+        }
         self.clone().deliver_to(agent, inputs, None, target).await;
         Ok(())
     }
@@ -1779,6 +1789,17 @@ impl Hub {
              blocked -- naming the task it waits on -- or to waiting_for_human, and say \
              what you need.",
         ))];
+        // Say on the timeline that this was the hub talking. A turn nobody
+        // can see the cause of reads as an agent that wandered off on its
+        // own, and when it turns out to have been handed the wrong work
+        // there is no record of who handed it over.
+        self.record(
+            &agent.id,
+            EntryKind::Notice,
+            &format!("Handed back {} open task(s) from the list", open.len()),
+            "",
+            "",
+        );
         self.deliver_to(agent, inputs, None, target).await;
         })
     }
@@ -2400,7 +2421,7 @@ impl Hub {
                      it is done, or blocked or waiting_for_human if you cannot go further.",
                     task.text,
                 ),
-                "",
+                &format!("Given the task: {}", task.text),
             )
             .await?;
         }
