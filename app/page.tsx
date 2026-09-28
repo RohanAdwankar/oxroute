@@ -458,13 +458,14 @@ export default function Home() {
         : [...current.slice(0, index + 1), agent, ...current.slice(index + 1)],
     );
     setPaneWidths((current) => {
+      if (current.length >= panes.length + 1) return current;
       const widths = [...current];
       const split = (widths[index] ?? 1) / 2;
       widths[index] = split;
       widths.splice(index + 1, 0, split);
       return widths;
     });
-  }, []);
+  }, [panes.length]);
 
   const forkBeside = (index: number, agent: string) =>
     run(async () => {
