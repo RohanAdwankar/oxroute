@@ -1287,7 +1287,7 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
     // This is what the TUI and the web UI do.
     w.hub.say_to(&agent, "one more thing").await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
-    assert!(settle(|| w.posts.lock().unwrap().replies.len() >= 3).await);
+    assert!(settle(|| w.posts.lock().unwrap().replies.len() >= 2).await);
 
     // It lands in the Slack thread, not into nowhere.
     assert!(w
@@ -1303,7 +1303,14 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
         .unwrap()
         .replies
         .iter()
-        .any(|(_, text)| text == "Question from Oxroute UI:\none more thing"));
+        .any(|(_, text)| text == "> one more thing\n\ndone"));
+    assert!(!w
+        .posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(_, text)| text.starts_with("Question from Oxroute UI:")));
 
     let timeline = w.hub.timeline(&agent, 50).unwrap();
     let direct: Vec<_> = timeline
@@ -1415,7 +1422,39 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
         .unwrap()
         .replies
         .iter()
-        .any(|(_, text)| text.contains("Question from Oxroute UI:\ninspect this")));
+        .any(|(_, text)| text == "> inspect this\n> \n> Attached: chart.png\n\ndone"));
+}
+
+#[tokio::test]
+async fn a_ui_question_steered_into_a_turn_stays_with_its_slack_answer() {
+    let w = build(
+        Mode::Auto,
+        Harnessed { delay: Duration::from_millis(200), ..Harnessed::default() },
+    )
+    .await;
+    w.hub.accept(signal("100.0", "100.0", "start here")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+    w.hub.say_to(&agent, "clarify this part").await.unwrap();
+
+    assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
+    assert!(settle(|| {
+        w.posts
+            .lock()
+            .unwrap()
+            .replies
+            .iter()
+            .any(|(_, text)| text == "> clarify this part\n\ndone")
+    })
+    .await);
+    assert!(!w
+        .posts
+        .lock()
+        .unwrap()
+        .replies
+        .iter()
+        .any(|(_, text)| text.starts_with("Question from Oxroute UI:")));
 }
 
 #[tokio::test]

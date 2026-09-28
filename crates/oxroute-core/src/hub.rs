@@ -98,6 +98,9 @@ struct Live {
     stopped: AtomicBool,
     target: Option<Target>,
     posted: Mutex<Option<Posted>>,
+    /// Questions asked from another surface that belong above the eventual
+    /// reply in Slack, instead of arriving there as their own notifications.
+    reply_context: Mutex<Vec<String>>,
     /// A side turn's output belongs to the caller, not the timeline.
     quiet: bool,
 }
@@ -120,6 +123,7 @@ impl Live {
             stopped: AtomicBool::new(false),
             target,
             posted: Mutex::new(None),
+            reply_context: Mutex::new(Vec::new()),
             quiet,
         }
     }
@@ -799,7 +803,7 @@ impl Hub {
 
         // Steering only makes sense when something is actually running and the
         // user did not explicitly ask to queue.
-        if !parsed.queued && self.steer(&agent, &signal, inputs.clone(), true).await? {
+        if !parsed.queued && self.steer(&agent, &signal, inputs.clone(), true, None).await? {
             self.resolve(&signal, &format!("steered {}", agent.name), &[agent.id.clone()])
                 .await;
             return Ok(());
@@ -979,15 +983,13 @@ impl Hub {
             },
         };
 
-        // A question submitted from the web or TUI is part of the Slack
-        // conversation too. Mirror it before the answer so the thread keeps
-        // the complete exchange instead of showing an unexplained response.
-        if let Some(target) = target
+        let reply_context = target
             .as_ref()
             .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
-        {
-            self.say(target, &format!("Question from Oxroute UI:\n{shown}"))
-                .await;
+            .map(|_| shown.clone());
+        if let Some(target) = target.as_ref().filter(|target| {
+            !opened && target.source == crate::source::slack::SOURCE
+        }) {
             if let Some(source) = self.source(&target.source) {
                 let _ = source.upload(target, &images).await;
             }
@@ -1012,7 +1014,17 @@ impl Hub {
         if !preface.is_empty() {
             self.store.mark_reactions_sent(&agent.id)?;
         }
-        if !queued && self.steer(&agent, &pseudo, inputs.clone(), false).await? {
+        if !queued
+            && self
+                .steer(
+                    &agent,
+                    &pseudo,
+                    inputs.clone(),
+                    false,
+                    reply_context.as_deref(),
+                )
+                .await?
+        {
             return Ok(());
         }
         // Steering is how a message reaches a turn that is already running.
@@ -1025,7 +1037,9 @@ impl Hub {
         if !queued {
             let _ = self.interrupt(&agent.id).await;
         }
-        self.clone().deliver_to(agent, inputs, None, target).await;
+        self.clone()
+            .deliver_to(agent, inputs, None, target, reply_context)
+            .await;
         Ok(())
     }
 
@@ -1044,7 +1058,7 @@ impl Hub {
         }
         let target = self.home_target(&agent.id).await;
         self.clone()
-            .deliver_to(agent, vec![TurnInput::text(text)], None, target)
+            .deliver_to(agent, vec![TurnInput::text(text)], None, target, None)
             .await;
         Ok(())
     }
@@ -1420,6 +1434,7 @@ impl Hub {
         signal: &Signal,
         inputs: Vec<TurnInput>,
         record: bool,
+        reply_context: Option<&str>,
     ) -> Result<bool> {
         // Ask the harness, not the enum. A capability declared in two places
         // is a capability that will eventually disagree with itself, and the
@@ -1440,6 +1455,9 @@ impl Hub {
             .await
         {
             Ok(()) => {
+                if let Some(text) = reply_context {
+                    turn.reply_context.lock().unwrap().push(text.to_string());
+                }
                 if record {
                     self.record(
                         &agent.id,
@@ -1465,7 +1483,7 @@ impl Hub {
             Some(s) if self.source(&s.source).is_some() => Some(s.target()),
             _ => self.home_target(&agent.id).await,
         };
-        self.deliver_to(agent, inputs, signal, target).await;
+        self.deliver_to(agent, inputs, signal, target, None).await;
     }
 
     async fn deliver_to(
@@ -1474,12 +1492,16 @@ impl Hub {
         inputs: Vec<TurnInput>,
         signal: Option<Signal>,
         target: Option<Target>,
+        reply_context: Option<String>,
     ) {
         let hub = self.clone();
         tokio::spawn(async move {
             let lock = hub.lock_for(&agent.id).await;
             let _held = lock.lock().await;
-            if let Err(error) = hub.run_turn(&agent, inputs, signal, target.clone()).await {
+            if let Err(error) = hub
+                .run_turn(&agent, inputs, signal, target.clone(), reply_context)
+                .await
+            {
                 tracing::error!(agent = agent.id, %error, "turn failed");
                 let _ = hub.store.stall_agent(&agent.id, "turn failed", now());
                 if let Some(target) = target {
@@ -1506,6 +1528,7 @@ impl Hub {
         mut inputs: Vec<TurnInput>,
         signal: Option<Signal>,
         target: Option<Target>,
+        reply_context: Option<String>,
     ) -> Result<()> {
         let harness = self.harness(agent.backend);
         let spec = SessionSpec {
@@ -1617,6 +1640,9 @@ impl Hub {
             target.clone(),
             false,
         ));
+        if let Some(text) = reply_context {
+            turn.reply_context.lock().unwrap().push(text);
+        }
         self.store.save_active_turn(&ActiveTurn {
             agent_id: agent.id.clone(),
             session_id: session.clone(),
@@ -1701,7 +1727,12 @@ impl Hub {
         self.store.set_agent_status(&agent.id, AgentStatus::Complete, now())?;
 
         if let Some(target) = &turn.target {
-            let permalink = self.say(target, &answer).await;
+            let reply = if target.source == crate::source::slack::SOURCE {
+                reply_with_context(&turn.reply_context.lock().unwrap(), &answer)
+            } else {
+                answer.clone()
+            };
+            let permalink = self.say(target, &reply).await;
             if !permalink.is_empty() {
                 let _ = self.store.set_agent_permalink(&agent.id, &permalink);
             }
@@ -1800,7 +1831,7 @@ impl Hub {
             "",
             "",
         );
-        self.deliver_to(agent, inputs, None, target).await;
+        self.deliver_to(agent, inputs, None, target, None).await;
         })
     }
 
@@ -2626,7 +2657,7 @@ impl Hub {
             let agent = self.spawn(&signal, None, model, None).await?;
             // Starting an agent for a task is asking it to do the task.
             self.clone()
-                .deliver_to(agent.clone(), vec![TurnInput::text(&task.text)], None, None)
+                .deliver_to(agent.clone(), vec![TurnInput::text(&task.text)], None, None, None)
                 .await;
             agent
         };
@@ -3090,6 +3121,26 @@ fn origin_of(signal: &Signal) -> String {
         bits.push(signal.label.clone());
     }
     bits.join(" ")
+}
+
+/// Keep a question asked in another surface with the answer it produced.
+/// Slack receives one message, with the question quoted at the top, instead
+/// of a question notification followed by a separate answer.
+fn reply_with_context(context: &[String], answer: &str) -> String {
+    if context.is_empty() {
+        return answer.to_string();
+    }
+    let quoted = context
+        .iter()
+        .map(|text| {
+            text.lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n>\n");
+    format!("{quoted}\n\n{answer}")
 }
 
 /// What to tell an agent about the lines you marked since you last spoke.
