@@ -855,6 +855,25 @@ async fn local_forks_nest_and_open_source_threads() {
 }
 
 #[tokio::test]
+async fn in_chat_forks_remain_linked_until_merged_without_opening_threads() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let child = w.hub.fork_in_chat(&parent).await.unwrap();
+    let grandchild = w.hub.fork_in_chat(&child.id).await.unwrap();
+
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+    assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&child.id], parent);
+    assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&grandchild.id], child.id);
+
+    w.hub.merge(&grandchild.id).await.unwrap();
+    assert!(!w.hub.snapshot(10).unwrap().pane_links.contains_key(&grandchild.id));
+    assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&child.id], parent);
+}
+
+#[tokio::test]
 async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();

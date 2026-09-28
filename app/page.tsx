@@ -39,6 +39,7 @@ const EMPTY: Snapshot = {
   agents: [],
   archived: [],
   messages: {},
+  paneLinks: {},
   inbox: [],
   tasks: [],
   taskNotes: [],
@@ -48,6 +49,20 @@ const EMPTY: Snapshot = {
   models: [],
   backends: [],
 };
+
+function linkedPanes(id: string, links: Record<string, string>): string[] {
+  let root = id;
+  const seen = new Set([root]);
+  while (links[root] && !seen.has(links[root])) {
+    root = links[root];
+    seen.add(root);
+  }
+  const group = [root];
+  for (let at = 0; at < group.length; at++) {
+    group.push(...Object.keys(links).filter((child) => links[child] === group[at]).sort());
+  }
+  return group;
+}
 
 /**
  * The whole interface.
@@ -98,6 +113,7 @@ export default function Home() {
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
   const paneArea = useRef<HTMLDivElement>(null);
+  const paneLinks = useRef<Record<string, string>>({});
   const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
   // A signal the inbox cursor should land on as soon as the daemon reports it.
   const landOn = useRef<string | null>(null);
@@ -172,8 +188,9 @@ export default function Home() {
     setOpen(id);
     // Opening an agent is walking into it: the keys act on it from here.
     if (id) setFocus("fleet");
-    setPanes(id ? [id] : []);
-    setPaneWidths(id ? [1] : []);
+    const group = id ? linkedPanes(id, paneLinks.current) : [];
+    setPanes(group);
+    setPaneWidths(group.map(() => 1));
     setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("agent", id);
@@ -297,7 +314,14 @@ export default function Home() {
     api.snapshot().then(
       (next) => {
         if (!live) return;
+        paneLinks.current = next.paneLinks ?? {};
         setSnapshot(next);
+        const selectedAgent = new URL(window.location.href).searchParams.get("agent");
+        if (selectedAgent) {
+          const group = linkedPanes(selectedAgent, next.paneLinks ?? {});
+          setPanes((current) => current.length === group.length && current.every((id, at) => id === group[at]) ? current : group);
+          setPaneWidths((current) => current.length === group.length ? current : group.map(() => 1));
+        }
         // Nothing to decide, nothing to read: the column earns its width by
         // having something waiting in it.
         if (firstLoad.current) {
@@ -429,17 +453,15 @@ export default function Home() {
 
   const forkBeside = (index: number, agent: string) =>
     run(async () => {
-      const { agent: child } = await api.fork(agent);
+      const { agent: child } = await api.forkInChat(agent);
       placeBeside(index, child.id);
     });
 
-  /// Branch, and carry on in the branch: the parent is where it was, and
-  /// this pane is now looking at the fork.
-  const forkHere = (index: number, agent: string) =>
+  /// A separate source thread is a separate card on the home screen.
+  const forkOut = (agent: string) =>
     run(async () => {
       const { agent: child } = await api.fork(agent);
-      setPanes((current) => current.map((id, at) => (at === index ? child.id : id)));
-      if (open === agent) setUrlAgent(child.id);
+      showAgent(child.id);
     });
 
   const mergePane = (index: number, agent: string) =>
@@ -923,7 +945,7 @@ export default function Home() {
                         }
                       }
                       busy={busy}
-                      onBack={() => closePane(index)}
+                      onBack={() => showAgent(null)}
                       onSay={(text, images, queued) =>
                         void run(() => api.say(id, text, images, queued))
                       }
@@ -957,8 +979,8 @@ export default function Home() {
                       onTag={(change) => void run(() => api.tag(id, change))}
                       onReact={(entry, reaction) => void run(() => api.react(entry, reaction))}
                       onInterrupt={() => void run(() => api.interrupt(id))}
-                      onFork={() => void forkHere(index, id)}
-                      onForkBeside={() => void forkBeside(index, id)}
+                      onFork={() => void forkBeside(index, id)}
+                      onForkBeside={() => void forkOut(id)}
                       onMerge={
                         view.timeline.some((entry) => entry.kind === "forkedFrom")
                           ? () => void mergePane(index, id)

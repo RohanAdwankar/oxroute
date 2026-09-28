@@ -953,6 +953,7 @@ impl Hub {
         self.record(&agent.id, EntryKind::You, &shown, "", "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
+            None if self.store.pane_links()?.contains_key(&agent.id) => (None, false),
             None => match self.open_current_thread(&shown).await? {
                 Some((target, permalink)) => {
                     for binding in self.store.bindings_for(&agent.id)? {
@@ -1235,6 +1236,15 @@ impl Hub {
     /// lives, if it lives anywhere; a machine with no source configured
     /// forks just the same, into a pane.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+        self.fork_with_layout(agent_id, false).await
+    }
+
+    /// A fork that remains in the parent's chat panes, without a source thread.
+    pub async fn fork_in_chat(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
+        self.fork_with_layout(agent_id, true).await
+    }
+
+    async fn fork_with_layout(self: &Arc<Self>, agent_id: &str, in_chat: bool) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1268,7 +1278,7 @@ impl Hub {
         let home = match self.home_binding(agent_id) {
             Some(binding) => Some((binding.source, binding.conversation)),
             None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
-        };
+        }.filter(|_| !in_chat);
         let home = home.and_then(|(name, conversation)| {
             self.source(&name).map(|source| (name, conversation, source))
         });
@@ -1283,6 +1293,9 @@ impl Hub {
             self.store.save_agent(&forked)?;
         }
         self.store.copy_timeline(agent_id, &forked.id)?;
+        if in_chat {
+            self.store.link_pane(&forked.id, agent_id)?;
+        }
         // A branch of the work sits where the work sits, until someone says not.
         self.store.set_tags(&forked.id, &self.store.tags(agent_id)?)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
@@ -2366,6 +2379,7 @@ impl Hub {
             agents,
             archived,
             messages: self.store.message_previews()?,
+            pane_links: self.store.pane_links()?,
             inbox,
             tasks: self.store.tasks()?,
             task_notes: self.store.task_notes()?,
@@ -3069,6 +3083,8 @@ pub struct Snapshot {
     /// Latest human or agent text by agent id. Tool activity stays in
     /// `Agent::activity` for watch surfaces.
     pub messages: HashMap<String, String>,
+    #[serde(default)]
+    pub pane_links: HashMap<String, String>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
     /// Why each task is where it is, oldest first.

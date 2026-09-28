@@ -149,6 +149,8 @@ export interface Snapshot {
   agents: Agent[];
   archived: Agent[];
   messages: Record<string, string>;
+  /** Child pane -> parent pane for forks that stay in the same chat. */
+  paneLinks: Record<string, string>;
   inbox: InboxItem[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];

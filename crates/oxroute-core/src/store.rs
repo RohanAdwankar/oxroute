@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS bindings (
 );
 CREATE INDEX IF NOT EXISTS bindings_agent ON bindings (agent_id);
 
+CREATE TABLE IF NOT EXISTS pane_links (
+    child_id TEXT PRIMARY KEY,
+    parent_id TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS signals (
     id           TEXT PRIMARY KEY,
     source       TEXT NOT NULL,
@@ -827,6 +832,25 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()?)
+        })
+    }
+
+    pub fn link_pane(&self, child_id: &str, parent_id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("INSERT INTO pane_links (child_id, parent_id) VALUES (?1, ?2)", params![child_id, parent_id])?;
+            Ok(())
+        })
+    }
+
+    pub fn pane_links(&self) -> Result<HashMap<String, String>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT p.child_id, p.parent_id FROM pane_links p
+                 JOIN agents child ON child.id = p.child_id AND child.archived = 0
+                 JOIN agents parent ON parent.id = p.parent_id AND parent.archived = 0",
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
         })
     }
 
