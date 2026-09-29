@@ -957,7 +957,6 @@ export default function Home() {
                           backend: view.agent.backend,
                           fork: false,
                           merge: false,
-                          steer: false,
                         }
                       }
                       busy={busy}

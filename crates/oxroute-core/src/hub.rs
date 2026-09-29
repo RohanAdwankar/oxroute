@@ -14,8 +14,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::pin::Pin;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -48,6 +48,7 @@ const MODE_KEY: &str = "mode";
 /// How many sessions a board considers. Every live one, and more finished
 /// ones than the fleet shows: a board is where old work is still sorted.
 const BOARD_SESSIONS: usize = 1000;
+const FOLLOW_UP_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// What to do with a signal waiting in the inbox.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -78,8 +79,7 @@ pub enum Routing {
 struct Live {
     session: String,
     turn_id: Mutex<Option<String>>,
-    /// Fires once the harness has told us the turn id, which is what steering
-    /// and interrupting both need.
+    /// Fires once the harness has told us the turn id needed to interrupt it.
     ready: Notify,
     is_ready: AtomicBool,
     done: Notify,
@@ -163,7 +163,7 @@ impl Live {
     }
 
     /// Wait for the turn id. Bounded, because a harness that never reports
-    /// one must not wedge the message that is waiting to steer.
+    /// one must not wedge the message waiting to preempt it.
     async fn wait_ready(&self) {
         if self.is_ready.load(Ordering::SeqCst) {
             return;
@@ -212,9 +212,16 @@ pub struct Hub {
     live: AsyncMutex<HashMap<String, Arc<Live>>>,
     /// One per agent, so its turns run in order.
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    follow_ups: AsyncMutex<HashMap<String, Vec<FollowUp>>>,
     naming: AsyncMutex<HashSet<String>>,
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
+}
+
+struct FollowUp {
+    inputs: Vec<TurnInput>,
+    target: Option<Target>,
+    reply_context: Option<String>,
 }
 
 /// What an agent has done to its task list while working through it.
@@ -248,7 +255,11 @@ fn chain_key(agent_id: &str) -> String {
 fn chain_from(memory: Option<&Chain>, remembered: Option<String>) -> Chain {
     match (memory, remembered) {
         (Some(chain), _) => chain.clone(),
-        (None, Some(shape)) => Chain { turns: 1, shape, told: false },
+        (None, Some(shape)) => Chain {
+            turns: 1,
+            shape,
+            told: false,
+        },
         (None, None) => Chain::default(),
     }
 }
@@ -304,6 +315,7 @@ impl Hub {
             sessions: AsyncMutex::new(HashMap::new()),
             live: AsyncMutex::new(HashMap::new()),
             locks: AsyncMutex::new(HashMap::new()),
+            follow_ups: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
         })
@@ -416,7 +428,9 @@ impl Hub {
     }
 
     async fn restore_turns(self: &Arc<Self>) {
-        let Ok(saved) = self.store.active_turns() else { return };
+        let Ok(saved) = self.store.active_turns() else {
+            return;
+        };
         for saved in saved {
             let Some(agent) = self.store.agent(&saved.agent_id).ok().flatten() else {
                 let _ = self.store.clear_active_turn(&saved.agent_id);
@@ -581,7 +595,9 @@ impl Hub {
             return;
         }
 
-        let Some(session) = event.session() else { return };
+        let Some(session) = event.session() else {
+            return;
+        };
         let Some(agent_id) = self.sessions.lock().await.get(session).cloned() else {
             return;
         };
@@ -598,7 +614,9 @@ impl Hub {
                 let _ = self.store.touch_agent(&agent_id, None, now());
                 let activity = {
                     let live = self.live.lock().await;
-                    let Some(turn) = live.get(&agent_id) else { return };
+                    let Some(turn) = live.get(&agent_id) else {
+                        return;
+                    };
                     let mut progress = turn.progress.lock().unwrap();
                     progress.observe(&item);
                     progress.activity()
@@ -613,7 +631,9 @@ impl Hub {
                         if let Ok(Some(entry)) =
                             self.store.set_work_output(&agent_id, item_id, &output)
                         {
-                            self.emit(Event::Timeline { entry: Box::new(entry) });
+                            self.emit(Event::Timeline {
+                                entry: Box::new(entry),
+                            });
                         }
                     }
                 }
@@ -630,7 +650,9 @@ impl Hub {
             } => {
                 {
                     let live = self.live.lock().await;
-                    let Some(turn) = live.get(&agent_id) else { return };
+                    let Some(turn) = live.get(&agent_id) else {
+                        return;
+                    };
                     let mut answer = turn.answer.lock().unwrap();
                     // The phase-marked final answer wins; otherwise the first
                     // thing it said stands in, which is all Claude Code gives.
@@ -710,7 +732,9 @@ impl Hub {
             &summary.item_id,
         ) {
             Ok(entry) => {
-                self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
+                self.emit(Event::Timeline {
+                    entry: Box::new(entry.clone()),
+                });
                 Some(entry)
             }
             Err(error) => {
@@ -801,17 +825,26 @@ impl Hub {
             return self.side_turn(&signal, &agent, inputs).await;
         }
 
-        // Steering only makes sense when something is actually running and the
-        // user did not explicitly ask to queue.
-        if !parsed.queued && self.steer(&agent, &signal, inputs.clone(), true, None).await? {
-            self.resolve(&signal, &format!("steered {}", agent.name), &[agent.id.clone()])
+        self.resolve(
+            &signal,
+            &format!("sent to {}", agent.name),
+            &[agent.id.clone()],
+        )
+        .await;
+        if parsed.queued {
+            self.clone().deliver(agent, inputs, Some(signal)).await;
+        } else {
+            self.record(
+                &agent.id,
+                EntryKind::Received,
+                &signal.text,
+                "",
+                &origin_of(&signal),
+            );
+            self.chains.lock().await.remove(&agent.id);
+            self.preempt_to(agent, inputs, Some(signal.target()), None)
                 .await;
-            return Ok(());
         }
-
-        self.resolve(&signal, &format!("sent to {}", agent.name), &[agent.id.clone()])
-            .await;
-        self.clone().deliver(agent, inputs, Some(signal)).await;
         Ok(())
     }
 
@@ -834,8 +867,12 @@ impl Hub {
         if inputs.is_empty() {
             return Ok(());
         }
-        self.resolve(&signal, &format!("started {}", agent.name), &[agent.id.clone()])
-            .await;
+        self.resolve(
+            &signal,
+            &format!("started {}", agent.name),
+            &[agent.id.clone()],
+        )
+        .await;
         self.clone().deliver(agent, inputs, Some(signal)).await;
         Ok(())
     }
@@ -863,14 +900,23 @@ impl Hub {
                 cwd,
             } => {
                 vec![
-                    self.spawn(&signal, backend.as_deref(), model.as_deref(), cwd.as_deref())
-                        .await?,
+                    self.spawn(
+                        &signal,
+                        backend.as_deref(),
+                        model.as_deref(),
+                        cwd.as_deref(),
+                    )
+                    .await?,
                 ]
             }
             Routing::Existing { agent_ids } => {
                 let mut out = Vec::new();
                 for id in agent_ids {
-                    out.push(self.store.agent(&id)?.with_context(|| format!("no agent {id}"))?);
+                    out.push(
+                        self.store
+                            .agent(&id)?
+                            .with_context(|| format!("no agent {id}"))?,
+                    );
                 }
                 if out.is_empty() {
                     anyhow::bail!("name at least one agent, or discard it");
@@ -914,9 +960,8 @@ impl Hub {
         self.say_to_with_images(agent_id, text, vec![], false).await
     }
 
-    /// `queued` holds the message back until the running turn ends instead of
-    /// folding it in, for when what you are saying is the next thing to do
-    /// rather than a correction to what is being done.
+    /// `queued` holds the message back until the running turn ends. Otherwise
+    /// a new message stops that turn and starts again with the new context.
     pub async fn say_to_with_images(
         self: &Arc<Self>,
         agent_id: &str,
@@ -949,7 +994,12 @@ impl Hub {
         if !spoken.trim().is_empty() {
             inputs.push(TurnInput::text(&spoken));
         }
-        inputs.extend(images.iter().cloned().map(|path| TurnInput::LocalImage { path }));
+        inputs.extend(
+            images
+                .iter()
+                .cloned()
+                .map(|path| TurnInput::LocalImage { path }),
+        );
         self.record(&agent.id, EntryKind::You, &shown, "", "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
@@ -988,59 +1038,28 @@ impl Hub {
             .as_ref()
             .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
             .map(|_| shown.clone());
-        if let Some(target) = target.as_ref().filter(|target| {
-            !opened && target.source == crate::source::slack::SOURCE
-        }) {
+        if let Some(target) = target
+            .as_ref()
+            .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
+        {
             if let Some(source) = self.source(&target.source) {
                 let _ = source.upload(target, &images).await;
             }
         }
 
-        let pseudo = Signal {
-            id: new_id("sig"),
-            source: "direct".into(),
-            conversation: String::new(),
-            thread_key: String::new(),
-            external_id: new_id("msg"),
-            author: self.config.owner.clone(),
-            label: "you".into(),
-            text: shown,
-            attachments: vec![],
-            at: now(),
-            root: false,
-        };
         // Only once the turn is actually going: opening a thread can fail,
         // and a reaction consumed by a message that never left would be
         // silently lost.
         if !preface.is_empty() {
             self.store.mark_reactions_sent(&agent.id)?;
         }
-        if !queued
-            && self
-                .steer(
-                    &agent,
-                    &pseudo,
-                    inputs.clone(),
-                    false,
-                    reply_context.as_deref(),
-                )
-                .await?
-        {
-            return Ok(());
+        if queued {
+            self.clone()
+                .deliver_to(agent, inputs, None, target, reply_context)
+                .await;
+        } else {
+            self.preempt_to(agent, inputs, target, reply_context).await;
         }
-        // Steering is how a message reaches a turn that is already running.
-        // Where the harness cannot do it, `deliver_to` waits on the agent's
-        // lock instead -- for as long as that turn decides to run -- so the
-        // message you least want to wait is the one that waits longest.
-        // "Stop" arriving fourteen minutes later is not a slow stop, it is a
-        // stop that did not happen. End the turn rather than queue behind
-        // it; `queued` is there for when waiting is what you meant.
-        if !queued {
-            let _ = self.interrupt(&agent.id).await;
-        }
-        self.clone()
-            .deliver_to(agent, inputs, None, target, reply_context)
-            .await;
         Ok(())
     }
 
@@ -1051,7 +1070,12 @@ impl Hub {
     /// they are there to produce. `said` is the line left behind, if any --
     /// a button someone pressed is worth a note, the machinery handing an
     /// agent its own list is not.
-    pub async fn ask_quietly(self: &Arc<Self>, agent_id: &str, text: &str, said: &str) -> Result<()> {
+    pub async fn ask_quietly(
+        self: &Arc<Self>,
+        agent_id: &str,
+        text: &str,
+        said: &str,
+    ) -> Result<()> {
         anyhow::ensure!(!text.trim().is_empty(), "nothing to ask");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         if !said.is_empty() {
@@ -1108,8 +1132,11 @@ impl Hub {
                     if self.live.lock().await.contains_key(id) {
                         "This agent is running. Reply `kill`, then `clean`.".into()
                     } else {
-                        self.store
-                            .unbind(&signal.source, &signal.conversation, &signal.thread_key)?;
+                        self.store.unbind(
+                            &signal.source,
+                            &signal.conversation,
+                            &signal.thread_key,
+                        )?;
                         self.emit(Event::Sync);
                         "Started clean. Your next reply opens a new session with no prior \
                          history."
@@ -1166,9 +1193,14 @@ impl Hub {
         let turn = self.live.lock().await.get(agent_id).cloned();
         let Some(turn) = turn else { return Ok(false) };
         turn.wait_ready().await;
-        let Some(turn_id) = turn.turn_id() else { return Ok(false) };
+        let Some(turn_id) = turn.turn_id() else {
+            return Ok(false);
+        };
         if turn.done() {
             return Ok(false);
+        }
+        if turn.stopped.load(Ordering::SeqCst) {
+            return Ok(true);
         }
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         turn.stopped.store(true, Ordering::SeqCst);
@@ -1351,13 +1383,7 @@ impl Hub {
                 .inject(&parent.session_id, &exchanges)
                 .await?;
         }
-        self.record(
-            &parent.id,
-            EntryKind::Merged,
-            "Fork merged",
-            &child.id,
-            "",
-        );
+        self.record(&parent.id, EntryKind::Merged, "Fork merged", &child.id, "");
         self.record(
             &child.id,
             EntryKind::MergedInto,
@@ -1441,57 +1467,13 @@ impl Hub {
         Ok(inputs)
     }
 
-    async fn steer(
-        &self,
-        agent: &Agent,
-        signal: &Signal,
-        inputs: Vec<TurnInput>,
-        record: bool,
-        reply_context: Option<&str>,
-    ) -> Result<bool> {
-        // Ask the harness, not the enum. A capability declared in two places
-        // is a capability that will eventually disagree with itself, and the
-        // harness is the half that actually has to do the work.
-        if !self.harness(agent.backend).capabilities().steer {
-            return Ok(false);
-        }
-        let turn = self.live.lock().await.get(&agent.id).cloned();
-        let Some(turn) = turn else { return Ok(false) };
-        turn.wait_ready().await;
-        let Some(turn_id) = turn.turn_id() else { return Ok(false) };
-        if turn.done() {
-            return Ok(false);
-        }
-        match self
-            .harness(agent.backend)
-            .steer(&turn.session, &turn_id, &signal.external_id, inputs)
-            .await
-        {
-            Ok(()) => {
-                if let Some(text) = reply_context {
-                    turn.reply_context.lock().unwrap().push(text.to_string());
-                }
-                if record {
-                    self.record(
-                        &agent.id,
-                        EntryKind::Received,
-                        &signal.text,
-                        "steered into the running turn",
-                        &origin_of(signal),
-                    );
-                }
-                self.emit(Event::Sync);
-                Ok(true)
-            }
-            // A turn that ended between the check and the call is a race, not
-            // a failure: fall back to starting a new one.
-            Err(_) if turn.done() => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
     /// Run a turn and deal with everything that comes out of it.
-    async fn deliver(self: Arc<Self>, agent: Agent, inputs: Vec<TurnInput>, signal: Option<Signal>) {
+    async fn deliver(
+        self: Arc<Self>,
+        agent: Agent,
+        inputs: Vec<TurnInput>,
+        signal: Option<Signal>,
+    ) {
         let target = match &signal {
             Some(s) if self.source(&s.source).is_some() => Some(s.target()),
             _ => self.home_target(&agent.id).await,
@@ -1526,6 +1508,71 @@ impl Hub {
         });
     }
 
+    /// Stop obsolete work, collect messages that arrived together, then start
+    /// one turn with all of them. Each arrival schedules a waiter; the first
+    /// to get the agent lock drains the batch, and the others find none.
+    async fn preempt_to(
+        self: &Arc<Self>,
+        agent: Agent,
+        inputs: Vec<TurnInput>,
+        target: Option<Target>,
+        reply_context: Option<String>,
+    ) {
+        let id = agent.id.clone();
+        self.follow_ups
+            .lock()
+            .await
+            .entry(id.clone())
+            .or_default()
+            .push(FollowUp {
+                inputs,
+                target,
+                reply_context,
+            });
+        if let Err(error) = self.interrupt(&id).await {
+            tracing::warn!(agent = id, %error, "could not interrupt turn before follow-up");
+            self.emit(Event::Notice { text: format!("Could not stop the current turn: {error}") });
+        }
+        let hub = self.clone();
+        tokio::spawn(async move {
+            let lock = hub.lock_for(&id).await;
+            let _held = lock.lock().await;
+            if !hub.follow_ups.lock().await.contains_key(&id) {
+                return;
+            }
+            tokio::time::sleep(FOLLOW_UP_SETTLE).await;
+            let pending = hub.follow_ups.lock().await.remove(&id).unwrap_or_default();
+            if pending.is_empty() {
+                return;
+            }
+            let target = pending.last().and_then(|item| item.target.clone());
+            let reply_context = pending
+                .iter()
+                .filter_map(|item| item.reply_context.as_deref())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let inputs = pending.into_iter().flat_map(|item| item.inputs).collect();
+            if let Err(error) = hub
+                .run_turn(
+                    &agent,
+                    inputs,
+                    None,
+                    target.clone(),
+                    (!reply_context.is_empty()).then_some(reply_context),
+                )
+                .await
+            {
+                tracing::error!(agent = agent.id, %error, "turn failed");
+                let _ = hub.store.stall_agent(&agent.id, "turn failed", now());
+                if let Some(target) = target {
+                    hub.say(&target, ERROR_REPLY).await;
+                }
+                hub.emit(Event::Sync);
+                hub.refresh_dashboard().await;
+            }
+        });
+    }
+
     async fn lock_for(&self, agent_id: &str) -> Arc<AsyncMutex<()>> {
         self.locks
             .lock()
@@ -1540,8 +1587,8 @@ impl Hub {
         agent: &Agent,
         mut inputs: Vec<TurnInput>,
         signal: Option<Signal>,
-        target: Option<Target>,
-        reply_context: Option<String>,
+        mut target: Option<Target>,
+        mut reply_context: Option<String>,
     ) -> Result<()> {
         let harness = self.harness(agent.backend);
         let spec = SessionSpec {
@@ -1572,6 +1619,7 @@ impl Hub {
 
         let artifact_dir = self.config.artifacts.join(&agent.id).join(new_id("turn"));
         tokio::fs::create_dir_all(&artifact_dir).await?;
+        let prompt_at = inputs.len();
         inputs.push(TurnInput::text(format!(
             "Place every image, video, or other file you want returned to the user in \
              {}",
@@ -1647,6 +1695,22 @@ impl Hub {
             );
         }
 
+        // The pending-message lock bridges the gap before this turn is live.
+        // An arrival is either included here or sees a turn it can stop.
+        let mut follow_ups = self.follow_ups.lock().await;
+        if let Some(pending) = follow_ups.remove(&agent.id) {
+            if let Some(next) = pending.last().and_then(|item| item.target.clone()) {
+                target = Some(next);
+            }
+            let context = pending.iter().filter_map(|item| item.reply_context.as_deref()).collect::<Vec<_>>().join("\n\n");
+            if !context.is_empty() {
+                reply_context = Some(match reply_context {
+                    Some(previous) => format!("{previous}\n\n{context}"),
+                    None => context,
+                });
+            }
+            inputs.splice(prompt_at..prompt_at, pending.into_iter().flat_map(|item| item.inputs));
+        }
         let turn = Arc::new(Live::new(
             session.clone(),
             artifact_dir.clone(),
@@ -1664,6 +1728,7 @@ impl Hub {
             target: target.clone(),
         })?;
         self.live.lock().await.insert(agent.id.clone(), turn.clone());
+        drop(follow_ups);
         self.store.set_agent_status(&agent.id, AgentStatus::Working, now())?;
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
@@ -1778,7 +1843,9 @@ impl Hub {
     /// An agent that is not running is an agent that could be doing its
     /// tasks, so the list is offered to it wherever it stopped.
     pub async fn hand_out_open_work(self: &Arc<Self>) {
-        let Ok(agents) = self.store.agents(usize::MAX) else { return };
+        let Ok(agents) = self.store.agents(usize::MAX) else {
+            return;
+        };
         for agent in agents {
             if agent.status == AgentStatus::Working {
                 continue;
@@ -1794,33 +1861,47 @@ impl Hub {
         target: Option<Target>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
-        let Ok(tasks) = self.store.tasks() else { return };
-        let mut chains = self.chains.lock().await;
-        let chain = chain_from(
-            chains.get(&agent.id),
-            self.store.get(&chain_key(&agent.id)).ok().flatten(),
-        );
-        let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
-            let stuck = tasks
-                .iter()
-                .filter(|task| task.agent_id == agent.id && task.status == TaskStatus::Incomplete)
-                .count();
-            if stuck > 0 && chain.turns > 0 && !chain.told {
-                chains.insert(agent.id.clone(), Chain { told: true, ..chain.clone() });
-                drop(chains);
-                self.emit(Event::Notice {
-                    text: format!("{} stopped with {stuck} task(s) still open", agent.name),
-                });
-            }
-            return;
-        };
-        let shape = shape_of(&tasks, &agent.id);
-        chains.insert(
-            agent.id.clone(),
-            Chain { turns: chain.turns + 1, shape: shape.clone(), told: false },
-        );
-        drop(chains);
-        let _ = self.store.set(&chain_key(&agent.id), &shape);
+            let Ok(tasks) = self.store.tasks() else {
+                return;
+            };
+            let mut chains = self.chains.lock().await;
+            let chain = chain_from(
+                chains.get(&agent.id),
+                self.store.get(&chain_key(&agent.id)).ok().flatten(),
+            );
+            let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
+                let stuck = tasks
+                    .iter()
+                    .filter(|task| {
+                        task.agent_id == agent.id && task.status == TaskStatus::Incomplete
+                    })
+                    .count();
+                if stuck > 0 && chain.turns > 0 && !chain.told {
+                    chains.insert(
+                        agent.id.clone(),
+                        Chain {
+                            told: true,
+                            ..chain.clone()
+                        },
+                    );
+                    drop(chains);
+                    self.emit(Event::Notice {
+                        text: format!("{} stopped with {stuck} task(s) still open", agent.name),
+                    });
+                }
+                return;
+            };
+            let shape = shape_of(&tasks, &agent.id);
+            chains.insert(
+                agent.id.clone(),
+                Chain {
+                    turns: chain.turns + 1,
+                    shape: shape.clone(),
+                    told: false,
+                },
+            );
+            drop(chains);
+            let _ = self.store.set(&chain_key(&agent.id), &shape);
 
         let list = open
             .iter()
@@ -1927,11 +2008,15 @@ impl Hub {
     /// it away when the turn ends.
     fn report(self: Arc<Self>, turn: Arc<Live>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let Some(target) = turn.target.clone() else { return };
+            let Some(target) = turn.target.clone() else {
+                return;
+            };
             if turn.quiet {
                 return;
             }
-            let Some(source) = self.source(&target.source) else { return };
+            let Some(source) = self.source(&target.source) else {
+                return;
+            };
 
             tokio::time::sleep(PROGRESS_DELAY).await;
             loop {
@@ -1992,18 +2077,17 @@ impl Hub {
     /// a surface can fetch it and written into the timeline. Uploading to a
     /// source as well is for the thread it came from -- and a deployment
     /// with no source is not a deployment where pictures should vanish.
-    async fn hand_back_artifacts(
-        &self,
-        agent_id: &str,
-        turn: &Arc<Live>,
-        target: Option<&Target>,
-    ) {
+    async fn hand_back_artifacts(&self, agent_id: &str, turn: &Arc<Live>, target: Option<&Target>) {
         let mut paths: Vec<String> = turn.artifacts.lock().unwrap().iter().cloned().collect();
         let mut stack = vec![turn.artifact_dir.clone()];
         while let Some(dir) = stack.pop() {
-            let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
+            let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
+                continue;
+            };
             while let Ok(Some(entry)) = entries.next_entry().await {
-                let Ok(meta) = entry.metadata().await else { continue };
+                let Ok(meta) = entry.metadata().await else {
+                    continue;
+                };
                 if meta.is_dir() {
                     stack.push(entry.path());
                 } else if meta.is_file() {
@@ -2037,11 +2121,19 @@ impl Hub {
             }
         }
         if !shown.is_empty() {
-            self.record(agent_id, EntryKind::Said, &format!("Attached: {}", shown.join(", ")), "", "");
+            self.record(
+                agent_id,
+                EntryKind::Said,
+                &format!("Attached: {}", shown.join(", ")),
+                "",
+                "",
+            );
         }
 
         let Some(target) = target else { return };
-        let Some(source) = self.source(&target.source) else { return };
+        let Some(source) = self.source(&target.source) else {
+            return;
+        };
         if let Err(error) = source.upload(target, &paths).await {
             tracing::warn!(%error, "could not hand back artifacts");
         }
@@ -2273,10 +2365,15 @@ impl Hub {
         let Some((source_name, conversation, message_id)) = self.dashboard_location() else {
             return;
         };
-        let Some(source) = self.source(&source_name) else { return };
+        let Some(source) = self.source(&source_name) else {
+            return;
+        };
         let target = Target::new(source_name, conversation, message_id);
         let _ = source
-            .reply(&target, &dashboard::alert(&self.config.owner, agent, reason))
+            .reply(
+                &target,
+                &dashboard::alert(&self.config.owner, agent, reason),
+            )
             .await;
     }
 
@@ -2324,7 +2421,9 @@ impl Hub {
     /// Keep the one dashboard message current. Posted on first use into
     /// whichever conversation is actually in play.
     pub async fn refresh_dashboard(&self) {
-        let Ok(agents) = self.store.agents(dashboard::COMPLETED_SHOWN) else { return };
+        let Ok(agents) = self.store.agents(dashboard::COMPLETED_SHOWN) else {
+            return;
+        };
         let text = dashboard::render(&agents, now());
 
         if let Some((source_name, conversation, message_id)) = self.dashboard_location() {
@@ -2341,12 +2440,18 @@ impl Hub {
 
         // No dashboard yet. Put it wherever an agent already lives.
         let Some(agent) = agents.first() else { return };
-        let Ok(bindings) = self.store.bindings_for(&agent.id) else { return };
-        let Some(binding) = bindings.into_iter().find(|b| self.sources.contains_key(&b.source))
+        let Ok(bindings) = self.store.bindings_for(&agent.id) else {
+            return;
+        };
+        let Some(binding) = bindings
+            .into_iter()
+            .find(|b| self.sources.contains_key(&b.source))
         else {
             return;
         };
-        let Some(source) = self.source(&binding.source) else { return };
+        let Some(source) = self.source(&binding.source) else {
+            return;
+        };
         let target = Target::new(&binding.source, &binding.conversation, String::new());
         if let Ok(posted) = source.post_status(&target, &text).await {
             let _ = self.store.set(
@@ -2408,7 +2513,6 @@ impl Hub {
                         // Merging a fork means splicing what it said back
                         // into its parent, which is what inject is.
                         merge: can.inject,
-                        steer: can.steer,
                     }
                 })
                 .collect(),
@@ -2671,7 +2775,13 @@ impl Hub {
             let agent = self.spawn(&signal, None, model, None).await?;
             // Starting an agent for a task is asking it to do the task.
             self.clone()
-                .deliver_to(agent.clone(), vec![TurnInput::text(&task.text)], None, None, None)
+                .deliver_to(
+                    agent.clone(),
+                    vec![TurnInput::text(&task.text)],
+                    None,
+                    None,
+                    None,
+                )
                 .await;
             agent
         };
@@ -2844,31 +2954,29 @@ impl Hub {
             .find_session(session_id)
             .await?
             .context("no such native session")?;
-        let model = if native.model.is_empty()
-            || !self
-                .config
-                .models
-                .values()
-                .any(|choice| choice.backend == backend && choice.id == native.model)
-        {
-            if self
-                .config
-                .models
-                .values()
-                .any(|choice| choice.backend == backend && choice.id == self.config.default_model)
-            {
-                self.config.default_model.clone()
-            } else {
-                self.config
+        let model =
+            if native.model.is_empty()
+                || !self
+                    .config
                     .models
                     .values()
-                    .find(|choice| choice.backend == backend)
-                    .map(|choice| choice.id.clone())
-                    .unwrap_or_else(|| self.config.default_model.clone())
-            }
-        } else {
-            native.model.clone()
-        };
+                    .any(|choice| choice.backend == backend && choice.id == native.model)
+            {
+                if self.config.models.values().any(|choice| {
+                    choice.backend == backend && choice.id == self.config.default_model
+                }) {
+                    self.config.default_model.clone()
+                } else {
+                    self.config
+                        .models
+                        .values()
+                        .find(|choice| choice.backend == backend)
+                        .map(|choice| choice.id.clone())
+                        .unwrap_or_else(|| self.config.default_model.clone())
+                }
+            } else {
+                native.model.clone()
+            };
         let location = match backend {
             Backend::Codex => "~/.codex/sessions",
             Backend::ClaudeCode => "~/.claude/projects",
@@ -3026,7 +3134,10 @@ mod task_tests {
 
     #[test]
     fn an_agent_carries_on_while_its_own_work_is_open() {
-        let tasks = [mine("a", TaskStatus::Incomplete), task("b", TaskStatus::Incomplete, "")];
+        let tasks = [
+            mine("a", TaskStatus::Incomplete),
+            task("b", TaskStatus::Incomplete, ""),
+        ];
         let open = carry_on(&tasks, "me", &Chain::default()).expect("work of its own is open");
         // Only its own: another agent's list is not its errand.
         assert_eq!(open.len(), 1);
@@ -3035,7 +3146,11 @@ mod task_tests {
 
     #[test]
     fn saying_it_cannot_go_further_ends_the_chain() {
-        for stop in [TaskStatus::Complete, TaskStatus::Blocked, TaskStatus::WaitingForHuman] {
+        for stop in [
+            TaskStatus::Complete,
+            TaskStatus::Blocked,
+            TaskStatus::WaitingForHuman,
+        ] {
             let tasks = [mine("a", stop)];
             assert!(carry_on(&tasks, "me", &Chain::default()).is_none());
         }
@@ -3044,18 +3159,29 @@ mod task_tests {
     #[test]
     fn a_turn_that_moves_nothing_ends_the_chain() {
         let tasks = [mine("a", TaskStatus::Incomplete)];
-        let went_round = Chain { turns: 1, shape: shape_of(&tasks, "me"), told: false };
+        let went_round = Chain {
+            turns: 1,
+            shape: shape_of(&tasks, "me"),
+            told: false,
+        };
         assert!(carry_on(&tasks, "me", &went_round).is_none());
 
         // The same list, with that task now finished and another started.
-        let moved = [mine("a", TaskStatus::Complete), mine("b", TaskStatus::Incomplete)];
+        let moved = [
+            mine("a", TaskStatus::Complete),
+            mine("b", TaskStatus::Incomplete),
+        ];
         assert!(carry_on(&moved, "me", &went_round).is_some());
     }
 
     #[test]
     fn a_chain_does_not_run_forever() {
         let tasks = [mine("a", TaskStatus::Incomplete)];
-        let long = Chain { turns: CHAIN_LIMIT, shape: String::new(), told: false };
+        let long = Chain {
+            turns: CHAIN_LIMIT,
+            shape: String::new(),
+            told: false,
+        };
         assert!(carry_on(&tasks, "me", &long).is_none());
     }
 
@@ -3109,9 +3235,6 @@ pub struct BackendInfo {
     pub backend: Backend,
     pub fork: bool,
     pub merge: bool,
-    /// Whether something said mid-turn can reach the turn that is running.
-    /// Where it cannot, waiting and not waiting are the same act.
-    pub steer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3202,7 +3325,10 @@ mod reaction_tests {
     #[test]
     fn a_preface_names_the_verdict_and_enough_of_the_line_to_place_it() {
         let preface = reaction_preface(&[
-            ("down".into(), "The daemon binds to 0.0.0.0 so the phone can reach it".into()),
+            (
+                "down".into(),
+                "The daemon binds to 0.0.0.0 so the phone can reach it".into(),
+            ),
             ("up".into(), "Reading the config from the env file".into()),
         ]);
         assert!(preface.starts_with("[Reactions I left since my last message:\n"));

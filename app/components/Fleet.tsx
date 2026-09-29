@@ -22,8 +22,7 @@ const DOT: Record<string, string> = {
 };
 
 const DELIVERY_NOTE: Record<Delivery, string> = {
-  steer: "folds into the turn it is running",
-  queue: "waits for the current turn to end",
+  restart: "stops this turn and starts with your message",
   start: "this is what sets it going",
 };
 
@@ -340,7 +339,7 @@ function Card({
         <span className="text-[12.5px] text-mid">{DELIVERY_NOTE[delivery]}</span>
         <span className="flex-1" />
         <span
-          className={`tnum text-[12.5px] ${delivery === "queue" ? "text-hold" : "text-ok"}`}
+          className="tnum text-[12.5px] text-ok"
         >
           {delivery}
         </span>

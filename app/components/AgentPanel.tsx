@@ -244,8 +244,7 @@ export function AgentPanel({
     pin();
   }, [draft, pictures.uploads, pictures.error, pin]);
 
-  /// A drawing is a message like any other, so it can wait for the turn
-  /// that is running rather than landing in the middle of it.
+  /// A drawing follows the same interrupt-or-queue choice as text.
   const sendDrawn = async (queued: boolean) => {
     if (busy) return;
     const text = draft.trim();
@@ -274,7 +273,7 @@ export function AgentPanel({
         ? edits.length > 0
         : sketchReady;
 
-  const send = (queued = agent.status === "working") => {
+  const send = (queued = false) => {
     if (mode !== "type") {
       void sendDrawn(queued);
       return;
@@ -773,26 +772,18 @@ export function AgentPanel({
           />
           {mode === "type" ? (
             // One button, one arrow, whether the agent is busy or not. What
-            // changes is when it is picked up, which the agent's own state
-            // already says; a button that redraws itself underneath you
-            // reads as a different button.
+            // changes is whether it stops the current turn.
             <SplitAction
               label="Send message"
               hint={
-                working
-                  ? can.steer
-                    ? "The agent is working, so this waits its turn"
-                    : "The agent is working; it will read this when the turn ends"
-                  : "Send message"
+                working ? "Stops this turn and starts with your message" : "Send message"
               }
               icon="send"
-              onClick={() => send(working)}
+              onClick={() => send()}
               disabled={busy || !canSend}
               menu={[
-                // Only where it means something: a harness that cannot take
-                // input mid-turn makes "now" and "next" the same thing.
-                ...(working && can.steer
-                  ? [{ label: "Send now, into the turn", icon: "queue" as const, onClick: () => send(false) }]
+                ...(working
+                  ? [{ label: "Queue after this turn", icon: "queue" as const, onClick: () => send(true) }]
                   : []),
                 { label: "Add to the task list", icon: "tasks" as const, onClick: () => void toTask() },
               ]}
@@ -800,27 +791,26 @@ export function AgentPanel({
             />
           ) : (
             // A drawing is made at the moment it is sent, so there is
-            // nothing yet to put on the task list -- but it waits its turn
-            // like anything else said to a working agent.
+            // nothing yet to put on the task list.
             <SplitAction
               label={mode === "diagram" ? "Send the change" : "Send the picture"}
               hint={
                 working
-                  ? "The agent is working, so this waits its turn"
+                  ? "Stops this turn and starts with your message"
                   : mode === "diagram"
                     ? "Send the change"
                     : "Send the picture"
               }
               icon="send"
-              onClick={() => send(working)}
+              onClick={() => send()}
               disabled={busy || !canSend}
               menu={[
-                ...(working && can.steer
+                ...(working
                   ? [
                       {
-                        label: "Send now, into the turn",
+                        label: "Queue after this turn",
                         icon: "queue" as const,
-                        onClick: () => send(false),
+                        onClick: () => send(true),
                       },
                     ]
                   : []),

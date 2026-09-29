@@ -7,10 +7,6 @@
 //! Threads are the sessions; every agent oxroute runs on Codex is one Codex
 //! thread, and the process holds all of them at once.
 //!
-//! This is the harness that can steer: `turn/steer` folds input into a turn
-//! that is already running, which is why a Codex agent reads differently from
-//! a Claude Code one in the UI.
-//!
 //! The process is supervised lazily. If it exits, every in-flight request
 //! fails at once with the reason, a `Down` event goes out so the hub can
 //! stall what it thought was running, and the next call starts a fresh one.
@@ -466,7 +462,6 @@ impl Harness for CodexHarness {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: true,
             fork: true,
             inject: true,
             resume: true,
@@ -511,26 +506,6 @@ impl Harness for CodexHarness {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string())
-    }
-
-    async fn steer(
-        &self,
-        session: &str,
-        turn_id: &str,
-        message_id: &str,
-        inputs: Vec<TurnInput>,
-    ) -> Result<()> {
-        self.request(
-            "turn/steer",
-            json!({
-                "threadId": session,
-                "clientUserMessageId": message_id,
-                "input": inputs,
-                "expectedTurnId": turn_id,
-            }),
-        )
-        .await?;
-        Ok(())
     }
 
     async fn interrupt(&self, session: &str, turn_id: &str) -> Result<()> {

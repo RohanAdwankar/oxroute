@@ -21,11 +21,6 @@
 //!   equivalent of the Codex harness's `approvalPolicy: never`, and is the
 //!   one thing here worth overriding deliberately.
 //!
-//! No steering. The CLI queues input rather than folding it into the turn
-//! that is already running, so `delivery()` reports `queue` for a busy agent
-//! and every surface says so before you send. That is the honest difference
-//! from Codex, and the reason capabilities are declared rather than assumed.
-
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -180,8 +175,6 @@ impl Harness for ClaudeHarness {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            // The CLI queues; it does not fold into a running turn.
-            steer: false,
             fork: true,
             inject: false,
             resume: true,
@@ -268,16 +261,6 @@ impl Harness for ClaudeHarness {
             turn_id: turn.clone(),
         });
         Ok(turn)
-    }
-
-    async fn steer(
-        &self,
-        _session: &str,
-        _turn_id: &str,
-        _message_id: &str,
-        _inputs: Vec<TurnInput>,
-    ) -> Result<()> {
-        anyhow::bail!("Claude Code queues input rather than steering a running turn")
     }
 
     async fn interrupt(&self, session: &str, _turn_id: &str) -> Result<()> {

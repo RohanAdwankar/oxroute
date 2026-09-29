@@ -22,10 +22,6 @@ pub fn new_id(prefix: &str) -> String {
 
 /// Which harness runs an agent.
 ///
-/// The difference that leaks into the UI is steering: Codex can fold input
-/// into a turn that is already running, Claude Code queues it instead. We
-/// declare that rather than discovering it, so the surface can say which will
-/// happen before you press send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
@@ -49,15 +45,6 @@ impl Backend {
         }
     }
 
-    /// What the harness that normally runs this backend can do.
-    ///
-    /// The hub always asks the live harness instead; this is here so a
-    /// surface can label a button without holding one, and the two are only
-    /// allowed to differ in tests.
-    pub fn can_steer(self) -> bool {
-        matches!(self, Backend::Codex)
-    }
-
     pub fn can_fork(self) -> bool {
         matches!(self, Backend::Codex)
     }
@@ -69,25 +56,21 @@ impl std::fmt::Display for Backend {
     }
 }
 
-/// How the next send reaches an agent. The surface shows this before you send,
-/// so a busy Claude Code agent never silently swallows an urgent message.
+/// How the next ordinary message reaches an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Delivery {
     /// The agent is idle; this context is what sets it going.
     Start,
-    /// The agent is working and the backend can fold input into the live turn.
-    Steer,
-    /// The agent is working and the backend cannot steer, so it waits.
-    Queue,
+    /// The agent is working; stop its turn and start with the new message.
+    Restart,
 }
 
 impl Delivery {
     pub fn as_str(self) -> &'static str {
         match self {
             Delivery::Start => "start",
-            Delivery::Steer => "steer",
-            Delivery::Queue => "queue",
+            Delivery::Restart => "restart",
         }
     }
 }
@@ -213,7 +196,7 @@ pub enum Directive {
 pub struct Parsed {
     pub directive: Option<Directive>,
     pub text: String,
-    /// `&` prefix: do not steer the running turn, run this after it.
+    /// `&` prefix: run this after the current turn.
     pub queued: bool,
     /// `btw` prefix: answer from an ephemeral fork, in parallel, without
     /// disturbing the turn that is running.
@@ -449,10 +432,8 @@ impl Agent {
     pub fn delivery(&self) -> Delivery {
         if self.status != AgentStatus::Working {
             Delivery::Start
-        } else if self.backend.can_steer() {
-            Delivery::Steer
         } else {
-            Delivery::Queue
+            Delivery::Restart
         }
     }
 }
@@ -811,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_queues_where_codex_steers() {
+    fn working_agents_restart_on_ordinary_messages() {
         let mut agent = Agent {
             id: "a".into(),
             name: "n".into(),
@@ -828,9 +809,9 @@ mod tests {
             stall_alerted: false,
             pinned: false,
         };
-        assert_eq!(agent.delivery(), Delivery::Steer);
+        assert_eq!(agent.delivery(), Delivery::Restart);
         agent.backend = Backend::ClaudeCode;
-        assert_eq!(agent.delivery(), Delivery::Queue);
+        assert_eq!(agent.delivery(), Delivery::Restart);
         agent.status = AgentStatus::Complete;
         assert_eq!(agent.delivery(), Delivery::Start);
     }

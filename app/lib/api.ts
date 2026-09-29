@@ -65,7 +65,7 @@ export const api = {
     post<Snapshot>("/api/route", { signal, action: "spawn", model }),
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
-  /// `queued` waits for the running turn instead of folding into it.
+  /// `queued` waits for the running turn instead of stopping it.
   say: (agent: string, text: string, images: File[] = [], queued = false) => {
     if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued });
     const form = new FormData();
@@ -149,7 +149,7 @@ export const api = {
   diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),
   previewDiagram: (agent: string, edits: DiagramEdit[]) =>
     post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
-  /// `queued` waits for the running turn instead of folding into it.
+  /// `queued` waits for the running turn instead of stopping it.
   sendDiagram: (agent: string, edits: DiagramEdit[], note: string, queued = false) =>
     post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, {
       edits,

@@ -17,8 +17,8 @@ use oxroute_core::config::{Choice, Config, Mode};
 use oxroute_core::hub::Routing;
 use oxroute_core::model::*;
 use oxroute_core::source::{Inbox, Posted, Source};
-use oxroute_core::{Hub, Store};
 use oxroute_core::store::ActiveTurn;
+use oxroute_core::{Hub, Store};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -29,7 +29,6 @@ struct Calls {
     started: Vec<(String, Vec<TurnInput>)>,
     /// When each turn began, so a test can tell serialized from concurrent.
     start_times: Vec<std::time::Instant>,
-    steered: Vec<(String, String)>,
     interrupted: Vec<String>,
     forked: Vec<(String, bool)>,
     injected: Vec<(String, usize)>,
@@ -48,12 +47,10 @@ struct FakeHarness {
     /// When set, the answer streams first and the closing frame repeats it,
     /// which is what Claude Code does.
     narrates: bool,
-    /// Whether this harness can fold input into a running turn. Claude Code
-    /// cannot, and that path deserves its own coverage.
-    can_steer: bool,
     /// How long a turn takes. A turn that ends instantly cannot show whether
     /// the next one waited for it.
     delay: Duration,
+    open_delay: Duration,
     /// Which backend this stands in for. It has to match what the agent's
     /// model implies, or the hub would look the harness up under the other
     /// one and find the real thing.
@@ -71,8 +68,8 @@ impl FakeHarness {
             hang,
             leave_artifacts: false,
             narrates: false,
-            can_steer: true,
             delay: Duration::ZERO,
+            open_delay: Duration::ZERO,
             backend: Backend::Codex,
             recovery: Mutex::new(None),
             native: Arc::new(Mutex::new(vec![])),
@@ -88,7 +85,6 @@ impl Harness for FakeHarness {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            steer: self.can_steer,
             fork: true,
             inject: true,
             resume: true,
@@ -100,6 +96,9 @@ impl Harness for FakeHarness {
     }
 
     async fn open(&self, spec: &SessionSpec) -> Result<String> {
+        if !self.open_delay.is_zero() {
+            tokio::time::sleep(self.open_delay).await;
+        }
         if let Some(existing) = spec.resume.as_deref().filter(|s| !s.is_empty()) {
             return Ok(existing.to_string());
         }
@@ -154,15 +153,6 @@ impl Harness for FakeHarness {
             });
         }
         Ok(turn)
-    }
-
-    async fn steer(&self, session: &str, turn: &str, _id: &str, _i: Vec<TurnInput>) -> Result<()> {
-        self.calls
-            .lock()
-            .unwrap()
-            .steered
-            .push((session.into(), turn.into()));
-        Ok(())
     }
 
     async fn interrupt(&self, session: &str, _turn: &str) -> Result<()> {
@@ -367,8 +357,8 @@ struct Harnessed {
     hang: bool,
     leave_artifacts: bool,
     narrates: bool,
-    can_steer: bool,
     delay: Duration,
+    open_delay: Duration,
     backend: Backend,
 }
 
@@ -379,15 +369,22 @@ impl Default for Harnessed {
             hang: false,
             leave_artifacts: false,
             narrates: false,
-            can_steer: true,
             delay: Duration::ZERO,
+            open_delay: Duration::ZERO,
             backend: Backend::Codex,
         }
     }
 }
 
 async fn world(mode: Mode, hang: bool) -> World {
-    build(mode, Harnessed { hang, ..Default::default() }).await
+    build(
+        mode,
+        Harnessed {
+            hang,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 async fn world_leaving_artifacts(mode: Mode) -> World {
@@ -401,13 +398,11 @@ async fn world_leaving_artifacts(mode: Mode) -> World {
     .await
 }
 
-/// A world whose harness cannot steer and whose turns take a moment, which
-/// is the shape of Claude Code and the only one where queueing is visible.
+/// A Claude Code world whose turns take long enough to observe delivery.
 async fn queueing_world() -> World {
     build(
         Mode::Auto,
         Harnessed {
-            can_steer: false,
             delay: Duration::from_millis(200),
             backend: Backend::ClaudeCode,
             ..Default::default()
@@ -476,8 +471,8 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     let harness = FakeHarness {
         leave_artifacts: options.leave_artifacts,
         narrates: options.narrates,
-        can_steer: options.can_steer,
         delay: options.delay,
+        open_delay: options.open_delay,
         backend: options.backend,
         ..FakeHarness::new(calls.clone(), options.hang)
     };
@@ -623,7 +618,12 @@ async fn an_independent_thread_gets_its_own_agent() {
 async fn ask_mode_holds_a_non_slack_signal_until_someone_says_where_it_goes() {
     let w = world(Mode::Ask, false).await;
     w.hub
-        .accept(signal_from("webhook", "100.0", "100.0", "is this worth doing"))
+        .accept(signal_from(
+            "webhook",
+            "100.0",
+            "100.0",
+            "is this worth doing",
+        ))
         .await
         .unwrap();
 
@@ -653,7 +653,12 @@ async fn ask_mode_holds_a_non_slack_signal_until_someone_says_where_it_goes() {
 async fn a_signal_can_be_discarded_without_reaching_anything() {
     let w = world(Mode::Ask, false).await;
     w.hub
-        .accept(signal_from("webhook", "100.0", "100.0", "anyone want coffee"))
+        .accept(signal_from(
+            "webhook",
+            "100.0",
+            "100.0",
+            "anyone want coffee",
+        ))
         .await
         .unwrap();
     let id = w.hub.store.inbox(10).unwrap()[0].signal.id.clone();
@@ -708,28 +713,72 @@ async fn a_waiting_signal_can_be_routed_to_an_agent_that_already_exists() {
 }
 
 #[tokio::test]
-async fn a_follow_up_steers_a_turn_that_is_still_running() {
+async fn rapid_follow_ups_stop_the_turn_and_start_together() {
     let w = world(Mode::Auto, true).await;
     w.hub.accept(signal("100.0", "100.0", "start something long")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
 
-    w.hub.accept(signal("100.0", "101.0", "actually, also do this")).await.unwrap();
-    assert!(settle(|| w.calls.lock().unwrap().steered.len() == 1).await);
-
-    // Steering folds in; it must not have started a second turn.
-    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    w.hub
+        .accept(signal("100.0", "101.0", "actually, also do this"))
+        .await
+        .unwrap();
+    w.hub
+        .accept(signal("100.0", "102.0", "and use the new URL"))
+        .await
+        .unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let calls = w.calls.lock().unwrap();
+    assert_eq!(calls.interrupted.len(), 1);
+    let texts: Vec<&str> = calls.started[1]
+        .1
+        .iter()
+        .filter_map(TurnInput::as_text)
+        .collect();
+    assert_eq!(
+        &texts[..2],
+        ["actually, also do this", "and use the new URL"]
+    );
 }
 
 #[tokio::test]
-async fn an_ampersand_queues_instead_of_steering() {
+async fn a_follow_up_sent_while_a_turn_is_opening_joins_that_turn() {
+    let w = build(Mode::Auto, Harnessed {
+        open_delay: Duration::from_millis(100),
+        ..Harnessed::default()
+    }).await;
+    w.hub.accept(signal("100.0", "100.0", "the first request")).await.unwrap();
+    w.hub.accept(signal("100.0", "101.0", "the correction")).await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    let calls = w.calls.lock().unwrap();
+    let texts: Vec<&str> = calls.started[0].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(&texts[..2], ["the first request", "the correction"]);
+}
+
+#[tokio::test]
+async fn rapid_ui_follow_ups_start_together() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "start something long")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    w.hub.say_to(&agent, "first correction").await.unwrap();
+    w.hub.say_to(&agent, "second correction").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let calls = w.calls.lock().unwrap();
+    assert_eq!(calls.interrupted.len(), 1);
+    let texts: Vec<&str> = calls.started[1].1.iter().filter_map(TurnInput::as_text).collect();
+    assert_eq!(&texts[..2], ["first correction", "second correction"]);
+}
+
+#[tokio::test]
+async fn an_ampersand_waits_without_interrupting() {
     let w = world(Mode::Auto, true).await;
     w.hub.accept(signal("100.0", "100.0", "start something long")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
 
     w.hub.accept(signal("100.0", "101.0", "& do this afterwards")).await.unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
-    // It waits behind the running turn rather than joining it.
-    assert!(w.calls.lock().unwrap().steered.is_empty());
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
 }
 
 #[tokio::test]
@@ -882,11 +931,25 @@ async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     let child = w.hub.fork(&parent.id).await.unwrap();
     w.hub
         .store
-        .add_entry(&child.id, now(), EntryKind::You, "try another design", "", "")
+        .add_entry(
+            &child.id,
+            now(),
+            EntryKind::You,
+            "try another design",
+            "",
+            "",
+        )
         .unwrap();
     w.hub
         .store
-        .add_entry(&child.id, now(), EntryKind::Said, "the alternate works", "", "")
+        .add_entry(
+            &child.id,
+            now(),
+            EntryKind::Said,
+            "the alternate works",
+            "",
+            "",
+        )
         .unwrap();
 
     let merged = w.hub.merge(&child.id).await.unwrap();
@@ -1089,7 +1152,11 @@ async fn an_agent_can_be_started_from_the_ui_with_no_source_configured() {
     w.hub
         .route(
             &waiting.signal.id,
-            Routing::Spawn { backend: None, model: None, cwd: None },
+            Routing::Spawn {
+                backend: None,
+                model: None,
+                cwd: None,
+            },
         )
         .await
         .expect("starting an agent must not need somewhere to mirror to");
@@ -1122,7 +1189,11 @@ async fn a_broken_mirror_is_visible_without_blocking_local_work() {
     w.hub
         .route(
             &waiting.signal.id,
-            Routing::Spawn { backend: None, model: None, cwd: None },
+            Routing::Spawn {
+                backend: None,
+                model: None,
+                cwd: None,
+            },
         )
         .await
         .expect("a mirror failure must not stop the work");
@@ -1436,16 +1507,20 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
         .uploads
         .iter()
         .any(|paths| paths == &["/tmp/chart.png"]));
-    assert!(w.posts
-        .lock()
-        .unwrap()
-        .replies
-        .iter()
-        .any(|(_, text)| text == "> inspect this\n> \n> Attached: chart.png\n\ndone"));
+    assert!(
+        settle(|| w
+            .posts
+            .lock()
+            .unwrap()
+            .replies
+            .iter()
+            .any(|(_, text)| text == "> inspect this\n> \n> Attached: chart.png\n\ndone"))
+        .await
+    );
 }
 
 #[tokio::test]
-async fn a_ui_question_steered_into_a_turn_stays_with_its_slack_answer() {
+async fn a_ui_question_restarted_into_a_turn_stays_with_its_slack_answer() {
     let w = build(
         Mode::Auto,
         Harnessed { delay: Duration::from_millis(200), ..Harnessed::default() },
@@ -1457,16 +1532,18 @@ async fn a_ui_question_steered_into_a_turn_stays_with_its_slack_answer() {
 
     w.hub.say_to(&agent, "clarify this part").await.unwrap();
 
-    assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
-    assert!(settle(|| {
-        w.posts
-            .lock()
-            .unwrap()
-            .replies
-            .iter()
-            .any(|(_, text)| text == "> clarify this part\n\ndone")
-    })
-    .await);
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert!(
+        settle(|| {
+            w.posts
+                .lock()
+                .unwrap()
+                .replies
+                .iter()
+                .any(|(_, text)| text == "> clarify this part\n\ndone")
+        })
+        .await
+    );
     assert!(!w
         .posts
         .lock()
@@ -1558,7 +1635,11 @@ fn the_routing_payload_the_surfaces_send_still_parses() {
     let spawn: Routing =
         serde_json::from_str(r#"{"action":"spawn","model":"astra"}"#).unwrap();
     match spawn {
-        Routing::Spawn { model, backend, cwd } => {
+        Routing::Spawn {
+            model,
+            backend,
+            cwd,
+        } => {
             assert_eq!(model.as_deref(), Some("astra"));
             // Everything but the action is optional, so the surfaces can send
             // only what the person actually chose.
@@ -1574,9 +1655,7 @@ fn the_routing_payload_the_surfaces_send_still_parses() {
 }
 
 #[tokio::test]
-async fn a_harness_that_cannot_steer_queues_behind_the_running_turn() {
-    // This is the Claude Code path. A second message must not start a second
-    // turn on the same session, and must not be dropped either: it waits.
+async fn a_claude_follow_up_interrupts_the_running_turn() {
     let w = queueing_world().await;
     w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
@@ -1585,14 +1664,12 @@ async fn a_harness_that_cannot_steer_queues_behind_the_running_turn() {
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
 
     let calls = w.calls.lock().unwrap();
-    // No steering, because the harness said it could not.
-    assert!(calls.steered.is_empty());
-    // One agent, one session, two turns in order.
+    assert_eq!(calls.interrupted.len(), 1);
     assert_eq!(calls.started[0].0, calls.started[1].0);
     let gap = calls.start_times[1].duration_since(calls.start_times[0]);
     assert!(
-        gap >= Duration::from_millis(180),
-        "the second turn started {gap:?} in, so it did not wait for the first"
+        gap < Duration::from_millis(200),
+        "the second turn started {gap:?} in, so it waited for the first"
     );
     drop(calls);
     assert_eq!(w.hub.store.agents(10).unwrap().len(), 1);
@@ -1778,8 +1855,18 @@ async fn an_agent_with_nothing_open_is_left_alone() {
 
 #[tokio::test]
 async fn a_fork_works_with_no_source_to_put_a_thread_in() {
-    let w = build(Mode::Auto, Harnessed { source: false, ..Harnessed::default() }).await;
-    w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
+    let w = build(
+        Mode::Auto,
+        Harnessed {
+            source: false,
+            ..Harnessed::default()
+        },
+    )
+    .await;
+    w.hub
+        .accept(signal("100.0", "100.0", "the original"))
+        .await
+        .unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let original = w.hub.store.agents(10).unwrap()[0].id.clone();
 
@@ -1791,7 +1878,7 @@ async fn a_fork_works_with_no_source_to_put_a_thread_in() {
 
 #[tokio::test]
 async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
-    // A harness that can steer, and a turn long enough to steer into.
+    // A turn long enough to queue behind.
     let w = build(
         Mode::Auto,
         Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
@@ -1804,8 +1891,7 @@ async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
     w.hub.say_to_with_images(&agent, "while you work", vec![], true).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
 
-    // It ran as its own turn, and nothing was folded into the first one.
-    assert!(w.calls.lock().unwrap().steered.is_empty());
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
     let started = w.calls.lock().unwrap().started.clone();
     let texts: Vec<&str> = started[1].1.iter().filter_map(TurnInput::as_text).collect();
     // The message arrives as written: queuing is said in the request, not
@@ -1814,14 +1900,10 @@ async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
 }
 
 #[tokio::test]
-async fn a_message_reaches_a_harness_that_cannot_steer_without_waiting_for_the_turn() {
-    // The whole point of not queuing is to be heard now. A harness that
-    // cannot fold a message into its running turn leaves one way to do
-    // that, and waiting for the turn to finish is not it.
+async fn a_message_reaches_a_running_harness_without_waiting_for_the_turn() {
     let w = build(
         Mode::Auto,
         Harnessed {
-            can_steer: false,
             delay: Duration::from_secs(30),
             ..Harnessed::default()
         },
@@ -1848,11 +1930,7 @@ async fn queuing_still_waits_for_the_turn_it_was_queued_behind() {
     // thing" must not end what is running.
     let w = build(
         Mode::Auto,
-        Harnessed {
-            can_steer: false,
-            delay: Duration::from_millis(300),
-            ..Harnessed::default()
-        },
+        Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
     )
     .await;
     w.hub.accept(signal("100.0", "100.0", "the first thing")).await.unwrap();
@@ -1877,11 +1955,9 @@ async fn a_task_handed_over_by_the_hub_says_so_on_the_timeline() {
 
     assert!(
         settle(|| {
-            w.hub
-                .timeline(&agent, 50)
-                .unwrap()
-                .iter()
-                .any(|entry| entry.kind == EntryKind::Notice && entry.text.contains("paint the shed"))
+            w.hub.timeline(&agent, 50).unwrap().iter().any(|entry| {
+                entry.kind == EntryKind::Notice && entry.text.contains("paint the shed")
+            })
         })
         .await,
         "the hand-over left no trace on the timeline",
@@ -1889,7 +1965,7 @@ async fn a_task_handed_over_by_the_hub_says_so_on_the_timeline() {
 }
 
 #[tokio::test]
-async fn an_ordinary_message_still_folds_into_a_running_turn() {
+async fn an_ordinary_ui_message_stops_and_restarts_a_running_turn() {
     let w = build(
         Mode::Auto,
         Harnessed { delay: Duration::from_millis(300), ..Harnessed::default() },
@@ -1900,8 +1976,8 @@ async fn an_ordinary_message_still_folds_into_a_running_turn() {
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub.say_to(&agent, "actually, like this").await.unwrap();
-    assert!(settle(|| !w.calls.lock().unwrap().steered.is_empty()).await);
-    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert_eq!(w.calls.lock().unwrap().interrupted.len(), 1);
 }
 
 #[tokio::test]
@@ -1951,7 +2027,15 @@ async fn a_task_changes_status_only_with_a_note_saying_why() {
 
     let done = w
         .hub
-        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("painted in a1b2c3d"), true)
+        .update_task(
+            &task.id,
+            &task.text,
+            TaskStatus::Complete,
+            "",
+            "",
+            Some("painted in a1b2c3d"),
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(done.status, TaskStatus::Complete);
@@ -2028,7 +2112,15 @@ async fn the_task_list_is_a_queue_that_can_be_rearranged() {
 
     // Editing a task leaves it where it is.
     w.hub
-        .update_task(&second, "second, reworded", TaskStatus::Incomplete, "", "", None, true)
+        .update_task(
+            &second,
+            "second, reworded",
+            TaskStatus::Incomplete,
+            "",
+            "",
+            None,
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(order(), vec!["third", "second, reworded", "first"]);
@@ -2053,8 +2145,18 @@ async fn two_sessions(w: &World) -> (String, String) {
 async fn tags_set_add_and_remove_and_show_in_the_snapshot() {
     let w = world(Mode::Auto, false).await;
     let (first, _) = two_sessions(&w).await;
-    w.hub.tag(&first, &words(&["Stage: Idea", "track:oss"]), &[], &[]).unwrap();
-    let now = w.hub.tag(&first, &words(&["track:business"]), &[], &words(&["stage:building"])).unwrap();
+    w.hub
+        .tag(&first, &words(&["Stage: Idea", "track:oss"]), &[], &[])
+        .unwrap();
+    let now = w
+        .hub
+        .tag(
+            &first,
+            &words(&["track:business"]),
+            &[],
+            &words(&["stage:building"]),
+        )
+        .unwrap();
     assert_eq!(now, ["stage:building", "track:business", "track:oss"]);
     assert_eq!(w.hub.snapshot(10).unwrap().tags[&first], now);
     let error = w.hub.tag(&first, &words(&["stage:"]), &[], &[]).unwrap_err().to_string();
@@ -2066,8 +2168,17 @@ async fn tags_set_add_and_remove_and_show_in_the_snapshot() {
 async fn a_board_is_its_settings_and_moving_a_card_is_setting_one_tag() {
     let w = world(Mode::Auto, false).await;
     let (first, second) = two_sessions(&w).await;
-    w.hub.tag(&first, &words(&["stage:idea", "priority:p2"]), &[], &[]).unwrap();
-    w.hub.tag(&second, &words(&["stage:building", "priority:p1"]), &[], &[]).unwrap();
+    w.hub
+        .tag(&first, &words(&["stage:idea", "priority:p2"]), &[], &[])
+        .unwrap();
+    w.hub
+        .tag(
+            &second,
+            &words(&["stage:building", "priority:p1"]),
+            &[],
+            &[],
+        )
+        .unwrap();
 
     let board = w
         .hub
@@ -2182,7 +2293,11 @@ async fn a_question_the_interface_asks_does_not_look_like_one_you_asked() {
     let before = w.hub.timeline(&agent, usize::MAX).unwrap().len();
 
     w.hub
-        .ask_quietly(&agent, "Draw the architecture, at length", "Asked for a diagram")
+        .ask_quietly(
+            &agent,
+            "Draw the architecture, at length",
+            "Asked for a diagram",
+        )
         .await
         .unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
@@ -2351,7 +2466,15 @@ async fn an_agent_says_done_and_a_person_says_complete() {
     // What an agent can do when it has finished.
     let done = w
         .hub
-        .update_task(&task.id, &task.text, TaskStatus::Done, "", "", Some("painted in a1b2c3d"), false)
+        .update_task(
+            &task.id,
+            &task.text,
+            TaskStatus::Done,
+            "",
+            "",
+            Some("painted in a1b2c3d"),
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(done.status, TaskStatus::Done);
@@ -2367,7 +2490,15 @@ async fn an_agent_says_done_and_a_person_says_complete() {
     // A person looking at it can.
     let approved = w
         .hub
-        .update_task(&task.id, &task.text, TaskStatus::Complete, "", "", Some("approved"), true)
+        .update_task(
+            &task.id,
+            &task.text,
+            TaskStatus::Complete,
+            "",
+            "",
+            Some("approved"),
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(approved.status, TaskStatus::Complete);
@@ -2440,7 +2571,15 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
     let task = w.hub.create_task("paint the shed", &agent, vec![]).await.unwrap();
     w.hub
-        .update_task(&task.id, &task.text, TaskStatus::Done, "", &agent, Some("painted it"), false)
+        .update_task(
+            &task.id,
+            &task.text,
+            TaskStatus::Done,
+            "",
+            &agent,
+            Some("painted it"),
+            false,
+        )
         .await
         .unwrap();
     let turns = w.calls.lock().unwrap().started.len();
@@ -2466,12 +2605,13 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
     // something to say is not this test's business.
     assert!(
         settle(|| {
-            w.calls.lock().unwrap().started[turns..].iter().any(|(_, inputs)| {
-                inputs
-                    .iter()
-                    .filter_map(TurnInput::as_text)
-                    .any(|text| text.contains("the trim is still bare") && text.contains("paint the shed"))
-            })
+            w.calls.lock().unwrap().started[turns..]
+                .iter()
+                .any(|(_, inputs)| {
+                    inputs.iter().filter_map(TurnInput::as_text).any(|text| {
+                        text.contains("the trim is still bare") && text.contains("paint the shed")
+                    })
+                })
         })
         .await,
         "the agent was never told what was wrong",

@@ -242,8 +242,7 @@ fn agent_row(agent: &Agent, width: usize, routing: bool, ticked: bool) -> ListIt
     header.push(Span::styled(
         agent.delivery().as_str().to_string(),
         theme::on(match agent.delivery() {
-            oxroute_core::Delivery::Steer => theme::OK,
-            oxroute_core::Delivery::Queue => theme::WARN,
+            oxroute_core::Delivery::Restart => theme::OK,
             oxroute_core::Delivery::Start => theme::DIM,
         }),
     ));

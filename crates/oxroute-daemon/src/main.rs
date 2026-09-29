@@ -475,7 +475,7 @@ async fn route(
 struct SayBody {
     agent: String,
     text: String,
-    /// Wait for the running turn rather than folding into it.
+    /// Wait for the running turn rather than stopping it.
     #[serde(default)]
     queued: bool,
 }
@@ -1082,7 +1082,7 @@ struct SendBody {
     edits: Vec<diagram::Edit>,
     #[serde(default)]
     note: String,
-    /// Wait for the running turn rather than folding into it.
+    /// Wait for the running turn rather than stopping it.
     #[serde(default)]
     queued: bool,
 }

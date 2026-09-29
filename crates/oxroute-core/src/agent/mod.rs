@@ -1,11 +1,10 @@
 //! The seam between oxroute and whatever is actually running the agents.
 //!
-//! oxroute wants five things from a harness and nothing else:
+//! oxroute wants four things from a harness and nothing else:
 //!
 //! ```text
 //! open        attach to a session, or make one
 //! start       run a turn
-//! steer       fold input into a turn already running, if it can
 //! interrupt   stop a turn without losing the session
 //! events      a stream of what it is doing
 //! ```
@@ -23,13 +22,9 @@ use serde_json::Value;
 
 use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
 
-/// What a harness can actually do. Declared, not discovered: the UI says how
-/// a send will land *before* you press it, so a busy agent that cannot be
-/// steered never silently swallows an urgent message.
+/// What a harness can actually do, declared rather than discovered.
 #[derive(Debug, Clone, Copy)]
 pub struct Capabilities {
-    /// Accept input while a turn is running.
-    pub steer: bool,
     /// Branch a session's history into a new one.
     pub fork: bool,
     /// Splice turns into a session's history without running them.
@@ -59,7 +54,7 @@ pub struct RecoveredTurn {
 /// What a harness tells us, in oxroute's vocabulary rather than its own.
 #[derive(Debug, Clone)]
 pub enum HarnessEvent {
-    /// A turn is running. `turn_id` is what `interrupt` and `steer` need.
+    /// A turn is running. `turn_id` identifies it for interruption.
     TurnStarted { session: String, turn_id: String },
     /// Raw item activity, kept untranslated because the progress view wants
     /// the harness's own detail and a lowest common denominator would throw
@@ -112,15 +107,6 @@ pub trait Harness: Send + Sync {
 
     /// Run a turn. Returns the turn id.
     async fn start(&self, session: &str, inputs: Vec<TurnInput>) -> Result<String>;
-
-    /// Fold input into a turn that is already running.
-    async fn steer(
-        &self,
-        session: &str,
-        turn_id: &str,
-        message_id: &str,
-        inputs: Vec<TurnInput>,
-    ) -> Result<()>;
 
     async fn interrupt(&self, session: &str, turn_id: &str) -> Result<()>;
 
