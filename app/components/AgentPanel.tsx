@@ -180,7 +180,7 @@ export function AgentPanel({
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const renameCancelled = useRef(false);
-  const items = compactTimeline(view.timeline);
+  const items = useMemo(() => compactTimeline(view.timeline), [view.timeline]);
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
 

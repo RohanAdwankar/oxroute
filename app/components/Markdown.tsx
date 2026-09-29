@@ -1,10 +1,15 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 
-export function Markdown({ children }: { children: string }) {
+/// Memoised on the text: a refetch replaces every entry object, so the
+/// messages re-render even though not a character of them changed, and
+/// re-parsing a transcript through remark and a highlighter is the most
+/// expensive thing this app does.
+export const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
@@ -33,4 +38,4 @@ export function Markdown({ children }: { children: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
