@@ -1889,6 +1889,44 @@ async fn a_task_handed_over_by_the_hub_says_so_on_the_timeline() {
 }
 
 #[tokio::test]
+async fn a_session_can_be_moved_onto_another_model_its_harness_runs() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+    let backend = agent.backend;
+
+    // Whatever else this config offers for the same harness.
+    let other = w
+        .hub
+        .config
+        .models
+        .values()
+        .find(|choice| choice.backend == backend && choice.id != agent.model)
+        .cloned();
+    let Some(other) = other else { return };
+
+    let set = w.hub.set_model(&agent.id, &other.id).unwrap();
+    assert_eq!(set, other.id);
+    assert_eq!(w.hub.store.agent(&agent.id).unwrap().unwrap().model, other.id);
+
+    // A model belongs to one harness, so the offer is refused rather than
+    // leaving a live session pointing at a harness that never opened it.
+    let foreign = w
+        .hub
+        .config
+        .models
+        .values()
+        .find(|choice| choice.backend != backend)
+        .cloned();
+    if let Some(foreign) = foreign {
+        assert!(w.hub.set_model(&agent.id, &foreign.id).is_err());
+        assert_eq!(w.hub.store.agent(&agent.id).unwrap().unwrap().model, other.id);
+    }
+    assert!(w.hub.set_model(&agent.id, "no-such-model").is_err());
+}
+
+#[tokio::test]
 async fn an_ordinary_message_still_folds_into_a_running_turn() {
     let w = build(
         Mode::Auto,

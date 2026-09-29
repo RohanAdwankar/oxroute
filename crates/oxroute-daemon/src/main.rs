@@ -236,6 +236,7 @@ async fn serve() -> Result<()> {
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         .route("/api/agents/{id}/tags", get(tags).post(change_tags))
+        .route("/api/agents/{id}/model", post(change_model))
         .route("/api/boards", get(boards).post(create_board))
         .route(
             "/api/boards/{id}",
@@ -899,6 +900,21 @@ async fn change_tags(
     Json(body): Json<TagsBody>,
 ) -> Result<Json<Vec<String>>, Failed> {
     Ok(Json(hub.tag(&id, &body.add, &body.remove, &body.set)?))
+}
+
+#[derive(Deserialize)]
+struct ModelBody {
+    /// An alias or a model id; both resolve the same way.
+    model: String,
+}
+
+async fn change_model(
+    State(hub): Hubs,
+    Path(id): Path<String>,
+    Json(body): Json<ModelBody>,
+) -> Result<Json<serde_json::Value>, Failed> {
+    let model = hub.set_model(&id, &body.model)?;
+    Ok(Json(json!({ "model": model })))
 }
 
 async fn boards(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::tags::Board>>, Failed> {

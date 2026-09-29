@@ -1223,6 +1223,31 @@ impl Hub {
         Ok(())
     }
 
+    /// Move a session onto another model.
+    ///
+    /// The model decides the harness, so only a model this agent's harness
+    /// runs will do: swapping backends underneath a live session would
+    /// leave it pointing at a session id the new harness has never heard of.
+    pub fn set_model(self: &Arc<Self>, agent_id: &str, model: &str) -> Result<String> {
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        let choice = self
+            .config
+            .resolve_model(model)
+            .with_context(|| format!("no model called {model}"))?;
+        anyhow::ensure!(
+            choice.backend == agent.backend,
+            "{} runs on {}, and this session is a {} one",
+            choice.label,
+            choice.backend,
+            agent.backend,
+        );
+        let id = choice.id.clone();
+        self.store.set_agent_model(agent_id, &id)?;
+        self.record(agent_id, EntryKind::Notice, &format!("Now on {}", choice.label), "", "");
+        self.emit(Event::Sync);
+        Ok(id)
+    }
+
     pub fn pin(&self, agent_id: &str, pinned: bool) -> Result<()> {
         self.store.set_agent_pinned(agent_id, pinned)?;
         self.emit(Event::Sync);
