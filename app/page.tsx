@@ -99,7 +99,7 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
-  const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem>>({});
+  const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem & { existing: Set<string> }>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -459,10 +459,11 @@ export default function Home() {
   const file = async (text: string, images: File[], agentId = "") => {
     const id = crypto.randomUUID();
     const at = Date.now() / 1000;
-    const pending: TaskItem = {
+    const pending = {
       id, text, agentId, status: "incomplete", blockedByTaskId: "",
       images: [], createdAt: at, updatedAt: at,
-    };
+      existing: new Set(snapshot.tasks.map((task) => task.id)),
+    } satisfies TaskItem & { existing: Set<string> };
     setCreatingTasks((current) => ({ ...current, [id]: pending }));
     showTasks(true);
     setShownTask(id);
@@ -580,7 +581,13 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...Object.values(creatingTasks)];
+  const pendingTasks = Object.values(creatingTasks);
+  for (const task of snapshot.tasks) {
+    const at = pendingTasks.findIndex((pending) => !pending.existing.has(task.id) &&
+      pending.text === task.text && pending.agentId === task.agentId);
+    if (at >= 0) pendingTasks.splice(at, 1);
+  }
+  const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...pendingTasks];
   const tasks = taskRows(taskItems, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
