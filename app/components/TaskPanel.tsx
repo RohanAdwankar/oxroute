@@ -294,8 +294,14 @@ export function TaskPanel({
           disabled={busy(task.id)}
           aria-label={`status for ${task.text}`}
           onChange={(event) => {
+            const status = event.target.value as TaskStatus;
+            if (status === "complete") {
+              setPending(null);
+              onUpdate({ ...task, status, blockedByTaskId: "" }, "approved", true);
+              return;
+            }
             setWhy("");
-            setPending({ task, status: event.target.value as TaskStatus });
+            setPending({ task, status });
           }}
           className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
         >
