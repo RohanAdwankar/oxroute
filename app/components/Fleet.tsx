@@ -254,7 +254,7 @@ function Card({
   return (
     <article
       className={[
-        "group relative flex h-[212px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
+        "group relative flex h-[184px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
@@ -263,7 +263,7 @@ function Card({
       ].join(" ")}
     >
       {hint && <Hint at={hint} />}
-      <div className="flex items-center gap-[10px]">
+      <div className="flex min-w-0 items-center gap-[8px]">
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete}`}
         />
@@ -271,11 +271,18 @@ function Card({
           type="button"
           onClick={onOpen}
           title={`Open ${agent.name}`}
-          className="min-w-0 cursor-pointer truncate text-left text-[14.5px] font-semibold leading-tight hover:underline"
+          className="min-w-[60px] flex-1 cursor-pointer truncate text-left text-[14.5px] font-semibold leading-tight hover:underline"
         >
           {agent.name}
         </button>
-        <span className="flex-1" />
+        <span className="shrink-0 whitespace-nowrap text-[11.5px] text-faint" title={agent.backend}>
+          {agent.status} {since(agent.updatedAt)}
+        </span>
+        {tags.length > 0 && (
+          <div className="flex max-w-[80px] min-w-0 gap-[4px] overflow-hidden" title={tags.join(", ")}>
+            {tags.map((tag) => <TagChip key={tag} tag={tag} quiet />)}
+          </div>
+        )}
         {!routing && (
           <button
             type="button"
@@ -317,19 +324,7 @@ function Card({
         )}
       </div>
 
-      <div className="mt-[6px] ml-[18px] text-[12px] text-faint">
-        {agent.status} {since(agent.updatedAt)} · {agent.backend}
-      </div>
-
-      {tags.length > 0 && (
-        <div className="mt-[8px] ml-[18px] flex max-h-[22px] flex-wrap gap-[4px] overflow-hidden">
-          {tags.map((tag) => (
-            <TagChip key={tag} tag={tag} quiet />
-          ))}
-        </div>
-      )}
-
-      <div className={`mt-[12px] overflow-hidden text-[13px] leading-[1.55] text-mid ${tags.length > 0 ? "max-h-[60.5px]" : "max-h-[80.6px]"}`}>
+      <div className="mt-[12px] max-h-[60.5px] overflow-hidden text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
 
