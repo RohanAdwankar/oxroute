@@ -1012,8 +1012,7 @@ const Message = memo(function Message({
       );
 });
 
-/// What an agent handed back, shown the way it was made: a picture as a
-/// picture, a recording as something you can press play on.
+/// Preview media inline; offer other artifacts as downloads.
 function Attached({ name }: { name: string }) {
   const [missing, setMissing] = useState(false);
   const url = `/api/attachments/${encodeURIComponent(name)}`;
@@ -1029,6 +1028,15 @@ function Attached({ name }: { name: string }) {
         onError={() => setMissing(true)}
         className={shape}
       />
+    );
+  }
+  if (!/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
+    const label = name.startsWith("art_") ? name.slice(name.indexOf("-") + 1) : name;
+    return (
+      <a href={url} download={label} title="Download file" className="flex items-center gap-2 text-[13px] text-ink underline underline-offset-2">
+        <Icon name="attach" />
+        {label}
+      </a>
     );
   }
   return (

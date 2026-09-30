@@ -817,21 +817,21 @@ mod tests {
     }
 }
 
-/// What a browser can show inline, and the type to serve it as.
-///
-/// An agent that made a picture or a recording should have it appear where
-/// it was made, so this is the one list of what counts -- the hub keeps
-/// these, and the daemon serves them.
-pub fn viewable(name: &str) -> Option<&'static str> {
-    match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "svg" => Some("image/svg+xml"),
-        "mp4" | "m4v" => Some("video/mp4"),
-        "webm" => Some("video/webm"),
-        "mov" => Some("video/quicktime"),
-        _ => None,
+/// Media can be previewed; other artifacts are downloads.
+pub fn attachment_mime(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "pdf" => "application/pdf",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _ => "application/octet-stream",
     }
 }

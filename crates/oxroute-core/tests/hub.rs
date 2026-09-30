@@ -122,6 +122,9 @@ impl Harness for FakeHarness {
             if let Some(directory) = artifact_directory(&self.calls.lock().unwrap().started) {
                 std::fs::create_dir_all(&directory).unwrap();
                 std::fs::write(format!("{directory}/chart.png"), b"not really a png").unwrap();
+                for name in ["report.xlsx", "slides.pptx", "notes.txt", "payload.dat"] {
+                    std::fs::write(format!("{directory}/{name}"), name.as_bytes()).unwrap();
+                }
             }
         }
         if !self.hang {
@@ -2740,7 +2743,7 @@ async fn an_answer_is_written_down_once_even_with_an_attachment_after_it() {
 }
 
 #[tokio::test]
-async fn a_picture_an_agent_made_reaches_a_surface_with_no_source() {
+async fn every_artifact_reaches_a_surface_with_no_source() {
     // No Slack, no thread: the web UI is the only place it could show up.
     let w = build(
         Mode::Auto,
@@ -2758,8 +2761,9 @@ async fn a_picture_an_agent_made_reaches_a_surface_with_no_source() {
         .into_iter()
         .find(|entry| entry.text.starts_with("Attached: "))
         .expect("the picture was never mentioned in the timeline");
-    let name = attached.text.trim_start_matches("Attached: ").to_string();
-
-    // And the file is where the attachments route serves from.
-    assert!(w.hub.config.attachments.join(&name).exists(), "{name} was not kept");
+    let names: Vec<_> = attached.text.trim_start_matches("Attached: ").split(", ").collect();
+    for expected in ["chart.png", "report.xlsx", "slides.pptx", "notes.txt", "payload.dat"] {
+        let name = names.iter().find(|name| name.ends_with(expected)).expect("artifact missing");
+        assert!(w.hub.config.attachments.join(name).exists(), "{name} was not kept");
+    }
 }

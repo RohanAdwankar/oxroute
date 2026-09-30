@@ -1184,10 +1184,13 @@ async fn attachment(
     let Ok(bytes) = tokio::fs::read(hub.config.attachments.join(&name)).await else {
         return Ok((StatusCode::NOT_FOUND, "no such attachment").into_response());
     };
-    let whole = Response::builder()
+    let mut whole = Response::builder()
         .header(header::CONTENT_TYPE, kind)
         .header(header::CACHE_CONTROL, "private, max-age=86400")
         .header(header::ACCEPT_RANGES, "bytes");
+    if !kind.starts_with("image/") && !kind.starts_with("video/") {
+        whole = whole.header(header::CONTENT_DISPOSITION, "attachment");
+    }
 
     // A video is watched by asking for parts of it. Without this a player
     // can show the first frame and nothing else.
@@ -1223,7 +1226,7 @@ fn wanted(range: &str, size: usize) -> Option<(usize, usize)> {
 ///
 /// Only a bare file name: anything with a separator or a leading dot is
 /// refused before the disk is touched, so no name reaches outside the
-/// attachments directory. What is worth serving is the core's list.
+/// attachments directory. Unknown file types are served as binary downloads.
 fn attachment_type(name: &str) -> Option<&'static str> {
     let plain = !name.is_empty()
         && !name.starts_with('.')
@@ -1232,7 +1235,7 @@ fn attachment_type(name: &str) -> Option<&'static str> {
     if !plain {
         return None;
     }
-    oxroute_core::model::viewable(name)
+    Some(oxroute_core::model::attachment_mime(name))
 }
 
 #[cfg(test)]
@@ -1255,12 +1258,14 @@ mod tests {
     }
 
     #[test]
-    fn only_a_bare_name_of_something_showable_is_served_from_attachments() {
+    fn only_bare_attachment_names_are_served() {
         assert_eq!(attachment_type("web-msg_1-sketch.png"), Some("image/png"));
         assert_eq!(attachment_type("photo.JPG"), Some("image/jpeg"));
         assert_eq!(attachment_type("art_1-demo.mp4"), Some("video/mp4"));
         assert_eq!(attachment_type("art_1-demo.webm"), Some("video/webm"));
-        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.mp4", "notes.txt", ""] {
+        assert_eq!(attachment_type("notes.txt"), Some("application/octet-stream"));
+        assert_eq!(attachment_type("report.xlsx"), Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.mp4", ""] {
             assert_eq!(attachment_type(refused), None, "{refused} was served");
         }
     }

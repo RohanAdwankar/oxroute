@@ -2151,15 +2151,11 @@ impl Hub {
             return;
         }
 
-        // What can be looked at goes where the web can ask for it, under a
-        // name of ours.
+        // Every artifact goes where the web can download it, under a name
+        // of ours. Inline previews are a surface concern.
         let mut shown = Vec::new();
         for path in &paths {
             let file = std::path::Path::new(path);
-            let name_of = file.file_name().map(|name| name.to_string_lossy().to_string());
-            if name_of.as_deref().and_then(crate::model::viewable).is_none() {
-                continue;
-            }
             let name = format!(
                 "{}-{}",
                 new_id("art"),
