@@ -205,12 +205,11 @@ export function BoardView({
         <KeyPicker label="Columns" value={settings.columns} keys={keys} onChange={(columns) => save({ columns })} />
         <KeyPicker label="Rows" value={settings.rows} keys={keys} onChange={(rows) => save({ rows })} />
         <KeyPicker label="Sort" value={settings.sort} keys={keys} none="recent" onChange={(sort) => save({ sort })} />
-        <KeyPicker
-          label="Filter"
-          value=""
+        <FilterPicker
           keys={keys.filter((key) => !settings.filters.includes(key))}
-          none="+ key"
-          onChange={(key) => key && save({ filters: [...settings.filters, key] })}
+          tags={arranged.plain.filter((tag) => !settings.selected.includes(tag))}
+          onKey={(key) => save({ filters: [...settings.filters, key] })}
+          onTag={(tag) => toggle(tag)}
         />
         <button
           type="button"
@@ -230,7 +229,7 @@ export function BoardView({
         </button>
       </div>
 
-      {settings.filters.length > 0 && (
+      {(settings.filters.length > 0 || settings.selected.some((tag) => !tag.includes(":"))) && (
         <div className="flex shrink-0 flex-col gap-[6px] border-b border-hair px-7 py-2">
           {settings.filters.map((key) => (
             <div key={key} className="flex flex-wrap items-center gap-[5px]" role="group" aria-label={`filter by ${key}`}>
@@ -269,6 +268,22 @@ export function BoardView({
               </button>
             </div>
           ))}
+          {settings.selected.some((tag) => !tag.includes(":")) && (
+            <div className="flex flex-wrap items-center gap-[5px]" role="group" aria-label="filter by tag">
+              <span className="w-[70px] shrink-0 text-[11.5px] text-faint">Tags</span>
+              {settings.selected.filter((tag) => !tag.includes(":")).map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggle(tag)}
+                  aria-label={`remove ${tag} filter`}
+                  className="cursor-pointer rounded-[3px] border border-edge bg-wash px-[7px] py-[1px] text-[11.5px] text-ink"
+                >
+                  {tag} ×
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -382,6 +397,46 @@ function KeyPicker({
             {key}
           </option>
         ))}
+      </select>
+    </label>
+  );
+}
+
+function FilterPicker({
+  keys,
+  tags,
+  onKey,
+  onTag,
+}: {
+  keys: string[];
+  tags: string[];
+  onKey: (key: string) => void;
+  onTag: (tag: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-[6px] text-[12px] text-faint">
+      Filter
+      <select
+        value=""
+        onChange={(event) => {
+          const [kind, value] = event.target.value.split(":", 2);
+          if (kind === "key") onKey(value);
+          if (kind === "tag") onTag(value);
+        }}
+        aria-label="filter"
+        className="cursor-pointer rounded-[3px] border border-rule bg-card px-[6px] py-[3px] text-[12px] text-ink outline-none"
+      >
+        <option value="">+ tag</option>
+        {keys.length > 0 && (
+          <optgroup label="Keyed tags">
+            {keys.map((key) => <option key={key} value={`key:${key}`}>{key}</option>)}
+          </optgroup>
+        )}
+        {tags.length > 0 && (
+          <optgroup label="Bare tags">
+            {tags.map((tag) => <option key={tag} value={`tag:${tag}`}>{tag}</option>)}
+          </optgroup>
+        )}
       </select>
     </label>
   );
