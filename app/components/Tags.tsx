@@ -67,7 +67,7 @@ export function TagEditor({
     setDraft("");
   };
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-[5px]">
+    <div className="flex w-full min-w-0 flex-nowrap items-center gap-[5px] overflow-hidden">
       {tags.map((tag) => (
         <TagChip key={tag} tag={tag} onRemove={busy ? undefined : () => onRemove(tag)} />
       ))}
@@ -89,7 +89,7 @@ export function TagEditor({
         disabled={busy}
         placeholder="+ tag"
         aria-label="add a tag"
-        className="w-[110px] border-b border-transparent bg-transparent px-1 text-[11.5px] outline-none placeholder:text-faint focus:border-edge"
+        className="min-w-0 w-[110px] flex-1 border-b border-transparent bg-transparent px-1 text-[11.5px] outline-none placeholder:text-faint focus:border-edge"
       />
       <datalist id={list}>
         {known
