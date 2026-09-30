@@ -56,9 +56,24 @@ function splitAttached(text: string): { body: string; names: string[] } {
     names: match[1].split(", ").map((name) => name.trim()).filter(Boolean),
   };
 }
-/// One right-click, two offers: quote what you selected, and react to the
-/// line you landed on. Either half can be absent.
+/// Quote the selection or the clicked message, and react to that message.
 type LineMenu = { text: string; entry: number | null; reaction: string; x: number; y: number };
+
+function selectedText(node: HTMLElement | null): string {
+  const selection = window.getSelection();
+  if (!node || !selection?.rangeCount || selection.isCollapsed) return "";
+  const range = selection.getRangeAt(0).cloneRange();
+  if (!range.intersectsNode(node)) return "";
+  const bounds = document.createRange();
+  bounds.selectNodeContents(node);
+  if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) {
+    range.setStart(bounds.startContainer, bounds.startOffset);
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) {
+    range.setEnd(bounds.endContainer, bounds.endOffset);
+  }
+  return range.toString().trim();
+}
 
 const REACTIONS: { key: string; icon: IconName; label: string }[] = [
   { key: "up", icon: "thumbUp", label: "Thumbs up" },
@@ -168,6 +183,7 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
+  const menu = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>("type");
   const [edits, setEdits] = useState<DiagramEdit[]>([]);
   const [sketchReady, setSketchReady] = useState(false);
@@ -203,6 +219,13 @@ export function AgentPanel({
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
 
+  const pin = useCallback(() => {
+    const node = timeline.current;
+    if (node && following.current && !menu.current && !selectedText(node)) {
+      node.scrollTo({ top: node.scrollHeight });
+    }
+  }, []);
+
   // Follow streamed updates while the reader is at the tail. Scrolling up
   // opts out until they return to the bottom; switching agents starts fresh.
   useEffect(() => {
@@ -214,28 +237,18 @@ export function AgentPanel({
       ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${focusEntry}"]`)
       : null;
     if (target) target.scrollIntoView({ block: "center" });
-    else if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
-  }, [tailRevision, agent.id, focusEntry]);
-
-  /// Hold the reader at the tail. The composer grows as you type, which
-  /// takes its height from the transcript, so what you were reading slides
-  /// under the box unless the scroll follows it down.
-  const pin = useCallback(() => {
-    const node = timeline.current;
-    if (node && following.current) node.scrollTo({ top: node.scrollHeight });
-  }, []);
+    else pin();
+  }, [tailRevision, agent.id, focusEntry, pin]);
 
   // A picture or a drawn diagram arrives after the scroll that revealed it,
   // and grows the timeline under the reader. Keep following the tail.
   useEffect(() => {
     const body = timelineBody.current;
     if (!body) return;
-    const observer = new ResizeObserver(() => {
-      if (following.current) timeline.current?.scrollTo({ top: timeline.current.scrollHeight });
-    });
+    const observer = new ResizeObserver(pin);
     observer.observe(body);
     return () => observer.disconnect();
-  }, [agent.id]);
+  }, [agent.id, pin]);
 
   useEffect(() => {
     const input = composer.current;
@@ -561,17 +574,11 @@ export function AgentPanel({
         ref={timeline}
         hidden={mode !== "type"}
         onContextMenu={(event) => {
-          const selection = window.getSelection();
-          const selectedNode = selection?.rangeCount
-            ? selection.getRangeAt(0).commonAncestorContainer
-            : null;
-          const text =
-            selectedNode && timeline.current?.contains(selectedNode)
-              ? (selection?.toString().trim() ?? "")
-              : "";
           const row = (event.target as HTMLElement).closest("[data-entry]");
           const id = row ? Number(row.getAttribute("data-entry")) : null;
           const entry = id !== null && Number.isFinite(id) ? id : null;
+          const line = view.timeline.find((line) => line.id === entry);
+          const text = selectedText(timeline.current) || line?.text.trim() || "";
           // Nothing selected and nothing under the cursor means the browser's
           // own menu is the more useful one.
           if (!text && entry === null) return;
@@ -579,16 +586,17 @@ export function AgentPanel({
           setQuoteMenu({
             text,
             entry,
-            reaction: view.timeline.find((line) => line.id === entry)?.reaction ?? "",
-            x: event.clientX,
-            y: event.clientY,
+            reaction: line?.reaction ?? "",
+            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 110) - 8)),
+            y: Math.max(8, Math.min(event.clientY, window.innerHeight - 46)),
           });
         }}
         onScroll={(event) => {
           const node = event.currentTarget;
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-          setQuoteMenu(null);
         }}
+        onWheel={() => setQuoteMenu(null)}
+        onTouchMove={() => setQuoteMenu(null)}
         data-transcript
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-[var(--pane-x)] py-2"
       >
@@ -653,7 +661,14 @@ export function AgentPanel({
         <div
           autoFocus
           tabIndex={-1}
-          ref={(node) => node?.focus()}
+          ref={(node) => {
+            menu.current = node;
+            node?.focus({ preventScroll: true });
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Escape") setQuoteMenu(null);
+          }}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
               setQuoteMenu(null);
