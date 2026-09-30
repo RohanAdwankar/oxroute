@@ -1551,6 +1551,7 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
         .1
         .iter()
         .any(|input| matches!(input, TurnInput::LocalImage { path } if path == "/tmp/chart.png")));
+    assert!(calls.started[1].1.iter().filter_map(TurnInput::as_text).any(|text| text.contains("/tmp/chart.png")));
     drop(calls);
     assert!(w.posts
         .lock()
@@ -1568,6 +1569,21 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
             .any(|(_, text)| text == "> inspect this\n> \n> Attached: chart.png\n\ndone"))
         .await
     );
+}
+
+#[tokio::test]
+async fn image_only_messages_keep_references_in_text_history() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "inspect the workspace")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let path = w.hub.config.attachments.join("diagram.png").to_string_lossy().to_string();
+    w.hub.say_to_with_images(&agent, "", vec![path.clone()], false).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let calls = w.calls.lock().unwrap();
+    let inputs = &calls.started[1].1;
+    assert!(inputs.iter().any(|input| matches!(input, TurnInput::LocalImage { path: given } if given == &path)));
+    assert!(inputs.iter().filter_map(TurnInput::as_text).any(|text| text.contains(&path)));
 }
 
 #[tokio::test]

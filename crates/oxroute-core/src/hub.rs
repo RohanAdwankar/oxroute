@@ -1761,6 +1761,21 @@ impl Hub {
             }
             inputs.splice(prompt_at..prompt_at, pending.into_iter().flat_map(|item| item.inputs));
         }
+        // Image content can be dropped from compacted native history. Keep
+        // file references as text too, including images in a follow-up batch.
+        let images = inputs.iter().filter_map(|input| match input {
+            TurnInput::LocalImage { path } => Some(path.as_str()),
+            _ => None,
+        }).collect::<Vec<_>>().join("\n");
+        if !images.is_empty() {
+            inputs.push(TurnInput::text(format!("Attached image files:\n{images}")));
+        }
+        inputs.push(TurnInput::text(format!(
+            "Earlier attachments remain in {}. To retrieve attachment references \
+             from previous messages, read GET http://{}/api/agents/{} and its timeline, \
+             then inspect the referenced files before reporting them unavailable.",
+            self.config.attachments.display(), self.config.listen, agent.id,
+        )));
         let turn = Arc::new(Live::new(
             session.clone(),
             artifact_dir.clone(),
