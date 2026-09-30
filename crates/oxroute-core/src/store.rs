@@ -170,6 +170,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !columns.iter().any(|column| column == "output") {
         conn.execute("ALTER TABLE entries ADD COLUMN output TEXT NOT NULL DEFAULT ''", [])?;
     }
+    if !columns.iter().any(|column| column == "slack_url") {
+        conn.execute("ALTER TABLE entries ADD COLUMN slack_url TEXT NOT NULL DEFAULT ''", [])?;
+    }
     if !columns.iter().any(|column| column == "item_id") {
         conn.execute("ALTER TABLE entries ADD COLUMN item_id TEXT NOT NULL DEFAULT ''", [])?;
     }
@@ -995,6 +998,7 @@ impl Store {
                 detail: detail.to_string(),
                 output: output.to_string(),
                 origin: origin.to_string(),
+                slack_url: String::new(),
                 reaction: String::new(),
             })
         })
@@ -1020,7 +1024,7 @@ impl Store {
             c.execute("UPDATE entries SET output = ?2 WHERE id = ?1", params![id, output])?;
             Ok(c
                 .query_row(
-                    "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction
+                    "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url
                      FROM entries WHERE id = ?1",
                     params![id],
                     read_entry,
@@ -1032,8 +1036,8 @@ impl Store {
     pub fn copy_timeline(&self, from: &str, to: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent)
-                 SELECT ?2, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent
+                "INSERT INTO entries (agent_id, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent, slack_url)
+                 SELECT ?2, at, kind, text, detail, output, item_id, origin, reaction, reaction_sent, slack_url
                  FROM entries WHERE agent_id = ?1 ORDER BY id",
                 params![from, to],
             )?;
@@ -1045,7 +1049,7 @@ impl Store {
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction FROM entries
+                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url FROM entries
                  WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
@@ -1054,6 +1058,23 @@ impl Store {
             }
             out.reverse();
             Ok(out)
+        })
+    }
+
+    pub fn set_entry_slack_url(&self, id: i64, url: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("UPDATE entries SET slack_url = ?2 WHERE id = ?1", params![id, url])?;
+            Ok(())
+        })
+    }
+
+    pub fn message_entry(&self, agent_id: &str, kind: EntryKind, text: &str) -> Result<Option<Entry>> {
+        self.with(|c| {
+            Ok(c.query_row(
+                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url
+                 FROM entries WHERE agent_id = ?1 AND kind = ?2 AND text = ?3 ORDER BY id DESC LIMIT 1",
+                params![agent_id, kind.as_str(), text], read_entry,
+            ).optional()?)
         })
     }
 
@@ -1423,6 +1444,7 @@ fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
         output: row.get(6)?,
         origin: row.get(7)?,
         reaction: row.get(8)?,
+        slack_url: row.get(9)?,
     })
 }
 
@@ -1734,6 +1756,21 @@ mod tests {
         // Taking it back entirely leaves nothing to announce.
         store.set_entry_reaction(line.id, "").unwrap();
         assert!(store.pending_reactions("a").unwrap().is_empty());
+    }
+
+    #[test]
+    fn message_links_belong_to_one_entry_and_survive_forks() {
+        let store = Store::in_memory().unwrap();
+        for id in ["parent", "child"] { store.save_agent(&agent(id)).unwrap(); }
+        let linked = store.add_entry("parent", 1.0, EntryKind::Received, "a message", "", "").unwrap();
+        store.add_entry("parent", 2.0, EntryKind::Said, "another message", "", "").unwrap();
+        let url = "https://workspace.slack.com/archives/C123/p1234567890123456";
+        store.set_entry_slack_url(linked.id, url).unwrap();
+        assert_eq!(store.message_entry("parent", EntryKind::Received, "a message").unwrap().unwrap().slack_url, url);
+        store.copy_timeline("parent", "child").unwrap();
+        let copied = store.timeline("child", 10).unwrap();
+        assert_eq!(copied[0].slack_url, url);
+        assert!(copied[1].slack_url.is_empty());
     }
 
     #[test]

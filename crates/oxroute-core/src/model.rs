@@ -523,6 +523,9 @@ pub struct Entry {
     /// Where it came from: `slack #infra @dana`.
     #[serde(default)]
     pub origin: String,
+    /// The corresponding Slack message, if one was recorded.
+    #[serde(default)]
+    pub slack_url: String,
     /// What you thought of it: `up`, `down`, or empty. One per
     /// line, because a second opinion replaces the first rather than
     /// piling up beside it.

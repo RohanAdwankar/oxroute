@@ -722,6 +722,27 @@ impl Hub {
         }
     }
 
+    fn link_entry(&self, mut entry: Entry, url: &str) {
+        if url.is_empty() { return; }
+        if self.store.set_entry_slack_url(entry.id, url).is_ok() {
+            entry.slack_url = url.into();
+            self.emit(Event::Timeline { entry: Box::new(entry) });
+        }
+    }
+
+    async fn record_signal(&self, agent_id: &str, signal: &Signal) {
+        let entry = self.record(agent_id, EntryKind::Received, &signal.text, "", &origin_of(signal));
+        if signal.source != crate::source::slack::SOURCE { return; }
+        if let (Some(entry), Some(source)) = (entry, self.source(&signal.source)) {
+            if let Ok(url) = source.permalink(&signal.conversation, &signal.external_id).await {
+                if !url.is_empty() {
+                    let _ = self.store.set_agent_permalink(agent_id, &url);
+                    self.link_entry(entry, &url);
+                }
+            }
+        }
+    }
+
     fn record_work(&self, agent_id: &str, summary: crate::progress::Summary) -> Option<Entry> {
         match self.store.add_work_entry(
             agent_id,
@@ -807,15 +828,6 @@ impl Hub {
             return self.route_new(signal, parsed).await;
         };
 
-        // Keep the deep link pointing at the newest message in the thread.
-        if let Some(source) = self.source(&signal.source) {
-            if let Ok(link) = source.permalink(&signal.conversation, &signal.external_id).await {
-                if !link.is_empty() {
-                    let _ = self.store.set_agent_permalink(&agent.id, &link);
-                }
-            }
-        }
-
         let inputs = self.inputs_for(&signal).await?;
         if inputs.is_empty() {
             return Ok(());
@@ -834,13 +846,7 @@ impl Hub {
         if parsed.queued {
             self.clone().deliver(agent, inputs, Some(signal)).await;
         } else {
-            self.record(
-                &agent.id,
-                EntryKind::Received,
-                &signal.text,
-                "",
-                &origin_of(&signal),
-            );
+            self.record_signal(&agent.id, &signal).await;
             self.chains.lock().await.remove(&agent.id);
             self.preempt_to(agent, inputs, Some(signal.target()), None)
                 .await;
@@ -1000,7 +1006,7 @@ impl Hub {
                 .cloned()
                 .map(|path| TurnInput::LocalImage { path }),
         );
-        self.record(&agent.id, EntryKind::You, &shown, "", "");
+        let spoken_entry = self.record(&agent.id, EntryKind::You, &shown, "", "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
             None if self.store.pane_links()?.contains_key(&agent.id) => (None, false),
@@ -1025,6 +1031,11 @@ impl Hub {
                     )?;
                     if !permalink.is_empty() {
                         self.store.set_agent_permalink(&agent.id, &permalink)?;
+                        if target.source == crate::source::slack::SOURCE {
+                            if let Some(entry) = spoken_entry {
+                                self.link_entry(entry, &permalink);
+                            }
+                        }
                     }
                     (Some(target), true)
                 }
@@ -1736,13 +1747,7 @@ impl Hub {
             self.chains.lock().await.remove(&agent.id);
         }
         if let Some(signal) = &signal {
-            self.record(
-                &agent.id,
-                EntryKind::Received,
-                &signal.text,
-                "",
-                &origin_of(signal),
-            );
+            self.record_signal(&agent.id, signal).await;
         }
 
         // The pending-message lock bridges the gap before this turn is live.
@@ -1876,8 +1881,17 @@ impl Hub {
                 answer.clone()
             };
             let permalink = self.say(target, &reply).await;
-            if !permalink.is_empty() {
+            if !permalink.is_empty() && target.source == crate::source::slack::SOURCE {
                 let _ = self.store.set_agent_permalink(&agent.id, &permalink);
+                if let Some(entry) = self.store.message_entry(&agent.id, EntryKind::Said, &answer)? {
+                    self.link_entry(entry, &permalink);
+                }
+                let context = turn.reply_context.lock().unwrap().clone();
+                for context in context {
+                    if let Some(entry) = self.store.message_entry(&agent.id, EntryKind::You, &context)? {
+                        self.link_entry(entry, &permalink);
+                    }
+                }
             }
         }
         self.emit(Event::TurnFinished {

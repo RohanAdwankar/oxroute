@@ -57,7 +57,7 @@ function splitAttached(text: string): { body: string; names: string[] } {
   };
 }
 /// Quote the selection or the clicked message, and react to that message.
-type LineMenu = { text: string; entry: number | null; reaction: string; x: number; y: number };
+type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number };
 
 function selectedText(node: HTMLElement | null): string {
   const selection = window.getSelection();
@@ -629,7 +629,8 @@ export function AgentPanel({
             text,
             entry,
             reaction: line?.reaction ?? "",
-            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 110) - 8)),
+            slackUrl: line?.slackUrl ?? "",
+            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 146) - 8)),
             y: Math.max(8, Math.min(event.clientY, window.innerHeight - 46)),
           });
         }}
@@ -703,6 +704,8 @@ export function AgentPanel({
 
       {quoteMenu && (
         <div
+          role="group"
+          aria-label="message actions"
           autoFocus
           tabIndex={-1}
           ref={(node) => {
@@ -732,6 +735,19 @@ export function AgentPanel({
             >
               <Icon name="quote" />
             </button>
+          )}
+          {quoteMenu.slackUrl && (
+            <a
+              href={quoteMenu.slackUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="open in Slack"
+              title="Open in Slack"
+              onClick={() => setQuoteMenu(null)}
+              className="flex h-9 w-9 items-center justify-center hover:bg-wash"
+            >
+              <Icon name="external" />
+            </a>
           )}
           {quoteMenu.entry !== null &&
             REACTIONS.map((choice) => {

@@ -91,6 +91,7 @@ export interface Entry {
   detail: string;
   output: string;
   origin: string;
+  slackUrl?: string;
   /// "up", "down", or "" for none.
   reaction: string;
 }

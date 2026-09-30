@@ -584,6 +584,25 @@ async fn a_reply_resumes_the_same_agent_rather_than_starting_another() {
 }
 
 #[tokio::test]
+async fn slack_messages_keep_their_individual_links() {
+    let w = world(Mode::Auto, false).await;
+    let incoming = signal("101.0", "102.0", "a question");
+    w.hub.accept(incoming.clone()).await.unwrap();
+    assert!(settle(|| !w.posts.lock().unwrap().replies.is_empty()).await);
+    let agent = w.hub.store.agents(10).unwrap().remove(0);
+    assert!(settle(|| w.hub.timeline(&agent.id, 20).unwrap().iter()
+        .any(|entry| entry.kind == EntryKind::Said && !entry.slack_url.is_empty())).await);
+    let lines = w.hub.timeline(&agent.id, 20).unwrap();
+    assert_eq!(lines.iter().find(|entry| entry.kind == EntryKind::Received).unwrap().slack_url,
+        format!("https://example/{}", incoming.external_id));
+    assert_eq!(lines.iter().find(|entry| entry.kind == EntryKind::Said).unwrap().slack_url,
+        format!("https://example/{}", incoming.thread_key));
+    w.hub.say_to(&agent.id, "a UI follow-up").await.unwrap();
+    assert!(settle(|| w.hub.timeline(&agent.id, 20).unwrap().iter()
+        .any(|entry| entry.kind == EntryKind::You && !entry.slack_url.is_empty())).await);
+}
+
+#[tokio::test]
 async fn slack_threads_route_immediately_even_when_the_inbox_mode_is_ask() {
     let w = world(Mode::Ask, false).await;
     w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();
