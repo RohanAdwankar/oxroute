@@ -135,8 +135,11 @@ export function AgentPanel({
   onReact,
   models,
   onModel,
+  initialPreview,
 }: {
   view: AgentView;
+  /** The card's latest message while the full history arrives. */
+  initialPreview?: string;
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
@@ -601,7 +604,9 @@ export function AgentPanel({
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-[var(--pane-x)] py-2"
       >
         <div ref={timelineBody}>
-          {view.timeline.length === 0 ? (
+          {initialPreview !== undefined ? (
+            <Markdown>{initialPreview}</Markdown>
+          ) : view.timeline.length === 0 ? (
             <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
           ) : (
             items.map((item, at) => {

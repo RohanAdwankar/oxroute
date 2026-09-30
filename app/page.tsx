@@ -84,6 +84,18 @@ export default function Home() {
   const [paneWidths, setPaneWidths] = useState<number[]>([]);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
+  const requests = useRef(new Map<string, Promise<AgentView>>());
+  const warmed = useRef(new Set<string>());
+  const loadAgent = useCallback((id: string) => {
+    const pending = requests.current.get(id);
+    if (pending) return pending;
+    const request = api.agent(id).then((view) => {
+      setDetails((current) => ({ ...current, [id]: view }));
+      return view;
+    }).finally(() => requests.current.delete(id));
+    requests.current.set(id, request);
+    return request;
+  }, []);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
@@ -367,6 +379,15 @@ export default function Home() {
     };
   }, [revision, complain, openRouting, setInboxVisible]);
 
+  // Active cards should already have their conversation when opened.
+  useEffect(() => {
+    for (const agent of snapshot.agents) {
+      if (warmed.current.has(agent.id)) continue;
+      warmed.current.add(agent.id);
+      void loadAgent(agent.id).catch(() => warmed.current.delete(agent.id));
+    }
+  }, [snapshot.agents, loadAgent]);
+
   useEffect(() => {
     if (panes.length === 0) return;
     let live = true;
@@ -377,17 +398,11 @@ export default function Home() {
     // saying "Loading session…" for as long as you look at it.
     const fetchPanes = async () => {
       for (let wait = 500; live; wait = Math.min(wait * 2, 8000)) {
-        const answers = await Promise.allSettled(panes.map((id) => api.agent(id)));
+        const answers = await Promise.allSettled(panes.map(loadAgent));
         if (!live) return;
         const views = answers.flatMap((answer) =>
           answer.status === "fulfilled" ? [answer.value] : [],
         );
-        if (views.length > 0) {
-          setDetails((current) => ({
-            ...current,
-            ...Object.fromEntries(views.map((view) => [view.agent.id, view])),
-          }));
-        }
         if (views.length === panes.length) return;
         await new Promise((again) => setTimeout(again, wait));
       }
@@ -396,7 +411,7 @@ export default function Home() {
     return () => {
       live = false;
     };
-  }, [panes, revision, complain]);
+  }, [panes, revision, complain, loadAgent]);
 
   /** Every mutation runs through here, so failures always reach the top bar. */
   const run = useCallback(
@@ -968,7 +983,12 @@ export default function Home() {
         {open ? (
           <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
             {panes.map((id, index) => {
-              const view = details[id];
+              const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
+              const view = details[id] ?? (agent ? {
+                agent,
+                timeline: [],
+                delivery: agent.status === "working" ? "restart" as const : "start" as const,
+              } : undefined);
               return (
                 <div
                   key={id}
@@ -978,6 +998,7 @@ export default function Home() {
                   {view ? (
                     <AgentPanel
                       view={view}
+                      initialPreview={details[id] ? undefined : snapshot.messages[id] ?? ""}
                       can={
                         snapshot.backends.find((b) => b.backend === view.agent.backend) ?? {
                           backend: view.agent.backend,
