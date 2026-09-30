@@ -97,6 +97,7 @@ export const api = {
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
   /// A task made in a composer, with whatever was attached to it.
   createTaskWithImages: (text: string, agentId: string, images: File[]) => {
+    if (images.length === 0) return api.createTask(text, agentId);
     const form = new FormData();
     form.append("text", text);
     form.append("agentId", agentId);

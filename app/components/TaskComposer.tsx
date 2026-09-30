@@ -22,7 +22,7 @@ export function TaskComposer({
   onTask,
 }: {
   busy: boolean;
-  onTask: (text: string, images: File[]) => void;
+  onTask: (text: string, images: File[]) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(() => draftFor(FLEET));
   const [dragging, setDragging] = useState(false);
@@ -31,12 +31,17 @@ export function TaskComposer({
 
   useEffect(() => keepDraft(FLEET, draft), [draft]);
 
-  const file = () => {
+  const file = async () => {
     const text = draft.trim();
     if (!text && pictures.uploads.length === 0) return;
-    onTask(text, pictures.files);
+    const files = pictures.files;
+    const saving = onTask(text, files);
     setDraft("");
     pictures.clear();
+    if (!await saving) {
+      setDraft((current) => current ? `${text}\n${current}` : text);
+      pictures.add(files);
+    }
   };
 
   return (

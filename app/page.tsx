@@ -99,6 +99,7 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
+  const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -455,15 +456,35 @@ export default function Home() {
   /// Filing a task from a composer. It goes to the bottom of a long list,
   /// so the list has to be open and looking at it, or nothing happened as
   /// far as anyone can see.
-  const file = useCallback(
-    (work: () => Promise<TaskItem>) =>
-      run(async () => {
-        const task = await work();
-        showTasks(true);
-        setShownTask(task.id);
-      }),
-    [run, showTasks],
-  );
+  const file = async (text: string, images: File[], agentId = "") => {
+    const id = crypto.randomUUID();
+    const at = Date.now() / 1000;
+    const pending: TaskItem = {
+      id, text, agentId, status: "incomplete", blockedByTaskId: "",
+      images: [], createdAt: at, updatedAt: at,
+    };
+    setCreatingTasks((current) => ({ ...current, [id]: pending }));
+    showTasks(true);
+    setShownTask(id);
+    try {
+      const task = await api.createTaskWithImages(text, agentId, images);
+      setSnapshot((current) => ({
+        ...current, tasks: [...current.tasks.filter((item) => item.id !== task.id), task],
+      }));
+      setShownTask(task.id);
+      reload();
+      return true;
+    } catch (error) {
+      complain(error);
+      return false;
+    } finally {
+      setCreatingTasks((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    }
+  };
 
   const toggleVim = useCallback(() => setVimMode(!getVimMode()), []);
 
@@ -559,7 +580,7 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const taskItems = snapshot.tasks.map((task) => savingTasks[task.id] ?? task);
+  const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...Object.values(creatingTasks)];
   const tasks = taskRows(taskItems, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
@@ -1011,14 +1032,7 @@ export default function Home() {
                       onSay={(text, images, queued) =>
                         void run(() => api.say(id, text, images, queued))
                       }
-                      onTask={(text, images) =>
-                        // Unassigned, like the one on the home screen. Typing
-                        // a task in a session's composer is about where your
-                        // hands were, not about who should do it, and the
-                        // assignment it used to infer was dispatched before
-                        // anyone could see -- let alone correct -- the guess.
-                        void file(() => api.createTaskWithImages(text, "", images))
-                      }
+                      onTask={(text, images) => file(text, images, id)}
                       correcting={correcting?.agentId === id ? correcting : null}
                       onStopCorrecting={() => setCorrecting(null)}
                       onCorrect={(text, images) => {
@@ -1144,9 +1158,7 @@ export default function Home() {
             )}
             <TaskComposer
               busy={busy}
-              onTask={(text, images) =>
-                void file(() => api.createTaskWithImages(text, "", images))
-              }
+              onTask={(text, images) => file(text, images)}
             />
           </div>
         )}
@@ -1192,7 +1204,7 @@ export default function Home() {
             named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
-            busy={(id) => busy || id in savingTasks}
+            busy={(id) => busy || id in savingTasks || id in creatingTasks}
             onUpdate={(task, note, approved) => void updateTask(task, note, approved)}
             onOpenAgent={(id) => {
               clearRouting();

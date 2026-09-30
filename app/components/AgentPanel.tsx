@@ -145,7 +145,7 @@ export function AgentPanel({
   onBack: () => void;
   onSay: (text: string, images: File[], queued: boolean) => void;
   /// Put what is in the composer on the task list instead of saying it.
-  onTask: (text: string, images: File[]) => void;
+  onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
   correcting: TaskItem | null;
   onCorrect: (text: string, images: File[]) => void;
@@ -327,11 +327,15 @@ export function AgentPanel({
     const filed = [...(drawn ? [drawn] : []), ...pictures.files];
     if (!text && filed.length === 0) return;
     setDraft("");
-    onTask(text, filed);
+    const saving = onTask(text, filed);
     pictures.clear();
     if (drawn) {
       sketch.current?.clear();
       setMode("type");
+    }
+    if (!await saving) {
+      setDraft((current) => current ? `${text}\n${current}` : text);
+      pictures.add(filed);
     }
   };
 
