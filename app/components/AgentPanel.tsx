@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
 import { isTyping } from "../lib/keys";
-import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, TaskItem } from "../lib/types";
+import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
 import { Code } from "./Code";
@@ -118,6 +118,8 @@ export function AgentPanel({
   knownTags,
   onTag,
   onReact,
+  models,
+  onModel,
 }: {
   view: AgentView;
   /// What this agent's harness can do.
@@ -139,6 +141,10 @@ export function AgentPanel({
   onTag: (change: { add?: string[]; remove?: string[]; set?: string[] }) => void;
   /// An empty reaction clears whatever was there.
   onReact: (entry: number, reaction: string) => void;
+  /// Every model configured, so the picker can show the ones this
+  /// session's harness can actually run.
+  models: ModelInfo[];
+  onModel: (model: string) => void;
   onInterrupt: () => void;
   /// Branch this session and read the branch here, in this pane.
   onFork: () => void;
@@ -174,7 +180,7 @@ export function AgentPanel({
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const renameCancelled = useRef(false);
-  const items = compactTimeline(view.timeline);
+  const items = useMemo(() => compactTimeline(view.timeline), [view.timeline]);
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
 
@@ -439,8 +445,29 @@ export function AgentPanel({
         {/* It gives up its width first, but never all of it: what an agent
             is doing now is the thing this line is for. */}
         <span className="min-w-[86px] flex-1 truncate text-[12.5px] text-faint">
-          {agent.status} {since(agent.updatedAt)} · {agent.backend} · {agent.model} ·{" "}
-          {view.delivery}
+          {agent.status} {since(agent.updatedAt)} · {agent.backend} ·{" "}
+          {/* The model was printed here as a fact about the session. It is a
+              decision about the session, and the place you read it is the
+              place you would go to change it. */}
+          <select
+            value={agent.model}
+            onChange={(event) => onModel(event.target.value)}
+            aria-label="model"
+            title="Model"
+            className="cursor-pointer appearance-none bg-transparent text-[12.5px] text-faint underline decoration-dotted underline-offset-2 hover:text-ink"
+          >
+            {models.filter((option) => option.backend === agent.backend).length === 0 && (
+              <option value={agent.model}>{agent.model}</option>
+            )}
+            {models
+              .filter((option) => option.backend === agent.backend)
+              .map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+          </select>{" "}
+          · {view.delivery}
         </span>
 
         <span className="flex max-w-[45%] shrink items-center overflow-hidden">

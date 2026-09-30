@@ -86,6 +86,9 @@ export const api = {
   /// "" takes the reaction back. The daemon answers 204 and syncs, so the
   /// pane redraws from the same event any other change arrives on.
   react: (entry: number, reaction: string) => post<void>("/api/react", { entry, reaction }),
+  /// Move a running session onto another model its harness can run.
+  setModel: (agent: string, model: string) =>
+    post<{ model: string }>(`/api/agents/${encodeURIComponent(agent)}/model`, { model }),
   createTask: (text: string, agentId = "") =>
     post<TaskItem>("/api/tasks", { text, agentId }),
   /// Hand a task to an agent that does not exist yet: a new one, or a fork
