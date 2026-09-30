@@ -1381,9 +1381,6 @@ impl Hub {
             .store
             .agent(&parent_id)?
             .context("the parent session no longer exists")?;
-        if parent.status == AgentStatus::Working {
-            anyhow::bail!("stop the parent's active turn before merging into it");
-        }
         if parent.backend != child.backend {
             anyhow::bail!("a fork can only merge into the same backend");
         }
@@ -1406,9 +1403,34 @@ impl Hub {
                 _ => {}
             }
         }
+        let lock = self.lock_for(&parent.id).await;
+        match lock.clone().try_lock_owned() {
+            Ok(_held) => self.apply_merge(&parent, &child, &exchanges).await?,
+            Err(_) => {
+                self.store.set_agent_archived(&child.id, true)?;
+                self.record(&parent.id, EntryKind::Notice, "Fork merge queued", &child.id, "");
+                self.emit(Event::Sync);
+                let hub = self.clone();
+                let queued_parent = parent.clone();
+                tokio::spawn(async move {
+                    let _held = lock.lock().await;
+                    if let Err(error) = hub.apply_merge(&queued_parent, &child, &exchanges).await {
+                        tracing::error!(agent = child.id, %error, "queued merge failed");
+                        let _ = hub.store.set_agent_archived(&child.id, false);
+                        hub.record(&child.id, EntryKind::Notice, &format!("Merge failed: {error}"), "", "");
+                        hub.emit(Event::Notice { text: format!("Could not merge {}: {error}", child.name) });
+                        hub.emit(Event::Sync);
+                    }
+                });
+            }
+        }
+        Ok(parent)
+    }
+
+    async fn apply_merge(&self, parent: &Agent, child: &Agent, exchanges: &[(String, String)]) -> Result<()> {
         if !exchanges.is_empty() {
             self.harness(parent.backend)
-                .inject(&parent.session_id, &exchanges)
+                .inject(&parent.session_id, exchanges)
                 .await?;
         }
         self.record(&parent.id, EntryKind::Merged, "Fork merged", &child.id, "");
@@ -1421,7 +1443,7 @@ impl Hub {
         );
         self.store.set_agent_archived(&child.id, true)?;
         self.emit(Event::Sync);
-        Ok(parent)
+        Ok(())
     }
 
     async fn command(self: &Arc<Self>, name: &str, user: &str) -> String {

@@ -944,6 +944,33 @@ async fn in_chat_forks_remain_linked_until_merged_without_opening_threads() {
 }
 
 #[tokio::test]
+async fn a_busy_parent_accepts_a_merge_without_being_interrupted() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "work on the main task")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let child = w.hub.fork_in_chat(&parent.id).await.unwrap();
+    for (kind, text) in [(EntryKind::You, "explore an alternative"), (EntryKind::Said, "the alternative works")] {
+        w.hub.store.add_entry(&child.id, now(), kind, text, "", "").unwrap();
+    }
+
+    assert_eq!(w.hub.merge(&child.id).await.unwrap().id, parent.id);
+    assert!(w.hub.store.archived_agents().unwrap().iter().any(|agent| agent.id == child.id));
+    assert!(!w.hub.store.pane_links().unwrap().contains_key(&child.id));
+    assert!(w.calls.lock().unwrap().injected.is_empty());
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+
+    w.harness.send(HarnessEvent::Message {
+        session: parent.session_id.clone(), text: "main task finished".into(), final_answer: true,
+    }).unwrap();
+    w.harness.send(HarnessEvent::TurnFinished {
+        session: parent.session_id.clone(), status: "completed".into(),
+    }).unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().injected.len() == 1).await);
+    assert_eq!(w.calls.lock().unwrap().injected, vec![(parent.session_id, 1)]);
+}
+
+#[tokio::test]
 async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
