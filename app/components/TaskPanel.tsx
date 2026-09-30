@@ -125,7 +125,7 @@ export function TaskPanel({
   agents: Agent[];
   /// Every agent, live or archived, for reading a name back.
   named: Agent[];
-  busy: boolean;
+  busy: (id: string) => boolean;
   /// A status change carries why it changed, and only a person approves.
   onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
   /// Move a task to an agent that does not exist yet.
@@ -225,7 +225,7 @@ export function TaskPanel({
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
-            disabled={busy}
+            disabled={busy(task.id)}
             onClick={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
             className="flex h-7 cursor-pointer items-center rounded-[3px] bg-ink px-3 text-[11.5px] font-semibold text-paper disabled:opacity-40"
           >
@@ -233,7 +233,7 @@ export function TaskPanel({
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy(task.id)}
             // Saying what is still wrong is saying something to the agent,
             // so it is said in the composer: room to write, and somewhere
             // to drop a picture of what you mean.
@@ -291,7 +291,7 @@ export function TaskPanel({
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <select
           value={asking ? asking.status : task.status}
-          disabled={busy}
+          disabled={busy(task.id)}
           aria-label={`status for ${task.text}`}
           onChange={(event) => {
             setWhy("");
@@ -308,7 +308,7 @@ export function TaskPanel({
         {task.status === "blocked" && (
           <select
             value={task.blockedByTaskId}
-            disabled={busy}
+            disabled={busy(task.id)}
             aria-label={`blocking task for ${task.text}`}
             onChange={(event) => onUpdate({ ...task, blockedByTaskId: event.target.value })}
             className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-[#a6493d] outline-none"
@@ -318,7 +318,7 @@ export function TaskPanel({
         )}
         <select
           value={task.agentId}
-          disabled={busy}
+          disabled={busy(task.id)}
           aria-label={`assign ${task.text}`}
           onChange={(event) => {
             const to = event.target.value;
@@ -340,7 +340,7 @@ export function TaskPanel({
         </select>
       </div>
     </div>
-    <button type="button" onClick={() => onDelete(task.id)} disabled={busy} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
+    <button type="button" onClick={() => onDelete(task.id)} disabled={busy(task.id)} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
       <Icon name="discard" size={14} />
     </button>
   </Row>;

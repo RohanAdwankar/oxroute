@@ -85,6 +85,7 @@ export default function Home() {
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -413,6 +414,28 @@ export default function Home() {
     [reload, complain],
   );
 
+  // Task edits are independent. Show each edit immediately and lock only
+  // that row until it is saved; snapshots cannot erase an in-flight edit.
+  const updateTask = async (task: TaskItem, note?: string, approved?: boolean) => {
+    setSavingTasks((current) => ({ ...current, [task.id]: task }));
+    try {
+      const saved = await api.updateTask(task, note, approved);
+      setSnapshot((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) => item.id === saved.id ? saved : item),
+      }));
+      reload();
+    } catch (error) {
+      complain(error);
+    } finally {
+      setSavingTasks((current) => {
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+    }
+  };
+
   /// Filing a task from a composer. It goes to the bottom of a long list,
   /// so the list has to be open and looking at it, or nothing happened as
   /// far as anyone can see.
@@ -520,7 +543,8 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const tasks = taskRows(snapshot.tasks, tasksDone);
+  const taskItems = snapshot.tasks.map((task) => savingTasks[task.id] ?? task);
+  const tasks = taskRows(taskItems, tasksDone);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
@@ -1133,7 +1157,7 @@ export default function Home() {
             </div>
             <div className="shrink-0 overflow-hidden" style={{ width: taskWidth }}>
           <TaskPanel
-            tasks={snapshot.tasks}
+            tasks={taskItems}
             rows={tasks}
             notes={snapshot.taskNotes}
             onShowDone={() => setTasksDone((shown) => !shown)}
@@ -1145,10 +1169,8 @@ export default function Home() {
             named={[...snapshot.agents, ...snapshot.archived].filter(
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
-            busy={busy}
-            onUpdate={(task, note, approved) =>
-              void run(() => api.updateTask(task, note, approved))
-            }
+            busy={(id) => busy || id in savingTasks}
+            onUpdate={(task, note, approved) => void updateTask(task, note, approved)}
             onOpenAgent={(id) => {
               clearRouting();
               showAgent(id);
