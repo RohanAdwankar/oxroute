@@ -143,7 +143,7 @@ export function AgentPanel({
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
-  onSay: (text: string, images: File[], queued: boolean) => void;
+  onSay: (text: string, images: File[], queued: boolean) => Promise<boolean>;
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
@@ -181,6 +181,8 @@ export function AgentPanel({
   verbose: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
+  const [pending, setPending] = useState<{ entry: Entry; after: number }[]>([]);
+  const nextPending = useRef(0);
   const pictures = useUploads();
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -199,7 +201,22 @@ export function AgentPanel({
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const renameCancelled = useRef(false);
-  const items = useMemo(() => compactTimeline(view.timeline), [view.timeline]);
+  const optimistic = useMemo(() => {
+    const unmatched = [...pending];
+    for (const entry of view.timeline) {
+      const at = unmatched.findIndex((item) => entry.id > item.after &&
+        entry.kind === "you" && entry.text === item.entry.text);
+      if (at >= 0) unmatched.splice(at, 1);
+    }
+    return unmatched.map((item) => item.entry);
+  }, [pending, view.timeline]);
+  const items = useMemo(() => compactTimeline([...view.timeline, ...optimistic]), [view.timeline, optimistic]);
+
+  const [previousTimeline, setPreviousTimeline] = useState(view.timeline);
+  if (previousTimeline !== view.timeline) {
+    setPreviousTimeline(view.timeline);
+    if (pending.length > 0 && optimistic.length === 0) setPending([]);
+  }
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
 
@@ -267,6 +284,24 @@ export function AgentPanel({
   }, [draft, pictures.uploads, pictures.error, pin]);
 
   /// A drawing follows the same interrupt-or-queue choice as text.
+  const sayImmediately = (text: string, images: File[], queued: boolean) => {
+    const id = --nextPending.current;
+    const shown = images.length > 0
+      ? [text, `Attached: ${images.map((image) => image.name).join(", ")}`].filter(Boolean).join("\n\n")
+      : text;
+    const entry: Entry = {
+      id, agentId: agent.id, at: Date.now() / 1000, kind: "you", text: shown,
+      detail: "", output: "", origin: "", reaction: "",
+    };
+    setPending((current) => [...current, { entry, after: view.timeline.at(-1)?.id ?? 0 }]);
+    void onSay(text, images, queued).then((accepted) => {
+      if (accepted) return;
+      setPending((current) => current.filter((item) => item.entry.id !== id));
+      setDraft((current) => current ? `${text}\n${current}` : text);
+      pictures.add(images);
+    });
+  };
+
   const sendDrawn = async (queued: boolean) => {
     if (busy) return;
     const text = draft.trim();
@@ -277,7 +312,7 @@ export function AgentPanel({
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      onSay(text, [picture, ...pictures.files], queued);
+      sayImmediately(text, [picture, ...pictures.files], queued);
       pictures.clear();
       sketch.current?.clear();
     }
@@ -308,7 +343,7 @@ export function AgentPanel({
     setDraft("");
     const sent = pictures.files;
     if (correcting) onCorrect(text, sent);
-    else onSay(text, sent, queued);
+    else sayImmediately(text, sent, queued);
     pictures.clear();
   };
 
@@ -608,9 +643,9 @@ export function AgentPanel({
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-[var(--pane-x)] py-2"
       >
         <div ref={timelineBody}>
-          {initialPreview !== undefined ? (
+          {initialPreview !== undefined && optimistic.length === 0 ? (
             <Markdown>{initialPreview}</Markdown>
-          ) : view.timeline.length === 0 ? (
+          ) : items.length === 0 ? (
             <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
           ) : (
             items.map((item, at) => {
