@@ -713,6 +713,27 @@ async fn a_waiting_signal_can_be_routed_to_an_agent_that_already_exists() {
 }
 
 #[tokio::test]
+async fn user_interruptions_do_not_send_stall_alerts() {
+    for follow_up in [false, true] {
+        let w = world(Mode::Auto, true).await;
+        w.hub.store.set("dashboard", "slack\u{1f}D1\u{1f}status").unwrap();
+        w.hub.accept(signal("100.0", "100.0", "start a task")).await.unwrap();
+        assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+        let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+
+        if follow_up {
+            w.hub.say_to(&agent, "update the request").await.unwrap();
+            assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+        } else {
+            assert!(w.hub.interrupt(&agent).await.unwrap());
+            assert_eq!(w.hub.store.agent(&agent).unwrap().unwrap().status, AgentStatus::Stalled);
+        }
+        assert_eq!(w.calls.lock().unwrap().interrupted.len(), 1);
+        assert!(w.posts.lock().unwrap().replies.iter().all(|(thread, _)| thread != "status"));
+    }
+}
+
+#[tokio::test]
 async fn rapid_follow_ups_stop_the_turn_and_start_together() {
     let w = world(Mode::Auto, true).await;
     w.hub.accept(signal("100.0", "100.0", "start something long")).await.unwrap();

@@ -1212,7 +1212,10 @@ impl Hub {
             turn.stopped.store(false, Ordering::SeqCst);
             return Err(error);
         }
-        self.stall(agent_id, "stopped").await;
+        // A requested stop changes the visible state without raising a stall alert.
+        self.store.stall_agent(agent_id, "stopped", now())?;
+        self.emit(Event::Sync);
+        self.refresh_dashboard().await;
         Ok(true)
     }
 
