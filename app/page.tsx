@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { AgentPanel } from "./components/AgentPanel";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
+import { FrontendVersion } from "./components/FrontendVersion";
 import { Help } from "./components/Help";
 import { Settings } from "./components/Settings";
 import { TaskComposer } from "./components/TaskComposer";
@@ -870,6 +871,7 @@ export default function Home() {
 
   return (
     <main className="flex h-full flex-col">
+      <FrontendVersion />
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings

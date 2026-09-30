@@ -23,7 +23,7 @@ export function Attachments({
         <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop images to attach</p>
       )}
       {uploads.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-[var(--pane-x)] pt-[6px]">
+        <div data-uploads className="flex flex-wrap gap-2 px-[var(--pane-x)] pt-[6px]">
           {uploads.map((upload) => (
             <span
               key={upload.preview}

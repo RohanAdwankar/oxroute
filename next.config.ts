@@ -4,8 +4,14 @@ import type { NextConfig } from "next";
 // app/api/events so its stream is not buffered by a rewrite; the remaining
 // API is forwarded to the daemon, which stays bound to localhost.
 const daemon = process.env.OXROUTE_DAEMON ?? "http://127.0.0.1:8787";
+const version = process.env.OXROUTE_WEB_VERSION;
 
 const nextConfig: NextConfig = {
+  generateBuildId: async () => {
+    if (!version) throw new Error("Build the frontend with npm run build");
+    return version;
+  },
+  env: version ? { NEXT_PUBLIC_WEB_VERSION: version } : {},
   // The demo builds its own copy while a dev server is running in the same
   // checkout, and two builds cannot share one output directory.
   distDir: process.env.OXROUTE_DIST ?? ".next",
