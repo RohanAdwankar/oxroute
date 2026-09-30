@@ -7,23 +7,12 @@ import { hintFor } from "../lib/keys";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { TagChip } from "./Tags";
-import {
-  deliveryOf,
-  type Agent,
-  type Delivery,
-  type InboxItem,
-  type ModelInfo,
-} from "../lib/types";
+import type { Agent, InboxItem, ModelInfo } from "../lib/types";
 
 const DOT: Record<string, string> = {
   working: "bg-ok",
   stalled: "bg-hold",
   complete: "bg-[#c9c1b5]",
-};
-
-const DELIVERY_NOTE: Record<Delivery, string> = {
-  restart: "stops this turn and starts with your message",
-  start: "this is what sets it going",
 };
 
 /**
@@ -246,7 +235,6 @@ function Card({
   onOpen: () => void;
   onPin: () => void;
 }) {
-  const delivery = deliveryOf(agent);
   // While routing, the agents this could go to stay bright and the rest
   // recede, so a large fleet is still readable at a glance.
   const dimmed = routing && !ticked && !suggested;
@@ -254,7 +242,7 @@ function Card({
   return (
     <article
       className={[
-        "group relative flex h-[184px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
+        "group relative flex h-[140px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
@@ -328,17 +316,6 @@ function Card({
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
 
-      <div className="flex-1" />
-
-      <div className="mt-[14px] flex items-baseline border-t border-hair pt-3">
-        <span className="text-[12.5px] text-mid">{DELIVERY_NOTE[delivery]}</span>
-        <span className="flex-1" />
-        <span
-          className="tnum text-[12.5px] text-ok"
-        >
-          {delivery}
-        </span>
-      </div>
     </article>
   );
 }

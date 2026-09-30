@@ -278,9 +278,3 @@ export type DaemonEvent =
   | { type: "turnStarted"; agentId: string }
   | { type: "turnFinished"; agentId: string; status: string }
   | { type: "notice"; text: string };
-
-/** How the next message to this agent will land, given what it is doing. */
-export function deliveryOf(agent: Agent): Delivery {
-  if (agent.status !== "working") return "start";
-  return "restart";
-}
