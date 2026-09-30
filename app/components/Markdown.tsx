@@ -15,7 +15,8 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
       <ReactMarkdown
         // Tables, task lists and strikethrough are GFM rather than CommonMark,
         // so without this an agent's table arrives as a wall of pipes.
-        remarkPlugins={[remarkGfm]}
+        // A shell's home-directory tildes are literal; deletion needs ~~.
+        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
