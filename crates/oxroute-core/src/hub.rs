@@ -734,11 +734,13 @@ impl Hub {
         let entry = self.record(agent_id, EntryKind::Received, &signal.text, "", &origin_of(signal));
         if signal.source != crate::source::slack::SOURCE { return; }
         if let (Some(entry), Some(source)) = (entry, self.source(&signal.source)) {
-            if let Ok(url) = source.permalink(&signal.conversation, &signal.external_id).await {
-                if !url.is_empty() {
+            match source.permalink(&signal.conversation, &signal.external_id).await {
+                Ok(url) if !url.is_empty() => {
                     let _ = self.store.set_agent_permalink(agent_id, &url);
                     self.link_entry(entry, &url);
                 }
+                Err(error) => tracing::warn!(%error, "could not link incoming Slack message"),
+                _ => {}
             }
         }
     }

@@ -532,18 +532,28 @@ impl Source for SlackSource {
     }
 
     async fn permalink(&self, conversation: &str, external_id: &str) -> Result<String> {
-        let response = self
-            .call(
-                "chat.getPermalink",
-                json!({ "channel": conversation, "message_ts": external_id }),
-            )
+        let response = permalink_request(&self.http, &self.bot_token, conversation, external_id)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
             .await?;
-        Ok(response
+        if response.get("ok").and_then(Value::as_bool) != Some(true) {
+            anyhow::bail!("slack chat.getPermalink: {}", response["error"]);
+        }
+        response
             .get("permalink")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string())
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+            .context("Slack returned no message permalink")
     }
+}
+
+fn permalink_request(http: &reqwest::Client, token: &str, channel: &str, ts: &str) -> reqwest::RequestBuilder {
+    http.get(format!("{API}/chat.getPermalink"))
+        .bearer_auth(token)
+        .query(&[("channel", channel), ("message_ts", ts)])
 }
 
 /// Split on character boundaries, so a long answer never lands mid-codepoint.
@@ -582,6 +592,17 @@ mod tests {
 
     fn source() -> SlackSource {
         SlackSource::new("xapp-test", "xoxb-test", "U_ME")
+    }
+
+    #[test]
+    fn permalink_parameters_are_sent_in_the_url() {
+        let request = permalink_request(&reqwest::Client::new(), "test", "D123", "123.456")
+            .build().unwrap();
+        assert_eq!(request.method(), reqwest::Method::GET);
+        let params: std::collections::HashMap<_, _> = request.url().query_pairs().collect();
+        assert_eq!(params.get("channel").unwrap(), "D123");
+        assert_eq!(params.get("message_ts").unwrap(), "123.456");
+        assert!(request.body().is_none());
     }
 
     #[test]
