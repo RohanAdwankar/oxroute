@@ -1318,6 +1318,26 @@ async fn an_unknown_native_session_cannot_be_continued() {
 }
 
 #[tokio::test]
+async fn the_web_snapshot_keeps_every_unarchived_session() {
+    let w = world(Mode::Ask, false).await;
+    for index in 0..24 {
+        let agent = Agent {
+            id: format!("visible-{index}"), name: format!("Session {index}"),
+            backend: Backend::Codex, model: "test".into(), session_id: String::new(),
+            cwd: String::new(), status: AgentStatus::Complete, activity: String::new(),
+            permalink: String::new(), last_activity: 0.0, updated_at: index as f64,
+            stall_reason: None, stall_alerted: false, pinned: false,
+        };
+        w.hub.store.save_agent(&agent).unwrap();
+    }
+    assert_eq!(w.hub.snapshot(10).unwrap().agents.len(), 24);
+    w.hub.archive("visible-0", true).unwrap();
+    let snapshot = w.hub.snapshot(10).unwrap();
+    assert_eq!(snapshot.agents.len(), 23);
+    assert_eq!(snapshot.archived.len(), 1);
+}
+
+#[tokio::test]
 async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
     let base = world(Mode::Auto, false).await;
     let config = base.hub.config.clone();

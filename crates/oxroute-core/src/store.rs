@@ -334,11 +334,20 @@ impl Store {
         })
     }
 
+    /// Every session remains visible until explicitly archived.
+    pub fn unarchived_agents(&self) -> Result<Vec<Agent>> {
+        self.list_agents(None)
+    }
+
     /// Everything unfinished, plus the most recent finished ones.
     ///
     /// The cap exists because the dashboard is a single message and a list
     /// that grows forever stops being a dashboard.
     pub fn agents(&self, completed_limit: usize) -> Result<Vec<Agent>> {
+        self.list_agents(Some(completed_limit))
+    }
+
+    fn list_agents(&self, completed_limit: Option<usize>) -> Result<Vec<Agent>> {
         self.with(|c| {
             let mut out = Vec::new();
             let mut live =
@@ -352,7 +361,7 @@ impl Store {
                     ORDER BY pinned DESC, updated_at DESC LIMIT ?1
                  ) WHERE archived = 0",
             )?;
-            for row in done.query_map(params![completed_limit as i64], read_agent)? {
+            for row in done.query_map(params![completed_limit.map(|limit| limit as i64).unwrap_or(-1)], read_agent)? {
                 out.push(row?);
             }
             out.sort_by(|a, b| {
@@ -1530,6 +1539,26 @@ mod tests {
 
         let found = store.search("ferry", 10).unwrap();
         assert_eq!(found[0].text, "book the ferry", "a person outranks a transcript");
+    }
+
+    #[test]
+    fn fleet_sessions_remain_visible_until_explicitly_archived() {
+        let store = Store::in_memory().unwrap();
+        for count in [12, 23] {
+            for index in 0..count {
+                let mut item = agent(&format!("session-{index}"));
+                item.status = AgentStatus::Complete;
+                item.updated_at = index as f64;
+                store.save_agent(&item).unwrap();
+            }
+            assert_eq!(store.unarchived_agents().unwrap().len(), count);
+            assert!(store.archived_agents().unwrap().is_empty());
+        }
+        store.set_agent_archived("session-0", true).unwrap();
+        assert_eq!(store.unarchived_agents().unwrap().len(), 22);
+        assert_eq!(store.archived_agents().unwrap().len(), 1);
+        store.set_agent_archived("session-0", false).unwrap();
+        assert_eq!(store.unarchived_agents().unwrap().len(), 23);
     }
 
     #[test]

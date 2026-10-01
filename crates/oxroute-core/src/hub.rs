@@ -45,9 +45,6 @@ const PROGRESS_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 const DASHBOARD_KEY: &str = "dashboard";
 const MODE_KEY: &str = "mode";
-/// How many sessions a board considers. Every live one, and more finished
-/// ones than the fleet shows: a board is where old work is still sorted.
-const BOARD_SESSIONS: usize = 1000;
 const FOLLOW_UP_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// What to do with a signal waiting in the inbox.
@@ -2541,7 +2538,7 @@ impl Hub {
     // -- reading ---------------------------------------------------------
 
     pub fn snapshot(&self, inbox_limit: usize) -> Result<Snapshot> {
-        let agents = self.store.agents(dashboard::COMPLETED_SHOWN)?;
+        let agents = self.store.unarchived_agents()?;
         let archived = self.store.archived_agents()?;
         let mut inbox = self.store.inbox(inbox_limit)?;
         for item in &mut inbox {
@@ -2949,7 +2946,7 @@ impl Hub {
     /// A board laid out over every session that is not archived.
     pub fn arrange(&self, id: &str) -> Result<Arranged> {
         let board = self.store.board(id)?.context("no such board")?;
-        let agents = self.store.agents(BOARD_SESSIONS)?;
+        let agents = self.store.unarchived_agents()?;
         Ok(tags::arrange(&board, &agents, &self.store.all_tags()?))
     }
 
