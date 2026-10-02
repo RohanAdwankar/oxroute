@@ -312,7 +312,7 @@ function Card({
         )}
       </div>
 
-      <div className="mt-[12px] line-clamp-3 text-[13px] leading-[1.55] text-mid">
+      <div className="mt-[12px] max-h-[3lh] overflow-hidden line-clamp-3 text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
 
