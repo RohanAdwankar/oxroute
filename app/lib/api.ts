@@ -72,8 +72,8 @@ export const api = {
     form.append("agent", agent);
     form.append("text", text);
     form.append("queued", String(queued));
-    images.forEach((image) => form.append("images", image));
-    return call<unknown>("/api/say-images", { method: "POST", body: form });
+    images.forEach((image) => form.append("files", image));
+    return call<unknown>("/api/say-attachments", { method: "POST", body: form });
   },
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
   fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),
@@ -101,8 +101,8 @@ export const api = {
     const form = new FormData();
     form.append("text", text);
     form.append("agentId", agentId);
-    images.forEach((image) => form.append("images", image));
-    return call<TaskItem>("/api/task-images", { method: "POST", body: form });
+    images.forEach((image) => form.append("files", image));
+    return call<TaskItem>("/api/task-attachments", { method: "POST", body: form });
   },
   /// Put a task after another one; no `after` means the top of the queue.
   moveTask: (id: string, after?: string) =>
@@ -111,7 +111,7 @@ export const api = {
   correctTask: (id: string, text: string, images: File[] = []) => {
     const form = new FormData();
     form.append("text", text);
-    images.forEach((image) => form.append("images", image));
+    images.forEach((image) => form.append("files", image));
     return call<TaskItem>(`/api/tasks/${encodeURIComponent(id)}/correction`, {
       method: "POST",
       body: form,

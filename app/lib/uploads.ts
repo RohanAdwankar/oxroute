@@ -4,11 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Upload = { file: File; preview: string };
 
-export const acceptsImageDrop = (transfer: DataTransfer) =>
+export const acceptsFileDrop = (transfer: DataTransfer) =>
   transfer.types.includes("Files") || transfer.types.includes("text/uri-list");
 
 /**
- * Pictures waiting to be sent with whatever you are typing.
+ * Files waiting to be sent with whatever you are typing.
  *
  * Every box you can type into takes them the same way -- pasted, dropped or
  * picked -- so the holding of them belongs here rather than in one composer.
@@ -28,11 +28,10 @@ export function useUploads() {
   }, []);
 
   const add = useCallback((files: File[]) => {
-    const images = files.filter((file) => file.type.startsWith("image/"));
-    setError(images.length === files.length ? "" : "Only image files are supported.");
+    setError("");
     setUploads((current) => [
       ...current,
-      ...images.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+      ...files.map((file) => ({ file, preview: URL.createObjectURL(file) })),
     ]);
   }, []);
 

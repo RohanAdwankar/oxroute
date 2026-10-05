@@ -1573,6 +1573,30 @@ async fn an_agent_with_an_old_slack_binding_gets_a_current_home_on_its_next_ui_m
 }
 
 #[tokio::test]
+async fn non_image_uploads_are_workspace_files_not_inline_context() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "start")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+    let contents = b"private file contents\x00\xff";
+    for name in ["notes.txt", "archive.zip", "unknown"] {
+        let path = w.hub.config.attachments.join(name);
+        tokio::fs::write(&path, contents).await.unwrap();
+        w.hub.say_to_with_attachments(&agent.id, "", vec![path.to_string_lossy().into()], true).await.unwrap();
+    }
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 4).await);
+    let calls = w.calls.lock().unwrap();
+    for (_, inputs) in &calls.started[1..] {
+        assert!(!inputs.iter().any(|input| matches!(input, TurnInput::LocalImage { .. })));
+        let reference = inputs.iter().filter_map(TurnInput::as_text).find(|text| text.starts_with("Uploaded file: ")).unwrap();
+        let copied = std::path::Path::new(reference.strip_prefix("Uploaded file: ").unwrap());
+        assert!(copied.starts_with(std::path::Path::new(&agent.cwd).join(".oxroute/uploads")));
+        assert_eq!(std::fs::read(copied).unwrap(), contents);
+        assert!(inputs.iter().filter_map(TurnInput::as_text).all(|text| !text.contains("private file contents")));
+    }
+}
+
+#[tokio::test]
 async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the task")).await.unwrap();
@@ -1580,7 +1604,7 @@ async fn ui_images_reach_the_agent_and_its_slack_thread() {
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub
-        .say_to_with_images(&agent, "inspect this", vec!["/tmp/chart.png".into()], false)
+        .say_to_with_attachments(&agent, "inspect this", vec!["/tmp/chart.png".into()], false)
         .await
         .unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
@@ -1617,7 +1641,7 @@ async fn image_only_messages_keep_references_in_text_history() {
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
     let path = w.hub.config.attachments.join("diagram.png").to_string_lossy().to_string();
-    w.hub.say_to_with_images(&agent, "", vec![path.clone()], false).await.unwrap();
+    w.hub.say_to_with_attachments(&agent, "", vec![path.clone()], false).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
     let calls = w.calls.lock().unwrap();
     let inputs = &calls.started[1].1;
@@ -1994,7 +2018,7 @@ async fn a_queued_message_waits_for_the_turn_instead_of_folding_into_it() {
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
-    w.hub.say_to_with_images(&agent, "while you work", vec![], true).await.unwrap();
+    w.hub.say_to_with_attachments(&agent, "while you work", vec![], true).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
 
     assert!(w.calls.lock().unwrap().interrupted.is_empty());
@@ -2043,7 +2067,7 @@ async fn queuing_still_waits_for_the_turn_it_was_queued_behind() {
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
-    w.hub.say_to_with_images(&agent, "after you finish", vec![], true).await.unwrap();
+    w.hub.say_to_with_attachments(&agent, "after you finish", vec![], true).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
     assert!(w.calls.lock().unwrap().interrupted.is_empty());
 }

@@ -11,7 +11,7 @@ import { Attachments } from "./composer/Attachments";
 import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
-import { acceptsImageDrop, useUploads } from "../lib/uploads";
+import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { draftFor, keepDraft } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -418,7 +418,7 @@ export function AgentPanel({
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onDragOver={(event) => {
-        if (!acceptsImageDrop(event.dataTransfer)) return;
+        if (!acceptsFileDrop(event.dataTransfer)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setDraggingImages(true);
@@ -429,7 +429,7 @@ export function AgentPanel({
         }
       }}
       onDrop={(event) => {
-        if (!acceptsImageDrop(event.dataTransfer)) return;
+        if (!acceptsFileDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDraggingImages(false);
         void pictures.addFromDrop(event.dataTransfer);
@@ -821,7 +821,6 @@ export function AgentPanel({
           <input
             ref={picker}
             type="file"
-            accept="image/*"
             multiple
             className="hidden"
             onChange={(event) => {
@@ -830,7 +829,7 @@ export function AgentPanel({
             }}
           />
           <SplitAction
-            label="Attach images"
+            label="Attach files"
             icon="attach"
             onClick={() => picker.current?.click()}
             disabled={busy}

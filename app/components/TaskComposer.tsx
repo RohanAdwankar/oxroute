@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { draftFor, keepDraft } from "../lib/drafts";
-import { acceptsImageDrop, useUploads } from "../lib/uploads";
+import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { Attachments } from "./composer/Attachments";
 import { SplitAction } from "./SplitAction";
 
@@ -47,13 +47,13 @@ export function TaskComposer({
   return (
     <footer
       onDragOver={(event) => {
-        if (!acceptsImageDrop(event.dataTransfer)) return;
+        if (!acceptsFileDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
-        if (!acceptsImageDrop(event.dataTransfer)) return;
+        if (!acceptsFileDrop(event.dataTransfer)) return;
         event.preventDefault();
         setDragging(false);
         void pictures.addFromDrop(event.dataTransfer);
@@ -72,7 +72,6 @@ export function TaskComposer({
         <input
           ref={picker}
           type="file"
-          accept="image/*"
           multiple
           className="hidden"
           onChange={(event) => {
@@ -81,7 +80,7 @@ export function TaskComposer({
           }}
         />
         <SplitAction
-          label="Attach images"
+          label="Attach files"
           icon="attach"
           onClick={() => picker.current?.click()}
           disabled={busy}

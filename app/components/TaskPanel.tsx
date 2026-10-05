@@ -247,13 +247,12 @@ export function TaskPanel({
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {task.images.map((image) => (
+            ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(image.split(".").pop()?.toLowerCase() ?? "") ?
             /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              key={image}
-              src={`/api/attachments/${encodeURIComponent(image)}`}
-              alt=""
-              className="max-h-28 rounded-[2px] border border-rule"
-            />
+            <img key={image} src={`/api/attachments/${encodeURIComponent(image)}`} alt="" className="max-h-28 rounded-[2px] border border-rule" /> :
+            <a key={image} href={`/api/attachments/${encodeURIComponent(image)}`} target="_blank" rel="noreferrer" className="underline">
+              {image}
+            </a>
           ))}
         </div>
       )}

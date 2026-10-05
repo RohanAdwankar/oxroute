@@ -16,7 +16,7 @@ import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
 import { taskRows } from "./lib/tasks";
-import { acceptsImageDrop } from "./lib/uploads";
+import { acceptsFileDrop } from "./lib/uploads";
 import {
   HINTS,
   LETTERS,
@@ -200,7 +200,7 @@ export default function Home() {
 
   useEffect(() => {
     const stopNavigation = (event: DragEvent) => {
-      if (event.defaultPrevented || !event.dataTransfer || !acceptsImageDrop(event.dataTransfer)) return;
+      if (event.defaultPrevented || !event.dataTransfer || !acceptsFileDrop(event.dataTransfer)) return;
       event.preventDefault();
       if (event.type === "drop") say("Drop images on a conversation to attach them");
     };

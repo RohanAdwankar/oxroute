@@ -962,12 +962,12 @@ impl Hub {
 
     /// Type straight at an agent, from any surface, bypassing the inbox.
     pub async fn say_to(self: &Arc<Self>, agent_id: &str, text: &str) -> Result<()> {
-        self.say_to_with_images(agent_id, text, vec![], false).await
+        self.say_to_with_attachments(agent_id, text, vec![], false).await
     }
 
     /// `queued` holds the message back until the running turn ends. Otherwise
     /// a new message stops that turn and starts again with the new context.
-    pub async fn say_to_with_images(
+    pub async fn say_to_with_attachments(
         self: &Arc<Self>,
         agent_id: &str,
         text: &str,
@@ -999,12 +999,7 @@ impl Hub {
         if !spoken.trim().is_empty() {
             inputs.push(TurnInput::text(&spoken));
         }
-        inputs.extend(
-            images
-                .iter()
-                .cloned()
-                .map(|path| TurnInput::LocalImage { path }),
-        );
+        inputs.extend(self.upload_inputs(&agent, &images).await?);
         let spoken_entry = self.record(&agent.id, EntryKind::You, &shown, "", "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
@@ -1490,6 +1485,24 @@ impl Hub {
     }
 
     // -- turns -----------------------------------------------------------
+
+    /// Non-images are workspace files, never inline model input.
+    async fn upload_inputs(&self, agent: &Agent, paths: &[String]) -> Result<Vec<TurnInput>> {
+        let mut inputs = Vec::new();
+        for path in paths {
+            if crate::model::attachment_mime(path).starts_with("image/") {
+                inputs.push(TurnInput::LocalImage { path: path.clone() });
+                continue;
+            }
+            let name = std::path::Path::new(path).file_name().context("upload has no file name")?;
+            let directory = std::path::Path::new(&agent.cwd).join(".oxroute/uploads");
+            tokio::fs::create_dir_all(&directory).await?;
+            let destination = directory.join(format!("{}-{}", new_id("file"), name.to_string_lossy()));
+            tokio::fs::copy(path, &destination).await?;
+            inputs.push(TurnInput::text(format!("Uploaded file: {}", destination.display())));
+        }
+        Ok(inputs)
+    }
 
     /// Everything the harness should see for this signal.
     async fn inputs_for(&self, signal: &Signal) -> Result<Vec<TurnInput>> {
@@ -2628,6 +2641,7 @@ impl Hub {
             updated_at: at,
         };
         self.store.save_task(&task)?;
+        self.copy_task_uploads(&task).await?;
         self.emit(Event::Sync);
 
         let idle = self
@@ -2704,6 +2718,9 @@ impl Hub {
             updated_at: now(),
         };
         self.store.save_task(&task)?;
+        if current.agent_id != task.agent_id {
+            self.copy_task_uploads(&task).await?;
+        }
         if let Some(note) = note.filter(|_| current_status != status) {
             self.add_task_note(id, note, "")?;
         }
@@ -2776,7 +2793,7 @@ impl Hub {
             ..task.clone()
         };
         self.store.save_task(&back)?;
-        self.say_to_with_images(
+        self.say_to_with_attachments(
             &task.agent_id,
             &format!("About \"{}\": {text}", task.text),
             images,
@@ -2785,6 +2802,19 @@ impl Hub {
         .await?;
         self.emit(Event::Sync);
         Ok(back)
+    }
+
+    /// Write down why a task is where it is.
+    async fn copy_task_uploads(&self, task: &TaskItem) -> Result<()> {
+        if let Some(agent) = self.store.agent(&task.agent_id)? {
+            let paths = task.images.iter().map(|name| self.config.attachments.join(name).to_string_lossy().into_owned()).collect::<Vec<_>>();
+            for input in self.upload_inputs(&agent, &paths).await? {
+                if let Some(reference) = input.as_text() {
+                    self.add_task_note(&task.id, reference, "")?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Write down why a task is where it is.

@@ -3,7 +3,7 @@
 import type { Upload } from "../../lib/uploads";
 
 /**
- * The pictures waiting to go with what you are typing, and anything wrong
+ * The files waiting to go with what you are typing, and anything wrong
  * with them. Every composer shows them the same way.
  */
 export function Attachments({
@@ -20,7 +20,7 @@ export function Attachments({
   return (
     <>
       {dragging && (
-        <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop images to attach</p>
+        <p className="px-[var(--pane-x)] pt-[6px] text-[11px] text-drop">Drop files to attach</p>
       )}
       {uploads.length > 0 && (
         <div data-uploads className="flex flex-wrap gap-2 px-[var(--pane-x)] pt-[6px]">
@@ -30,7 +30,7 @@ export function Attachments({
               className="flex items-center gap-2 bg-band p-2 text-[11px] text-mid"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={upload.preview} alt="" className="h-10 w-10 object-cover" />
+              {upload.file.type.startsWith("image/") && <img src={upload.preview} alt="" className="h-10 w-10 object-cover" />}
               <span className="max-w-48 truncate">{upload.file.name}</span>
               <button
                 type="button"

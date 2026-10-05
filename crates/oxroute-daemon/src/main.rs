@@ -216,7 +216,7 @@ async fn serve() -> Result<()> {
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
-        .route("/api/say-images", post(say_images))
+        .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
         .route("/api/fork-in-chat", post(fork_in_chat))
@@ -232,7 +232,7 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/tasks/{id}/move", post(move_task))
         .route("/api/tasks/{id}/correction", post(correct_task))
-        .route("/api/task-images", post(create_task_with_images))
+        .route("/api/task-attachments", post(create_task_with_attachments))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         .route("/api/agents/{id}/tags", get(tags).post(change_tags))
@@ -485,11 +485,11 @@ async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_j
     if body.text.trim().is_empty() {
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
-    hub.say_to_with_images(&body.agent, &body.text, vec![], body.queued).await?;
+    hub.say_to_with_attachments(&body.agent, &body.text, vec![], body.queued).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn say_images(
+async fn say_attachments(
     State(hub): Hubs,
     mut form: Multipart,
 ) -> Result<Json<serde_json::Value>, Failed> {
@@ -502,31 +502,29 @@ async fn say_images(
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
             Some("queued") => queued = field.text().await? == "true",
-            Some("images") => images.push(keep_image(&hub, field).await?),
+            Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
     }
     if agent.is_empty() {
         return Err(Failed(anyhow::anyhow!("an agent is required")));
     }
-    hub.say_to_with_images(&agent, &text, images, queued).await?;
+    hub.say_to_with_attachments(&agent, &text, images, queued).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Write an uploaded picture into the attachments directory, and say where.
+/// Stage an uploaded file without interpreting its contents.
 ///
 /// The name it is stored under is ours, not the browser's, so a file cannot
 /// name a place outside that directory or overwrite another upload.
-async fn keep_image(hub: &Arc<Hub>, field: axum::extract::multipart::Field<'_>) -> Result<String> {
-    let mimetype = field.content_type().unwrap_or_default().to_string();
-    anyhow::ensure!(mimetype.starts_with("image/"), "only image files are supported");
-    let given = std::path::Path::new(field.file_name().unwrap_or("image"))
+async fn keep_file(directory: &std::path::Path, field: axum::extract::multipart::Field<'_>) -> Result<String> {
+    let given = std::path::Path::new(field.file_name().unwrap_or("file"))
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
-        .unwrap_or("image");
+        .unwrap_or("file");
     let name = format!("{}-{given}", oxroute_core::model::new_id("web"));
-    let path = hub.config.attachments.join(&name);
+    let path = directory.join(&name);
     tokio::fs::write(&path, field.bytes().await?).await?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -772,7 +770,7 @@ async fn move_task(
 }
 
 /// A task made in a composer, with whatever was attached to it.
-async fn create_task_with_images(
+async fn create_task_with_attachments(
     State(hub): Hubs,
     mut form: Multipart,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
@@ -783,7 +781,7 @@ async fn create_task_with_images(
         match field.name() {
             Some("text") => text = field.text().await?,
             Some("agentId") => agent_id = field.text().await?,
-            Some("images") => images.push(keep_image(&hub, field).await?),
+            Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
     }
@@ -807,7 +805,7 @@ async fn correct_task(
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("text") => text = field.text().await?,
-            Some("images") => images.push(keep_image(&hub, field).await?),
+            Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
     }
@@ -1122,7 +1120,7 @@ async fn diagram_send(
     let file = diagram::DiagramFile::read(&path)?;
     let brief = diagram::describe(&file, &body.edits, &path, std::path::Path::new(&root), &body.note)?;
     diagram::write(&path, &diagram::rewrite(&file, &body.edits)?)?;
-    hub.say_to_with_images(&id, &brief, vec![], body.queued).await.map_err(|error| {
+    hub.say_to_with_attachments(&id, &brief, vec![], body.queued).await.map_err(|error| {
         Failed(error.context("the diagram is saved, but the agent could not be told"))
     })?;
     Ok(Json(diagram_payload(&hub, &id, &[])?))
@@ -1242,6 +1240,38 @@ fn attachment_type(name: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use oxroute_core::{TaskItem, TaskStatus};
+
+    #[tokio::test]
+    async fn uploads_preserve_arbitrary_bytes_without_overwriting() {
+        let directory = std::env::temp_dir().join(oxroute_core::model::new_id("upload-test"));
+        tokio::fs::create_dir_all(&directory).await.unwrap();
+        let destination = directory.clone();
+        let router = Router::new().route("/", post(move |mut form: Multipart| {
+            let directory = destination.clone();
+            async move {
+                let field = form.next_field().await.unwrap().unwrap();
+                Json(keep_file(&directory, field).await.unwrap())
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        let mut paths = Vec::new();
+        for bytes in [vec![0, 255, 17], vec![8, 0, 91]] {
+            let part = reqwest::multipart::Part::bytes(bytes.clone()).file_name("../payload.bin");
+            let response = client.post(format!("http://{address}/"))
+                .multipart(reqwest::multipart::Form::new().part("files", part))
+                .send().await.unwrap();
+            let path = response.json::<String>().await.unwrap();
+            assert!(std::path::Path::new(&path).starts_with(&directory));
+            assert_eq!(tokio::fs::read(&path).await.unwrap(), bytes);
+            paths.push(path);
+        }
+        assert_ne!(paths[0], paths[1]);
+        server.abort();
+        tokio::fs::remove_dir_all(&directory).await.unwrap();
+    }
 
     fn task(id: &str, text: &str, status: TaskStatus, blocker: &str) -> TaskItem {
         TaskItem {
