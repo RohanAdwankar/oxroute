@@ -471,6 +471,8 @@ pub enum EntryKind {
     MergedInto,
     /// oxroute itself reporting.
     Notice,
+    /// An immutable local change proposed for human review before publication.
+    Review,
 }
 
 impl EntryKind {
@@ -486,6 +488,7 @@ impl EntryKind {
             EntryKind::Merged => "merged",
             EntryKind::MergedInto => "merged-into",
             EntryKind::Notice => "notice",
+            EntryKind::Review => "review",
         }
     }
 
@@ -500,6 +503,7 @@ impl EntryKind {
             "forked-from" => EntryKind::ForkedFrom,
             "merged" => EntryKind::Merged,
             "merged-into" => EntryKind::MergedInto,
+            "review" => EntryKind::Review,
             _ => EntryKind::Notice,
         }
     }

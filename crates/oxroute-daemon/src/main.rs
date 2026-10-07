@@ -12,6 +12,7 @@
 //! ```
 
 use std::collections::HashMap;
+mod git;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -216,6 +217,9 @@ async fn serve() -> Result<()> {
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
+        .route("/api/agents/{id}/reviews", post(create_review))
+        .route("/api/agents/{id}/reviews/{review}", get(get_review))
+        .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
@@ -479,6 +483,73 @@ struct SayBody {
     /// Wait for the running turn rather than stopping it.
     #[serde(default)]
     queued: bool,
+}
+
+#[derive(Deserialize)]
+struct ReviewBody { repository: String, base: String, remote: String, title: String, description: String }
+
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeReview {
+    id: String,
+    agent_id: String,
+    title: String,
+    description: String,
+    snapshot: git::Snapshot,
+    approved_at: Option<f64>,
+}
+
+fn review_record(hub: &Hub, agent_id: &str, id: &str) -> anyhow::Result<(ChangeReview, String)> {
+    let data = hub.store.get(&format!("review:{id}"))?.context("no such review")?;
+    let review: ChangeReview = serde_json::from_str(&data)?;
+    anyhow::ensure!(review.agent_id == agent_id, "Review belongs to another session");
+    Ok((review, data))
+}
+
+async fn review_response(review: ChangeReview) -> serde_json::Value {
+    let status = if !git::current(&review.snapshot).await.unwrap_or(false) { "stale" }
+        else if review.approved_at.is_some() { "approved" } else { "pending" };
+    let mut response = serde_json::to_value(review).expect("review is serializable");
+    response["status"] = json!(status);
+    response
+}
+
+async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body): Json<ReviewBody>) -> Result<Json<serde_json::Value>, Failed> {
+    hub.store.agent(&agent_id)?.context("no such agent")?;
+    if body.title.trim().is_empty() || body.title.len() > 300 || body.description.len() > 32_000 {
+        return Err(anyhow::anyhow!("Provide a concise PR title and description").into());
+    }
+    let snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &body.repository, &body.base, &body.remote).await?;
+    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None };
+    let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
+    hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
+    Ok(Json(review_response(review).await))
+}
+
+async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await))
+}
+
+async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
+    let (mut review, before) = review_record(&hub, &agent_id, &id)?;
+    if !git::current(&review.snapshot).await? {
+        return Err(anyhow::anyhow!("This revision changed. Ask the agent to present a new review before publishing.").into());
+    }
+    if review.approved_at.is_none() {
+        review.approved_at = Some(oxroute_core::model::now());
+        let after = serde_json::to_string(&review)?;
+        let key = format!("review:{id}");
+        if hub.store.replace_value(&key, &before, &after)? {
+            let snapshot = &review.snapshot;
+            let authorization = format!("I approve local review {id}: {}. You may publish commit {} from {} to remote {} ({}) as branch {}, against base {} at {}. Recheck this review's status immediately before pushing, and use the review's stored title and description for the PR. No merge or deployment is authorized.",
+                review.title, snapshot.head_commit, snapshot.repository, snapshot.remote, snapshot.remote_url, snapshot.branch, snapshot.base_ref, snapshot.base_commit);
+            if let Err(error) = hub.say_to_with_attachments(&agent_id, &authorization, vec![], true).await {
+                hub.store.replace_value(&key, &after, &before)?;
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await))
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1239,7 +1310,96 @@ fn attachment_type(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxroute_core::{TaskItem, TaskStatus};
+    use oxroute_core::{Backend, TaskItem, TaskStatus};
+
+    struct ReviewHarness;
+
+    #[async_trait::async_trait]
+    impl oxroute_core::agent::Harness for ReviewHarness {
+        fn backend(&self) -> Backend { Backend::Codex }
+        fn capabilities(&self) -> oxroute_core::agent::Capabilities { oxroute_core::agent::Capabilities { fork: false, inject: false, resume: true } }
+        fn events(&self) -> tokio::sync::broadcast::Receiver<oxroute_core::agent::HarnessEvent> { tokio::sync::broadcast::channel(16).1 }
+        async fn open(&self, _: &oxroute_core::agent::SessionSpec) -> Result<String> { Ok("fixture-session".into()) }
+        async fn start(&self, _: &str, _: Vec<oxroute_core::model::TurnInput>) -> Result<String> { Ok("fixture-turn".into()) }
+        async fn interrupt(&self, _: &str, _: &str) -> Result<()> { Ok(()) }
+    }
+
+    #[tokio::test]
+    async fn local_review_http_lifecycle_never_publishes_and_persists_approval() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("review-api"));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let command = |args: Vec<&str>| {
+            let output = std::process::Command::new("git").arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success());
+        };
+        command(vec!["init", "-b", "main"]);
+        command(vec!["config", "user.name", "Fixture"]);
+        command(vec!["config", "user.email", "fixture@example.invalid"]);
+        command(vec!["remote", "add", "origin", "https://example.invalid/proposed.git"]);
+        tokio::fs::write(root.join("settings.txt"), "original\n").await.unwrap();
+        command(vec!["add", "settings.txt"]);
+        command(vec!["commit", "-m", "Initial"]);
+        command(vec!["checkout", "-b", "proposal"]);
+        tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
+        command(vec!["commit", "-am", "Propose"]);
+        let config_path = root.join("config.toml");
+        tokio::fs::write(&config_path, "owner = 'fixture'\n").await.unwrap();
+        let mut config = Config::load_from(&config_path).unwrap();
+        config.workspace = root.to_string_lossy().into();
+        config.artifacts = root.join("artifacts");
+        config.attachments = root.join("attachments");
+        config.min_free_bytes = 0;
+        config.database = root.join("state.sqlite");
+        let store = Store::open(&config.database).unwrap();
+        let agent_id = "review-fixture";
+        store.save_agent(&oxroute_core::Agent {
+            id: agent_id.into(), name: "Review fixture".into(), backend: Backend::Codex, model: config.default_model.clone(),
+            session_id: String::new(), cwd: config.workspace.clone(), status: oxroute_core::model::AgentStatus::Complete,
+            activity: String::new(), permalink: String::new(), last_activity: 0.0, updated_at: 0.0,
+            stall_reason: None, stall_alerted: false, pinned: false,
+        }).unwrap();
+        let mut hub = Hub::new(config, store);
+        hub.with_harness(Arc::new(ReviewHarness));
+        let router = Router::new().route("/api/agents/{id}/reviews", post(create_review))
+            .route("/api/agents/{id}/reviews/{review}", get(get_review))
+            .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/api/agents/{agent_id}/reviews");
+        let created = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Proposed change", "description": "Review before publication" }))
+            .send().await.unwrap();
+        assert!(created.status().is_success(), "{}", created.text().await.unwrap());
+        let review: serde_json::Value = created.json().await.unwrap();
+        assert_eq!(review["status"], "pending");
+        let id = review["id"].as_str().unwrap();
+        let endpoint = format!("{url}/{id}");
+        let card = hub.store.timeline(agent_id, 10).unwrap();
+        assert_eq!(card.len(), 1);
+        assert_eq!(card[0].kind, oxroute_core::model::EntryKind::Review);
+        assert_eq!(card[0].detail, id);
+        // A separate SQLite connection sees the same snapshot after reopening.
+        let reopened = Store::open(hub.store.path()).unwrap();
+        assert!(reopened.get(&format!("review:{id}")).unwrap().unwrap().contains("+proposed"));
+        assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}")).send().await.unwrap().status().is_success());
+        for _ in 0..2 {
+            let approved = client.post(format!("{endpoint}/approve")).send().await.unwrap();
+            assert!(approved.status().is_success(), "{}", approved.text().await.unwrap());
+            assert_eq!(approved.json::<serde_json::Value>().await.unwrap()["status"], "approved");
+        }
+        assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::You).count(), 1);
+        let stored: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        assert!(stored.approved_at.is_some());
+        tokio::fs::write(root.join("settings.txt"), "revised\n").await.unwrap();
+        command(vec!["commit", "-am", "Revise"]);
+        let stale = client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
+        assert_eq!(stale["status"], "stale");
+        assert_eq!(stale["snapshot"], review["snapshot"]);
+        assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        server.abort();
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+    }
 
     #[tokio::test]
     async fn uploads_preserve_arbitrary_bytes_without_overwriting() {

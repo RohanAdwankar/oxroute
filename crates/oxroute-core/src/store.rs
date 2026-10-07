@@ -1386,6 +1386,25 @@ impl Store {
         })
     }
 
+    /// Capture a proposal and its conversation card atomically.
+    pub fn add_review(&self, agent_id: &str, id: &str, title: &str, data: &str) -> Result<Entry> {
+        self.with(|c| {
+            let transaction = c.unchecked_transaction()?;
+            transaction.execute("INSERT INTO kv (key, value) VALUES (?1, ?2)", params![format!("review:{id}"), data])?;
+            transaction.execute("INSERT INTO entries (agent_id, at, kind, text, detail) VALUES (?1, ?2, 'review', ?3, ?4)",
+                params![agent_id, crate::model::now(), title, id])?;
+            let entry = transaction.query_row("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url FROM entries WHERE id = ?1",
+                params![transaction.last_insert_rowid()], read_entry)?;
+            transaction.commit()?;
+            Ok(entry)
+        })
+    }
+
+    /// Only one request may claim a revision's approval notification.
+    pub fn replace_value(&self, key: &str, before: &str, after: &str) -> Result<bool> {
+        self.with(|c| Ok(c.execute("UPDATE kv SET value = ?3 WHERE key = ?1 AND value = ?2", params![key, before, after])? == 1))
+    }
+
     pub fn set(&self, key: &str, value: &str) -> Result<()> {
         self.with(|c| {
             c.execute(

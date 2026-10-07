@@ -8,6 +8,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
+import { GitReview } from "./GitReview";
 import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
@@ -181,6 +182,8 @@ export function AgentPanel({
   verbose: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
+  const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
+  const [reviewId, setReviewId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ entry: Entry; after: number }[]>([]);
   const nextPending = useRef(0);
   const pictures = useUploads();
@@ -559,6 +562,11 @@ export function AgentPanel({
         >
           <Icon name={archived ? "restore" : "archive"} size={14} />
         </button>
+        {reviewId && <button aria-label="Open change review" title="Open change review" aria-pressed={reviewingGit === true}
+          onClick={() => { setReviewingGit(value => !value); setMode("type"); }}
+          className="flex cursor-pointer items-center justify-center px-3 text-mid hover:text-ink">
+          <Icon name="diff" size={14} />
+        </button>}
         <SplitAction
           label={can.fork ? "Fork in chat" : `${agent.backend} cannot fork a session`}
           icon="fork"
@@ -597,6 +605,11 @@ export function AgentPanel({
         </span>
       </div>
 
+      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={text => {
+        setDraft(current => `${current}${current ? "\n\n" : ""}${text}`);
+        setReviewingGit(false);
+        window.requestAnimationFrame(() => composer.current?.focus());
+      }} /></div>}
       {mode === "diagram" && (
         <DiagramComposer
           agentId={agent.id}
@@ -614,7 +627,7 @@ export function AgentPanel({
 
       <div
         ref={timeline}
-        hidden={mode !== "type"}
+        hidden={mode !== "type" || reviewingGit === true}
         onContextMenu={(event) => {
           const row = (event.target as HTMLElement).closest("[data-entry]");
           const id = row ? Number(row.getAttribute("data-entry")) : null;
@@ -687,6 +700,14 @@ export function AgentPanel({
               }
 
               const { entry } = item;
+              if (entry.kind === "review") return <div key={entry.id} data-entry={entry.id} className="border-b border-hair py-3">
+                <button aria-label={`Review ${entry.text}`} onClick={() => { setReviewId(entry.detail); setReviewingGit(true); setMode("type"); }}
+                  className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
+                  <Icon name="diff" />
+                  <span className="min-w-0 flex-1"><span className="block font-semibold">{entry.text}</span><span className="text-[12px] text-faint">Local change · Review before publication</span></span>
+                  <Icon name="external" size={14} />
+                </button>
+              </div>;
               return (
                 <Message
                   key={entry.id}

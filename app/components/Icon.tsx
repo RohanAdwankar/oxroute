@@ -9,6 +9,7 @@ export type IconName =
   | "collapse"
   | "copy"
   | "diagram"
+  | "diff"
   | "discard"
   | "expand"
   | "external"
@@ -38,6 +39,7 @@ export type IconName =
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
+    diff: <><path d="M3 1h7l3 3v11H3zM10 1v4h3M5 8h6M8 6v4M5 12h6" /></>,
     archive: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM6 9h4" /></>,
     ask: <><path d="M8 14a6 6 0 1 0-6-6" /><path d="M2 3v5h5" /></>,
     attach: <path d="M6 8.5 10.5 4a2.1 2.1 0 0 1 3 3L7 13.5a3.2 3.2 0 0 1-4.5-4.5L9 2.5" />,

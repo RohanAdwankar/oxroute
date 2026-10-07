@@ -1729,6 +1729,22 @@ impl Hub {
             listen = self.config.listen,
             id = agent.id,
         )));
+        inputs.push(TurnInput::text(format!(
+            "Before pushing a branch or creating a PR, present the committed local change \
+             for human review using POST http://{listen}/api/agents/{id}/reviews with \
+             {{\"repository\": \"absolute worktree root\", \"base\": \"base branch\", \
+             \"remote\": \"remote name\", \"title\": \"proposed PR title\", \
+             \"description\": \"proposed PR description\"}}. It returns a review ID and \
+             captures the exact diff in this conversation. Do not push to make it reviewable. \
+             Wait for the user's approval. Immediately before publication, GET \
+             http://{listen}/api/agents/{id}/reviews/<review-id> and require status approved. \
+             Push only its snapshot.headCommit to snapshot.remote and snapshot.branch, \
+             and use its stored title and description for the PR; \
+             approval does not authorize merging or deploying. Any changed commits, base, \
+             branch, remote or tracked edits require a new review. Never call the approval \
+             endpoint yourself. Approval here records user consent; it is not a shell sandbox.",
+            listen = self.config.listen, id = agent.id,
+        )));
 
         // Agents share a working directory by default, and a fork always
         // shares its parent's, so an agent can be one of several hands in

@@ -17,7 +17,8 @@ export type EntryKind =
   | "forkedFrom"
   | "merged"
   | "mergedInto"
-  | "notice";
+  | "notice"
+  | "review";
 export type Mode = "ask" | "auto";
 
 export interface Attachment {

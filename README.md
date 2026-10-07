@@ -22,3 +22,28 @@ do the work while you watch.
 | **Harnesses** | Claude Code and Codex, behind one interface |
 | **Surfaces** | A web UI, a terminal UI and Slack, all on the same sessions |
 | **Settings** | Light or dark, how much of each tool call you see, whether blocked work is drawn, keyboard hints |
+| **Change review** | Review a local proposed PR, quote diff lines, and approve the exact revision before publication |
+
+## Review before publication
+
+The agent commits its proposed change locally, then POSTs to
+`/api/agents/<agent-id>/reviews` with `repository` (absolute worktree root),
+`base` (existing target branch), `remote`, `title`, and `description`.
+Oxroute stores the committed diff and adds a review card to that conversation.
+There is no VM repository discovery or push during review.
+
+Open the card to browse files. Additions are green, deletions red. Select lines
+and right-click to quote their review ID, fixed commits, file, and line ranges
+into a question. The checkmark approves publication of that revision and queues
+the authorization to the owning agent without interrupting its current turn.
+Approval does not authorize merging or deploying.
+
+Before pushing, the agent must GET `/api/agents/<agent-id>/reviews/<review-id>`
+and require `status: approved`. Publish the recorded head commit to the recorded
+remote and branch, using the stored PR title and description. Changed commits,
+base, branch, destination, or tracked edits make the review stale and require
+a new review. Stored diffs survive those changes and restarts.
+
+This is a consent workflow in a single-user app. It does not sandbox an agent's
+shell or intercept arbitrary Git commands. Approval is a user action; agents
+must never call the approval endpoint themselves.

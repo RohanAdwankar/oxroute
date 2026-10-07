@@ -15,6 +15,7 @@
   --color-wash: #f2efe8;
   --color-band: #f4f0e9;
   --color-ok: #0f7a5c;
+  --color-remove: #ad3030;
   --color-merge: #8a4fc0;
   /* What you said, tinted towards the purple that means "a person did
      this", light enough to read black text on. */
@@ -53,6 +54,7 @@ html[data-theme="dark"] {
   --color-wash: #262019;
   --color-band: #221d16;
   --color-ok: #49b891;
+  --color-remove: #f28b82;
   --color-merge: #b58bea;
   --color-mine: #262036;
   --color-hold: #d79b3a;
