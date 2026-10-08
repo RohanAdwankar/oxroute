@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
+import type { DiffQuote } from "../lib/drafts";
 
 type Review = {
   id: string; title: string; description: string; status: "pending" | "approved" | "stale";
@@ -35,7 +36,7 @@ async function response<T>(request: Promise<Response>): Promise<T> {
 }
 
 export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
-  agentId: string; reviewId: string; active: boolean; onQuote: (text: string) => void; onClose: () => void;
+  agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void;
 }) {
   const [review, setReview] = useState<Review | null>(null);
   const [file, setFile] = useState("");
@@ -75,7 +76,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
     const range = `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
-    onQuote(`Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n`);
+    onQuote({ path: file, rows: selected, text: `Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
     setMenu(null);
   };
 

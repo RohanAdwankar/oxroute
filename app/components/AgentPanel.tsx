@@ -13,7 +13,7 @@ import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
-import { draftFor, keepDraft } from "../lib/drafts";
+import { draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -182,6 +182,8 @@ export function AgentPanel({
   verbose: boolean;
 }) {
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
+  const [diffs, setDiffs] = useState(() => diffsFor(view.agent.id));
+  const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
   const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ entry: Entry; after: number }[]>([]);
@@ -222,6 +224,7 @@ export function AgentPanel({
   }
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
+  useEffect(() => keepDiffs(agent.id, diffs), [agent.id, diffs]);
 
   /// Every question you asked, in order, so a question can lead to the one
   /// before or after it without reading everything in between.
@@ -284,10 +287,10 @@ export function AgentPanel({
     input.style.height = `${Math.max(floor || 34, Math.min(input.scrollHeight, 160))}px`;
     input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
     pin();
-  }, [draft, pictures.uploads, pictures.error, pin]);
+  }, [draft, diffs, pictures.uploads, pictures.error, pin]);
 
   /// A drawing follows the same interrupt-or-queue choice as text.
-  const sayImmediately = (text: string, images: File[], queued: boolean) => {
+  const sayImmediately = (text: string, images: File[], queued: boolean, restoreText = text, restoreDiffs: DiffQuote[] = []) => {
     const id = --nextPending.current;
     const shown = images.length > 0
       ? [text, `Attached: ${images.map((image) => image.name).join(", ")}`].filter(Boolean).join("\n\n")
@@ -300,14 +303,15 @@ export function AgentPanel({
     void onSay(text, images, queued).then((accepted) => {
       if (accepted) return;
       setPending((current) => current.filter((item) => item.entry.id !== id));
-      setDraft((current) => current ? `${text}\n${current}` : text);
+      setDraft((current) => current ? `${restoreText}\n${current}` : restoreText);
+      setDiffs(current => [...restoreDiffs, ...current]);
       pictures.add(images);
     });
   };
 
   const sendDrawn = async (queued: boolean) => {
     if (busy) return;
-    const text = draft.trim();
+    const text = composed;
     if (mode === "diagram") {
       if (edits.length === 0) return;
       onSendDiagram(edits, text, queued);
@@ -315,11 +319,12 @@ export function AgentPanel({
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      sayImmediately(text, [picture, ...pictures.files], queued);
+      sayImmediately(text, [picture, ...pictures.files], queued, draft, diffs);
       pictures.clear();
       sketch.current?.clear();
     }
     setDraft("");
+    setDiffs([]);
     // Back to the timeline, where what was just sent shows up.
     setMode("type");
   };
@@ -328,7 +333,7 @@ export function AgentPanel({
 
   const canSend =
     mode === "type"
-      ? draft.trim().length > 0 || pictures.uploads.length > 0
+      ? draft.trim().length > 0 || diffs.length > 0 || pictures.uploads.length > 0
       : mode === "diagram"
         ? edits.length > 0
         : sketchReady;
@@ -338,15 +343,16 @@ export function AgentPanel({
       void sendDrawn(queued);
       return;
     }
-    const text = draft.trim();
+    const text = composed;
     if ((!text && pictures.uploads.length === 0) || busy) return;
     // What you just said is what you want to see, wherever you had scrolled
     // to before saying it.
     following.current = true;
     setDraft("");
+    setDiffs([]);
     const sent = pictures.files;
     if (correcting) onCorrect(text, sent);
-    else sayImmediately(text, sent, queued);
+    else sayImmediately(text, sent, queued, draft, diffs);
     pictures.clear();
   };
 
@@ -360,11 +366,12 @@ export function AgentPanel({
   /// a drawing, which until now only existed at the moment it was sent.
   const toTask = async () => {
     if (busy) return;
-    const text = draft.trim();
+    const text = composed;
     const drawn = mode === "draw" ? await sketch.current?.export() : null;
     const filed = [...(drawn ? [drawn] : []), ...pictures.files];
     if (!text && filed.length === 0) return;
     setDraft("");
+    setDiffs([]);
     const saving = onTask(text, filed);
     pictures.clear();
     if (drawn) {
@@ -372,7 +379,8 @@ export function AgentPanel({
       setMode("type");
     }
     if (!await saving) {
-      setDraft((current) => current ? `${text}\n${current}` : text);
+      setDraft((current) => current ? `${draft}\n${current}` : draft);
+      setDiffs(current => [...diffs, ...current]);
       pictures.add(filed);
     }
   };
@@ -605,8 +613,9 @@ export function AgentPanel({
         </span>
       </div>
 
-      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={text => {
-        setDraft(current => `${current}${current ? "\n\n" : ""}${text}`);
+      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={quote => {
+        setDiffs(current => [...current, quote]);
+        setMode("type");
         setReviewingGit(false);
         window.requestAnimationFrame(() => composer.current?.focus());
       }} /></div>}
@@ -838,6 +847,13 @@ export function AgentPanel({
           dragging={draggingImages}
           onDrop={pictures.drop}
         />
+        {diffs.map((quote, index) => <section key={index} aria-label={`Attached diff ${quote.path}`} className="px-3 py-2 text-[12px]">
+          <div className="flex items-center gap-2 text-faint">
+            <span className="min-w-0 flex-1 truncate">{quote.path}</span>
+            <button aria-label={`Remove diff ${quote.path}`} title="Remove diff" onClick={() => setDiffs(current => current.filter((_, at) => at !== index))} className="cursor-pointer"><Icon name="discard" size={13} /></button>
+          </div>
+          <pre className="mt-1 max-h-36 overflow-auto font-mono leading-[1.6]">{quote.rows.map((row, at) => <div key={at} data-quoted-diff-line className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-2 inline-block w-9 text-right text-faint">{row.old}</span><span className="mr-2 inline-block w-9 text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}</pre>
+        </section>)}
         <div className="flex items-stretch">
           <input
             ref={picker}

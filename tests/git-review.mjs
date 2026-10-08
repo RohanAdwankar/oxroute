@@ -82,19 +82,23 @@ try {
   await stage('Right-click a changed line to quote it into a question.');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await page.getByRole('button', { name: 'Quote diff into chat' }).click();
-  const draft = await page.locator('[data-composer]').inputValue();
-  assert.ok(draft.includes('File: config.yaml'));
-  assert.ok(draft.includes(`${review.snapshot.baseCommit}...${review.snapshot.headCommit}`));
-  assert.ok(draft.includes(review.id));
-  assert.ok(draft.includes('> +value: after'));
-  assert.ok(draft.includes('old none, new 3–3'), 'Quotes retain source line numbers without metadata rows');
+  const attachment = page.getByRole('region', { name: 'Attached diff config.yaml' });
+  await attachment.waitFor();
+  assert.equal(await page.locator('[data-composer]').inputValue(), '', 'Diff content is separate from editable question');
+  const attachedAdded = attachment.locator('[data-quoted-diff-line]').filter({ hasText: '+value: after' });
+  const [quoteRed, quoteGreen] = await color(attachedAdded);
+  assert.ok(quoteGreen > quoteRed, 'Attachment additions are green');
   assert.equal(await page.locator('section[aria-label="Change review"]').isVisible(), false);
+  await page.locator('[data-composer]').fill('Explain this change.');
   if (demo) {
     await page.locator('[data-composer]').press('ControlOrMeta+End');
     await page.locator('[data-composer]').type('Can you explain this change before I approve it?', { delay: 35 });
   }
   await stage('The draft includes the review ID, exact commits, file, and line numbers.');
   if (demo) await page.screenshot({ path: `${demo}/review-quote.png` });
+  await page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }).click();
+  assert.equal(await attachment.count(), 0);
+  assert.ok((await page.locator('[data-composer]').inputValue()).includes('Explain this change.'), 'Removing a diff preserves the question');
   if (!demo) await page.setViewportSize({ width: 500, height: 800 });
   await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   await added.waitFor();
@@ -110,10 +114,19 @@ try {
   });
   await added.click({ button: 'right' });
   await page.getByRole('button', { name: 'Quote diff into chat' }).click();
-  const multiple = await page.locator('[data-composer]').inputValue();
-  assert.ok(multiple.includes('> -value: before\n> +value: after'));
+  await attachment.waitFor();
+  assert.ok((await attachment.innerText()).includes('-value: before'));
+  const attachedRemoved = attachment.locator('[data-quoted-diff-line]').filter({ hasText: '-value: before' });
+  const [quoteRemovedRed, quoteRemovedGreen] = await color(attachedRemoved);
+  assert.ok(quoteRemovedRed > quoteRemovedGreen, 'Attachment deletions are red');
+  await page.getByRole('button', { name: 'back to the fleet', exact: true }).click();
+  await page.getByText('Review test', { exact: true }).click();
+  await attachment.waitFor();
+  assert.ok((await page.locator('[data-composer]').inputValue()).includes('Explain this change.'), 'Question and attached diff survive navigation');
+  await page.setViewportSize({ width: 1280, height: 800 });
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   assert.deepEqual(writes, [], 'Review and quote never send a message or change Git');
-  await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await stage('When satisfied, approve this revision for publication.');
   await page.getByRole('button', { name: 'Approve publication' }).click();
   await page.getByText('Approved for publication', { exact: true }).waitFor();
@@ -129,6 +142,22 @@ try {
   await page.getByText('Revision changed', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Approve publication' }).isDisabled(), true);
   await stage('Further edits require a new review. The previous diff stays readable.');
+  if (!demo) {
+    await page.getByRole('button', { name: 'Back to conversation' }).click();
+    let sent;
+    await page.route('**/api/say', route => { sent = route.request().postDataJSON(); return route.fulfill({ status: 500, json: { error: 'Test rejection' } }); });
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await attachment.waitFor();
+    assert.equal(await page.locator('[data-composer]').inputValue(), 'Explain this change.', 'Rejected sends restore question and attachment');
+    assert.ok(sent.text.includes(review.id) && sent.text.includes(`${review.snapshot.baseCommit}...${review.snapshot.headCommit}`));
+    assert.ok(sent.text.includes('File: config.yaml (old 3–3, new 3–3)'));
+    assert.ok(sent.text.includes('> -value: before\n> +value: after'));
+    assert.ok(sent.text.endsWith('Explain this change.'));
+    await page.route('**/api/say', route => route.fulfill({ json: {} }));
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await attachment.waitFor({ state: 'detached' });
+    assert.equal(await page.locator('[data-composer]').inputValue(), '', 'Successful sends clear composer attachments');
+  }
   if (demo) {
     await page.screenshot({ path: `${demo}/review-stale.png` });
     const video = page.video();
