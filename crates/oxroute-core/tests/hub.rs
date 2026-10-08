@@ -1910,6 +1910,24 @@ async fn something_you_typed_carries_no_provenance_label() {
 }
 
 #[tokio::test]
+async fn direct_publication_is_scoped_to_the_session_the_user_exempted() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "initial work")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let review_required = |inputs: &[TurnInput]| inputs.iter().filter_map(TurnInput::as_text)
+        .any(|text| text.contains("require status approved"));
+    assert!(review_required(&w.calls.lock().unwrap().started[0].1));
+    w.hub.tag(&agent, &[], &[], &["publication:direct".into()]).unwrap();
+    w.hub.accept(signal("100.0", "101.0", "continue exempted work")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert!(!review_required(&w.calls.lock().unwrap().started[1].1));
+    w.hub.accept(signal("200.0", "200.0", "unrelated work")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
+    assert!(review_required(&w.calls.lock().unwrap().started[2].1));
+}
+
+#[tokio::test]
 async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();

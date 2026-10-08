@@ -1736,7 +1736,16 @@ impl Hub {
             listen = self.config.listen,
             id = agent.id,
         )));
-        inputs.push(TurnInput::text(format!(
+        if self.store.tags(&agent.id)?.iter().any(|tag| tag == "publication:direct") {
+            inputs.push(TurnInput::text(
+                "The user has exempted this conversation from per-diff publication reviews. \
+                 Ship tested changes directly within the repository and deployment scope they \
+                 authorized. Do not request review-card approval. Preserve unrelated work and \
+                 wait for active sessions to become idle before restarting shared services. \
+                 Change this publication policy only at the user's explicit request.",
+            ));
+        } else {
+            inputs.push(TurnInput::text(format!(
             "Before pushing a branch or creating a PR, present the committed local change \
              for human review using POST http://{listen}/api/agents/{id}/reviews with \
              {{\"repository\": \"absolute worktree root\", \"base\": \"base branch\", \
@@ -1751,7 +1760,8 @@ impl Hub {
              branch, remote or tracked edits require a new review. Never call the approval \
              endpoint yourself. Approval here records user consent; it is not a shell sandbox.",
             listen = self.config.listen, id = agent.id,
-        )));
+            )));
+        }
 
         // Agents share a working directory by default, and a fork always
         // shares its parent's, so an agent can be one of several hands in
