@@ -974,6 +974,13 @@ impl Hub {
         images: Vec<String>,
         queued: bool,
     ) -> Result<()> {
+        self.say_to_annotated(agent_id, text, images, queued, "").await
+    }
+
+    /// Timeline annotations affect presentation only; the harness receives the original text.
+    pub async fn say_to_annotated(
+        self: &Arc<Self>, agent_id: &str, text: &str, images: Vec<String>, queued: bool, detail: &str,
+    ) -> Result<()> {
         anyhow::ensure!(!text.trim().is_empty() || !images.is_empty(), "nothing to say");
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let image_names = images
@@ -1000,7 +1007,7 @@ impl Hub {
             inputs.push(TurnInput::text(&spoken));
         }
         inputs.extend(self.upload_inputs(&agent, &images).await?);
-        let spoken_entry = self.record(&agent.id, EntryKind::You, &shown, "", "");
+        let spoken_entry = self.record(&agent.id, EntryKind::You, &shown, detail, "");
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
             None if self.store.pane_links()?.contains_key(&agent.id) => (None, false),

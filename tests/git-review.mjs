@@ -8,7 +8,10 @@ const otherPatch = 'diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/n
 const review = { id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
   snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
     baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }, { path: 'notes.txt', patch: otherPatch }] } };
-const timeline = [{ id: 1, agentId: agent.id, at: Date.now()/1000, kind: 'review', text: review.title, detail: review.id }];
+const authorization = `Authorize publishing revision ${review.snapshot.headCommit} from ${agent.cwd}; merge and deployment require separate approval.`;
+const approvalDetail = 'review-approval:' + JSON.stringify({ id: review.id, title: review.title, commit: review.snapshot.headCommit, branch: review.snapshot.branch, base: review.snapshot.baseRef });
+const timeline = [{ id: 1, agentId: agent.id, at: Date.now()/1000, kind: 'review', text: review.title, detail: review.id },
+  { id: 2, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: authorization, detail: approvalDetail }];
 const demo = process.env.DEMO_DIR;
 if (demo) await mkdir(demo, { recursive: true });
 const browser = await chromium.launch({ slowMo: demo ? 250 : 0 });
@@ -35,6 +38,16 @@ try {
   const writes = [];
   page.on('request', r => { if (r.method() !== 'GET') writes.push(r.url()); });
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
+  const approvalCard = page.getByRole('region', { name: 'Publication approval', exact: true });
+  await approvalCard.waitFor();
+  assert.ok((await approvalCard.innerText()).includes(`Publication approved · ${review.title}`));
+  assert.ok((await approvalCard.innerText()).includes('proposal into main · bbbbbbbb'));
+  assert.ok((await approvalCard.innerText()).includes('Push and create PR only · No merge or deployment'));
+  assert.equal(await approvalCard.getByText(authorization, { exact: true }).isVisible(), false, 'Raw authorization is collapsed');
+  if (process.env.APPROVAL_SCREENSHOT) await page.screenshot({ path: process.env.APPROVAL_SCREENSHOT });
+  await approvalCard.locator('summary').click();
+  assert.equal(await approvalCard.getByText(authorization, { exact: true }).isVisible(), true, 'Original authorization remains inspectable');
+  await approvalCard.locator('summary').click();
   await stage('The agent presents a local proposed PR in chat. Demo data; nothing is pushed.');
   if (demo) await page.screenshot({ path: `${demo}/review-card.png` });
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();

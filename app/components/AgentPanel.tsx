@@ -709,6 +709,17 @@ export function AgentPanel({
               }
 
               const { entry } = item;
+              if (entry.kind === "you" && entry.detail.startsWith("review-approval:")) {
+                const approval = JSON.parse(entry.detail.slice("review-approval:".length)) as { id: string; title: string; commit: string; branch: string; base: string };
+                return <div key={entry.id} data-entry={entry.id} role="region" aria-label="Publication approval" className="border-b border-hair py-3">
+                  <button aria-label={`Review approved change ${approval.title}`} onClick={() => { setReviewId(approval.id); setReviewingGit(true); setMode("type"); }} className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
+                    <Icon name="tick" />
+                    <span className="min-w-0 flex-1"><span className="block font-semibold">Publication approved · {approval.title}</span><span className="block text-[12px] text-mid">{approval.branch} into {approval.base.replace("refs/heads/", "").replace("refs/remotes/", "")} · {approval.commit.slice(0, 8)}</span><span className="text-[12px] text-faint">Push and create PR only · No merge or deployment</span></span>
+                    <Icon name="external" size={14} />
+                  </button>
+                  <details className="mt-2 text-[12px] text-faint"><summary className="cursor-pointer">Authorization details</summary><Markdown>{entry.text}</Markdown></details>
+                </div>;
+              }
               if (entry.kind === "review") return <div key={entry.id} data-entry={entry.id} className="border-b border-hair py-3">
                 <button aria-label={`Review ${entry.text}`} onClick={() => { setReviewId(entry.detail); setReviewingGit(true); setMode("type"); }}
                   className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">

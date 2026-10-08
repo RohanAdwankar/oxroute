@@ -543,7 +543,11 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
             let snapshot = &review.snapshot;
             let authorization = format!("I approve local review {id}: {}. You may publish commit {} from {} to remote {} ({}) as branch {}, against base {} at {}. Recheck this review's status immediately before pushing, and use the review's stored title and description for the PR. No merge or deployment is authorized.",
                 review.title, snapshot.head_commit, snapshot.repository, snapshot.remote, snapshot.remote_url, snapshot.branch, snapshot.base_ref, snapshot.base_commit);
-            if let Err(error) = hub.say_to_with_attachments(&agent_id, &authorization, vec![], true).await {
+            let detail = format!("review-approval:{}", json!({
+                "id": id, "title": review.title, "commit": snapshot.head_commit,
+                "branch": snapshot.branch, "base": snapshot.base_ref,
+            }));
+            if let Err(error) = hub.say_to_annotated(&agent_id, &authorization, vec![], true, &detail).await {
                 hub.store.replace_value(&key, &after, &before)?;
                 return Err(error.into());
             }
@@ -1389,6 +1393,13 @@ mod tests {
             assert_eq!(approved.json::<serde_json::Value>().await.unwrap()["status"], "approved");
         }
         assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::You).count(), 1);
+        let timeline = reopened.timeline(agent_id, 10).unwrap();
+        let approval = timeline.iter().find(|entry| entry.kind == oxroute_core::model::EntryKind::You).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(approval.detail.strip_prefix("review-approval:").unwrap()).unwrap();
+        assert_eq!(metadata["id"], id);
+        assert_eq!(metadata["commit"], review["snapshot"]["headCommit"]);
+        assert!(approval.text.contains(review["snapshot"]["headCommit"].as_str().unwrap()));
+        assert!(approval.text.contains("No merge or deployment is authorized."));
         let stored: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
         assert!(stored.approved_at.is_some());
         tokio::fs::write(root.join("settings.txt"), "revised\n").await.unwrap();
