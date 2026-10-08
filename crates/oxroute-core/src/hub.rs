@@ -2035,7 +2035,7 @@ impl Hub {
         self.record(
             &agent.id,
             EntryKind::Notice,
-            &format!("Handed back {} open task(s) from the list", open.len()),
+            &format!("Resuming open work:\n{list}"),
             "",
             "",
         );

@@ -1943,6 +1943,9 @@ async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
     let texts: Vec<&str> = started[2].1.iter().filter_map(TurnInput::as_text).collect();
     assert!(texts[0].contains("still has open work"));
     assert!(texts[0].contains("scrub the tiles"));
+    assert!(w.hub.timeline(&agent.id, usize::MAX).unwrap().iter().any(|entry|
+        entry.kind == EntryKind::Notice && entry.text.contains("scrub the tiles")
+    ), "the notice must identify the task being resumed");
 
     // And it stops there: that turn left the list exactly as it found it,
     // so asking again would only repeat itself.
