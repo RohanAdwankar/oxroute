@@ -16,7 +16,7 @@ import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
-import { Markdown } from "./Markdown";
+import { Markdown, ReviewLinks } from "./Markdown";
 import { SplitAction } from "./SplitAction";
 
 /// What the person said needs no label: it is the one that sits on the
@@ -216,6 +216,12 @@ export function AgentPanel({
     return unmatched.map((item) => item.entry);
   }, [pending, view.timeline]);
   const items = useMemo(() => compactTimeline([...view.timeline, ...optimistic]), [view.timeline, optimistic]);
+  const reviewTitles = useMemo(() => JSON.stringify(view.timeline.filter(entry => entry.kind === "review")
+    .map(entry => [entry.detail, entry.text])), [view.timeline]);
+  const reviewLinks = useMemo(() => ({
+    titles: new Map<string, string>(JSON.parse(reviewTitles)),
+    open: (id: string) => { setReviewId(id); setReviewingGit(true); setMode("type"); },
+  }), [reviewTitles]);
 
   const [previousTimeline, setPreviousTimeline] = useState(view.timeline);
   if (previousTimeline !== view.timeline) {
@@ -426,6 +432,7 @@ export function AgentPanel({
   };
 
   return (
+    <ReviewLinks.Provider value={reviewLinks}>
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onDragOver={(event) => {
@@ -975,6 +982,7 @@ export function AgentPanel({
         </div>
       </footer>
     </section>
+    </ReviewLinks.Provider>
   );
 }
 
