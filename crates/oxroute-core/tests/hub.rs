@@ -2763,6 +2763,7 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
             &task.id,
             "the trim is still bare",
             vec![shown.to_string_lossy().to_string()],
+            false,
         )
         .await
         .unwrap();
@@ -2796,6 +2797,24 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
         .unwrap()
         .iter()
         .any(|note| note.text == "the trim is still bare"));
+}
+
+#[tokio::test]
+async fn queued_corrections_reopen_work_without_interrupting_the_active_turn() {
+    let w = build(Mode::Auto, Harnessed {
+        delay: Duration::from_millis(300), ..Harnessed::default()
+    }).await;
+    w.hub.accept(signal("100.0", "100.0", "current work")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let task = w.hub.create_task("previous work", &agent, vec![]).await.unwrap();
+    let back = w.hub.correct_task(&task.id, "needs another pass", vec![], true).await.unwrap();
+    assert_eq!(back.status, TaskStatus::Incomplete);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    assert!(settle(|| w.calls.lock().unwrap().started.iter().skip(1).any(|(_, inputs)| {
+        inputs.iter().filter_map(TurnInput::as_text).any(|text| text.contains("needs another pass"))
+    })).await);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
 }
 
 #[tokio::test]
