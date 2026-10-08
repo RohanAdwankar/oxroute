@@ -150,6 +150,10 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    // Reviews retain publication identity; Git owns the diff content.
+    conn.execute("UPDATE kv SET value = json_remove(value, '$.snapshot.files')
+        WHERE key GLOB 'review:*' AND json_valid(value)
+        AND json_type(value, '$.snapshot.files') IS NOT NULL", [])?;
     let mut statement = conn.prepare("PRAGMA table_info(agents)")?;
     let agent_columns = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -1480,6 +1484,25 @@ fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
 mod tests {
     use super::*;
     use crate::model::now;
+
+    #[test]
+    fn review_migration_removes_patch_content_and_preserves_metadata() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let review = serde_json::json!({ "approvedAt": 1, "snapshot": {
+            "headCommit": "revision", "files": [{ "path": "example", "patch": "content" }]
+        }});
+        conn.execute("INSERT INTO kv VALUES ('review:example', ?1)", [review.to_string()]).unwrap();
+        conn.execute("INSERT INTO kv VALUES ('unrelated', ?1)", [review.to_string()]).unwrap();
+        migrate(&conn).unwrap();
+        let saved: String = conn.query_row("SELECT value FROM kv WHERE key = 'review:example'", [], |r| r.get(0)).unwrap();
+        let mut expected = review.clone();
+        expected["snapshot"].as_object_mut().unwrap().remove("files");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap(), expected);
+        let untouched: String = conn.query_row("SELECT value FROM kv WHERE key = 'unrelated'", [], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&untouched).unwrap(), review);
+        migrate(&conn).unwrap();
+    }
 
     fn agent(id: &str) -> Agent {
         Agent {
