@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
@@ -43,10 +43,12 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   const [error, setError] = useState("");
   const [approving, setApproving] = useState(false);
   const loading = useRef<AbortController | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; start: number; end: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number } | null>(null);
+  const scroll = useRef<HTMLDivElement>(null);
+  const sections = useRef(new Map<string, HTMLElement>());
   const endpoint = `/api/agents/${encodeURIComponent(agentId)}/reviews/${encodeURIComponent(reviewId)}`;
   const snapshot = review?.snapshot;
-  const rows = lines(snapshot?.files.find(item => item.path === file)?.patch ?? "");
+  const files = useMemo(() => snapshot?.files.map(item => ({ ...item, rows: lines(item.patch) })) ?? [], [snapshot]);
 
   useEffect(() => {
     if (!active) return;
@@ -72,11 +74,11 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
 
   const quote = () => {
     if (!menu || !review || !snapshot) return;
-    const selected = rows.slice(menu.start, menu.end + 1);
+    const selected = files.find(item => item.path === menu.file)!.rows.slice(menu.start, menu.end + 1);
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
     const range = `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
-    onQuote({ path: file, rows: selected, text: `Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
+    onQuote({ path: menu.file, rows: selected, text: `Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${menu.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
     setMenu(null);
   };
 
@@ -99,12 +101,24 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     {error && <p role="alert" className="px-4 py-2 text-[12px]">{error}</p>}
     {review?.status === "stale" && <p className="px-4 py-2 text-[12px]">This snapshot is still readable. Ask the agent to present the revised change for fresh approval.</p>}
     <div className="flex min-h-0 flex-1">
-      <nav aria-label="Changed files" className="w-48 shrink-0 overflow-y-auto border-r border-rule text-[12px] max-sm:w-32">
-        {snapshot?.files.map(item => <button key={item.path} title={item.path} onClick={() => setFile(item.path)} className={`block w-full cursor-pointer break-all px-3 py-2 text-left ${item.path === file ? "bg-band font-semibold" : "hover:bg-band"}`}>{item.path}</button>)}
+      <nav aria-label="Changed files" className="w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] max-sm:w-24">
+        {files.map(item => <button key={item.path} title={item.path} onClick={() => {
+          const section = sections.current.get(item.path), container = scroll.current;
+          if (section && container) container.scrollTo({ top: section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop });
+          setFile(item.path);
+        }} aria-current={item.path === file ? "location" : undefined} className={`block w-full cursor-pointer break-all px-2 py-2 text-left ${item.path === file ? "bg-band font-semibold" : "hover:bg-band"}`}>{item.path}</button>)}
       </nav>
-      <div className="min-w-0 flex-1 overflow-auto p-3 text-[12px]">
-        {review && <>
-          <p className="mb-3 text-faint">{file}</p>
+      <div ref={scroll} className="min-w-0 flex-1 overflow-y-auto text-[12px]" onScroll={event => {
+        const top = event.currentTarget.getBoundingClientRect().top;
+        const current = files.find(item => (sections.current.get(item.path)?.getBoundingClientRect().bottom ?? 0) > top + 8);
+        if (current) setFile(current.path);
+      }}>
+        {files.map(item => <section key={item.path} aria-label={`Diff ${item.path}`} ref={element => {
+          if (element) sections.current.set(item.path, element);
+          else sections.current.delete(item.path);
+        }} className="mb-5">
+          <h3 className="sticky top-0 z-10 bg-band px-3 py-2 text-[10px] text-mid">{item.path}</h3>
+          <div className="overflow-x-auto p-3">
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
             if (!clicked) return;
@@ -115,11 +129,12 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             const selected = selection && !selection.isCollapsed && anchor?.closest("[data-diff]") === event.currentTarget && focus?.closest("[data-diff]") === event.currentTarget;
             const start = Number(selected ? anchor?.dataset.diffLine : clicked.dataset.diffLine);
             const end = Number(selected ? focus?.dataset.diffLine : clicked.dataset.diffLine);
-            setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), start: Math.min(start, end), end: Math.max(start, end) });
+            setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
           }}>
-            {rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
+            {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
           </pre>
-        </>}
+          </div>
+        </section>)}
       </div>
     </div>
     {menu && <div role="group" aria-label="Diff actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-2 shadow-md">

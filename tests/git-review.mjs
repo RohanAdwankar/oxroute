@@ -4,9 +4,10 @@ import { mkdir } from 'node:fs/promises';
 
 const agent = { id: 'review-test', name: 'Review test', cwd: '/workspace/review', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const patch = 'diff --git a/config.yaml b/config.yaml\nindex 1234567..abcdef0 100644\n--- a/config.yaml\n+++ b/config.yaml\n@@ -2,2 +2,2 @@\n setting: true\n-value: before\n+value: after\n@@ -20 +30 @@\n-later: before\n+later: after\n';
+const otherPatch = 'diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -7,51 +7,51 @@\n-old note\n+new note\n' + Array.from({ length: 50 }, (_, index) => ` context ${index}`).join('\n');
 const review = { id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
   snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
-    baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }] } };
+    baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }, { path: 'notes.txt', patch: otherPatch }] } };
 const timeline = [{ id: 1, agentId: agent.id, at: Date.now()/1000, kind: 'review', text: review.title, detail: review.id }];
 const demo = process.env.DEMO_DIR;
 if (demo) await mkdir(demo, { recursive: true });
@@ -41,7 +42,7 @@ try {
   assert.equal(await page.getByRole('region', { name: 'Change review' }).getByRole('combobox').count(), 0, 'Review has no repository discovery picker');
   const added = page.locator('[data-diff-line]').filter({ hasText: '+value: after' });
   await added.waitFor();
-  const rendered = await page.locator('[data-diff]').innerText();
+  const rendered = await page.locator('[data-diff]').first().innerText();
   for (const metadata of ['diff --git', 'index 1234567', '--- a/', '+++ b/']) {
     assert.ok(!rendered.includes(metadata), 'Patch metadata is hidden');
   }
@@ -77,6 +78,23 @@ try {
   const [darkRemovedRed, darkRemovedGreen] = await color(removed);
   assert.ok(darkAddedGreen > darkAddedRed && darkRemovedRed > darkRemovedGreen);
   await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+  assert.equal(await page.locator('[data-diff]').count(), 2, 'All files render together');
+  const sidebar = page.getByRole('navigation', { name: 'Changed files' });
+  const codeSize = await added.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  const fileSize = await sidebar.getByRole('button').first().evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  assert.ok(fileSize < codeSize, 'File labels are smaller than code');
+  if (process.env.REVIEW_SCREENSHOT) await page.screenshot({ path: process.env.REVIEW_SCREENSHOT });
+  await sidebar.getByRole('button', { name: 'notes.txt', exact: true }).click();
+  assert.ok(await page.getByRole('region', { name: 'Diff notes.txt', exact: true }).evaluate(element => element.parentElement.scrollTop > 0), 'Sidebar scrolls the shared diff view');
+  const otherAdded = page.getByRole('region', { name: 'Diff notes.txt', exact: true }).locator('[data-diff-line]').filter({ hasText: '+new note' });
+  assert.ok(await otherAdded.isVisible());
+  assert.equal(await page.locator('[data-diff]').count(), 2, 'Sidebar navigation does not replace other files');
+  await otherAdded.click({ button: 'right' });
+  await page.getByRole('button', { name: 'Quote diff into chat' }).click();
+  await page.getByRole('region', { name: 'Attached diff notes.txt', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Remove diff notes.txt', exact: true }).click();
+  await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  await sidebar.getByRole('button', { name: 'config.yaml', exact: true }).click();
   assert.ok((await added.innerText()).includes('3'));
   await added.click({ button: 'right' });
   await stage('Right-click a changed line to quote it into a question.');
@@ -102,7 +120,7 @@ try {
   if (!demo) await page.setViewportSize({ width: 500, height: 800 });
   await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   await added.waitFor();
-  await page.locator('[data-diff]').evaluate(element => {
+  await page.locator('[data-diff]').first().evaluate(element => {
     const nodes = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) nodes.push(walker.currentNode);
