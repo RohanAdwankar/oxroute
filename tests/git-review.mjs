@@ -159,15 +159,20 @@ try {
   assert.deepEqual(writes, [], 'Review and quote never send a message or change Git');
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await stage('When satisfied, approve this revision for publication.');
+  await page.route('**/reviews/review-local/approve', r => r.fulfill({ status: 409, json: { error: 'Revision changed before approval' } }));
   await page.getByRole('button', { name: 'Approve publication' }).click();
-  await page.getByText('Approved for publication', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Approve publication' }).isDisabled(), true);
-  assert.equal(writes.length, 1, 'Only explicit approval mutates review state');
+  await page.getByRole('alert').filter({ hasText: 'Revision changed before approval' }).waitFor();
+  assert.equal(await page.getByRole('region', { name: 'Change review' }).isVisible(), true, 'Failed approval keeps the review open');
+  await page.route('**/reviews/review-local/approve', r => r.fulfill({ json: { ...review, status: 'approved' } }));
+  await page.getByRole('button', { name: 'Approve publication' }).click();
+  await page.getByRole('region', { name: 'Change review' }).waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('[data-composer]').inputValue(), 'Explain this change.', 'Approval returns to chat without losing the draft');
+  if (process.env.APPROVED_SCREENSHOT) await page.screenshot({ path: process.env.APPROVED_SCREENSHOT });
+  assert.equal(writes.length, 2, 'Only explicit approval attempts mutate review state');
   assert.ok(writes[0].endsWith('/reviews/review-local/approve'));
   await stage('Approval authorizes this revision only. Merge and deployment remain separate.');
   // A stale snapshot stays inspectable but cannot authorize publication.
   await page.route('**/reviews/review-local', r => r.fulfill({ json: { ...review, status: 'stale' } }));
-  await page.getByRole('button', { name: 'Back to conversation' }).click();
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await added.waitFor();
   await page.getByText('Revision changed', { exact: true }).waitFor();

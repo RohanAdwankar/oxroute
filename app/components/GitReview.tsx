@@ -68,6 +68,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     try {
       setReview(await response<Review>(fetch(`${endpoint}/approve`, { method: "POST" })));
       setError("");
+      onClose();
     } catch (error) { setError(String(error)); }
     finally { setApproving(false); }
   };
