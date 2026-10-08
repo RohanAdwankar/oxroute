@@ -75,6 +75,21 @@ try {
   assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
   await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('[data-diff-line]')];
+    const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild.firstChild;
+    const after = rows.find(row => row.textContent.includes('+value: after')).lastElementChild.firstChild;
+    const range = document.createRange();
+    range.setStart(before, 0); range.setEnd(after, 0);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+  });
+  await removed.click({ button: 'right' });
+  await page.getByRole('button', { name: 'Quote diff into chat' }).click();
+  const boundaryQuote = page.getByRole('region', { name: 'Attached diff config.yaml', exact: true });
+  await boundaryQuote.waitFor();
+  assert.equal(await boundaryQuote.locator('[data-quoted-diff-line]').count(), 1, 'A selection ending at the next line start excludes that line');
+  await page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }).click();
+  await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   const color = async row => row.evaluate(element => {
     const rgb = getComputedStyle(element).color;
     const canvas = document.createElement('canvas');

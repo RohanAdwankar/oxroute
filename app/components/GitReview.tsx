@@ -125,11 +125,12 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             if (!clicked) return;
             event.preventDefault();
             const selection = window.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
             const rowOf = (node: Node | null | undefined) => (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>("[data-diff-line]");
-            const anchor = rowOf(selection?.anchorNode), focus = rowOf(selection?.focusNode);
+            const anchor = rowOf(range?.startContainer), focus = rowOf(range?.endContainer);
             const selected = selection && !selection.isCollapsed && anchor?.closest("[data-diff]") === event.currentTarget && focus?.closest("[data-diff]") === event.currentTarget;
             const start = Number(selected ? anchor?.dataset.diffLine : clicked.dataset.diffLine);
-            const end = Number(selected ? focus?.dataset.diffLine : clicked.dataset.diffLine);
+            const end = Number(selected ? focus?.dataset.diffLine : clicked.dataset.diffLine) - (selected && range?.endOffset === 0 && anchor !== focus ? 1 : 0);
             setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
           }}>
             {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
