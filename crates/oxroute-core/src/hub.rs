@@ -2803,6 +2803,7 @@ impl Hub {
         id: &str,
         text: &str,
         images: Vec<String>,
+        queued: bool,
     ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "say what is wrong with it");
@@ -2820,7 +2821,7 @@ impl Hub {
             &task.agent_id,
             &format!("About \"{}\": {text}", task.text),
             images,
-            false,
+            queued,
         )
         .await?;
         self.emit(Event::Sync);

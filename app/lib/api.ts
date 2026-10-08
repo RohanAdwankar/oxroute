@@ -108,9 +108,10 @@ export const api = {
   moveTask: (id: string, after?: string) =>
     post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/move`, { after }),
   /// Saying no to finished work: the agent hears why, and it is work again.
-  correctTask: (id: string, text: string, images: File[] = []) => {
+  correctTask: (id: string, text: string, images: File[] = [], queued = false) => {
     const form = new FormData();
     form.append("text", text);
+    form.append("queued", String(queued));
     images.forEach((image) => form.append("files", image));
     return call<TaskItem>(`/api/tasks/${encodeURIComponent(id)}/correction`, {
       method: "POST",

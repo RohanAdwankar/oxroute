@@ -1057,10 +1057,10 @@ export default function Home() {
                       onTask={(text, images) => file(text, images, id)}
                       correcting={correcting?.agentId === id ? correcting : null}
                       onStopCorrecting={() => setCorrecting(null)}
-                      onCorrect={(text, images) => {
+                      onCorrect={(text, images, queued) => {
                         const task = correcting;
                         setCorrecting(null);
-                        if (task) void run(() => api.correctTask(task.id, text, images));
+                        if (task) void run(() => api.correctTask(task.id, text, images, queued));
                       }}
                       onSendDiagram={(edits, note, queued) =>
                         void run(async () => {

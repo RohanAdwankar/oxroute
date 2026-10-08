@@ -149,7 +149,7 @@ export function AgentPanel({
   onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
   correcting: TaskItem | null;
-  onCorrect: (text: string, images: File[]) => void;
+  onCorrect: (text: string, images: File[], queued: boolean) => void;
   onStopCorrecting: () => void;
   /** Draw instead of describe: the edits become the message. */
   onSendDiagram: (edits: DiagramEdit[], note: string, queued: boolean) => void;
@@ -351,7 +351,7 @@ export function AgentPanel({
     setDraft("");
     setDiffs([]);
     const sent = pictures.files;
-    if (correcting) onCorrect(text, sent);
+    if (correcting) onCorrect(text, sent, queued);
     else sayImmediately(text, sent, queued, draft, diffs);
     pictures.clear();
   };
@@ -907,11 +907,11 @@ export function AgentPanel({
                 event.preventDefault();
                 send();
               }
-              // Tab files it instead: the same words, kept as work rather
-              // than said now. There is nothing to tab to from here.
+              // Tab queues a correction; otherwise it files a new task.
               if (event.key === "Tab" && !event.shiftKey && mode !== "diagram") {
                 event.preventDefault();
-                void toTask();
+                if (correcting) send(true);
+                else void toTask();
               }
             }}
             rows={1}

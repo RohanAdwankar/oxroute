@@ -876,15 +876,17 @@ async fn correct_task(
     mut form: Multipart,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
     let mut text = String::new();
+    let mut queued = false;
     let mut images = Vec::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("text") => text = field.text().await?,
+            Some("queued") => queued = field.text().await? == "true",
             Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
     }
-    Ok(Json(hub.correct_task(&id, &text, images).await?))
+    Ok(Json(hub.correct_task(&id, &text, images, queued).await?))
 }
 
 async fn create_task(
