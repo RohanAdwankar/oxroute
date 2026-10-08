@@ -20,7 +20,7 @@ try {
   await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3941'}/?agent=${agent.id}`);
   const message = page.locator('[data-entry="3"]');
   await message.getByRole('button', { name: `Review ${reviews[0].title}`, exact: true }).waitFor();
-  assert.equal(await message.getByRole('button').count(), 2, 'Plain and inline-code review references render as cards');
+  assert.equal(await message.getByRole('button', { name: /^Review / }).count(), 2, 'Plain and inline-code review references render as cards');
   assert.ok((await message.innerText()).includes(unknown), 'Unknown references stay literal');
   assert.ok((await message.innerText()).includes(`${reviews[0].id}extra`), 'ID prefixes do not match');
   assert.equal((await message.locator('pre').innerText()).trim(), reviews[0].id, 'Code blocks preserve literal IDs');
