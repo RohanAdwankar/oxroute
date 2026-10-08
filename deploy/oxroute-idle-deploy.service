@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply prepared Oxroute updates when agent turns are idle
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=XDG_RUNTIME_DIR=%t
+ExecStart=/usr/bin/bash %h/.local/share/oxroute/deploy-when-idle.sh
+TimeoutStartSec=15min
+UMask=0077
