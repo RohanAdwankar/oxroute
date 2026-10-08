@@ -29,7 +29,7 @@ uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.a
 cp -a "$binary" "$backup/oxrouted"
 cp -a "$web" "$backup/web"
 task_status() {
-  jq -c --arg status "$1" --arg note "$2" '. as $r | .tasks[] | {id, text, agentId:$r.agentId, status:$status, note:$note}' "$request" |
+  jq -c --arg status "$1" --arg note "$2" --arg group "${3:-tasks}" '. as $r | .[$group][]? | {id, text, agentId:$r.agentId, status:$status, note:$note}' "$request" |
   while IFS= read -r task; do
     curl -fsS --max-time 10 -X PUT "$api/api/tasks/$(jq -r .id <<< "$task")" -H 'Content-Type: application/json' -d "$task" >/dev/null
   done
@@ -67,5 +67,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/git-review.mjs"
 trap - ERR
 task_status done "Deployed after all active turns finished. Live daemon, frontend build ID, Tab correction, wrapping and review browser checks passed."
 mv "$request" "$state/deployed.json"
+request=$state/deployed.json
+task_status incomplete "Deployment verified; resume the authorized follow-up work." resumeTasks
 printf '%s deployed %s\n' "$(date --iso-8601=seconds)" "$commit"
 find "$backup" -depth -delete
