@@ -37,6 +37,8 @@ export function Settings({
   onVerbose,
   graph,
   onGraph,
+  wrap,
+  onWrap,
   vim,
   onVim,
   onClose,
@@ -47,6 +49,8 @@ export function Settings({
   onVerbose: (next: Verbose) => void;
   graph: Graph;
   onGraph: (next: Graph) => void;
+  wrap: "off" | "on";
+  onWrap: (next: "off" | "on") => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -66,7 +70,7 @@ export function Settings({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-[420px] border border-edge bg-card px-6 py-5"
+        className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
         <Choice
@@ -82,6 +86,16 @@ export function Settings({
           options={NOISE}
           chosen={verbose}
           onChoose={onVerbose}
+        />
+        <Choice
+          title="Wrap code and diffs"
+          detail="Fit long lines to the available width."
+          options={[
+            { value: "off", label: "Off", detail: "Scroll long lines horizontally" },
+            { value: "on", label: "On", detail: "Wrap long lines" },
+          ]}
+          chosen={wrap}
+          onChoose={onWrap}
         />
         <Choice
           title="Task list"

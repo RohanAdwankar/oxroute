@@ -175,6 +175,9 @@ function choice<T extends string>(key: string, attribute: string, values: readon
 export type Graph = "off" | "on";
 export const graph = choice<Graph>("oxroute.graph", "graph", ["off", "on"]);
 
+/** Fit long code and diff lines to the available width. */
+export const wrap = choice("oxroute.wrap", "wrap", ["off", "on"] as const);
+
 /** Whether the call an agent is making right now stays in view. */
 export type Verbose = "off" | "on";
 export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);

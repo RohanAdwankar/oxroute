@@ -123,6 +123,21 @@ body {
   padding: 0;
 }
 
+html[data-wrap="on"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+html[data-wrap="on"] [data-diff] {
+  width: 100%;
+}
+
+html[data-wrap="on"] [data-diff-line],
+html[data-wrap="on"] [data-quoted-diff-line] {
+  display: grid;
+  grid-template-columns: 3rem 3rem minmax(0, 1fr);
+}
+
 .message-markdown ul,
 .message-markdown ol {
   padding-left: 1.4em;

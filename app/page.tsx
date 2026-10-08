@@ -24,6 +24,7 @@ import {
   theme,
   verbose,
   graph,
+  wrap,
   getVimMode,
   isTyping,
   setVimMode,
@@ -125,6 +126,7 @@ export default function Home() {
   const tone = useSyncExternalStore(theme.subscribe, theme.get, theme.fallback);
   const loud = useSyncExternalStore(verbose.subscribe, verbose.get, verbose.fallback);
   const drawn = useSyncExternalStore(graph.subscribe, graph.get, graph.fallback);
+  const wrapped = useSyncExternalStore(wrap.subscribe, wrap.get, wrap.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -937,6 +939,8 @@ export default function Home() {
           onVerbose={verbose.set}
           graph={drawn}
           onGraph={graph.set}
+          wrap={wrapped}
+          onWrap={wrap.set}
           vim={vim}
           onVim={setVimMode}
           onClose={() => setSettings(false)}
