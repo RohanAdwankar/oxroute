@@ -17,7 +17,6 @@ pub struct Snapshot {
     pub base_ref: String,
     pub base_commit: String,
     pub head_commit: String,
-    pub files: Vec<FileDiff>,
 }
 
 async fn git(directory: &Path, args: &[&str]) -> Result<String> {
@@ -59,7 +58,19 @@ pub async fn capture(workspace: &Path, repository: &str, base: &str, remote: &st
         "Commit tracked changes before presenting a review");
     let base_commit = commit(&root, base).await?;
     let head_commit = commit(&root, "HEAD").await?;
-    let range = format!("{base_commit}...{head_commit}");
+    let snapshot = Snapshot { repository: root.to_string_lossy().into(), remote: remote.into(), remote_url,
+        branch, base_ref: base.into(), base_commit, head_commit };
+    files(&snapshot).await?;
+    anyhow::ensure!(current(&snapshot).await?, "Repository changed while capturing the review; present it again");
+    Ok(snapshot)
+}
+
+pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
+    let root = Path::new(&snapshot.repository);
+    anyhow::ensure!(root.is_dir(), "Review worktree was removed; its diff is no longer available");
+    anyhow::ensure!(Path::new(&git(root, &["rev-parse", "--show-toplevel"]).await?) == root,
+        "Review worktree is no longer a repository root");
+    let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
     let names = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", &range, "--"]).await?;
     let mut files = Vec::new();
     let mut size = 0;
@@ -70,10 +81,7 @@ pub async fn capture(workspace: &Path, repository: &str, base: &str, remote: &st
         files.push(FileDiff { path: path.into(), patch });
     }
     anyhow::ensure!(!files.is_empty(), "No committed changes to review");
-    let snapshot = Snapshot { repository: root.to_string_lossy().into(), remote: remote.into(), remote_url,
-        branch, base_ref: base.into(), base_commit, head_commit, files };
-    anyhow::ensure!(current(&snapshot).await?, "Repository changed while capturing the review; present it again");
-    Ok(snapshot)
+    Ok(files)
 }
 
 pub async fn current(snapshot: &Snapshot) -> Result<bool> {
@@ -106,7 +114,8 @@ mod tests {
         git(&root, &["commit", "-am", "Change"]).await.unwrap();
         let before = git(&root, &["status", "--porcelain"]).await.unwrap();
         let snapshot = capture(&root, root.to_str().unwrap(), "main", "origin").await.unwrap();
-        assert!(snapshot.files[0].patch.contains("+after"));
+        assert!(files(&snapshot).await.unwrap()[0].patch.contains("+after"));
+        assert!(serde_json::to_value(&snapshot).unwrap().get("files").is_none());
         assert_eq!(git(&root, &["status", "--porcelain"]).await.unwrap(), before);
         assert!(current(&snapshot).await.unwrap());
         git(&root, &["remote", "set-url", "origin", "https://example.invalid/other.git"]).await.unwrap();
@@ -116,8 +125,9 @@ mod tests {
         assert!(!current(&snapshot).await.unwrap());
         git(&root, &["commit", "-am", "Revise"]).await.unwrap();
         assert!(!current(&snapshot).await.unwrap());
-        assert!(snapshot.files[0].patch.contains("+after"));
-        assert!(!snapshot.files[0].patch.contains("new revision"));
+        let original = files(&snapshot).await.unwrap();
+        assert!(original[0].patch.contains("+after"));
+        assert!(!original[0].patch.contains("new revision"));
         let newer = capture(&root, root.to_str().unwrap(), "main", "origin").await.unwrap();
         git(&root, &["branch", "-f", "main", "HEAD"]).await.unwrap();
         assert!(!current(&newer).await.unwrap());
@@ -125,5 +135,6 @@ mod tests {
         tokio::fs::create_dir_all(&allowed).await.unwrap();
         assert!(capture(&allowed, root.to_str().unwrap(), "main", "origin").await.is_err());
         tokio::fs::remove_dir_all(root).await.unwrap();
+        assert!(files(&snapshot).await.unwrap_err().to_string().contains("worktree was removed"));
     }
 }

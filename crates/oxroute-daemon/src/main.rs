@@ -506,12 +506,14 @@ fn review_record(hub: &Hub, agent_id: &str, id: &str) -> anyhow::Result<(ChangeR
     Ok((review, data))
 }
 
-async fn review_response(review: ChangeReview) -> serde_json::Value {
+async fn review_response(review: ChangeReview) -> anyhow::Result<serde_json::Value> {
+    let files = git::files(&review.snapshot).await?;
     let status = if !git::current(&review.snapshot).await.unwrap_or(false) { "stale" }
         else if review.approved_at.is_some() { "approved" } else { "pending" };
     let mut response = serde_json::to_value(review).expect("review is serializable");
     response["status"] = json!(status);
-    response
+    response["snapshot"]["files"] = serde_json::to_value(files)?;
+    Ok(response)
 }
 
 async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body): Json<ReviewBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -523,11 +525,11 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None };
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
-    Ok(Json(review_response(review).await))
+    Ok(Json(review_response(review).await?))
 }
 
 async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await))
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await?))
 }
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
@@ -553,7 +555,7 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
             }
         }
     }
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await))
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await?))
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1383,9 +1385,12 @@ mod tests {
         assert_eq!(card.len(), 1);
         assert_eq!(card[0].kind, oxroute_core::model::EntryKind::Review);
         assert_eq!(card[0].detail, id);
-        // A separate SQLite connection sees the same snapshot after reopening.
+        // SQLite keeps identity and consent, not duplicated Git content.
         let reopened = Store::open(hub.store.path()).unwrap();
-        assert!(reopened.get(&format!("review:{id}")).unwrap().unwrap().contains("+proposed"));
+        let saved: serde_json::Value = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        assert!(saved["snapshot"].get("files").is_none());
+        assert_eq!(saved["snapshot"]["headCommit"], review["snapshot"]["headCommit"]);
+        assert_eq!(client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap()["snapshot"], review["snapshot"]);
         assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}")).send().await.unwrap().status().is_success());
         for _ in 0..2 {
             let approved = client.post(format!("{endpoint}/approve")).send().await.unwrap();
@@ -1408,8 +1413,12 @@ mod tests {
         assert_eq!(stale["status"], "stale");
         assert_eq!(stale["snapshot"], review["snapshot"]);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
-        server.abort();
         tokio::fs::remove_dir_all(&root).await.unwrap();
+        let missing = client.get(&endpoint).send().await.unwrap();
+        assert!(!missing.status().is_success());
+        assert!(missing.text().await.unwrap().contains("worktree was removed"));
+        assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        server.abort();
     }
 
     #[tokio::test]

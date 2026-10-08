@@ -85,7 +85,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   return <section aria-label="Change review" className="flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
     <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
-      <span className="min-w-0 flex-1 font-semibold">{review?.title ?? "Reading review…"}</span>
+      <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}</span>
       {review && <>
         <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? "Revision changed" : "Awaiting approval"}</span>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}

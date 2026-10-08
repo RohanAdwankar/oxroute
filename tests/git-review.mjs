@@ -195,5 +195,13 @@ try {
     await page.context().close();
     await video.saveAs(`${demo}/pre-publication-review.webm`);
   }
-  console.log('Local review card, colors, revision-specific quotes, explicit approval, and stale review behavior pass.');
+  await page.route('**/reviews/review-local', r => r.fulfill({ status: 400, json: { error: 'Review worktree was removed; its diff is no longer available' } }));
+  await page.reload();
+  await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'worktree was removed' }).waitFor();
+  assert.equal(await page.getByText('Reading review…', { exact: true }).count(), 0);
+  await page.getByText('Review unavailable', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Approve publication', exact: true }).count(), 0);
+  if (process.env.UNAVAILABLE_SCREENSHOT) await page.screenshot({ path: process.env.UNAVAILABLE_SCREENSHOT });
+  console.log('Local review card, colors, quotes, explicit approval, stale revisions, and removed worktrees pass.');
 } finally { await browser.close(); }
