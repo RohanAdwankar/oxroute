@@ -40,14 +40,9 @@ try {
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
   const approvalCard = page.getByRole('region', { name: 'Publication approval', exact: true });
   await approvalCard.waitFor();
-  assert.ok((await approvalCard.innerText()).includes(`Publication approved · ${review.title}`));
-  assert.ok((await approvalCard.innerText()).includes('proposal into main · bbbbbbbb'));
-  assert.ok((await approvalCard.innerText()).includes('Push and create PR only · No merge or deployment'));
-  assert.equal(await approvalCard.getByText(authorization, { exact: true }).isVisible(), false, 'Raw authorization is collapsed');
+  assert.equal(await approvalCard.innerText(), `PR approved: ${review.title}`);
+  assert.equal(await approvalCard.getByText(authorization, { exact: true }).count(), 0, 'Authorization remains in message data, not the card');
   if (process.env.APPROVAL_SCREENSHOT) await page.screenshot({ path: process.env.APPROVAL_SCREENSHOT });
-  await approvalCard.locator('summary').click();
-  assert.equal(await approvalCard.getByText(authorization, { exact: true }).isVisible(), true, 'Original authorization remains inspectable');
-  await approvalCard.locator('summary').click();
   await stage('The agent presents a local proposed PR in chat. Demo data; nothing is pushed.');
   if (demo) await page.screenshot({ path: `${demo}/review-card.png` });
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
