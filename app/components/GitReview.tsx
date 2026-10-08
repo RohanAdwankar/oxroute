@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
@@ -43,7 +43,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   const [error, setError] = useState("");
   const [approving, setApproving] = useState(false);
   const loading = useRef<AbortController | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number; wholeFile?: boolean } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
   const endpoint = `/api/agents/${encodeURIComponent(agentId)}/reviews/${encodeURIComponent(reviewId)}`;
@@ -78,9 +78,14 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     const selected = files.find(item => item.path === menu.file)!.rows.slice(menu.start, menu.end + 1);
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
-    const range = `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
+    const range = menu.wholeFile ? "whole file" : `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
     onQuote({ path: menu.file, rows: selected, text: `Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${menu.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
     setMenu(null);
+  };
+
+  const quoteFile = (event: MouseEvent, item: { path: string; rows: Line[] }) => {
+    event.preventDefault();
+    setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: 0, end: item.rows.length - 1, wholeFile: true });
   };
 
   return <section aria-label="Change review" className="flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
@@ -103,7 +108,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     {review?.status === "stale" && <p className="px-4 py-2 text-[12px]">This snapshot is still readable. Ask the agent to present the revised change for fresh approval.</p>}
     <div className="flex min-h-0 flex-1">
       <nav aria-label="Changed files" className="w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] max-sm:w-24">
-        {files.map(item => <button key={item.path} title={item.path} onClick={() => {
+        {files.map(item => <button key={item.path} title={item.path} onContextMenu={event => quoteFile(event, item)} onClick={() => {
           const section = sections.current.get(item.path), container = scroll.current;
           if (section && container) container.scrollTo({ top: section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop });
           setFile(item.path);
@@ -118,7 +123,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
           if (element) sections.current.set(item.path, element);
           else sections.current.delete(item.path);
         }} className="mb-5">
-          <h3 className="sticky top-0 z-10 bg-band px-3 py-2 text-[10px] text-mid">{item.path}</h3>
+          <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-2 text-[10px] text-mid">{item.path}</h3>
           <div className="overflow-x-auto p-3">
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
@@ -140,7 +145,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       </div>
     </div>
     {menu && <div role="group" aria-label="Diff actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-2 shadow-md">
-      <button title="Quote diff into chat" aria-label="Quote diff into chat" onClick={quote} className="cursor-pointer"><Icon name="quote" /></button>
+      <button title={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} aria-label={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} onClick={quote} className="cursor-pointer"><Icon name="quote" /></button>
     </div>}
   </section>;
 }

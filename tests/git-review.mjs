@@ -108,6 +108,16 @@ try {
   await page.evaluate(() => document.documentElement.dataset.theme = 'light');
   assert.equal(await page.locator('[data-diff]').count(), 2, 'All files render together');
   const sidebar = page.getByRole('navigation', { name: 'Changed files' });
+  for (const filename of [sidebar.getByRole('button', { name: 'config.yaml', exact: true }), page.getByRole('heading', { name: 'config.yaml', exact: true })]) {
+    await filename.click({ button: 'right' });
+    await page.getByRole('button', { name: 'Quote file into chat', exact: true }).click();
+    const fullFile = page.getByRole('region', { name: 'Attached diff config.yaml', exact: true });
+    await fullFile.waitFor();
+    assert.ok((await fullFile.innerText()).includes('-value: before') && (await fullFile.innerText()).includes('+later: after'), 'Filename quotes include every hunk');
+    if (process.env.FILE_SCREENSHOT) await page.screenshot({ path: process.env.FILE_SCREENSHOT });
+    await page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }).click();
+    await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  }
   const codeSize = await added.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
   const fileSize = await sidebar.getByRole('button').first().evaluate(element => parseFloat(getComputedStyle(element).fontSize));
   assert.ok(fileSize < codeSize, 'File labels are smaller than code');
