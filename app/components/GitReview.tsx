@@ -24,7 +24,7 @@ function lines(patch: string): Line[] {
     const sign = text[0];
     if (!hunk || !["+", "-", " "].includes(sign)) return { text, old: null, next: null };
     return { text, old: sign === "+" ? null : old++, next: sign === "-" ? null : next++ };
-  }).filter(row => row.old !== null || row.next !== null);
+  }).filter(row => row.old !== null || row.next !== null || row.text.startsWith("@@ "));
 }
 
 async function response<T>(request: Promise<Response>): Promise<T> {
@@ -91,8 +91,8 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       </>}
     </div>
     {review && snapshot && <details className="border-b border-rule px-4 py-2 text-[12px]">
-      <summary className="cursor-pointer break-all">{snapshot.branch} → {snapshot.baseRef.replace("refs/heads/", "").replace("refs/remotes/", "")} · {snapshot.files.length} files · {snapshot.headCommit.slice(0, 8)}</summary>
-      <div className="mt-2 break-all text-faint">{snapshot.repository}<br />Publish to {snapshot.remoteUrl}, branch {snapshot.branch}<br />Base {snapshot.baseCommit} · Head {snapshot.headCommit}</div>
+      <summary className="cursor-pointer break-all"><span className="ml-2">{snapshot.branch} <span className="text-faint">into</span> {snapshot.baseRef.replace("refs/heads/", "").replace("refs/remotes/", "")}</span></summary>
+      <div className="mt-2 break-all text-faint">{snapshot.repository}<br />Publish to {snapshot.remoteUrl}<br />Base {snapshot.baseCommit.slice(0, 8)} · Head {snapshot.headCommit.slice(0, 8)}</div>
       <Markdown>{review.description}</Markdown>
     </details>}
     {error && <p role="alert" className="px-4 py-2 text-[12px]">{error}</p>}
@@ -116,7 +116,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             const end = Number(selected ? focus?.dataset.diffLine : clicked.dataset.diffLine);
             setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), start: Math.min(start, end), end: Math.max(start, end) });
           }}>
-            {rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next !== null ? "bg-ok/10 text-ok" : row.next === null && row.old !== null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
+            {rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
           </pre>
         </>}
       </div>

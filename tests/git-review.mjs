@@ -42,12 +42,24 @@ try {
   const added = page.locator('[data-diff-line]').filter({ hasText: '+value: after' });
   await added.waitFor();
   const rendered = await page.locator('[data-diff]').innerText();
-  for (const metadata of ['diff --git', 'index 1234567', '--- a/', '+++ b/', '@@']) {
+  for (const metadata of ['diff --git', 'index 1234567', '--- a/', '+++ b/']) {
     assert.ok(!rendered.includes(metadata), 'Patch metadata is hidden');
   }
   assert.equal(await page.getByText('Select lines and right-click to discuss them.', { exact: false }).count(), 0);
   const later = page.locator('[data-diff-line]').filter({ hasText: '+later: after' });
-  assert.equal(await later.locator('span').nth(1).innerText(), '30', 'Hidden hunk headers still set correct line numbers');
+  assert.equal(await later.locator('span').nth(1).innerText(), '30', 'Hunk headers set correct line numbers');
+  const hunk = page.locator('[data-diff-line]').filter({ hasText: '@@ -2,2 +2,2 @@' });
+  const context = page.locator('[data-diff-line]').filter({ hasText: 'setting: true' });
+  const textColor = row => row.evaluate(element => getComputedStyle(element).color);
+  assert.notEqual(await textColor(hunk), await textColor(context), 'Hunk headers are visually muted');
+  const summary = page.locator('section[aria-label="Change review"] summary');
+  assert.equal(await summary.innerText(), 'proposal into main', 'Summary shows only the branch relationship');
+  await summary.click();
+  const details = await page.locator('section[aria-label="Change review"] details').innerText();
+  assert.ok(details.includes('Base aaaaaaaa · Head bbbbbbbb'));
+  assert.ok(!details.includes(review.snapshot.headCommit) && !details.includes(review.snapshot.baseCommit), 'Displayed commits are abbreviated');
+  assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
+  await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
   const color = async row => row.evaluate(element => {
     const rgb = getComputedStyle(element).color;
