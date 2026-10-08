@@ -24,7 +24,7 @@ function lines(patch: string): Line[] {
     const sign = text[0];
     if (!hunk || !["+", "-", " "].includes(sign)) return { text, old: null, next: null };
     return { text, old: sign === "+" ? null : old++, next: sign === "-" ? null : next++ };
-  });
+  }).filter(row => row.old !== null || row.next !== null);
 }
 
 async function response<T>(request: Promise<Response>): Promise<T> {
@@ -103,7 +103,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       </nav>
       <div className="min-w-0 flex-1 overflow-auto p-3 text-[12px]">
         {review && <>
-          <p className="mb-3 text-faint">{file} · Select lines and right-click to discuss them.</p>
+          <p className="mb-3 text-faint">{file}</p>
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
             if (!clicked) return;

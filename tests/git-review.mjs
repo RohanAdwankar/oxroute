@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 
 const agent = { id: 'review-test', name: 'Review test', cwd: '/workspace/review', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
-const patch = 'diff --git a/config.yaml b/config.yaml\n--- a/config.yaml\n+++ b/config.yaml\n@@ -2,2 +2,2 @@\n setting: true\n-value: before\n+value: after\n';
+const patch = 'diff --git a/config.yaml b/config.yaml\nindex 1234567..abcdef0 100644\n--- a/config.yaml\n+++ b/config.yaml\n@@ -2,2 +2,2 @@\n setting: true\n-value: before\n+value: after\n@@ -20 +30 @@\n-later: before\n+later: after\n';
 const review = { id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
   snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
     baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }] } };
@@ -41,6 +41,13 @@ try {
   assert.equal(await page.getByRole('region', { name: 'Change review' }).getByRole('combobox').count(), 0, 'Review has no repository discovery picker');
   const added = page.locator('[data-diff-line]').filter({ hasText: '+value: after' });
   await added.waitFor();
+  const rendered = await page.locator('[data-diff]').innerText();
+  for (const metadata of ['diff --git', 'index 1234567', '--- a/', '+++ b/', '@@']) {
+    assert.ok(!rendered.includes(metadata), 'Patch metadata is hidden');
+  }
+  assert.equal(await page.getByText('Select lines and right-click to discuss them.', { exact: false }).count(), 0);
+  const later = page.locator('[data-diff-line]').filter({ hasText: '+later: after' });
+  assert.equal(await later.locator('span').nth(1).innerText(), '30', 'Hidden hunk headers still set correct line numbers');
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
   const color = async row => row.evaluate(element => {
     const rgb = getComputedStyle(element).color;
@@ -68,6 +75,7 @@ try {
   assert.ok(draft.includes(`${review.snapshot.baseCommit}...${review.snapshot.headCommit}`));
   assert.ok(draft.includes(review.id));
   assert.ok(draft.includes('> +value: after'));
+  assert.ok(draft.includes('old none, new 3–3'), 'Quotes retain source line numbers without metadata rows');
   assert.equal(await page.locator('section[aria-label="Change review"]').isVisible(), false);
   if (demo) {
     await page.locator('[data-composer]').press('ControlOrMeta+End');
