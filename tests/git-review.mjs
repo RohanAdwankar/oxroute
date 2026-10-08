@@ -113,7 +113,7 @@ try {
   await stage('Right-click a changed line to quote it into a question.');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await page.getByRole('button', { name: 'Quote diff into chat' }).click();
-  const attachment = page.getByRole('region', { name: 'Attached diff config.yaml' });
+  const attachment = page.getByRole('region', { name: 'Attached diff config.yaml' }).filter({ has: page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }) });
   await attachment.waitFor();
   assert.equal(await page.locator('[data-composer]').inputValue(), '', 'Diff content is separate from editable question');
   const attachedAdded = attachment.locator('[data-quoted-diff-line]').filter({ hasText: '+value: after' });
@@ -189,10 +189,28 @@ try {
     assert.ok(sent.text.includes('File: config.yaml (old 3–3, new 3–3)'));
     assert.ok(sent.text.includes('> -value: before\n> +value: after'));
     assert.ok(sent.text.endsWith('Explain this change.'));
-    await page.route('**/api/say', route => route.fulfill({ json: {} }));
+    await page.route('**/api/say', route => {
+      sent = route.request().postDataJSON();
+      timeline.push({ id: 3, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: sent.text, detail: 'diff-attachments:' + JSON.stringify(sent.diffs) });
+      return route.fulfill({ json: {} });
+    });
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await attachment.waitFor({ state: 'detached' });
     assert.equal(await page.locator('[data-composer]').inputValue(), '', 'Successful sends clear composer attachments');
+    const sentDiff = page.locator('[data-entry="3"]').getByRole('region', { name: 'Attached diff config.yaml', exact: true });
+    await sentDiff.waitFor();
+    assert.equal(await sentDiff.getByRole('button', { name: 'Remove diff config.yaml' }).count(), 0);
+    assert.equal(await page.locator('[data-entry="3"] blockquote').count(), 0, 'Sent diff does not become Markdown');
+    assert.ok((await page.locator('[data-entry="3"]').innerText()).includes('Explain this change.'));
+    const [sentRed, sentGreen] = await color(sentDiff.locator('[data-quoted-diff-line]').filter({ hasText: '-value: before' }));
+    assert.ok(sentRed > sentGreen, 'Sent deletions stay red');
+    const [sentAddRed, sentAddGreen] = await color(sentDiff.locator('[data-quoted-diff-line]').filter({ hasText: '+value: after' }));
+    assert.ok(sentAddGreen > sentAddRed, 'Sent additions stay green');
+    await page.reload();
+    await sentDiff.waitFor();
+    assert.ok((await sentDiff.innerText()).includes('-value: before'), 'Sent attachment survives reload');
+    assert.ok(!(await page.locator('[data-entry="3"]').innerText()).includes('diff-attachments:'), 'Presentation metadata stays hidden');
+    if (process.env.SENT_SCREENSHOT) await page.screenshot({ path: process.env.SENT_SCREENSHOT });
   }
   if (demo) {
     await page.screenshot({ path: `${demo}/review-stale.png` });

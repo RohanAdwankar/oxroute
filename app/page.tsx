@@ -489,9 +489,9 @@ export default function Home() {
     }
   };
 
-  const sendMessage = async (id: string, text: string, images: File[], queued: boolean) => {
+  const sendMessage = async (id: string, text: string, images: File[], queued: boolean, diffs: import("./lib/drafts").DiffQuote[] = []) => {
     try {
-      await api.say(id, text, images, queued);
+      await api.say(id, text, images, queued, diffs);
     } catch (error) {
       complain(error);
       return false;
@@ -1053,7 +1053,7 @@ export default function Home() {
                       }
                       busy={busy}
                       onBack={() => showAgent(null)}
-                      onSay={(text, images, queued) => sendMessage(id, text, images, queued)}
+                      onSay={(text, images, queued, diffs) => sendMessage(id, text, images, queued, diffs)}
                       onTask={(text, images) => file(text, images, id)}
                       correcting={correcting?.agentId === id ? correcting : null}
                       onStopCorrecting={() => setCorrecting(null)}

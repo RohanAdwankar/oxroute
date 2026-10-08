@@ -14,6 +14,7 @@ import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
+import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown, ReviewLinks } from "./Markdown";
@@ -144,7 +145,7 @@ export function AgentPanel({
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
-  onSay: (text: string, images: File[], queued: boolean) => Promise<boolean>;
+  onSay: (text: string, images: File[], queued: boolean, diffs: DiffQuote[]) => Promise<boolean>;
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
@@ -303,10 +304,10 @@ export function AgentPanel({
       : text;
     const entry: Entry = {
       id, agentId: agent.id, at: Date.now() / 1000, kind: "you", text: shown,
-      detail: "", output: "", origin: "", reaction: "",
+      detail: restoreDiffs.length ? `diff-attachments:${JSON.stringify(restoreDiffs)}` : "", output: "", origin: "", reaction: "",
     };
     setPending((current) => [...current, { entry, after: view.timeline.at(-1)?.id ?? 0 }]);
-    void onSay(text, images, queued).then((accepted) => {
+    void onSay(text, images, queued, restoreDiffs).then((accepted) => {
       if (accepted) return;
       setPending((current) => current.filter((item) => item.entry.id !== id));
       setDraft((current) => current ? `${restoreText}\n${current}` : restoreText);
@@ -865,13 +866,7 @@ export function AgentPanel({
           dragging={draggingImages}
           onDrop={pictures.drop}
         />
-        {diffs.map((quote, index) => <section key={index} aria-label={`Attached diff ${quote.path}`} className="px-3 py-2 text-[12px]">
-          <div className="flex items-center gap-2 text-faint">
-            <span className="min-w-0 flex-1 truncate">{quote.path}</span>
-            <button aria-label={`Remove diff ${quote.path}`} title="Remove diff" onClick={() => setDiffs(current => current.filter((_, at) => at !== index))} className="cursor-pointer"><Icon name="discard" size={13} /></button>
-          </div>
-          <pre className="mt-1 max-h-36 overflow-auto font-mono leading-[1.6]">{quote.rows.map((row, at) => <div key={at} data-quoted-diff-line className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-2 inline-block w-9 text-right text-faint">{row.old}</span><span className="mr-2 inline-block w-9 text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}</pre>
-        </section>)}
+        <div className="px-3">{diffs.map((quote, index) => <DiffAttachment key={index} quote={quote} onRemove={() => setDiffs(current => current.filter((_, at) => at !== index))} />)}</div>
         <div className="flex items-stretch">
           <input
             ref={picker}
@@ -1017,12 +1012,14 @@ function ToolCall({ entry }: { entry: Entry }) {
 }
 
 /// Anything anyone said: the words, and whatever came with them.
-function Said({ text }: { text: string }) {
-  if (text.includes("```mermaid")) return <DiagramMessage text={text} />;
+function Said({ text, detail }: { text: string; detail: string }) {
+  const diffs: DiffQuote[] = detail.startsWith("diff-attachments:") ? JSON.parse(detail.slice("diff-attachments:".length)) : [];
+  for (const quote of diffs) text = text.slice(quote.text.trim().length).trimStart();
   const { body, names } = splitAttached(text);
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      {body.trim() && <Markdown>{body}</Markdown>}
+    <div className="flex min-w-0 flex-1 flex-col gap-2">
+      {diffs.map((quote, index) => <DiffAttachment key={index} quote={quote} />)}
+      {body.trim() && (body.includes("```mermaid") ? <DiagramMessage text={body} /> : <Markdown>{body}</Markdown>)}
       {names.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {names.map((name) => (
@@ -1079,7 +1076,7 @@ const Message = memo(function Message({
                   {tag.label}
                 </span>
               )}
-              <Said text={entry.text} />
+              <Said text={entry.text} detail={entry.detail} />
             </div>
             {entry.reaction && (
               <span className="flex items-center text-mid">
@@ -1097,7 +1094,7 @@ const Message = memo(function Message({
               >
                 <Icon name="open" size={13} />
               </button>
-            ) : entry.detail ? (
+            ) : entry.detail && !entry.detail.startsWith("diff-attachments:") ? (
               <span className="text-[11px] text-faint">{entry.detail}</span>
             ) : null}
           </div>

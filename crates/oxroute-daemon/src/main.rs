@@ -483,6 +483,23 @@ struct SayBody {
     /// Wait for the running turn rather than stopping it.
     #[serde(default)]
     queued: bool,
+    #[serde(default)]
+    diffs: Vec<DiffQuote>,
+}
+
+#[derive(serde::Serialize, Deserialize)]
+struct DiffQuote { text: String, path: String, rows: Vec<DiffRow> }
+
+#[derive(serde::Serialize, Deserialize)]
+struct DiffRow { text: String, old: Option<u32>, next: Option<u32> }
+
+fn diff_detail(text: &str, diffs: &[DiffQuote]) -> anyhow::Result<String> {
+    if diffs.is_empty() { return Ok(String::new()); }
+    let serialized = serde_json::to_string(diffs)?;
+    anyhow::ensure!(serialized.len() <= 262_144, "Diff attachments are too large");
+    let prefix = diffs.iter().map(|diff| diff.text.trim()).collect::<Vec<_>>().join("\n\n");
+    anyhow::ensure!(text.starts_with(&prefix), "Diff attachments must match the message");
+    Ok(format!("diff-attachments:{serialized}"))
 }
 
 #[derive(Deserialize)]
@@ -562,7 +579,8 @@ async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_j
     if body.text.trim().is_empty() {
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
-    hub.say_to_with_attachments(&body.agent, &body.text, vec![], body.queued).await?;
+    let detail = diff_detail(&body.text, &body.diffs)?;
+    hub.say_to_annotated(&body.agent, &body.text, vec![], body.queued, &detail).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -574,11 +592,13 @@ async fn say_attachments(
     let mut text = String::new();
     let mut queued = false;
     let mut images = Vec::new();
+    let mut diffs = Vec::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
             Some("queued") => queued = field.text().await? == "true",
+            Some("diffs") => diffs = serde_json::from_str::<Vec<DiffQuote>>(&field.text().await?)?,
             Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
@@ -586,7 +606,8 @@ async fn say_attachments(
     if agent.is_empty() {
         return Err(Failed(anyhow::anyhow!("an agent is required")));
     }
-    hub.say_to_with_attachments(&agent, &text, images, queued).await?;
+    let detail = diff_detail(&text, &diffs)?;
+    hub.say_to_annotated(&agent, &text, images, queued, &detail).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1320,6 +1341,36 @@ mod tests {
     use super::*;
     use oxroute_core::{Backend, TaskItem, TaskStatus};
 
+    #[test]
+    fn diff_attachments_preserve_literal_rows_and_original_message() {
+        let diffs: Vec<DiffQuote> = serde_json::from_value(json!([
+            {"path":"settings.txt", "text":"Quoted change\n> -old\n> +new", "rows":[
+                {"text":"-old", "old":4, "next":null}, {"text":"+new", "old":null, "next":4}
+            ]},
+            {"path":"template.yaml", "text":"Another quote\n> +{{ value }}", "rows":[
+                {"text":"+{{ value }}", "old":null, "next":8}
+            ]}
+        ])).unwrap();
+        let text = format!("{}\n\n{}\n\nExplain these changes.", diffs[0].text, diffs[1].text);
+        let detail = diff_detail(&text, &diffs).unwrap();
+        let stored: Vec<DiffQuote> = serde_json::from_str(detail.strip_prefix("diff-attachments:").unwrap()).unwrap();
+        assert_eq!(stored[1].rows[0].text, "+{{ value }}");
+        assert_eq!(stored[0].rows[0].old, Some(4));
+        assert!(diff_detail("Unrelated message", &diffs).is_err());
+        assert_eq!(diff_detail("Ordinary message", &[]).unwrap(), "");
+        let path = std::env::temp_dir().join(oxroute_core::model::new_id("diff-store"));
+        {
+            let store = Store::open(&path).unwrap();
+            store.add_entry("fixture", 1.0, oxroute_core::model::EntryKind::You, &text, &detail, "").unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let entry = &store.timeline("fixture", 10).unwrap()[0];
+        assert_eq!(entry.text, text);
+        assert_eq!(entry.detail, detail);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
     struct ReviewHarness;
 
     #[async_trait::async_trait]
@@ -1370,6 +1421,7 @@ mod tests {
         hub.with_harness(Arc::new(ReviewHarness));
         let router = Router::new().route("/api/agents/{id}/reviews", post(create_review))
             .route("/api/agents/{id}/reviews/{review}", get(get_review))
+            .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
             .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1415,6 +1467,22 @@ mod tests {
         assert_eq!(stale["status"], "stale");
         assert_eq!(stale["snapshot"], review["snapshot"]);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        let diffs = json!([{ "text":"Quoted revision", "path":"settings.txt", "rows":[
+            {"text":"-previous", "old":1, "next":null}, {"text":"+updated", "old":null, "next":1}
+        ]}]);
+        let text = "Quoted revision\n\nExplain the change.";
+        for multipart in [false, true] {
+            let request = if multipart {
+                client.post(format!("http://{address}/api/say-attachments")).multipart(reqwest::multipart::Form::new()
+                    .text("agent", agent_id).text("text", text).text("queued", "true").text("diffs", diffs.to_string()))
+            } else {
+                client.post(format!("http://{address}/api/say")).json(&json!({"agent":agent_id,"text":text,"queued":true,"diffs":diffs}))
+            };
+            let response = request.send().await.unwrap();
+            assert!(response.status().is_success(), "{}", response.text().await.unwrap());
+            let entry = reopened.timeline(agent_id, 100).unwrap().into_iter().rev().find(|entry| entry.text == text).unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(entry.detail.strip_prefix("diff-attachments:").unwrap()).unwrap(), diffs);
+        }
         tokio::fs::remove_dir_all(&root).await.unwrap();
         let missing = client.get(&endpoint).send().await.unwrap();
         assert!(!missing.status().is_success());
