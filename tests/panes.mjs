@@ -67,6 +67,7 @@ try {
   await page.mouse.up();
   assert.ok((await pane('alpha').boundingBox()).width > oldWidth, 'Pointer dragging resizes horizontal splits');
   const junction = page.getByRole('separator', { name: 'Resize pane intersection', exact: true }).first();
+  assert.equal(await junction.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)', 'Intersection drag target has no visible box');
   const junctionBox = await junction.boundingBox(), beforeCorner = await pane('alpha').boundingBox();
   await page.mouse.move(junctionBox.x + junctionBox.width/2, junctionBox.y + junctionBox.height/2);
   await page.mouse.down();

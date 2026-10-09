@@ -126,7 +126,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
         }} />
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1", [...ancestors, { path, axis: node.axis, side: "second" }])}</div>
       {!zoomed && junctions.map(ancestor => <div key={ancestor.path} role="separator" aria-label="Resize pane intersection" title="Drag to resize both directions"
-        className="absolute z-30 h-3 w-3 cursor-move bg-edge hover:bg-ink"
+        className="absolute z-30 h-3 w-3 cursor-move"
         style={node.axis === "column" ? { top: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "right" : "left"]: 0 } : { left: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "bottom" : "top"]: 0 }}
         onPointerDown={event => {
           event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
