@@ -124,8 +124,9 @@ export function Settings({
         />
         <label className="mb-4 flex items-center justify-between text-[12.5px]">
           Minimum pane scale
-          <span><input type="number" aria-label="Minimum pane scale" min={10} max={100} step={1} value={minimumPaneScale}
+          <span><input type="number" aria-label="Minimum pane scale" min={10} max={100} step={1} defaultValue={minimumPaneScale}
             onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isInteger(value) && value >= 10 && value <= 100) onMinimumPaneScale(String(value)); }}
+            onBlur={event => { event.currentTarget.value = minimumPaneScale; }}
             className="w-16 border-b border-rule bg-transparent text-right outline-none" />%</span>
         </label>
         <Choice

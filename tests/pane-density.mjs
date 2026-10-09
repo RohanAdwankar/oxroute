@@ -48,7 +48,10 @@ try {
   const dialog = page.getByRole('dialog', { name: 'settings' });
   const scaling = dialog.locator('section').filter({ has: page.getByText('Scale panes with width', { exact: true }) });
   await scaling.getByRole('button').nth(1).click();
-  await dialog.getByRole('spinbutton', { name: 'Minimum pane scale' }).fill('85');
+  const percentage = dialog.getByRole('spinbutton', { name: 'Minimum pane scale' });
+  await percentage.focus();
+  await percentage.press('ControlOrMeta+A');
+  await percentage.pressSequentially('85');
   if (process.env.SETTINGS_SCREENSHOT) await page.screenshot({ path: process.env.SETTINGS_SCREENSHOT });
   await page.keyboard.press('Escape');
   const zoom = locator => locator.evaluate(node => Number(getComputedStyle(node).zoom));
