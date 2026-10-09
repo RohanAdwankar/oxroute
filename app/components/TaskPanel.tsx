@@ -357,7 +357,7 @@ export function TaskPanel({
   };
 
   return (
-    <aside aria-label="Tasks" className="flex h-full w-full shrink-0 flex-col border-l border-rule bg-card">
+    <aside data-task-panel aria-label="Tasks" className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-rule bg-card">
       <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="h-[var(--bar)] w-full shrink-0 border-b border-rule bg-transparent px-5 text-[12px] outline-none" />
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (

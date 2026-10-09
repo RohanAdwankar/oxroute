@@ -1207,7 +1207,7 @@ export default function Home() {
             >
               <span className="absolute inset-y-0 -left-[4px] w-[8px]" />
             </div>
-            <div className="shrink-0 overflow-hidden" style={{ width: taskWidth }}>
+            <div data-task-pane className="flex min-h-0 shrink-0 overflow-hidden" style={{ width: taskWidth }}>
           <TaskPanel
             tasks={taskItems}
             rows={tasks}
