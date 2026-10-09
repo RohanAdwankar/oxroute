@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { AgentPanel } from "./components/AgentPanel";
+import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
+import { paneIds, readPanes, syncPanes } from "./lib/panes";
 import { Chrome } from "./components/Chrome";
 import { Fleet } from "./components/Fleet";
 import { FrontendVersion } from "./components/FrontendVersion";
@@ -70,10 +72,10 @@ function linkedPanes(id: string, links: Record<string, string>): string[] {
 /**
  * The whole interface.
  *
- * It keeps no state the daemon does not have. The event stream only bumps a
- * revision counter; every read is a refetch keyed on that counter. Which is
- * why a decision made in the TUI shows up here a moment later without either
- * surface knowing the other exists.
+ * Agent data comes from the daemon; pane arrangements are browser-local.
+ * The event stream bumps a revision counter and every read refetches it,
+ * so decisions made in the TUI appear here without either surface knowing
+ * the other exists.
  */
 export default function Home() {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY);
@@ -82,7 +84,7 @@ export default function Home() {
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
   const [panes, setPanes] = useState<string[]>([]);
-  const [paneWidths, setPaneWidths] = useState<number[]>([]);
+  const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const requests = useRef(new Map<string, Promise<AgentView>>());
@@ -130,9 +132,7 @@ export default function Home() {
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
-  const paneArea = useRef<HTMLDivElement>(null);
   const paneLinks = useRef<Record<string, string>>({});
-  const paneDrag = useRef<{ index: number; x: number; widths: number[] } | null>(null);
   // A signal the inbox cursor should land on as soon as the daemon reports it.
   const landOn = useRef<string | null>(null);
   const firstLoad = useRef(true);
@@ -220,9 +220,10 @@ export default function Home() {
     setOpen(id);
     // Opening an agent is walking into it: the keys act on it from here.
     if (id) setFocus("fleet");
-    const group = id ? linkedPanes(id, paneLinks.current) : [];
+    const saved = id ? readPanes(id) : null;
+    customPanes.current = saved !== null;
+    const group = saved ? paneIds(saved) : id ? linkedPanes(id, paneLinks.current) : [];
     setPanes(group);
-    setPaneWidths(group.map(() => 1));
     setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("agent", id);
@@ -260,8 +261,9 @@ export default function Home() {
       // Arriving at an agent is the same as walking into one: the keys act
       // on the conversation in front of you, not on the column beside it.
       if (agent) setFocus("fleet");
-      setPanes(agent ? [agent] : []);
-      setPaneWidths(agent ? [1] : []);
+      const saved = agent ? readPanes(agent) : null;
+      customPanes.current = saved !== null;
+      setPanes(saved ? paneIds(saved) : agent ? [agent] : []);
       const entry = Number(url.searchParams.get("entry"));
       setFocusEntry(entry > 0 ? entry : null);
     };
@@ -349,10 +351,9 @@ export default function Home() {
         paneLinks.current = next.paneLinks ?? {};
         setSnapshot(next);
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
-        if (selectedAgent) {
+        if (selectedAgent && !customPanes.current) {
           const group = linkedPanes(selectedAgent, next.paneLinks ?? {});
           setPanes((current) => current.length === group.length && current.every((id, at) => id === group[at]) ? current : group);
-          setPaneWidths((current) => current.length === group.length ? current : group.map(() => 1));
         }
         // Nothing to decide, nothing to read: the column earns its width by
         // having something waiting in it.
@@ -516,32 +517,18 @@ export default function Home() {
   const closePane = (index: number) => {
     const next = panes.filter((_, at) => at !== index);
     setPanes(next);
-    setPaneWidths((current) => {
-      const widths = [...current];
-      const removed = widths.splice(index, 1)[0] ?? 0;
-      if (widths.length > 0) widths[Math.min(index, widths.length - 1)] += removed;
-      return widths;
-    });
     setUrlAgent(next[0] ?? null);
   };
 
   /// Put a session in its own pane beside the one at `index`, sharing that
-  /// pane's width with it.
+  /// pane's space with it.
   const placeBeside = useCallback((index: number, agent: string) => {
     setPanes((current) =>
       current.includes(agent)
         ? current
         : [...current.slice(0, index + 1), agent, ...current.slice(index + 1)],
     );
-    setPaneWidths((current) => {
-      if (current.length >= panes.length + 1) return current;
-      const widths = [...current];
-      const split = (widths[index] ?? 1) / 2;
-      widths[index] = split;
-      widths.splice(index + 1, 0, split);
-      return widths;
-    });
-  }, [panes.length]);
+  }, []);
 
   const forkBeside = (index: number, agent: string) =>
     run(async () => {
@@ -564,32 +551,19 @@ export default function Home() {
         if (parentAt >= 0) return current.filter((_, at) => at !== index);
         return current.map((id, at) => (at === index ? parent.id : id));
       });
-      setPaneWidths((current) => {
-        const widths = [...current];
-        const parentAt = panes.indexOf(parent.id);
-        if (parentAt >= 0) {
-          const removed = widths.splice(index, 1)[0] ?? 0;
-          const adjustedParent = parentAt > index ? parentAt - 1 : parentAt;
-          widths[adjustedParent] += removed;
-        }
-        return widths;
-      });
       if (open === agent) setUrlAgent(parent.id);
     });
 
-  const resizePanes = (clientX: number) => {
-    const drag = paneDrag.current;
-    const width = paneArea.current?.clientWidth ?? 0;
-    if (!drag || width === 0) return;
-    const total = drag.widths.reduce((sum, value) => sum + value, 0);
-    const delta = ((clientX - drag.x) / width) * total;
-    const combined = drag.widths[drag.index] + drag.widths[drag.index + 1];
-    const minimum = Math.min(0.18, combined / 3);
-    const left = Math.min(Math.max(drag.widths[drag.index] + delta, minimum), combined - minimum);
-    const next = [...drag.widths];
-    next[drag.index] = left;
-    next[drag.index + 1] = combined - left;
-    setPaneWidths(next);
+  const choosePanes = (ids: string[]) => {
+    const key = open ?? ids[0];
+    if (key) {
+      const tree = syncPanes(readPanes(key), ids);
+      if (tree) localStorage.setItem(`oxroute.panes.${key}`, JSON.stringify(tree));
+      else localStorage.removeItem(`oxroute.panes.${key}`);
+    }
+    customPanes.current = true;
+    setPanes(ids);
+    if (!open || !ids.length) setUrlAgent(ids[0] ?? null);
   };
 
   // Both columns as they are drawn, so the keyboard counts the rows on
@@ -948,6 +922,7 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
+        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived]} selected={panes} onSelect={choosePanes} />}
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
@@ -1026,8 +1001,8 @@ export default function Home() {
         ) : null}
 
         {open ? (
-          <div ref={paneArea} className="flex min-w-0 flex-1 overflow-hidden">
-            {panes.map((id, index) => {
+          <PaneWorkspace key={open} workspace={open} ids={panes} onCustomize={() => { customPanes.current = true; }}>
+            {(id, index, paneHandle) => {
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
               const view = details[id] ?? (agent ? {
                 agent,
@@ -1038,10 +1013,11 @@ export default function Home() {
                 <div
                   key={id}
                   className="flex min-w-0 overflow-hidden"
-                  style={{ flexGrow: paneWidths[index] ?? 1, flexBasis: 0 }}
+                  style={{ flex: 1 }}
                 >
                   {view ? (
                     <AgentPanel
+                      paneHandle={paneHandle}
                       view={view}
                       initialPreview={details[id] ? undefined : snapshot.messages[id] ?? ""}
                       can={
@@ -1106,29 +1082,10 @@ export default function Home() {
                       Loading session…
                     </div>
                   )}
-                  {index < panes.length - 1 && (
-                    <div
-                      role="separator"
-                      aria-label="resize chat panes"
-                      aria-orientation="vertical"
-                      onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        paneDrag.current = { index, x: event.clientX, widths: [...paneWidths] };
-                      }}
-                      onPointerMove={(event) => resizePanes(event.clientX)}
-                      onPointerUp={(event) => {
-                        event.currentTarget.releasePointerCapture(event.pointerId);
-                        paneDrag.current = null;
-                      }}
-                      className="group relative w-[5px] shrink-0 cursor-col-resize border-l border-rule"
-                    >
-                      <span className="absolute inset-y-0 left-[-2px] w-[5px] bg-edge opacity-0 group-hover:opacity-45" />
-                    </div>
-                  )}
                 </div>
               );
-            })}
-          </div>
+            }}
+          </PaneWorkspace>
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {activeBoard && !selected ? (

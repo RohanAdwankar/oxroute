@@ -3,6 +3,7 @@
 import type { Mode, Snapshot } from "../lib/types";
 import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
+import type { ReactNode } from "react";
 
 /**
  * The top bar: the wordmark, the one global switch, and the counters.
@@ -24,6 +25,7 @@ export function Chrome({
   onNewBoard,
   onSearchOpen,
   onSearchContinue,
+  panes,
 }: {
   snapshot: Snapshot;
   notice: string | null;
@@ -38,6 +40,7 @@ export function Chrome({
   onNewBoard: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
+  panes?: ReactNode;
 }) {
   return (
     <header className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
@@ -85,6 +88,7 @@ export function Chrome({
       </nav>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
+      {panes}
 
       <div className="flex-1" />
 

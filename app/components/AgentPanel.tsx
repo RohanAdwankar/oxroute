@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
@@ -138,10 +138,12 @@ export function AgentPanel({
   models,
   onModel,
   initialPreview,
+  paneHandle,
 }: {
   view: AgentView;
   /** The card's latest message while the full history arrives. */
   initialPreview?: string;
+  paneHandle?: ReactNode;
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
@@ -460,6 +462,7 @@ export function AgentPanel({
       {/* Nothing here overflows -- the parts that could truncate themselves --
           and a menu dropping out of a button needs to be allowed out. */}
       <div className="relative z-20 flex h-[var(--bar)] shrink-0 items-center gap-x-[10px] border-b border-rule pl-3">
+        {paneHandle}
         <button
           type="button"
           onClick={onBack}
