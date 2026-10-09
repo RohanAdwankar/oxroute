@@ -437,6 +437,7 @@ export function AgentPanel({
   return (
     <ReviewLinks.Provider value={reviewLinks}>
     <section
+      data-agent-panel
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onDragOver={(event) => {
         if (!acceptsFileDrop(event.dataTransfer)) return;
@@ -696,7 +697,7 @@ export function AgentPanel({
                     {folded.length > 0 && (
                       <details className="group">
                         <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                          <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">
+                          <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">
                             {minute(folded.at(-1)?.at ?? first.at)}
                           </span>
                           <span className="w-2 text-center group-open:rotate-90">›</span>
@@ -921,8 +922,8 @@ export function AgentPanel({
             }}
             rows={1}
             data-composer
-            placeholder={correcting ? "What is still wrong?" : PLACEHOLDER[mode]}
-            className="min-h-[var(--cell)] flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
+            placeholder={correcting ? "What is still wrong?" : mode === "type" ? "" : PLACEHOLDER[mode]}
+            className="min-h-[var(--cell)] min-w-0 flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
           />
           {mode === "type" ? (
             // One button, one arrow, whether the agent is busy or not. What
@@ -996,7 +997,7 @@ export function AgentPanel({
 function ToolCall({ entry }: { entry: Entry }) {
   return (
     <div className="flex gap-3 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
-      <span className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
+      <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
       <div className="min-w-0 flex-1">
         {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
         <div className="break-words whitespace-pre-wrap">
@@ -1065,11 +1066,11 @@ const Message = memo(function Message({
             "flex items-start gap-3 border-b border-hair py-[var(--row-y)] last:border-b-0",
             // The whole row, so what you said is found by running
             // your eye down the column rather than reading it.
-            mine ? "group -mx-7 bg-mine px-7" : "",
+            mine ? "group -mx-[var(--pane-x)] bg-mine px-[var(--pane-x)]" : "",
             focused ? "bg-band" : "",
           ].join(" ")}
         >
-          <span className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-mid">
+          <span data-message-time className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-mid">
             {minute(entry.at)}
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">

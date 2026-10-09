@@ -40,6 +40,20 @@
   --said: 15px;
 }
 
+[data-agent-pane] {
+  container: agent-pane / inline-size;
+}
+
+@container agent-pane (max-width: 480px) {
+  [data-agent-panel] {
+    --pane-x: 8px;
+    --row-y: 5px;
+  }
+  [data-message-time] {
+    display: none;
+  }
+}
+
 /* The same palette read the other way round: warm still, but ink for
    paper. Nothing downstream names a colour, so this is the whole of it. */
 html[data-theme="dark"] {
