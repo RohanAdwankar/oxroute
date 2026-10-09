@@ -51,6 +51,7 @@ try {
   await drag('charlie', 'alpha', 'bottom');
   let a = await pane('alpha').boundingBox(), c = await pane('charlie').boundingBox(), b = await pane('bravo').boundingBox();
   assert.ok(c.y > a.y && Math.abs(c.x - a.x) < 2 && b.x > a.x, 'Nested vertical and horizontal panes share the view');
+  assert.ok(Math.abs(c.y - a.y - a.height) < 0.5 && Math.abs(b.x - a.x - a.width) < 0.5, 'Panes meet without horizontal or vertical gaps');
   assert.equal(await pane('alpha').locator('[data-composer]').inputValue(), 'Keep this draft.', 'Moving panes retains message drafts');
   const verticalSplit = page.locator('[role="separator"][aria-orientation="horizontal"]');
   await verticalSplit.focus();

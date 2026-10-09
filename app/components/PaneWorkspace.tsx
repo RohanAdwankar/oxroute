@@ -112,7 +112,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
     return <div ref={element => { if (element) splits.current.set(path, element); else splits.current.delete(path); }} data-pane-split={node.axis} className={`relative flex min-h-0 min-w-0 flex-1 ${node.axis === "column" ? "flex-col" : ""}`}>
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : node.ratio} 1 0`, display: zoomed && !paneIds(node.first).includes(active) ? "none" : undefined }}>{render(node.first, path + "0", [...ancestors, { path, axis: node.axis, side: "first" }])}</div>
       <div role="separator" aria-label="resize chat panes" aria-orientation={node.axis === "row" ? "vertical" : "horizontal"} tabIndex={0}
-        hidden={zoomed} className={node.axis === "row" ? "w-[5px] shrink-0 cursor-col-resize border-l border-rule hover:bg-band" : "h-[5px] shrink-0 cursor-row-resize border-t border-rule hover:bg-band"}
+        hidden={zoomed} className={`relative z-20 shrink-0 before:absolute before:content-[''] ${node.axis === "row" ? "w-0 cursor-col-resize before:inset-y-0 before:-left-[3px] before:w-[6px]" : "h-0 cursor-row-resize before:inset-x-0 before:-top-[3px] before:h-[6px]"}`}
         onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={event => {
           if (!event.currentTarget.hasPointerCapture(event.pointerId) || !tree) return;
@@ -127,7 +127,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1", [...ancestors, { path, axis: node.axis, side: "second" }])}</div>
       {!zoomed && junctions.map(ancestor => <div key={ancestor.path} role="separator" aria-label="Resize pane intersection" title="Drag to resize both directions"
         className="absolute z-30 h-3 w-3 cursor-move bg-edge hover:bg-ink"
-        style={node.axis === "column" ? { top: `calc(${node.ratio * 100}% + ${2.5 - node.ratio * 5 - 6}px)`, [ancestor.side === "first" ? "right" : "left"]: 0 } : { left: `calc(${node.ratio * 100}% + ${2.5 - node.ratio * 5 - 6}px)`, [ancestor.side === "first" ? "bottom" : "top"]: 0 }}
+        style={node.axis === "column" ? { top: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "right" : "left"]: 0 } : { left: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "bottom" : "top"]: 0 }}
         onPointerDown={event => {
           event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
           corner.current = [{ path, axis: node.axis }, ancestor].map(split => ({ ...split, box: splits.current.get(split.path)!.getBoundingClientRect() }));
