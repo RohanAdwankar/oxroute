@@ -513,6 +513,8 @@ impl EntryKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_id: String,
     pub id: i64,
     pub agent_id: String,
     pub at: f64,

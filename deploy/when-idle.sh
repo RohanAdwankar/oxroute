@@ -70,6 +70,9 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/task-search.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/compact-panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/scale-panes.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/composer.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/message-reconciliation.mjs"
+curl -fsS "$api/api/terminals" | jq -e 'type == "array"' >/dev/null
 trap - ERR
 task_status done "Deployed after all active turns finished. Live daemon, frontend build ID, Tab correction, wrapping and review browser checks passed."
 mv "$request" "$state/deployed.json"

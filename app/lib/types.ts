@@ -84,6 +84,7 @@ export interface InboxItem {
 }
 
 export interface Entry {
+  requestId?: string;
   id: number;
   agentId: string;
   at: number;

@@ -147,7 +147,7 @@ export function AgentPanel({
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
-  onSay: (text: string, images: File[], queued: boolean, diffs: DiffQuote[]) => Promise<boolean>;
+  onSay: (text: string, images: File[], queued: boolean, diffs: DiffQuote[], requestId: string) => Promise<boolean>;
   /// Put what is in the composer on the task list instead of saying it.
   onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
@@ -189,7 +189,7 @@ export function AgentPanel({
   const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
   const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ entry: Entry; after: number }[]>([]);
+  const [pending, setPending] = useState<Entry[]>([]);
   const nextPending = useRef(0);
   const pictures = useUploads();
   const [draggingImages, setDraggingImages] = useState(false);
@@ -212,11 +212,10 @@ export function AgentPanel({
   const optimistic = useMemo(() => {
     const unmatched = [...pending];
     for (const entry of view.timeline) {
-      const at = unmatched.findIndex((item) => entry.id > item.after &&
-        entry.kind === "you" && entry.text === item.entry.text);
+      const at = unmatched.findIndex((item) => entry.requestId === item.requestId);
       if (at >= 0) unmatched.splice(at, 1);
     }
-    return unmatched.map((item) => item.entry);
+    return unmatched;
   }, [pending, view.timeline]);
   const items = useMemo(() => compactTimeline([...view.timeline, ...optimistic]), [view.timeline, optimistic]);
   const reviewTitles = useMemo(() => JSON.stringify(view.timeline.filter(entry => entry.kind === "review")
@@ -229,7 +228,7 @@ export function AgentPanel({
   const [previousTimeline, setPreviousTimeline] = useState(view.timeline);
   if (previousTimeline !== view.timeline) {
     setPreviousTimeline(view.timeline);
-    if (pending.length > 0 && optimistic.length === 0) setPending([]);
+    if (pending.length !== optimistic.length) setPending(optimistic);
   }
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
@@ -306,12 +305,12 @@ export function AgentPanel({
       : text;
     const entry: Entry = {
       id, agentId: agent.id, at: Date.now() / 1000, kind: "you", text: shown,
-      detail: restoreDiffs.length ? `diff-attachments:${JSON.stringify(restoreDiffs)}` : "", output: "", origin: "", reaction: "",
+      detail: restoreDiffs.length ? `diff-attachments:${JSON.stringify(restoreDiffs)}` : "", output: "", origin: "", reaction: "", requestId: crypto.randomUUID(),
     };
-    setPending((current) => [...current, { entry, after: view.timeline.at(-1)?.id ?? 0 }]);
-    void onSay(text, images, queued, restoreDiffs).then((accepted) => {
+    setPending((current) => [...current, entry]);
+    void onSay(text, images, queued, restoreDiffs, entry.requestId!).then((accepted) => {
       if (accepted) return;
-      setPending((current) => current.filter((item) => item.entry.id !== id));
+      setPending((current) => current.filter((item) => item.id !== id));
       setDraft((current) => current ? `${restoreText}\n${current}` : restoreText);
       setDiffs(current => [...restoreDiffs, ...current]);
       pictures.add(images);

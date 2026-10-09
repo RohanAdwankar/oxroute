@@ -48,7 +48,7 @@ await page.route('**/api/say', async r => {
   submitted.set(body.text, (submitted.get(body.text) ?? 0) + 1);
   await delay(submitted.get(body.text) > 1 ? 2100 : 1000);
   if (failMessage) return r.fulfill({ status: 500, json: { error: 'Message rejected' } });
-  const entry = { id: entries.length + 1, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: body.text, detail: '', output: '', origin: '', reaction: '' };
+  const entry = { id: entries.length + 1, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: body.text, detail: '', output: '', origin: '', reaction: '', requestId: body.requestId };
   entries.push(entry);
   await emit({ type: 'timeline', entry });
   await delay(500);
@@ -95,4 +95,3 @@ assert.equal(await page.locator('[data-transcript]').getByText(retry, { exact: t
 if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
 await browser.close();
 console.log('Passed assignment, immediate updates, early-event deduplication, successive sends, and failure recovery; no real submissions sent.');
-

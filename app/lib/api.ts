@@ -68,13 +68,14 @@ export const api = {
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
   /// `queued` waits for the running turn instead of stopping it.
-  say: (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = []) => {
-    if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued, diffs });
+  say: (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = [], requestId = "") => {
+    if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued, diffs, requestId });
     const form = new FormData();
     form.append("agent", agent);
     form.append("text", text);
     form.append("queued", String(queued));
     form.append("diffs", JSON.stringify(diffs));
+    form.append("requestId", requestId);
     images.forEach((image) => form.append("files", image));
     return call<unknown>("/api/say-attachments", { method: "POST", body: form });
   },

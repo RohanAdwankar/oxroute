@@ -479,6 +479,7 @@ async fn route(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SayBody {
     agent: String,
     text: String,
@@ -487,6 +488,8 @@ struct SayBody {
     queued: bool,
     #[serde(default)]
     diffs: Vec<DiffQuote>,
+    #[serde(default)]
+    request_id: String,
 }
 
 #[derive(serde::Serialize, Deserialize)]
@@ -568,7 +571,7 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
                 "id": id, "title": review.title, "commit": snapshot.head_commit,
                 "branch": snapshot.branch, "base": snapshot.base_ref,
             }));
-            if let Err(error) = hub.say_to_annotated(&agent_id, &authorization, vec![], true, &detail).await {
+            if let Err(error) = hub.say_to_annotated(&agent_id, &authorization, vec![], true, &detail, "").await {
                 hub.store.replace_value(&key, &after, &before)?;
                 return Err(error.into());
             }
@@ -582,7 +585,7 @@ async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_j
         return Err(Failed(anyhow::anyhow!("nothing to say")));
     }
     let detail = diff_detail(&body.text, &body.diffs)?;
-    hub.say_to_annotated(&body.agent, &body.text, vec![], body.queued, &detail).await?;
+    hub.say_to_annotated(&body.agent, &body.text, vec![], body.queued, &detail, &body.request_id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -595,12 +598,14 @@ async fn say_attachments(
     let mut queued = false;
     let mut images = Vec::new();
     let mut diffs = Vec::new();
+    let mut request_id = String::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("agent") => agent = field.text().await?,
             Some("text") => text = field.text().await?,
             Some("queued") => queued = field.text().await? == "true",
             Some("diffs") => diffs = serde_json::from_str::<Vec<DiffQuote>>(&field.text().await?)?,
+            Some("requestId") => request_id = field.text().await?,
             Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
             _ => {}
         }
@@ -609,7 +614,7 @@ async fn say_attachments(
         return Err(Failed(anyhow::anyhow!("an agent is required")));
     }
     let detail = diff_detail(&text, &diffs)?;
-    hub.say_to_annotated(&agent, &text, images, queued, &detail).await?;
+    hub.say_to_annotated(&agent, &text, images, queued, &detail, &request_id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1474,15 +1479,17 @@ mod tests {
         ]}]);
         let text = "Quoted revision\n\nExplain the change.";
         for multipart in [false, true] {
+            let request_id = oxroute_core::model::new_id("request");
             let request = if multipart {
                 client.post(format!("http://{address}/api/say-attachments")).multipart(reqwest::multipart::Form::new()
-                    .text("agent", agent_id).text("text", text).text("queued", "true").text("diffs", diffs.to_string()))
+                    .text("agent", agent_id).text("text", text).text("queued", "true").text("diffs", diffs.to_string()).text("requestId", request_id.clone()))
             } else {
-                client.post(format!("http://{address}/api/say")).json(&json!({"agent":agent_id,"text":text,"queued":true,"diffs":diffs}))
+                client.post(format!("http://{address}/api/say")).json(&json!({"agent":agent_id,"text":text,"queued":true,"diffs":diffs,"requestId":request_id}))
             };
             let response = request.send().await.unwrap();
             assert!(response.status().is_success(), "{}", response.text().await.unwrap());
             let entry = reopened.timeline(agent_id, 100).unwrap().into_iter().rev().find(|entry| entry.text == text).unwrap();
+            assert_eq!(entry.request_id, request_id);
             assert_eq!(serde_json::from_str::<serde_json::Value>(entry.detail.strip_prefix("diff-attachments:").unwrap()).unwrap(), diffs);
         }
         tokio::fs::remove_dir_all(&root).await.unwrap();

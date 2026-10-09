@@ -984,6 +984,10 @@ impl Store {
         )
     }
 
+    pub fn add_user_entry(&self, agent_id: &str, at: f64, text: &str, detail: &str, request_id: &str) -> Result<Entry> {
+        self.add_entry_full(agent_id, at, EntryKind::You, text, detail, "", request_id, "")
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add_entry_full(
         &self,
@@ -1003,6 +1007,7 @@ impl Store {
                 params![agent_id, at, kind.as_str(), text, detail, output, item_id, origin],
             )?;
             Ok(Entry {
+                request_id: if kind == EntryKind::You { item_id.to_string() } else { String::new() },
                 id: c.last_insert_rowid(),
                 agent_id: agent_id.to_string(),
                 at,
@@ -1037,7 +1042,7 @@ impl Store {
             c.execute("UPDATE entries SET output = ?2 WHERE id = ?1", params![id, output])?;
             Ok(c
                 .query_row(
-                    "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url
+                    "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id
                      FROM entries WHERE id = ?1",
                     params![id],
                     read_entry,
@@ -1062,7 +1067,7 @@ impl Store {
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url FROM entries
+                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries
                  WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
@@ -1084,7 +1089,7 @@ impl Store {
     pub fn message_entry(&self, agent_id: &str, kind: EntryKind, text: &str) -> Result<Option<Entry>> {
         self.with(|c| {
             Ok(c.query_row(
-                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url
+                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id
                  FROM entries WHERE agent_id = ?1 AND kind = ?2 AND text = ?3 ORDER BY id DESC LIMIT 1",
                 params![agent_id, kind.as_str(), text], read_entry,
             ).optional()?)
@@ -1397,7 +1402,7 @@ impl Store {
             transaction.execute("INSERT INTO kv (key, value) VALUES (?1, ?2)", params![format!("review:{id}"), data])?;
             transaction.execute("INSERT INTO entries (agent_id, at, kind, text, detail) VALUES (?1, ?2, 'review', ?3, ?4)",
                 params![agent_id, crate::model::now(), title, id])?;
-            let entry = transaction.query_row("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url FROM entries WHERE id = ?1",
+            let entry = transaction.query_row("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries WHERE id = ?1",
                 params![transaction.last_insert_rowid()], read_entry)?;
             transaction.commit()?;
             Ok(entry)
@@ -1467,6 +1472,7 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
 
 fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
     Ok(Entry {
+        request_id: if row.get::<_, String>(3)? == "you" { row.get(10)? } else { String::new() },
         id: row.get(0)?,
         agent_id: row.get(1)?,
         at: row.get(2)?,
