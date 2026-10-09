@@ -39,6 +39,10 @@ try {
   await page.getByRole('button', { name: 'Revoke', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke', exact: true }).waitFor({ state: 'detached' });
   assert.equal((await api('/input', { agentId: 'terminal-fixture-agent', data: 'printf denied\r' })).ok(), false);
+  await page.route(`**/api/terminals/${id}?after=*`, async route => {
+    await page.waitForTimeout(500);
+    await route.continue();
+  });
   await page.reload();
   await pane.waitFor();
   await typed.focus();
@@ -50,4 +54,4 @@ try {
   await pane.getByRole('button', { name: 'End terminal session' }).click();
   await pane.waitFor({ state: 'detached' });
   console.log('Real terminal user input, agent approval, revocation, reload and ending pass.');
-} finally { await browser.close(); }
+} finally { for (const context of browser.contexts()) for (const page of context.pages()) await page.unrouteAll({ behavior: 'ignoreErrors' }); await browser.close(); }

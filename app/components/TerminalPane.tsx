@@ -31,7 +31,12 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       const send = (data: string) => token() && terminalApi(`/${id}/input`, { controller: token(), data }).catch(error => setError(String(error)));
       let writing = Promise.resolve<unknown>(undefined);
       let replaying = true;
-      const input = terminal.onData(data => { if (!replaying) writing = writing.then(() => send(data)); });
+      let userInput = false;
+      const markInput = () => { userInput = true; setTimeout(() => { userInput = false; }, 0); };
+      const inputEvents = ["keydown", "keypress", "input", "paste"];
+      const element = host.current;
+      for (const event of inputEvents) element.addEventListener(event, markInput, true);
+      const input = terminal.onData(data => { if (!replaying || userInput) writing = writing.then(() => send(data)); });
       const observer = new ResizeObserver(() => {
         fit.fit();
         if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
@@ -52,7 +57,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         if (live) timer = setTimeout(poll, 200);
       };
       void poll();
-      dispose = () => { clearTimeout(timer); observer.disconnect(); input.dispose(); terminal.dispose(); };
+      dispose = () => { clearTimeout(timer); observer.disconnect(); input.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
     })().catch(error => setError(String(error)));
     return () => { live = false; dispose(); };
   }, [id, token]);
