@@ -2057,10 +2057,11 @@ impl Hub {
         // can see the cause of reads as an agent that wandered off on its
         // own, and when it turns out to have been handed the wrong work
         // there is no record of who handed it over.
+        let references = open.iter().map(|task| format!("- {}", task.id)).collect::<Vec<_>>().join("\n");
         self.record(
             &agent.id,
             EntryKind::Notice,
-            &format!("Resuming open work:\n{list}"),
+            &format!("Resuming open work:\n{references}"),
             "",
             "",
         );

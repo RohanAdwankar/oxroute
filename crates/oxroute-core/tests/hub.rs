@@ -1962,7 +1962,7 @@ async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
     assert!(texts[0].contains("still has open work"));
     assert!(texts[0].contains("scrub the tiles"));
     assert!(w.hub.timeline(&agent.id, usize::MAX).unwrap().iter().any(|entry|
-        entry.kind == EntryKind::Notice && entry.text.contains("scrub the tiles")
+        entry.kind == EntryKind::Notice && entry.text.contains("task_1")
     ), "the notice must identify the task being resumed");
 
     // And it stops there: that turn left the list exactly as it found it,

@@ -4,7 +4,8 @@ const agent = { id: 'reference-fixture', name: 'References', status: 'complete',
 const tasks = ['a', 'b'].map((letter, index) => ({ id: `task_${letter.repeat(32)}`, text: ['Inspect a change', 'Validate a release'][index], status: index ? 'complete' : 'incomplete', agentId: agent.id, blockedByTaskId: '', images: [], createdAt: index, updatedAt: index }));
 const unknown = `task_${'e'.repeat(32)}`;
 const text = `See ${tasks[0].id} and \`${tasks[1].id}\`. Unknown ${unknown}. Lookalike ${tasks[0].id}extra.\n\n\`\`\`text\n${tasks[0].id}\n\`\`\`\n\n[Existing link](https://example.invalid/${tasks[0].id})`;
-const timeline = [{ id: 1, agentId: agent.id, kind: 'said', text, at: Date.now()/1000, detail: '' }];
+const timeline = [{ id: 1, agentId: agent.id, kind: 'said', text, at: Date.now()/1000, detail: '' },
+  { id: 2, agentId: agent.id, kind: 'notice', text: `Resuming open work:\n- ${tasks[0].id}\n- ${tasks[1].id}`, at: Date.now()/1000, detail: '' }];
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
@@ -22,6 +23,9 @@ try {
   assert.ok((await message.innerText()).includes(`${tasks[0].id}extra`));
   assert.equal((await message.locator('pre').innerText()).trim(), tasks[0].id);
   assert.equal(await message.getByRole('link', { name: 'Existing link' }).getAttribute('href'), `https://example.invalid/${tasks[0].id}`);
+  const notice = page.locator('[data-entry="2"]');
+  assert.equal(await notice.getByRole('button', { name: /^Task / }).count(), tasks.length, 'Resume notices show task previews');
+  for (const task of tasks) assert.equal((await notice.innerText()).split(task.text).length - 1, 1, 'Notice titles appear once');
   for (const task of tasks) {
     await message.getByRole('button', { name: `Task ${task.text}`, exact: true }).click();
     await page.locator('[data-task-row]').filter({ hasText: task.text }).waitFor();
