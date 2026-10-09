@@ -94,6 +94,8 @@ function Notes({ notes }: { notes: TaskNote[] }) {
 export function TaskPanel({
   tasks,
   rows,
+  query,
+  onSearch,
   notes,
   onShowDone,
   cursor,
@@ -112,6 +114,8 @@ export function TaskPanel({
   tasks: TaskItem[];
   /// The rows on screen, in order; the keyboard counts these.
   rows: TaskRow[];
+  query: string;
+  onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
   notes: TaskNote[];
   onShowDone: () => void;
@@ -352,12 +356,12 @@ export function TaskPanel({
   };
 
   return (
-    <aside className="flex h-full w-full shrink-0 flex-col border-l border-rule bg-card">
+    <aside aria-label="Tasks" className="flex h-full w-full shrink-0 flex-col border-l border-rule bg-card">
+      <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="h-[var(--bar)] w-full shrink-0 border-b border-rule bg-transparent px-5 text-[12px] outline-none" />
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
-            No tasks yet. Type in a conversation and choose &ldquo;add to the task
-            list&rdquo;, or press tab.
+            {query.trim() ? "No matching tasks." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">

@@ -120,6 +120,7 @@ export default function Home() {
   const [taskAt, setTaskAt] = useState(0);
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
+  const [taskQuery, setTaskQuery] = useState("");
   const [shownTask, setShownTask] = useState<string | null>(null);
   /// Finished work you have said "not yet" to, answered in its composer.
   const [correcting, setCorrecting] = useState<TaskItem | null>(null);
@@ -577,7 +578,10 @@ export default function Home() {
     if (at >= 0) pendingTasks.splice(at, 1);
   }
   const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...pendingTasks];
-  const tasks = taskRows(taskItems, tasksDone);
+  const taskSearch = taskQuery.trim().toLowerCase();
+  const taskNames = new Map([...snapshot.agents, ...snapshot.archived].map(agent => [agent.id, agent.name]));
+  const taskMatches = taskItems.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
+  const tasks = taskRows(taskMatches, tasksDone || !!taskSearch);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
@@ -1173,6 +1177,8 @@ export default function Home() {
           <TaskPanel
             tasks={taskItems}
             rows={tasks}
+            query={taskQuery}
+            onSearch={query => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }}
             notes={snapshot.taskNotes}
             onShowDone={() => setTasksDone((shown) => !shown)}
             cursor={taskAt}
