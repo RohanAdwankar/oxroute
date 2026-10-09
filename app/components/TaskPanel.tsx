@@ -46,6 +46,7 @@ function Row({
     <div
       ref={row}
       data-task-row
+      aria-current={focused ? "true" : undefined}
       className={`group flex items-start gap-3 border-b border-hair border-l-[3px] py-4 pr-5 pl-[17px] ${
         focused ? "border-l-ink bg-wash" : "border-l-transparent"
       }`}

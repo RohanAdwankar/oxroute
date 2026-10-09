@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { TaskLinks } from "./components/Markdown";
 
 import { AgentPanel } from "./components/AgentPanel";
 import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
@@ -166,6 +167,18 @@ export default function Home() {
     setTasksOpen(open);
     window.localStorage.setItem("oxroute.tasks", String(open));
   }, []);
+
+  const taskLinks = useMemo(() => ({
+    titles: new Map((snapshot?.tasks ?? []).map(task => [task.id, task.text])),
+    open: (id: string) => {
+      showTasks(true);
+      setTaskQuery("");
+      setTasksDone(true);
+      setShownTask(id);
+      setTaskAt(taskRows(snapshot?.tasks ?? [], true).findIndex(row => row.kind === "task" && row.task.id === id));
+      setFocus("tasks");
+    },
+  }), [snapshot?.tasks, showTasks]);
 
   const setInboxVisible = useCallback((open: boolean) => {
     setInboxOpen(open);
@@ -913,6 +926,7 @@ export default function Home() {
   }
 
   return (
+    <TaskLinks.Provider value={taskLinks}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {help && <Help onClose={() => setHelp(false)} />}
@@ -1226,5 +1240,6 @@ export default function Home() {
         )}
       </div>
     </main>
+    </TaskLinks.Provider>
   );
 }
