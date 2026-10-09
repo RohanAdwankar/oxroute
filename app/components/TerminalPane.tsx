@@ -37,15 +37,27 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       const fit = new FitAddon();
       terminal.loadAddon(fit);
       terminal.open(host.current);
-      const send = (data: string) => token() && terminalApi(`/${id}/input`, { controller: token(), data }).catch(error => setError(String(error)));
-      let writing = Promise.resolve<unknown>(undefined);
+      const send = (data: string) => token() && terminalApi(`/${id}/input`, { controller: token(), data }, "POST", controller.signal).catch(error => { if (live) setError(String(error)); });
+      let pendingInput = "";
+      let writing = false;
+      const flushInput = async () => {
+        if (writing) return;
+        writing = true;
+        try {
+          while (live && pendingInput) {
+            const data = pendingInput;
+            pendingInput = "";
+            await send(data);
+          }
+        } finally { writing = false; }
+      };
       let replaying = true;
       let userInput = false;
       const markInput = () => { userInput = true; setTimeout(() => { userInput = false; }, 0); };
       const inputEvents = ["keydown", "keypress", "input", "paste"];
       const element = host.current;
       for (const event of inputEvents) element.addEventListener(event, markInput, true);
-      const input = terminal.onData(data => { if (!replaying || userInput) writing = writing.then(() => send(data)); });
+      const input = terminal.onData(data => { if (!replaying || userInput) { pendingInput += data; void flushInput(); } });
       const observer = new ResizeObserver(() => {
         fit.fit();
         if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
