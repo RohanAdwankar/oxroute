@@ -24,7 +24,9 @@ test "$(sha256sum "$release/bin/oxrouted" | cut -d ' ' -f1)" = "$(jq -er '.binar
 binary=$HOME/.local/bin/oxrouted
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
-backup=$(mktemp -d "${XDG_RUNTIME_DIR:?}/oxroute-deploy-backup.XXXXXX")
+backup=$(mktemp -d "$state/deploy-backup.XXXXXX")
+cleanup() { find "$backup" -depth -delete; }
+trap cleanup EXIT
 uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True).backup(sqlite3.connect(sys.argv[2]))' "$database" "$backup/database.sqlite3"
 cp -a "$binary" "$backup/oxrouted"
 cp -a "$web" "$backup/web"
@@ -35,7 +37,7 @@ task_status() {
   done
 }
 rollback() {
-  trap - ERR
+  trap - ERR EXIT
   systemctl --user stop oxroute-web.service oxroute.service
   cp -a "$backup/web" "$web.next"
   mv -Tf "$web.next" "$web"
@@ -46,9 +48,9 @@ rollback() {
   systemctl --user start oxroute.service oxroute-web.service
   task_status waiting_for_human "Deployment failed; previous release and review records restored. Inspect the idle-deploy journal."
   mv "$request" "$state/failed-deployment.json"
+  cleanup
 }
 if ! idle; then
-  find "$backup" -depth -delete
   exit 0
 fi
 trap rollback ERR
@@ -70,4 +72,3 @@ mv "$request" "$state/deployed.json"
 request=$state/deployed.json
 task_status incomplete "Deployment verified; resume the authorized follow-up work." resumeTasks
 printf '%s deployed %s\n' "$(date --iso-8601=seconds)" "$commit"
-find "$backup" -depth -delete
