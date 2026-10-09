@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { AgentPanel } from "./components/AgentPanel";
+import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
 import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
 import { paneIds, readPanes, syncPanes } from "./lib/panes";
 import { Chrome } from "./components/Chrome";
@@ -112,6 +113,7 @@ export default function Home() {
   const [help, setHelp] = useState(false);
   const [jump, setJump] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
   // Which board the main column shows when no agent is open. Null is the fleet.
   const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
@@ -254,6 +256,7 @@ export default function Home() {
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
   );
+  useEffect(() => { void terminalApi<TerminalInfo[]>("").then(setTerminals).catch(complain); }, [complain]);
 
   useEffect(() => {
     const restore = () => {
@@ -404,13 +407,14 @@ export default function Home() {
     // asked again may never come: a dropped event stream leaves the pane
     // saying "Loading session…" for as long as you look at it.
     const fetchPanes = async () => {
+      const chats = panes.filter(id => !id.startsWith("terminal_"));
       for (let wait = 500; live; wait = Math.min(wait * 2, 8000)) {
-        const answers = await Promise.allSettled(panes.map(loadAgent));
+        const answers = await Promise.allSettled(chats.map(loadAgent));
         if (!live) return;
         const views = answers.flatMap((answer) =>
           answer.status === "fulfilled" ? [answer.value] : [],
         );
-        if (views.length === panes.length) return;
+        if (views.length === chats.length) return;
         await new Promise((again) => setTimeout(again, wait));
       }
     };
@@ -649,6 +653,7 @@ export default function Home() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.target as HTMLElement)?.closest?.("[data-terminal-pane]")) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTyping(event.target)) {
         // Escape gets you out of the compose box and back to the keys.
@@ -930,7 +935,13 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
-        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived]} selected={panes} onSelect={choosePanes} />}
+        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onTerminal={() => {
+          void terminalApi<{ terminal: TerminalInfo; controller: string }>("", {}).then(({ terminal, controller }) => {
+            localStorage.setItem(`oxroute.terminal.${terminal.id}`, controller);
+            setTerminals(current => [...current, terminal]);
+            choosePanes([...panes, terminal.id]);
+          }).catch(complain);
+        }} />}
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
@@ -1011,6 +1022,7 @@ export default function Home() {
         {open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
+              if (id.startsWith("terminal_")) return <TerminalPane id={id} handle={paneHandle} agents={[...snapshot.agents, ...snapshot.archived]} onEnd={() => { setTerminals(current => current.filter(terminal => terminal.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
               const view = details[id] ?? (agent ? {
                 agent,

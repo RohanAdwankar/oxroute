@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
 
 /* The palette from the design canvas: warm paper, one green for what
    worked, one purple for what merged, one amber for what is waiting.

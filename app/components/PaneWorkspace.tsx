@@ -8,7 +8,7 @@ import { Icon } from "./Icon";
 
 type Split = { path: string; axis: "row" | "column"; side: "first" | "second" };
 
-export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; selected: string[]; onSelect: (ids: string[]) => void }) {
+export function AgentPicker({ agents, selected, onSelect, onTerminal }: { agents: Pick<Agent, "id" | "name">[]; selected: string[]; onSelect: (ids: string[]) => void; onTerminal?: () => void }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
   const picker = useRef<HTMLDetailsElement>(null);
@@ -26,6 +26,7 @@ export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; s
         <input type="checkbox" checked={selected.includes(agent.id)} onChange={event => onSelect(event.target.checked ? [...selected, agent.id] : selected.filter(id => id !== agent.id))} />
         <span className="truncate">{agent.name}</span>
       </label>)}</div>
+      {onTerminal && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onTerminal(); }}><Icon name="terminal" size={13} />New terminal</button>}
     </div>}
   </details>;
 }

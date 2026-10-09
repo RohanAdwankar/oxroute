@@ -35,6 +35,7 @@ use oxroute_core::source::slack::SlackSource;
 use oxroute_core::{Config, Hub, Store};
 
 mod diagram;
+mod terminal;
 
 const INBOX_LIMIT: usize = 200;
 const TIMELINE_LIMIT: usize = 500;
@@ -257,7 +258,8 @@ async fn serve() -> Result<()> {
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())
-        .with_state(hub.clone());
+        .with_state(hub.clone())
+        .merge(terminal::routes(hub.clone())?);
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await

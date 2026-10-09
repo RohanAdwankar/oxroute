@@ -1738,6 +1738,17 @@ impl Hub {
             listen = self.config.listen,
             id = agent.id,
         )));
+        inputs.push(TurnInput::text(format!(
+            "Interactive terminal panes are listed by GET http://{listen}/api/terminals. \
+             Read output at GET http://{listen}/api/terminals/<id>?after=<byte-offset>. \
+             Only when the user asks you to drive a terminal, POST /api/terminals/<id>/access \
+             with {{\"agentId\":\"{id}\"}} and wait until GET shows your agentId in granted. \
+             Then POST /api/terminals/<id>/input with {{\"agentId\":\"{id}\",\"data\":\"exact keystrokes\"}}. \
+             Use only your own agentId. Never call consent, create, resize or delete terminal \
+             endpoints, obtain controller credentials, or approve your own request. Terminal \
+             approval allows typing in that terminal only and does not authorize unrelated actions.",
+            listen = self.config.listen, id = agent.id,
+        )));
         if self.store.tags(&agent.id)?.iter().any(|tag| tag == "publication:direct") {
             inputs.push(TurnInput::text(
                 "The user has exempted this conversation from per-diff publication reviews. \
