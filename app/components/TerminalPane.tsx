@@ -59,10 +59,15 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       for (const event of inputEvents) element.addEventListener(event, markInput, true);
       const input = terminal.onData(data => { if (!replaying || userInput) { pendingInput += data; void flushInput(); } });
       const observer = new ResizeObserver(() => {
+        // Keep xterm's mouse coordinates unzoomed and scale its font instead.
+        const scale = Number(getComputedStyle(element.parentElement!).zoom);
+        element.style.zoom = String(1 / scale);
+        terminal.options.fontSize = 13 * scale;
         fit.fit();
         if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
       });
       observer.observe(host.current);
+      observer.observe(host.current.parentElement!);
       let after = 0;
       let timer: ReturnType<typeof setTimeout>;
       const poll = async () => {

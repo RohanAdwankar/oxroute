@@ -56,6 +56,7 @@
 }
 
 html[data-scale-panes="on"] [data-agent-panel],
+html[data-scale-panes="on"] [data-terminal-pane],
 html[data-scale-panes="on"] [data-task-panel] {
   zoom: clamp(var(--minimum-pane-scale), calc(100cqw / 800px), 1);
 }
