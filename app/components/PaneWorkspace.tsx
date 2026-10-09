@@ -81,22 +81,19 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
   }, [menu]);
   useEffect(() => { if (tree && readPanes(workspace)) localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(tree)); }, [tree, workspace]);
   const save = (next: PaneLayout) => { setTree(next); localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(next)); onCustomize(); };
-  const minimumHeight = (node: PaneLayout): number => {
+  const minimumSize = (node: PaneLayout, axis: "row" | "column"): number => {
     if (typeof node === "string") return root.current!.querySelector(`[data-agent-pane="${node}"] [data-pane-header]`)!.getBoundingClientRect().height;
-    const first = minimumHeight(node.first), second = minimumHeight(node.second);
-    return node.axis === "column" ? first + second : Math.max(first, second);
+    const first = minimumSize(node.first, axis), second = minimumSize(node.second, axis);
+    return node.axis === axis ? first + second : Math.max(first, second);
   };
   const resize = (current: PaneLayout, path: string, ratio: number): PaneLayout => {
     let node = current;
     for (const side of path) { if (typeof node === "string") return current; node = side === "0" ? node.first : node.second; }
     if (typeof node === "string") return current;
-    let lower = 0.1, upper = 0.9;
-    if (node.axis === "column") {
-      const first = minimumHeight(node.first), second = minimumHeight(node.second);
-      const height = Math.max(splits.current.get(path)!.getBoundingClientRect().height, first + second);
-      lower = first / height; upper = 1 - second / height;
-    }
-    ratio = Math.min(upper, Math.max(lower, ratio));
+    const first = minimumSize(node.first, node.axis), second = minimumSize(node.second, node.axis);
+    const box = splits.current.get(path)!.getBoundingClientRect();
+    const size = Math.max(node.axis === "column" ? box.height : box.width, first + second);
+    ratio = Math.min(1 - second / size, Math.max(first / size, ratio));
     const update = (node: PaneLayout, path: string): PaneLayout => {
       if (typeof node === "string") return node;
       if (!path) return { ...node, ratio };
@@ -119,7 +116,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
         if (!drag || !over || over.id !== node || !tree) return;
         event.preventDefault(); event.stopPropagation(); save(movePane(tree, drag, node, over.edge)); setDrag(null); setOver(null);
       }}>
-      {children(node, ids.indexOf(node), <button draggable aria-label={`Move pane ${node}`} title="Drag to an edge of another pane" className="cursor-grab text-faint"
+      {children(node, ids.indexOf(node), <button data-pane-handle draggable aria-label={`Move pane ${node}`} title="Drag to an edge of another pane" className="cursor-grab text-faint"
         onContextMenu={event => { event.preventDefault(); setMenu({ id: node, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 120)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 36)) }); }}
         onDragStart={event => { event.dataTransfer.setData("application/x-oxroute-pane", node); event.dataTransfer.effectAllowed = "move"; setDrag(node); }}
         onDragEnd={() => { setDrag(null); setOver(null); }}>⋮</button>)}

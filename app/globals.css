@@ -49,6 +49,18 @@ html[data-scale-panes="on"] [data-agent-panel] {
   zoom: clamp(0.7, calc(100cqw / 800px), 1);
 }
 
+@container agent-pane (max-width: 48px) {
+  [data-agent-panel] > :not([data-pane-header]),
+  [data-terminal-pane] > :not([data-pane-header]),
+  [data-pane-header] > :not([data-pane-handle]) {
+    display: none;
+  }
+  [data-pane-header] {
+    justify-content: center;
+    padding: 0;
+  }
+}
+
 @container agent-pane (max-width: 480px) {
   [data-agent-panel] {
     --pane-x: 8px;

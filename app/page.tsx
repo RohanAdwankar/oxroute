@@ -1199,9 +1199,9 @@ export default function Home() {
                 const width = resizeTasks(taskWidth + (event.key === "ArrowLeft" ? 20 : -20));
                 window.localStorage.setItem("oxroute.taskWidth", String(width));
               }}
-              className="group relative w-px shrink-0 cursor-col-resize outline-none focus:bg-band"
+              className="relative z-30 w-0 shrink-0 cursor-col-resize outline-none"
             >
-              <span className="absolute inset-y-0 left-[-4px] w-[9px] bg-edge opacity-0 group-hover:opacity-45" />
+              <span className="absolute inset-y-0 -left-[4px] w-[8px]" />
             </div>
             <div className="shrink-0 overflow-hidden" style={{ width: taskWidth }}>
           <TaskPanel
