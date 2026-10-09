@@ -91,7 +91,11 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
     <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
-      <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}</span>
+      <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}
+        {review?.status === "stale" && <button type="button" aria-label="Snapshot changed"
+          title="This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."
+          className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}
+      </span>
       {review && <>
         <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? "Revision changed" : "Awaiting approval"}</span>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}
@@ -105,7 +109,6 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       <Markdown>{review.description}</Markdown>
     </details>}
     {error && <p role="alert" className="px-4 py-2 text-[12px]">{error}</p>}
-    {review?.status === "stale" && <p className="px-4 py-2 text-[12px]">This snapshot is still readable. Ask the agent to present the revised change for fresh approval.</p>}
     <div className="flex min-h-0 flex-1">
       <nav aria-label="Changed files" className="hidden w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] @min-[640px]:block">
         {files.map(item => <button key={item.path} title={item.path} onContextMenu={event => quoteFile(event, item)} onClick={() => {

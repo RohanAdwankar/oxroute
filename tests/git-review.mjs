@@ -216,6 +216,11 @@ try {
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await added.waitFor();
   await page.getByText('Revision changed', { exact: true }).waitFor();
+  const warning = page.getByRole('button', { name: 'Snapshot changed', exact: true });
+  await warning.hover();
+  assert.ok((await warning.getAttribute('title')).includes('no longer matches'), 'Staleness is explained on the title warning');
+  assert.equal(await page.getByText('This snapshot is still readable. Ask the agent to present the revised change for fresh approval.', { exact: true }).count(), 0);
+  if (process.env.STALE_SCREENSHOT) await page.screenshot({ path: process.env.STALE_SCREENSHOT });
   assert.equal(await page.getByRole('button', { name: 'Approve publication' }).isDisabled(), true);
   await stage('Further edits require a new review. The previous diff stays readable.');
   if (!demo) {
