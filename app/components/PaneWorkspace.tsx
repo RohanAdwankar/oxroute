@@ -11,7 +11,14 @@ type Split = { path: string; axis: "row" | "column"; side: "first" | "second" };
 export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; selected: string[]; onSelect: (ids: string[]) => void }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
-  return <details className="relative z-40" onToggle={event => setOpen(event.currentTarget.open)} onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+  const picker = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => { if (!picker.current?.contains(event.target as Node)) picker.current!.open = false; };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+  return <details ref={picker} className="relative z-40" onToggle={event => setOpen(event.currentTarget.open)} onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
     <summary aria-label="Choose visible agents" title="Choose visible agents" className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer list-none items-center justify-center border-r border-rule text-faint hover:text-ink"><Icon name="split" size={14} /></summary>
     {open && <div role="group" aria-label="Visible agents" className="absolute left-0 top-full w-64 bg-card p-2 shadow-md">
       <input aria-label="Filter agents" placeholder="Filter agents" value={filter} onChange={event => setFilter(event.target.value)} className="mb-1 w-full bg-band px-2 py-1 text-[12px] outline-none" />

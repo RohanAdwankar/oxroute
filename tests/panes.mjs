@@ -16,6 +16,15 @@ try {
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=alpha`);
   const pane = id => page.locator(`[data-agent-pane="${id}"]`);
   await pane('alpha').waitFor();
+  await page.getByLabel('Choose visible agents').click();
+  await page.getByLabel('Filter agents').fill('alpha');
+  assert.equal(await page.getByLabel('Visible agents', { exact: true }).isVisible(), true, 'Inside clicks retain picker');
+  await pane('alpha').locator('[data-transcript]').click();
+  await page.getByLabel('Visible agents', { exact: true }).waitFor({ state: 'detached' });
+  await page.getByLabel('Choose visible agents').click();
+  await page.getByLabel('Filter agents').fill('');
+  await page.keyboard.press('Escape');
+  await page.getByLabel('Visible agents', { exact: true }).waitFor({ state: 'detached' });
   const picker = page.getByLabel('Choose visible agents');
   assert.equal(await picker.innerText(), '', 'Pane picker is icon-only');
   const pickerBox = await picker.boundingBox(), settingsBox = await page.getByRole('button', { name: 'Settings', exact: true }).boundingBox();
