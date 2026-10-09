@@ -47,6 +47,7 @@ struct Terminals {
     socket: String,
     records: Mutex<Vec<Record>>,
     live: Mutex<HashMap<String, Live>>,
+    changed: Arc<tokio::sync::Notify>,
 }
 type TermState = State<Arc<Terminals>>;
 
@@ -62,6 +63,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
         hub,
         records: Mutex::new(records),
         live: Mutex::new(HashMap::new()),
+        changed: Arc::new(tokio::sync::Notify::new()),
     });
     Ok(Router::new()
         .route("/api/terminals", get(list).post(create))
@@ -74,7 +76,9 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
 }
 impl Terminals {
     fn save(&self, records: &[Record]) -> Result<()> {
-        self.hub.store.set(KEY, &serde_json::to_string(records)?)
+        self.hub.store.set(KEY, &serde_json::to_string(records)?)?;
+        self.changed.notify_waiters();
+        Ok(())
     }
     fn record(&self, id: &str) -> Result<Record> {
         self.records
@@ -151,6 +155,7 @@ impl Terminals {
         let writer = pair.master.take_writer()?;
         let output = Arc::new(Mutex::new(Output::default()));
         let captured = output.clone();
+        let changed = self.changed.clone();
         std::thread::spawn(move || {
             let mut bytes = [0; 8192];
             while let Ok(count) = reader.read(&mut bytes) {
@@ -163,6 +168,8 @@ impl Terminals {
                 while output.bytes.len() > LIMIT {
                     output.bytes.pop_front();
                 }
+                drop(output);
+                changed.notify_waiters();
             }
         });
         live.insert(
@@ -244,28 +251,47 @@ async fn create(State(state): TermState) -> Result<Json<Value>, Failed> {
 struct Position {
     #[serde(default)]
     after: u64,
+    #[serde(default)]
+    wait: bool,
 }
 async fn output(
     State(state): TermState,
     Path(id): Path<String>,
     Query(position): Query<Position>,
 ) -> Result<Json<Value>, Failed> {
-    let record = state.record(&id)?;
     state.attach(&id)?;
+    let notified = state.changed.notified();
+    tokio::pin!(notified);
+    notified.as_mut().enable();
+    let mut response = output_snapshot(&state, &id, position.after)?;
+    if position.wait
+        && response["bytes"].as_array().unwrap().is_empty()
+        && response["reset"] == false
+    {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(20), notified).await;
+        response = output_snapshot(&state, &id, position.after)?;
+    }
+    Ok(Json(response))
+}
+
+fn output_snapshot(state: &Terminals, id: &str, after: u64) -> Result<Value> {
+    let record = state.record(id)?;
     let live = state.live.lock().unwrap();
-    let output = live.get(&id).unwrap().output.lock().unwrap();
+    let output = live
+        .get(id)
+        .context("Terminal ended")?
+        .output
+        .lock()
+        .unwrap();
     let start = output.end - output.bytes.len() as u64;
-    let reset = position.after < start || position.after > output.end;
-    let after = if reset { start } else { position.after };
+    let reset = after < start || after > output.end;
+    let after = if reset { start } else { after };
     let bytes = output
         .bytes
-        .iter()
-        .skip((after - start) as usize)
+        .range((after - start) as usize..)
         .copied()
         .collect::<Vec<_>>();
-    Ok(Json(
-        json!({ "terminal": record.terminal, "bytes": bytes, "end": output.end, "reset": reset }),
-    ))
+    Ok(json!({ "terminal": record.terminal, "bytes": bytes, "end": output.end, "reset": reset }))
 }
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -588,6 +614,52 @@ mod tests {
             .status()
             .is_success());
         assert!(!hub.store.get(KEY).unwrap().unwrap().contains("requester"));
+        // Drain the shell prompt before checking that idle reads wait for changes.
+        let mut end = 0;
+        loop {
+            let snapshot: Value = client
+                .get(&target)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let next = snapshot["end"].as_u64().unwrap();
+            if next == end {
+                break;
+            }
+            end = next;
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let waiting_client = client.clone();
+        let waiting_url = format!("{target}?after={end}&wait=true");
+        let waiting = tokio::spawn(async move {
+            waiting_client
+                .get(waiting_url)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(), "Idle output reads should wait");
+        client
+            .post(format!("{target}/access"))
+            .json(&json!({"agentId":"requester"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let update = tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(update["terminal"]["pending"], json!(["requester"]));
+        assert_eq!(update["bytes"], json!([]));
         client
             .delete(&target)
             .json(&json!({"controller":controller}))

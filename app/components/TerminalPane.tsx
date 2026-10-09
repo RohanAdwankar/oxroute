@@ -5,8 +5,8 @@ import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
 
 export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[] }
-export async function terminalApi<T>(path: string, body?: object, method = "POST"): Promise<T> {
-  const response = await fetch(`/api/terminals${path}`, body ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
+export async function terminalApi<T>(path: string, body?: object, method = "POST", signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api/terminals${path}`, { signal, ...(body ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" }) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error);
   return result;
@@ -19,12 +19,21 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
   const decide = (agentId: string, allow: boolean) => terminalApi<TerminalInfo>(`/${id}/consent`, { controller: token(), agentId, allow }).then(setInfo).catch(error => setError(String(error)));
   useEffect(() => {
     let live = true;
+    const controller = new AbortController();
     let dispose = () => {};
     void (async () => {
       const [{ Terminal }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
       if (!live || !host.current) return;
       const style = getComputedStyle(host.current);
       const terminal = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "monospace", theme: { background: style.backgroundColor, foreground: style.color }, scrollback: 1000 });
+      const palette = () => {
+        const style = getComputedStyle(host.current!);
+        terminal.options.theme = { background: style.backgroundColor, foreground: style.color, cursor: style.color, cursorAccent: style.backgroundColor,
+          selectionBackground: getComputedStyle(document.documentElement).getPropertyValue("--color-band").trim() };
+      };
+      palette();
+      const theme = new MutationObserver(palette);
+      theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
       const fit = new FitAddon();
       terminal.loadAddon(fit);
       terminal.open(host.current);
@@ -46,20 +55,20 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       let timer: ReturnType<typeof setTimeout>;
       const poll = async () => {
         try {
-          const result = await terminalApi<{ terminal: TerminalInfo; bytes: number[]; end: number; reset: boolean }>(`/${id}?after=${after}`);
+          const result = await terminalApi<{ terminal: TerminalInfo; bytes: number[]; end: number; reset: boolean }>(`/${id}?after=${after}&wait=true`, undefined, "GET", controller.signal);
           if (!live) return;
-          setInfo(result.terminal);
+          setInfo(current => JSON.stringify(current) === JSON.stringify(result.terminal) ? current : result.terminal);
           if (result.reset) { replaying = true; terminal.reset(); }
           if (result.bytes.length) await new Promise<void>(resolve => terminal.write(new Uint8Array(result.bytes), resolve));
           replaying = false;
           after = result.end;
-        } catch (error) { if (live) setError(String(error)); }
-        if (live) timer = setTimeout(poll, 200);
+          if (live) timer = setTimeout(poll, 0);
+        } catch (error) { if (live) { setError(String(error)); timer = setTimeout(poll, 200); } }
       };
       void poll();
-      dispose = () => { clearTimeout(timer); observer.disconnect(); input.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
+      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); input.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
     })().catch(error => setError(String(error)));
-    return () => { live = false; dispose(); };
+    return () => { live = false; controller.abort(); dispose(); };
   }, [id, token]);
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
   return <section data-terminal-pane={id} className="flex min-h-0 min-w-0 flex-1 flex-col bg-paper text-ink">
