@@ -70,21 +70,24 @@ try {
   assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
   await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
-  await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('[data-diff-line]')];
-    const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild.firstChild;
-    const after = rows.find(row => row.textContent.includes('+value: after')).lastElementChild.firstChild;
-    const range = document.createRange();
-    range.setStart(before, 0); range.setEnd(after, 0);
-    window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
-  });
-  await removed.click({ button: 'right' });
-  await page.getByRole('button', { name: 'Quote diff into chat' }).click();
-  const boundaryQuote = page.getByRole('region', { name: 'Attached diff config.yaml', exact: true });
-  await boundaryQuote.waitFor();
-  assert.equal(await boundaryQuote.locator('[data-quoted-diff-line]').count(), 1, 'A selection ending at the next line start excludes that line');
-  await page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }).click();
-  await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  for (const [endpoint, expected, backward] of [['text', 1, false], ['row', 1, false], ['gutter', 1, false], ['gutter', 1, true], ['partial', 2, false]]) {
+    await page.evaluate(({ endpoint, backward }) => {
+      const rows = [...document.querySelectorAll('[data-diff-line]')];
+      const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild.firstChild;
+      const after = rows.find(row => row.textContent.includes('+value: after'));
+      const node = endpoint === 'row' ? after : endpoint === 'gutter' ? after.children[1].firstChild : after.lastElementChild.firstChild;
+      const offset = endpoint === 'row' ? 1 : endpoint === 'gutter' ? node.length : endpoint === 'partial' ? 4 : 0;
+      window.getSelection().setBaseAndExtent(backward ? node : before, backward ? offset : 0, backward ? before : node, backward ? 0 : offset);
+    }, { endpoint, backward });
+    await removed.click({ button: 'right' });
+    await page.getByRole('button', { name: 'Quote diff into chat' }).click();
+    const boundaryQuote = page.getByRole('region', { name: 'Attached diff config.yaml', exact: true });
+    await boundaryQuote.waitFor();
+    assert.equal(await boundaryQuote.locator('[data-quoted-diff-line]').count(), expected, 'Only rows with selected code text enter a quote, including backward selections');
+    if (process.env.BOUNDARY_SCREENSHOT && endpoint === 'row') await page.screenshot({ path: process.env.BOUNDARY_SCREENSHOT });
+    await page.getByRole('button', { name: 'Remove diff config.yaml', exact: true }).click();
+    await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  }
   const color = async row => row.evaluate(element => {
     const rgb = getComputedStyle(element).color;
     const canvas = document.createElement('canvas');

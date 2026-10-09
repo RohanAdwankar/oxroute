@@ -131,11 +131,17 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             event.preventDefault();
             const selection = window.getSelection();
             const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-            const rowOf = (node: Node | null | undefined) => (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>("[data-diff-line]");
-            const anchor = rowOf(range?.startContainer), focus = rowOf(range?.endContainer);
-            const selected = selection && !selection.isCollapsed && anchor?.closest("[data-diff]") === event.currentTarget && focus?.closest("[data-diff]") === event.currentTarget;
-            const start = Number(selected ? anchor?.dataset.diffLine : clicked.dataset.diffLine);
-            const end = Number(selected ? focus?.dataset.diffLine : clicked.dataset.diffLine) - (selected && range?.endOffset === 0 && anchor !== focus ? 1 : 0);
+            const selected = range && !selection?.isCollapsed ? Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-diff-line]")).filter(row => {
+              const code = row.lastElementChild!;
+              if (!range.intersectsNode(code)) return false;
+              const content = document.createRange(), overlap = range.cloneRange();
+              content.selectNodeContents(code);
+              if (overlap.compareBoundaryPoints(Range.START_TO_START, content) < 0) overlap.setStart(content.startContainer, content.startOffset);
+              if (overlap.compareBoundaryPoints(Range.END_TO_END, content) > 0) overlap.setEnd(content.endContainer, content.endOffset);
+              return overlap.toString().length > 0;
+            }) : [];
+            const start = Number((selected[0] ?? clicked).dataset.diffLine);
+            const end = Number((selected.at(-1) ?? clicked).dataset.diffLine);
             setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
           }}>
             {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
