@@ -220,7 +220,7 @@ export function TaskPanel({
           }}
           data-task-open
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
-          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "incomplete" ? "text-ink" : STATE_COLOR[task.status]} ${task.status === "complete" ? "line-through opacity-70" : ""}`}
+          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
         >
           {task.text}
         </button>
