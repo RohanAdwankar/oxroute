@@ -515,6 +515,7 @@ export function AgentPanel({
             }}
             className="max-w-[40%] shrink-0 cursor-text truncate text-[16px] font-semibold hover:underline"
             title="rename"
+            data-pane-title
           >
             {agent.name}
           </button>

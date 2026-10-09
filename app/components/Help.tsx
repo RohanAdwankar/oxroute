@@ -21,6 +21,8 @@ const KEYS: [string, string][] = [
   ["d", "discard this signal"],
   ["f", "letters on everything; type one to go there"],
   ["i", "add something to the inbox"],
+  ["h j k l", "select a pane by direction; i reads the selected pane"],
+  ["z", "zoom the selected pane; z again restores the layout"],
   ["m", "ask me first, or auto route"],
   ["v", "letters on, off"],
   ["esc", "back out of the agent, then the routing question"],

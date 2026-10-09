@@ -674,7 +674,7 @@ export default function Home() {
         // In an open agent the middle column is a conversation, not a list,
         // so moving in it means reading it.
         if (focus === "fleet" && reading) {
-          document.querySelector("[data-transcript]")?.scrollBy({ top: delta * 90 });
+          document.querySelector('[data-pane-active="true"] [data-transcript]')?.scrollBy({ top: delta * 90 });
           return;
         }
         const setAt =
@@ -684,7 +684,7 @@ export default function Home() {
       /// The top or the bottom of whatever is in front of you.
       const toEnd = (way: number) => {
         if (focus === "fleet" && reading) {
-          const node = document.querySelector("[data-transcript]");
+          const node = document.querySelector('[data-pane-active="true"] [data-transcript]');
           node?.scrollTo({ top: way < 0 ? 0 : node.scrollHeight, behavior: "smooth" });
           return;
         }
@@ -795,7 +795,7 @@ export default function Home() {
           // when the middle column has the emphasis: an open pane must not
           // answer for a column you have moved away from.
           if (focus === "fleet" && reading) {
-            document.querySelector<HTMLTextAreaElement>("[data-composer]")?.focus();
+            document.querySelector<HTMLTextAreaElement>('[data-pane-active="true"] [data-composer]')?.focus();
             return;
           }
           if (focus === "inbox") {
@@ -1001,7 +1001,7 @@ export default function Home() {
         ) : null}
 
         {open ? (
-          <PaneWorkspace key={open} workspace={open} ids={panes} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
+          <PaneWorkspace key={open} workspace={open} ids={panes} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
               const view = details[id] ?? (agent ? {

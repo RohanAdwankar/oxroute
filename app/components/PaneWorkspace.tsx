@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { movePane, readPanes, syncPanes, type PaneEdge, type PaneLayout } from "../lib/panes";
+import { movePane, paneIds, readPanes, syncPanes, type PaneEdge, type PaneLayout } from "../lib/panes";
+import { isTyping } from "../lib/keys";
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -20,8 +21,8 @@ export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; s
   </details>;
 }
 
-export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }: {
-  workspace: string; ids: string[]; onCustomize: () => void; onClose: (id: string) => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
+export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomize, onClose, children }: {
+  workspace: string; ids: string[]; keyboard: boolean; onActivate: () => void; onCustomize: () => void; onClose: (id: string) => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
 }) {
   const [layout, setTree] = useState<PaneLayout | null>(() => readPanes(workspace));
   const tree = useMemo(() => syncPanes(layout, ids), [layout, ids]);
@@ -29,6 +30,35 @@ export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }
   const [over, setOver] = useState<{ id: string; edge: PaneEdge } | null>(null);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const [focused, setFocused] = useState(ids[0]);
+  const active = ids.includes(focused) ? focused : ids[0];
+  const [reading, setReading] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!keyboard || menu || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
+      const stop = () => { event.preventDefault(); event.stopPropagation(); };
+      if (event.key === "z") { stop(); setZoomed(value => !value); return; }
+      if (event.key === "i") { stop(); setReading(true); return; }
+      if (event.key === "Escape" && (reading || zoomed)) { stop(); setReading(false); setZoomed(false); return; }
+      const direction = { h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0] }[event.key];
+      if (!direction || reading || zoomed) return;
+      stop();
+      const panes = Array.from(root.current?.querySelectorAll<HTMLElement>("[data-agent-pane]") ?? []);
+      const from = panes.find(pane => pane.dataset.agentPane === active)?.getBoundingClientRect();
+      if (!from) return;
+      const [dx, dy] = direction;
+      const candidates = panes.filter(pane => pane.dataset.agentPane !== active).map(pane => {
+        const box = pane.getBoundingClientRect();
+        const x = box.x + box.width / 2 - from.x - from.width / 2, y = box.y + box.height / 2 - from.y - from.height / 2;
+        return { id: pane.dataset.agentPane!, forward: x * dx + y * dy, sideways: Math.abs(x * dy + y * dx) };
+      }).filter(pane => pane.forward > 1).sort((a, b) => a.sideways - b.sideways || a.forward - b.forward);
+      if (candidates[0]) setFocused(candidates[0].id);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [keyboard, menu, active, reading, zoomed]);
   useEffect(() => {
     if (!menu) return;
     const dismiss = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(null); };
@@ -45,7 +75,9 @@ export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }
     return path[0] === "0" ? { ...current, first: resize(current.first, path.slice(1), ratio) } : { ...current, second: resize(current.second, path.slice(1), ratio) };
   };
   const render = (node: PaneLayout, path = ""): ReactNode => {
-    if (typeof node === "string") return <div key={node} data-agent-pane={node} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+    if (typeof node === "string") return <div key={node} data-agent-pane={node} data-pane-active={node === active} data-pane-mode={node === active && reading ? "reading" : "navigation"}
+      className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${node === active ? "ring-2 ring-inset ring-ink [&_[data-pane-title]]:font-bold" : ""}`}
+      onPointerDownCapture={() => { setFocused(node); onActivate(); }} onFocusCapture={() => { setFocused(node); onActivate(); }}
       onDragOver={event => {
         if (!drag || drag === node) return;
         event.preventDefault(); event.dataTransfer.dropEffect = "move";
@@ -64,9 +96,9 @@ export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }
       {over?.id === node && <div aria-label={`Place pane ${over.edge}`} className="pointer-events-none absolute z-40 bg-edge/20" style={over.edge === "left" || over.edge === "right" ? { top: 0, bottom: 0, width: "50%", [over.edge]: 0 } : { left: 0, right: 0, height: "50%", [over.edge]: 0 }} />}
     </div>;
     return <div data-pane-split={node.axis} className={`flex min-h-0 min-w-0 flex-1 ${node.axis === "column" ? "flex-col" : ""}`}>
-      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${node.ratio} 1 0` }}>{render(node.first, path + "0")}</div>
+      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : node.ratio} 1 0`, display: zoomed && !paneIds(node.first).includes(active) ? "none" : undefined }}>{render(node.first, path + "0")}</div>
       <div role="separator" aria-label="resize chat panes" aria-orientation={node.axis === "row" ? "vertical" : "horizontal"} tabIndex={0}
-        className={node.axis === "row" ? "w-[5px] shrink-0 cursor-col-resize border-l border-rule hover:bg-band" : "h-[5px] shrink-0 cursor-row-resize border-t border-rule hover:bg-band"}
+        hidden={zoomed} className={node.axis === "row" ? "w-[5px] shrink-0 cursor-col-resize border-l border-rule hover:bg-band" : "h-[5px] shrink-0 cursor-row-resize border-t border-rule hover:bg-band"}
         onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={event => {
           if (!event.currentTarget.hasPointerCapture(event.pointerId) || !tree) return;
@@ -78,10 +110,10 @@ export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }
           const negative = node.axis === "row" ? "ArrowLeft" : "ArrowUp", positive = node.axis === "row" ? "ArrowRight" : "ArrowDown";
           if (tree && (event.key === negative || event.key === positive)) { event.preventDefault(); event.stopPropagation(); save(resize(tree, path, Math.min(0.9, Math.max(0.1, node.ratio + (event.key === positive ? 0.05 : -0.05))))); }
         }} />
-      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${1 - node.ratio} 1 0` }}>{render(node.second, path + "1")}</div>
+      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1")}</div>
     </div>;
   };
-  return <div className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>
+  return <div ref={root} data-pane-zoomed={zoomed} className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>
     {tree && render(tree)}
     {menu && <div ref={menuRef} role="menu" aria-label="Pane actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-1 shadow-md">
       <button role="menuitem" className="cursor-pointer px-2 py-1 text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
