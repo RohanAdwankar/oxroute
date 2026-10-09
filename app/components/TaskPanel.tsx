@@ -163,7 +163,6 @@ export function TaskPanel({
     const mine = notes.filter((note) => note.taskId === task.id);
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} focused={active && at === cursor} shown={task.id === shown}>
-    <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full bg-current ${STATE_COLOR[task.status]}`} />
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
         // A task reads over several lines, so it is edited over several:
@@ -221,7 +220,7 @@ export function TaskPanel({
           }}
           data-task-open
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
-          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
+          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "incomplete" ? "text-ink" : STATE_COLOR[task.status]} ${task.status === "complete" ? "line-through opacity-70" : ""}`}
         >
           {task.text}
         </button>
