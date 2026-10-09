@@ -36,11 +36,11 @@ try {
   await page.getByRole('checkbox', { name: 'charlie', exact: true }).check();
   await page.getByLabel('Choose visible agents').click();
   await pane('charlie').waitFor();
-  const edge = async id => pane(id).evaluate(el => getComputedStyle(el, '::after').boxShadow);
+  const edge = async id => pane(id).evaluate(el => getComputedStyle(el).borderColor);
   await pane('alpha').locator('[data-transcript]').click();
   const focusedEdge = await edge('alpha'), quietEdge = await edge('bravo');
   assert.notEqual(focusedEdge, quietEdge, 'Focus changes edge shade');
-  for (const shadow of [focusedEdge, quietEdge]) assert.ok(shadow.includes('0px 0px 0px 1px'), 'Focused and inactive edges retain the same single-pixel width');
+  for (const id of ['alpha', 'bravo']) assert.equal(await pane(id).evaluate(el => getComputedStyle(el).borderWidth), '1px', 'Focused and inactive edges retain the same single-pixel width');
   const drag = async (source, target, edge) => {
     const box = await pane(target).boundingBox();
     const handle = page.getByRole('button', { name: `Move pane ${source}`, exact: true });

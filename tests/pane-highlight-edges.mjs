@@ -5,6 +5,7 @@ const agents = ['alpha', 'bravo'].map(id => ({ id, name: id, status: 'complete',
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 650 }, deviceScaleFactor: 1 });
+  if (process.env.PANE_SCALE) await page.addInitScript(() => localStorage.setItem('oxroute.scalePanes', 'on'));
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents, archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/events', r => r.fulfill({ contentType: 'text/event-stream', body: ': test\n\n' }));
   await page.route('**/api/terminals', r => r.fulfill({ json: [] }));
@@ -27,6 +28,11 @@ try {
   const box = await pane.boundingBox();
   const next = await page.locator('[data-agent-pane="bravo"]').boundingBox();
   assert.equal(box.x + box.width, next.x, 'Panes stay flush');
+  for (const row of await pane.locator('[data-entry="1"], [data-entry="3"]').all()) {
+    const bounds = await row.boundingBox();
+    assert.ok(bounds.x >= box.x + 1 && bounds.x + bounds.width <= box.x + box.width - 1,
+      'Highlighted content ends inside the divider instead of painting across it');
+  }
   const ys = await pane.locator('[data-entry]').evaluateAll(nodes => nodes.map(n => { const b = n.getBoundingClientRect(); return Math.floor(b.y + b.height / 2); }));
   const colors = await page.evaluate(async ({ image, x, ys }) => {
     const img = new Image(); img.src = image; await img.decode();
