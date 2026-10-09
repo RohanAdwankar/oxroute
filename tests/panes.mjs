@@ -16,6 +16,11 @@ try {
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=alpha`);
   const pane = id => page.locator(`[data-agent-pane="${id}"]`);
   await pane('alpha').waitFor();
+  const picker = page.getByLabel('Choose visible agents');
+  assert.equal(await picker.innerText(), '', 'Pane picker is icon-only');
+  const pickerBox = await picker.boundingBox(), settingsBox = await page.getByRole('button', { name: 'Settings', exact: true }).boundingBox();
+  assert.ok(Math.abs(pickerBox.x - settingsBox.x - settingsBox.width) < 2, 'Pane picker sits beside the left toolbar icons');
+  assert.equal(pickerBox.width, settingsBox.width, 'Pane picker matches toolbar cell size');
   await pane('alpha').locator('[data-composer]').fill('Keep this draft.');
   await page.getByLabel('Choose visible agents').click();
   await page.getByRole('checkbox', { name: 'bravo', exact: true }).check();

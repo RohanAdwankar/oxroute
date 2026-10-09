@@ -67,6 +67,7 @@ export function Chrome({
       />
       <Cell onClick={onTasks} pressed={tasksOpen} label="Show or hide tasks" icon="tasks" />
       <Cell onClick={onSettings} label="Settings" icon="settings" />
+      {panes}
 
       <nav className="flex items-stretch" aria-label="boards">
         <Cell
@@ -88,7 +89,6 @@ export function Chrome({
       </nav>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
-      {panes}
 
       <div className="flex-1" />
 

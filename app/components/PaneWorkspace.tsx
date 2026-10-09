@@ -9,7 +9,7 @@ export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; s
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
   return <details className="relative z-40" onToggle={event => setOpen(event.currentTarget.open)} onKeyDown={event => { if (event.key === "Escape") event.currentTarget.open = false; }}>
-    <summary aria-label="Choose visible agents" title="Choose visible agents" className="flex h-[var(--cell)] cursor-pointer list-none items-center gap-1 border-r border-rule px-3 text-[12px]"><Icon name="split" />Panes</summary>
+    <summary aria-label="Choose visible agents" title="Choose visible agents" className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer list-none items-center justify-center border-r border-rule text-faint hover:text-ink"><Icon name="split" size={14} /></summary>
     {open && <div role="group" aria-label="Visible agents" className="absolute left-0 top-full w-64 bg-card p-2 shadow-md">
       <input aria-label="Filter agents" placeholder="Filter agents" value={filter} onChange={event => setFilter(event.target.value)} className="mb-1 w-full bg-band px-2 py-1 text-[12px] outline-none" />
       <div className="max-h-72 overflow-y-auto">{agents.filter(agent => agent.name.toLowerCase().includes(filter.toLowerCase())).map(agent => <label key={agent.id} className="flex cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band">
