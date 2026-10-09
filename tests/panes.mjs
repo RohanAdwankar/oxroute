@@ -36,7 +36,7 @@ try {
   await page.getByRole('checkbox', { name: 'charlie', exact: true }).check();
   await page.getByLabel('Choose visible agents').click();
   await pane('charlie').waitFor();
-  const edge = async id => pane(id).evaluate(el => getComputedStyle(el).boxShadow);
+  const edge = async id => pane(id).evaluate(el => getComputedStyle(el, '::after').boxShadow);
   await pane('alpha').locator('[data-transcript]').click();
   const focusedEdge = await edge('alpha'), quietEdge = await edge('bravo');
   assert.notEqual(focusedEdge, quietEdge, 'Focus changes edge shade');

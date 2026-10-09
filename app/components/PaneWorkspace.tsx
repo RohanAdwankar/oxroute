@@ -103,7 +103,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
   };
   const render = (node: PaneLayout, path = "", ancestors: Split[] = []): ReactNode => {
     if (typeof node === "string") return <div key={node} data-agent-pane={node} data-pane-active={node === active} data-pane-mode={node === active && reading ? "reading" : "navigation"}
-      className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ring-1 ring-inset ${node === active ? "ring-edge [&_[data-pane-title]]:font-bold" : "ring-rule"}`}
+      className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden after:pointer-events-none after:absolute after:inset-0 after:z-30 after:ring-1 after:ring-inset ${node === active ? "after:ring-edge [&_[data-pane-title]]:font-bold" : "after:ring-rule"}`}
       onPointerDownCapture={() => { setFocused(node); onActivate(); }} onFocusCapture={() => { setFocused(node); onActivate(); }}
       onDragOver={event => {
         if (!drag || drag === node) return;
