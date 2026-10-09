@@ -68,6 +68,8 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/git-review.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/task-search.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/compact-panes.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/scale-panes.mjs"
 trap - ERR
 task_status done "Deployed after all active turns finished. Live daemon, frontend build ID, Tab correction, wrapping and review browser checks passed."
 mv "$request" "$state/deployed.json"

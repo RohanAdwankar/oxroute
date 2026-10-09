@@ -39,6 +39,8 @@ export function Settings({
   onGraph,
   wrap,
   onWrap,
+  scalePanes,
+  onScalePanes,
   vim,
   onVim,
   onClose,
@@ -51,6 +53,8 @@ export function Settings({
   onGraph: (next: Graph) => void;
   wrap: "off" | "on";
   onWrap: (next: "off" | "on") => void;
+  scalePanes: "off" | "on";
+  onScalePanes: (next: "off" | "on") => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -103,6 +107,16 @@ export function Settings({
           options={SHAPE}
           chosen={graph}
           onChoose={onGraph}
+        />
+        <Choice
+          title="Scale panes with width"
+          detail="Shrink text, spacing and controls together in smaller panes."
+          options={[
+            { value: "off", label: "Off", detail: "Keep the normal size" },
+            { value: "on", label: "On", detail: "Scale down to 70% in narrow panes" },
+          ]}
+          chosen={scalePanes}
+          onChoose={onScalePanes}
         />
         <Choice
           title="Keyboard"

@@ -44,6 +44,10 @@
   container: agent-pane / inline-size;
 }
 
+html[data-scale-panes="on"] [data-agent-panel] {
+  zoom: clamp(0.7, calc(100cqw / 800px), 1);
+}
+
 @container agent-pane (max-width: 480px) {
   [data-agent-panel] {
     --pane-x: 8px;

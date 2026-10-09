@@ -27,6 +27,7 @@ import {
   verbose,
   graph,
   wrap,
+  scalePanes,
   getVimMode,
   isTyping,
   setVimMode,
@@ -130,6 +131,7 @@ export default function Home() {
   const loud = useSyncExternalStore(verbose.subscribe, verbose.get, verbose.fallback);
   const drawn = useSyncExternalStore(graph.subscribe, graph.get, graph.fallback);
   const wrapped = useSyncExternalStore(wrap.subscribe, wrap.get, wrap.fallback);
+  const scaled = useSyncExternalStore(scalePanes.subscribe, scalePanes.get, scalePanes.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -919,6 +921,8 @@ export default function Home() {
           onGraph={graph.set}
           wrap={wrapped}
           onWrap={wrap.set}
+          scalePanes={scaled}
+          onScalePanes={scalePanes.set}
           vim={vim}
           onVim={setVimMode}
           onClose={() => setSettings(false)}

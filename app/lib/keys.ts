@@ -178,6 +178,9 @@ export const graph = choice<Graph>("oxroute.graph", "graph", ["off", "on"]);
 /** Fit long code and diff lines to the available width. */
 export const wrap = choice("oxroute.wrap", "wrap", ["off", "on"] as const);
 
+/** Scale pane contents with their available width. */
+export const scalePanes = choice("oxroute.scalePanes", "scalePanes", ["off", "on"] as const);
+
 /** Whether the call an agent is making right now stays in view. */
 export type Verbose = "off" | "on";
 export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);
