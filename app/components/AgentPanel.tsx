@@ -461,7 +461,7 @@ export function AgentPanel({
           space to say what it already said. */}
       {/* Nothing here overflows -- the parts that could truncate themselves --
           and a menu dropping out of a button needs to be allowed out. */}
-      <div className="relative z-20 flex h-[var(--bar)] shrink-0 items-center gap-x-[10px] border-b border-rule pl-3">
+      <div data-pane-header className="relative z-20 flex h-[var(--bar)] shrink-0 items-center gap-x-[10px] border-b border-rule pl-3">
         {paneHandle}
         <button
           type="button"

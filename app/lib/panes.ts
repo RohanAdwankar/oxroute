@@ -30,7 +30,7 @@ export function readPanes(key: string): PaneLayout | null {
     if (typeof node === "string") return node.length > 0;
     if (!node || typeof node !== "object" || depth > 16) return false;
     const value = node as Exclude<PaneLayout, string>;
-    return ["row", "column"].includes(value.axis) && value.ratio >= 0.1 && value.ratio <= 0.9 && valid(value.first, depth + 1) && valid(value.second, depth + 1);
+    return ["row", "column"].includes(value.axis) && value.ratio > 0 && value.ratio < 1 && valid(value.first, depth + 1) && valid(value.second, depth + 1);
   };
   try {
     const tree: unknown = JSON.parse(localStorage.getItem(`oxroute.panes.${key}`) ?? "null");

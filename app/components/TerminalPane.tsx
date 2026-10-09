@@ -63,7 +63,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
   }, [id, token]);
   const name = (id: string) => agents.find(agent => agent.id === id)?.name ?? id;
   return <section data-terminal-pane={id} className="flex min-h-0 min-w-0 flex-1 flex-col bg-paper text-ink">
-    <header className="flex h-[var(--bar)] shrink-0 items-center gap-2 border-b border-rule px-2">
+    <header data-pane-header className="flex h-[var(--bar)] shrink-0 items-center gap-2 border-b border-rule px-2">
       {handle}<Icon name="terminal" size={14} /><span data-pane-title className="min-w-0 flex-1 truncate text-[13px]">{info.name}</span>
       <button title="End terminal session" aria-label="End terminal session" className="cursor-pointer text-faint hover:text-ink" onClick={() => {
         if (confirm("End this terminal session and its running shell?")) void terminalApi(`/${id}`, { controller: token() }, "DELETE").then(onEnd).catch(error => setError(String(error)));

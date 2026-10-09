@@ -81,10 +81,28 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
   }, [menu]);
   useEffect(() => { if (tree && readPanes(workspace)) localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(tree)); }, [tree, workspace]);
   const save = (next: PaneLayout) => { setTree(next); localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(next)); onCustomize(); };
+  const minimumHeight = (node: PaneLayout): number => {
+    if (typeof node === "string") return root.current!.querySelector(`[data-agent-pane="${node}"] [data-pane-header]`)!.getBoundingClientRect().height;
+    const first = minimumHeight(node.first), second = minimumHeight(node.second);
+    return node.axis === "column" ? first + second : Math.max(first, second);
+  };
   const resize = (current: PaneLayout, path: string, ratio: number): PaneLayout => {
-    if (typeof current === "string") return current;
-    if (!path) return { ...current, ratio };
-    return path[0] === "0" ? { ...current, first: resize(current.first, path.slice(1), ratio) } : { ...current, second: resize(current.second, path.slice(1), ratio) };
+    let node = current;
+    for (const side of path) { if (typeof node === "string") return current; node = side === "0" ? node.first : node.second; }
+    if (typeof node === "string") return current;
+    let lower = 0.1, upper = 0.9;
+    if (node.axis === "column") {
+      const first = minimumHeight(node.first), second = minimumHeight(node.second);
+      const height = Math.max(splits.current.get(path)!.getBoundingClientRect().height, first + second);
+      lower = first / height; upper = 1 - second / height;
+    }
+    ratio = Math.min(upper, Math.max(lower, ratio));
+    const update = (node: PaneLayout, path: string): PaneLayout => {
+      if (typeof node === "string") return node;
+      if (!path) return { ...node, ratio };
+      return path[0] === "0" ? { ...node, first: update(node.first, path.slice(1)) } : { ...node, second: update(node.second, path.slice(1)) };
+    };
+    return update(current, path);
   };
   const render = (node: PaneLayout, path = "", ancestors: Split[] = []): ReactNode => {
     if (typeof node === "string") return <div key={node} data-agent-pane={node} data-pane-active={node === active} data-pane-mode={node === active && reading ? "reading" : "navigation"}
@@ -112,21 +130,21 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
     return <div ref={element => { if (element) splits.current.set(path, element); else splits.current.delete(path); }} data-pane-split={node.axis} className={`relative flex min-h-0 min-w-0 flex-1 ${node.axis === "column" ? "flex-col" : ""}`}>
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : node.ratio} 1 0`, display: zoomed && !paneIds(node.first).includes(active) ? "none" : undefined }}>{render(node.first, path + "0", [...ancestors, { path, axis: node.axis, side: "first" }])}</div>
       <div role="separator" aria-label="resize chat panes" aria-orientation={node.axis === "row" ? "vertical" : "horizontal"} tabIndex={0}
-        hidden={zoomed} className={`relative z-20 shrink-0 before:absolute before:content-[''] ${node.axis === "row" ? "w-0 cursor-col-resize before:inset-y-0 before:-left-[3px] before:w-[6px]" : "h-0 cursor-row-resize before:inset-x-0 before:-top-[3px] before:h-[6px]"}`}
+        hidden={zoomed} className={`relative z-30 shrink-0 before:absolute before:content-[''] ${node.axis === "row" ? "w-0 cursor-col-resize before:inset-y-0 before:-left-[3px] before:w-[6px]" : "h-0 cursor-row-resize before:inset-x-0 before:-top-[3px] before:h-[6px]"}`}
         onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={event => {
           if (!event.currentTarget.hasPointerCapture(event.pointerId) || !tree) return;
           const box = event.currentTarget.parentElement!.getBoundingClientRect();
           const ratio = node.axis === "row" ? (event.clientX - box.left) / box.width : (event.clientY - box.top) / box.height;
-          save(resize(tree, path, Math.min(0.9, Math.max(0.1, ratio))));
+          save(resize(tree, path, ratio));
         }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)}
         onKeyDown={event => {
           const negative = node.axis === "row" ? "ArrowLeft" : "ArrowUp", positive = node.axis === "row" ? "ArrowRight" : "ArrowDown";
-          if (tree && (event.key === negative || event.key === positive)) { event.preventDefault(); event.stopPropagation(); save(resize(tree, path, Math.min(0.9, Math.max(0.1, node.ratio + (event.key === positive ? 0.05 : -0.05))))); }
+          if (tree && (event.key === negative || event.key === positive)) { event.preventDefault(); event.stopPropagation(); save(resize(tree, path, node.ratio + (event.key === positive ? 0.05 : -0.05))); }
         }} />
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1", [...ancestors, { path, axis: node.axis, side: "second" }])}</div>
       {!zoomed && junctions.map(ancestor => <div key={ancestor.path} role="separator" aria-label="Resize pane intersection" title="Drag to resize both directions"
-        className="absolute z-30 h-3 w-3 cursor-move"
+        className="absolute z-40 h-3 w-3 cursor-move"
         style={node.axis === "column" ? { top: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "right" : "left"]: 0 } : { left: `calc(${node.ratio * 100}% - 6px)`, [ancestor.side === "first" ? "bottom" : "top"]: 0 }}
         onPointerDown={event => {
           event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
@@ -136,7 +154,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
           let next = tree;
           for (const split of corner.current) {
             const ratio = split.axis === "row" ? (event.clientX - split.box.x) / split.box.width : (event.clientY - split.box.y) / split.box.height;
-            next = resize(next, split.path, Math.min(0.9, Math.max(0.1, ratio)));
+            next = resize(next, split.path, ratio);
           }
           save(next);
         }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />)}
