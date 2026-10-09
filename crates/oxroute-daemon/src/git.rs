@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::process::Command;
@@ -74,11 +75,16 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     let names = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", &range, "--"]).await?;
     let mut files = Vec::new();
     let mut size = 0;
-    for path in names.split('\0').filter(|path| !path.is_empty()) {
+    let range = range.as_str();
+    let jobs: Vec<_> = names.split('\0').filter(|path| !path.is_empty()).map(|path| async move {
         let patch = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--unified=5", &range, "--", path]).await?;
-        size += patch.len();
+        Ok::<_, anyhow::Error>(FileDiff { path: path.into(), patch })
+    }).collect();
+    let mut patches = stream::iter(jobs).buffered(8);
+    while let Some(file) = patches.try_next().await? {
+        size += file.patch.len();
         anyhow::ensure!(size <= 2 * 1024 * 1024, "Review is too large; split the proposed change");
-        files.push(FileDiff { path: path.into(), patch });
+        files.push(file);
     }
     anyhow::ensure!(!files.is_empty(), "No committed changes to review");
     Ok(files)
@@ -86,11 +92,15 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
 
 pub async fn current(snapshot: &Snapshot) -> Result<bool> {
     let root = Path::new(&snapshot.repository);
-    Ok(commit(root, "HEAD").await? == snapshot.head_commit
-        && commit(root, &snapshot.base_ref).await? == snapshot.base_commit
-        && git(root, &["symbolic-ref", "--short", "HEAD"]).await? == snapshot.branch
-        && git(root, &["remote", "get-url", "--push", "--all", &snapshot.remote]).await? == snapshot.remote_url
-        && git(root, &["status", "--porcelain", "--untracked-files=no"]).await?.is_empty())
+    let remote_args = ["remote", "get-url", "--push", "--all", &snapshot.remote];
+    let (head, base, branch, remote, status) = tokio::try_join!(
+        commit(root, "HEAD"), commit(root, &snapshot.base_ref),
+        git(root, &["symbolic-ref", "--short", "HEAD"]),
+        git(root, &remote_args),
+        git(root, &["status", "--porcelain", "--untracked-files=no"]),
+    )?;
+    Ok(head == snapshot.head_commit && base == snapshot.base_commit && branch == snapshot.branch
+        && remote == snapshot.remote_url && status.is_empty())
 }
 
 #[cfg(test)]
@@ -106,15 +116,30 @@ mod tests {
         git(&root, &["config", "user.email", "test@example.invalid"]).await.unwrap();
         git(&root, &["remote", "add", "origin", "https://example.invalid/repo.git"]).await.unwrap();
         tokio::fs::write(root.join("settings.txt"), "before\n").await.unwrap();
+        let paths: Vec<_> = (0..12).map(|index| format!("file {index:02} λ\n.txt")).collect();
+        for (index, path) in paths.iter().enumerate() {
+            tokio::fs::write(root.join(path), format!("old-{index}\n")).await.unwrap();
+        }
         git(&root, &["add", "."]).await.unwrap();
         git(&root, &["commit", "-m", "Initial"]).await.unwrap();
         git(&root, &["checkout", "-b", "proposal"]).await.unwrap();
         tokio::fs::write(root.join("settings.txt"), "after\n").await.unwrap();
+        for (index, path) in paths.iter().enumerate() {
+            tokio::fs::write(root.join(path), format!("new-{index}\n")).await.unwrap();
+        }
         assert!(capture(&root, root.to_str().unwrap(), "main", "origin").await.is_err());
         git(&root, &["commit", "-am", "Change"]).await.unwrap();
         let before = git(&root, &["status", "--porcelain"]).await.unwrap();
         let snapshot = capture(&root, root.to_str().unwrap(), "main", "origin").await.unwrap();
-        assert!(files(&snapshot).await.unwrap()[0].patch.contains("+after"));
+        let diffs = files(&snapshot).await.unwrap();
+        assert_eq!(diffs.len(), paths.len() + 1);
+        assert!(diffs.windows(2).all(|pair| pair[0].path < pair[1].path));
+        for (index, path) in paths.iter().enumerate() {
+            let patch = &diffs.iter().find(|file| &file.path == path).unwrap().patch;
+            assert!(patch.contains(&format!("-old-{index}\n")));
+            assert!(patch.contains(&format!("+new-{index}")));
+        }
+        assert!(diffs.iter().find(|file| file.path == "settings.txt").unwrap().patch.contains("+after"));
         assert!(serde_json::to_value(&snapshot).unwrap().get("files").is_none());
         assert_eq!(git(&root, &["status", "--porcelain"]).await.unwrap(), before);
         assert!(current(&snapshot).await.unwrap());
@@ -126,8 +151,9 @@ mod tests {
         git(&root, &["commit", "-am", "Revise"]).await.unwrap();
         assert!(!current(&snapshot).await.unwrap());
         let original = files(&snapshot).await.unwrap();
-        assert!(original[0].patch.contains("+after"));
-        assert!(!original[0].patch.contains("new revision"));
+        let settings = &original.iter().find(|file| file.path == "settings.txt").unwrap().patch;
+        assert!(settings.contains("+after"));
+        assert!(!settings.contains("new revision"));
         let newer = capture(&root, root.to_str().unwrap(), "main", "origin").await.unwrap();
         git(&root, &["branch", "-f", "main", "HEAD"]).await.unwrap();
         assert!(!current(&newer).await.unwrap());

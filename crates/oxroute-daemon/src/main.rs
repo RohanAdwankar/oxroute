@@ -529,8 +529,9 @@ fn review_record(hub: &Hub, agent_id: &str, id: &str) -> anyhow::Result<(ChangeR
 }
 
 async fn review_response(review: ChangeReview) -> anyhow::Result<serde_json::Value> {
-    let files = git::files(&review.snapshot).await?;
-    let status = if !git::current(&review.snapshot).await.unwrap_or(false) { "stale" }
+    let (files, current) = tokio::join!(git::files(&review.snapshot), git::current(&review.snapshot));
+    let files = files?;
+    let status = if !current.unwrap_or(false) { "stale" }
         else if review.approved_at.is_some() { "approved" } else { "pending" };
     let mut response = serde_json::to_value(review).expect("review is serializable");
     response["status"] = json!(status);
