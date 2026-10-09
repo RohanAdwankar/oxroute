@@ -912,7 +912,7 @@ export function AgentPanel({
                 event.preventDefault();
                 send();
               }
-              // Tab queues a correction; otherwise it files a new task.
+              // Tab saves correction feedback on the task; otherwise it files a new task.
               if (event.key === "Tab" && !event.shiftKey && mode !== "diagram") {
                 event.preventDefault();
                 if (correcting) send(true);

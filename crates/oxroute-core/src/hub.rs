@@ -1718,10 +1718,12 @@ impl Hub {
              \"complete\": complete is what a person marks it once they have looked. \
              Every status change needs a \"note\" in the same request saying why, in \
              three sentences or fewer -- as short as the commit that did it. Leave other \
-             agents' tasks alone unless you are asked.",
+             agents' tasks alone unless you are asked. Read saved feedback from \
+             GET http://{}/api/task-notes, matching each note's taskId to your task.",
             self.config.listen,
             self.config.listen,
             agent.id,
+            self.config.listen,
         )));
         inputs.push(TurnInput::text(format!(
             "This session carries tags such as stage:idea or priority:p2; boards in oxroute \
@@ -2803,11 +2805,7 @@ impl Hub {
         Ok(tasks)
     }
 
-    /// Send the agent a correction, and put its task back to work.
-    ///
-    /// Saying no to finished work is not a status change, it is a sentence
-    /// about what is still wrong -- so it goes to the agent as a message,
-    /// and the task goes back to being work.
+    /// Reopen a task with saved feedback. Queued feedback stays off the chat.
     pub async fn correct_task(
         self: &Arc<Self>,
         id: &str,
@@ -2821,19 +2819,36 @@ impl Hub {
         let task = tasks.iter().find(|task| task.id == id).context("no such task")?.clone();
         anyhow::ensure!(!task.agent_id.is_empty(), "nobody has this task to correct");
         self.add_task_note(id, text, "")?;
+        let mut saved_images = task.images.clone();
+        for path in &images {
+            let name = std::path::Path::new(path).file_name().context("upload has no file name")?.to_string_lossy().into_owned();
+            if !saved_images.contains(&name) {
+                saved_images.push(name);
+            }
+        }
         let back = TaskItem {
             status: TaskStatus::Incomplete,
             updated_at: now(),
+            images: saved_images,
             ..task.clone()
         };
         self.store.save_task(&back)?;
-        self.say_to_with_attachments(
-            &task.agent_id,
-            &format!("About \"{}\": {text}", task.text),
-            images,
-            queued,
-        )
-        .await?;
+        if queued {
+            for input in self.upload_inputs(&self.store.agent(&task.agent_id)?.context("no such agent")?, &images).await? {
+                let reference = match input {
+                    TurnInput::LocalImage { path } => format!("Attached image: {path}"),
+                    TurnInput::Text { text } => text,
+                };
+                self.add_task_note(id, &reference, "")?;
+            }
+        } else {
+            self.say_to_with_attachments(
+                &task.agent_id,
+                &format!("About \"{}\": {text}", task.text),
+                images,
+                false,
+            ).await?;
+        }
         self.emit(Event::Sync);
         Ok(back)
     }

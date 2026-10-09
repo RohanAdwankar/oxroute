@@ -2821,20 +2821,25 @@ async fn saying_no_to_finished_work_sends_the_reason_and_reopens_it() {
 }
 
 #[tokio::test]
-async fn queued_corrections_reopen_work_without_interrupting_the_active_turn() {
+async fn queued_corrections_save_feedback_without_chat_or_delivery() {
     let w = build(Mode::Auto, Harnessed {
-        delay: Duration::from_millis(300), ..Harnessed::default()
+        hang: true, ..Harnessed::default()
     }).await;
     w.hub.accept(signal("100.0", "100.0", "current work")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
     let task = w.hub.create_task("previous work", &agent, vec![]).await.unwrap();
-    let back = w.hub.correct_task(&task.id, "needs another pass", vec![], true).await.unwrap();
+    let shown = w.hub.config.attachments.join("feedback.png");
+    std::fs::create_dir_all(&w.hub.config.attachments).unwrap();
+    std::fs::write(&shown, b"png").unwrap();
+    let back = w.hub.correct_task(&task.id, "needs another pass", vec![shown.to_string_lossy().into_owned()], true).await.unwrap();
     assert_eq!(back.status, TaskStatus::Incomplete);
-    assert!(w.calls.lock().unwrap().interrupted.is_empty());
-    assert!(settle(|| w.calls.lock().unwrap().started.iter().skip(1).any(|(_, inputs)| {
-        inputs.iter().filter_map(TurnInput::as_text).any(|text| text.contains("needs another pass"))
-    })).await);
+    assert_eq!(back.images, vec!["feedback.png"]);
+    let notes = w.hub.task_notes().unwrap();
+    assert!(notes.iter().any(|note| note.task_id == task.id && note.text == "needs another pass"));
+    assert!(notes.iter().any(|note| note.task_id == task.id && note.text.contains("feedback.png")));
+    assert!(!w.hub.timeline(&agent, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::You && entry.text.contains("needs another pass")));
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
     assert!(w.calls.lock().unwrap().interrupted.is_empty());
 }
 

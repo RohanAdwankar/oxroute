@@ -892,7 +892,7 @@ async fn create_task_with_attachments(
 }
 
 /// Saying no to finished work, with whatever you drew or dropped on it:
-/// the words go to the agent the way anything said in the composer does.
+/// Tab saves feedback on the task; Enter also sends it to the agent.
 async fn correct_task(
     State(hub): Hubs,
     Path(id): Path<String>,
