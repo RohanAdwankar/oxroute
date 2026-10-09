@@ -103,6 +103,14 @@ try {
   await page.evaluate(() => document.documentElement.dataset.theme = 'light');
   assert.equal(await page.locator('[data-diff]').count(), 2, 'All files render together');
   const sidebar = page.getByRole('navigation', { name: 'Changed files' });
+  const reviewPanel = page.getByRole('region', { name: 'Change review', exact: true });
+  await reviewPanel.evaluate(element => element.style.width = '380px');
+  assert.equal(await sidebar.isVisible(), false, 'Narrow columns hide the sidebar even in a wide browser');
+  assert.equal(await page.getByRole('heading', { name: 'config.yaml', exact: true }).isVisible(), true, 'Diff headers retain the filename');
+  assert.equal(await page.locator('[data-diff]').count(), 2, 'All file diffs remain available');
+  if (process.env.NARROW_SCREENSHOT) await page.screenshot({ path: process.env.NARROW_SCREENSHOT });
+  await reviewPanel.evaluate(element => element.style.width = '');
+  assert.equal(await sidebar.isVisible(), true, 'Wider columns retain filename navigation');
   for (const filename of [sidebar.getByRole('button', { name: 'config.yaml', exact: true }), page.getByRole('heading', { name: 'config.yaml', exact: true })]) {
     await filename.click({ button: 'right' });
     await page.getByRole('button', { name: 'Quote file into chat', exact: true }).click();

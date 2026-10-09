@@ -88,7 +88,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: 0, end: item.rows.length - 1, wholeFile: true });
   };
 
-  return <section aria-label="Change review" className="flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
+  return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
     <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
       <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}</span>
@@ -107,7 +107,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     {error && <p role="alert" className="px-4 py-2 text-[12px]">{error}</p>}
     {review?.status === "stale" && <p className="px-4 py-2 text-[12px]">This snapshot is still readable. Ask the agent to present the revised change for fresh approval.</p>}
     <div className="flex min-h-0 flex-1">
-      <nav aria-label="Changed files" className="w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] max-sm:w-24">
+      <nav aria-label="Changed files" className="hidden w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] @min-[640px]:block">
         {files.map(item => <button key={item.path} title={item.path} onContextMenu={event => quoteFile(event, item)} onClick={() => {
           const section = sections.current.get(item.path), container = scroll.current;
           if (section && container) container.scrollTo({ top: section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop });
