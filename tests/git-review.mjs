@@ -102,6 +102,15 @@ try {
   assert.ok(darkAddedGreen > darkAddedRed && darkRemovedRed > darkRemovedGreen);
   await page.evaluate(() => document.documentElement.dataset.theme = 'light');
   assert.equal(await page.locator('[data-diff]').count(), 2, 'All files render together');
+  const spacing = await page.locator('[data-diff]').first().evaluate(element => {
+    const section = element.closest('section');
+    const header = section.querySelector('h3').getBoundingClientRect();
+    const code = element.getBoundingClientRect();
+    const next = section.nextElementSibling.getBoundingClientRect();
+    return { headerGap: code.top - header.bottom, fileGap: next.top - code.bottom };
+  });
+  assert.ok(spacing.headerGap <= 4, 'Filename sits directly above its code');
+  assert.ok(spacing.fileGap <= 4, 'Files have no large inter-file whitespace');
   const sidebar = page.getByRole('navigation', { name: 'Changed files' });
   const reviewPanel = page.getByRole('region', { name: 'Change review', exact: true });
   await reviewPanel.evaluate(element => element.style.width = '380px');

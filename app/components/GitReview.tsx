@@ -122,9 +122,9 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
         {files.map(item => <section key={item.path} aria-label={`Diff ${item.path}`} ref={element => {
           if (element) sections.current.set(item.path, element);
           else sections.current.delete(item.path);
-        }} className="mb-5">
-          <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-2 text-[10px] text-mid">{item.path}</h3>
-          <div className="overflow-x-auto p-3">
+        }}>
+          <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-1 text-[10px] text-mid">{item.path}</h3>
+          <div className="overflow-x-auto px-3 py-1">
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
             if (!clicked) return;
