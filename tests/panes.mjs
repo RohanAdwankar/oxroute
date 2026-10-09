@@ -51,6 +51,14 @@ try {
   await page.mouse.move(sideBox.x + 60, sideBox.y + sideBox.height/2, { steps: 6 });
   await page.mouse.up();
   assert.ok((await pane('alpha').boundingBox()).width > oldWidth, 'Pointer dragging resizes horizontal splits');
+  const junction = page.getByRole('separator', { name: 'Resize pane intersection', exact: true }).first();
+  const junctionBox = await junction.boundingBox(), beforeCorner = await pane('alpha').boundingBox();
+  await page.mouse.move(junctionBox.x + junctionBox.width/2, junctionBox.y + junctionBox.height/2);
+  await page.mouse.down();
+  await page.mouse.move(junctionBox.x + junctionBox.width/2 + 40, junctionBox.y + junctionBox.height/2 + 35, { steps: 6 });
+  await page.mouse.up();
+  const afterCorner = await pane('alpha').boundingBox();
+  assert.ok(afterCorner.width > beforeCorner.width + 30 && afterCorner.height > beforeCorner.height + 25, 'Intersection dragging resizes both axes simultaneously');
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('j');
   assert.equal(await pane('charlie').getAttribute('data-pane-active'), 'true', 'j selects the pane below');
@@ -86,6 +94,7 @@ try {
   await pane('charlie').waitFor();
   a = await pane('alpha').boundingBox(); c = await pane('charlie').boundingBox();
   assert.ok(c.y > a.y && Math.abs(c.x - a.x) < 2, 'Arrangement and selected agents survive reload');
+  assert.ok(Math.abs(a.width - afterCorner.width) < 2 && Math.abs(a.height - afterCorner.height) < 2, 'Both intersection dimensions survive reload');
   await drag('charlie', 'bravo', 'left');
   c = await pane('charlie').boundingBox(); b = await pane('bravo').boundingBox();
   assert.ok(c.x < b.x && Math.abs(c.y - b.y) < 2, 'Dragging to a side creates a horizontal split');

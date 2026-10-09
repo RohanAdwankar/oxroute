@@ -6,6 +6,8 @@ import { isTyping } from "../lib/keys";
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
 
+type Split = { path: string; axis: "row" | "column"; side: "first" | "second" };
+
 export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; selected: string[]; onSelect: (ids: string[]) => void }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
@@ -35,6 +37,8 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
   const active = ids.includes(focused) ? focused : ids[0];
   const [reading, setReading] = useState(false);
   const [zoomed, setZoomed] = useState(false);
+  const splits = useRef(new Map<string, HTMLDivElement>());
+  const corner = useRef<{ path: string; axis: "row" | "column"; box: DOMRect }[]>([]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!keyboard || menu || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
@@ -74,7 +78,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
     if (!path) return { ...current, ratio };
     return path[0] === "0" ? { ...current, first: resize(current.first, path.slice(1), ratio) } : { ...current, second: resize(current.second, path.slice(1), ratio) };
   };
-  const render = (node: PaneLayout, path = ""): ReactNode => {
+  const render = (node: PaneLayout, path = "", ancestors: Split[] = []): ReactNode => {
     if (typeof node === "string") return <div key={node} data-agent-pane={node} data-pane-active={node === active} data-pane-mode={node === active && reading ? "reading" : "navigation"}
       className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${node === active ? "ring-2 ring-inset ring-ink [&_[data-pane-title]]:font-bold" : ""}`}
       onPointerDownCapture={() => { setFocused(node); onActivate(); }} onFocusCapture={() => { setFocused(node); onActivate(); }}
@@ -95,8 +99,10 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
         onDragEnd={() => { setDrag(null); setOver(null); }}>⋮</button>)}
       {over?.id === node && <div aria-label={`Place pane ${over.edge}`} className="pointer-events-none absolute z-40 bg-edge/20" style={over.edge === "left" || over.edge === "right" ? { top: 0, bottom: 0, width: "50%", [over.edge]: 0 } : { left: 0, right: 0, height: "50%", [over.edge]: 0 }} />}
     </div>;
-    return <div data-pane-split={node.axis} className={`flex min-h-0 min-w-0 flex-1 ${node.axis === "column" ? "flex-col" : ""}`}>
-      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : node.ratio} 1 0`, display: zoomed && !paneIds(node.first).includes(active) ? "none" : undefined }}>{render(node.first, path + "0")}</div>
+    const junctions = ancestors.filter((ancestor, index) => ancestor.axis !== node.axis && ancestors.slice(index + 1).every(next => next.axis !== ancestor.axis || next.side !== ancestor.side))
+      .filter((ancestor, index, all) => !all.slice(index + 1).some(next => next.side === ancestor.side));
+    return <div ref={element => { if (element) splits.current.set(path, element); else splits.current.delete(path); }} data-pane-split={node.axis} className={`relative flex min-h-0 min-w-0 flex-1 ${node.axis === "column" ? "flex-col" : ""}`}>
+      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : node.ratio} 1 0`, display: zoomed && !paneIds(node.first).includes(active) ? "none" : undefined }}>{render(node.first, path + "0", [...ancestors, { path, axis: node.axis, side: "first" }])}</div>
       <div role="separator" aria-label="resize chat panes" aria-orientation={node.axis === "row" ? "vertical" : "horizontal"} tabIndex={0}
         hidden={zoomed} className={node.axis === "row" ? "w-[5px] shrink-0 cursor-col-resize border-l border-rule hover:bg-band" : "h-[5px] shrink-0 cursor-row-resize border-t border-rule hover:bg-band"}
         onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
@@ -110,7 +116,22 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
           const negative = node.axis === "row" ? "ArrowLeft" : "ArrowUp", positive = node.axis === "row" ? "ArrowRight" : "ArrowDown";
           if (tree && (event.key === negative || event.key === positive)) { event.preventDefault(); event.stopPropagation(); save(resize(tree, path, Math.min(0.9, Math.max(0.1, node.ratio + (event.key === positive ? 0.05 : -0.05))))); }
         }} />
-      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1")}</div>
+      <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${zoomed ? 1 : 1 - node.ratio} 1 0`, display: zoomed && !paneIds(node.second).includes(active) ? "none" : undefined }}>{render(node.second, path + "1", [...ancestors, { path, axis: node.axis, side: "second" }])}</div>
+      {!zoomed && junctions.map(ancestor => <div key={ancestor.path} role="separator" aria-label="Resize pane intersection" title="Drag to resize both directions"
+        className="absolute z-30 h-3 w-3 cursor-move bg-edge hover:bg-ink"
+        style={node.axis === "column" ? { top: `calc(${node.ratio * 100}% + ${2.5 - node.ratio * 5 - 6}px)`, [ancestor.side === "first" ? "right" : "left"]: 0 } : { left: `calc(${node.ratio * 100}% + ${2.5 - node.ratio * 5 - 6}px)`, [ancestor.side === "first" ? "bottom" : "top"]: 0 }}
+        onPointerDown={event => {
+          event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
+          corner.current = [{ path, axis: node.axis }, ancestor].map(split => ({ ...split, box: splits.current.get(split.path)!.getBoundingClientRect() }));
+        }} onPointerMove={event => {
+          if (!tree || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          let next = tree;
+          for (const split of corner.current) {
+            const ratio = split.axis === "row" ? (event.clientX - split.box.x) / split.box.width : (event.clientY - split.box.y) / split.box.height;
+            next = resize(next, split.path, Math.min(0.9, Math.max(0.1, ratio)));
+          }
+          save(next);
+        }} onPointerUp={event => event.currentTarget.releasePointerCapture(event.pointerId)} />)}
     </div>;
   };
   return <div ref={root} data-pane-zoomed={zoomed} className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>
