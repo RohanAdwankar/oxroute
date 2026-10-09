@@ -158,7 +158,7 @@ export default function Home() {
       }
       setTasksOpen(window.localStorage.getItem("oxroute.tasks") === "true");
       const tasksAt = Number(window.localStorage.getItem("oxroute.taskWidth"));
-      if (tasksAt >= 260) setTaskWidth(tasksAt);
+      if (tasksAt >= 34) setTaskWidth(tasksAt);
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -192,7 +192,7 @@ export default function Home() {
 
   /// How wide the task column is, within what is readable and what fits.
   const resizeTasks = (width: number) => {
-    const next = Math.min(Math.max(width, 260), Math.max(window.innerWidth - 360, 260));
+    const next = Math.min(Math.max(width, 34), Math.max(window.innerWidth - 360, 34));
     setTaskWidth(next);
     return next;
   };

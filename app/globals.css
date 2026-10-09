@@ -50,6 +50,11 @@
   container: task-pane / inline-size;
 }
 
+@container task-pane (max-width: 48px) {
+  [data-task-panel] > :not([data-task-rail]) { display: none; }
+  [data-task-rail] { display: flex; }
+}
+
 html[data-scale-panes="on"] [data-agent-panel],
 html[data-scale-panes="on"] [data-task-panel] {
   zoom: clamp(var(--minimum-pane-scale), calc(100cqw / 800px), 1);
