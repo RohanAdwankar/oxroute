@@ -472,15 +472,6 @@ export function AgentPanel({
         >
           <Icon name="back" />
         </button>
-        <span
-          className={`h-2 w-2 rounded-full ${
-            agent.status === "working"
-              ? "bg-ok"
-              : agent.status === "stalled"
-                ? "bg-hold"
-                : "bg-[#c9c1b5]"
-          }`}
-        />
         {renaming ? (
           <input
             autoFocus
@@ -513,7 +504,7 @@ export function AgentPanel({
               setNameDraft(agent.name);
               setRenaming(true);
             }}
-            className="max-w-[40%] shrink-0 cursor-text truncate text-[16px] font-semibold hover:underline"
+            className={`max-w-[40%] shrink-0 cursor-text truncate text-[16px] font-semibold hover:underline ${agent.status === "working" ? "text-ok" : agent.status === "stalled" ? "text-hold" : ""}`}
             title="rename"
             data-pane-title
           >
