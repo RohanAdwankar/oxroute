@@ -70,13 +70,17 @@ try {
   assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
   await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
+  assert.ok(await context.locator('.hljs-attr').count(), 'File syntax is highlighted');
+  assert.equal((await added.locator('[data-diff-change]').allTextContents()).join(''), 'after', 'Only changed words are emphasized');
+  assert.equal((await removed.locator('[data-diff-change]').allTextContents()).join(''), 'before');
+  assert.ok((await added.innerText()).includes('+value: after'), 'Syntax and change spans preserve source text');
   for (const [endpoint, expected, backward] of [['text', 1, false], ['row', 1, false], ['gutter', 1, false], ['gutter', 1, true], ['partial', 2, false]]) {
     await page.evaluate(({ endpoint, backward }) => {
       const rows = [...document.querySelectorAll('[data-diff-line]')];
-      const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild.firstChild;
+      const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild;
       const after = rows.find(row => row.textContent.includes('+value: after'));
-      const node = endpoint === 'row' ? after : endpoint === 'gutter' ? after.children[1].firstChild : after.lastElementChild.firstChild;
-      const offset = endpoint === 'row' ? 1 : endpoint === 'gutter' ? node.length : endpoint === 'partial' ? 4 : 0;
+      const node = endpoint === 'row' ? after : endpoint === 'gutter' ? after.children[1].firstChild : after.lastElementChild;
+      const offset = endpoint === 'row' ? 1 : endpoint === 'gutter' ? node.length : endpoint === 'partial' ? 2 : 0;
       window.getSelection().setBaseAndExtent(backward ? node : before, backward ? offset : 0, backward ? before : node, backward ? 0 : offset);
     }, { endpoint, backward });
     await removed.click({ button: 'right' });
@@ -174,13 +178,11 @@ try {
   await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   await added.waitFor();
   await page.locator('[data-diff]').first().evaluate(element => {
-    const nodes = [];
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-    const before = nodes.find(node => node.textContent === '-value: before');
-    const after = nodes.find(node => node.textContent === '+value: after');
+    const rows = [...element.querySelectorAll('[data-diff-line]')];
+    const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild;
+    const after = rows.find(row => row.textContent.includes('+value: after')).lastElementChild;
     const range = document.createRange();
-    range.setStart(before, 0); range.setEnd(after, after.textContent.length);
+    range.setStart(before, 0); range.setEnd(after, after.childNodes.length);
     window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
   });
   await added.click({ button: 'right' });

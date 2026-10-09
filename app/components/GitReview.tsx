@@ -1,5 +1,7 @@
 "use client";
 
+import { diffCode } from "./DiffCode";
+
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -48,7 +50,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   const sections = useRef(new Map<string, HTMLElement>());
   const endpoint = `/api/agents/${encodeURIComponent(agentId)}/reviews/${encodeURIComponent(reviewId)}`;
   const snapshot = review?.snapshot;
-  const files = useMemo(() => snapshot?.files.map(item => ({ ...item, rows: lines(item.patch) })) ?? [], [snapshot]);
+  const files = useMemo(() => snapshot?.files.map(item => { const rows = lines(item.patch); return { ...item, rows, code: diffCode(rows, item.path) }; }) ?? [], [snapshot]);
 
   useEffect(() => {
     if (!active) return;
@@ -147,7 +149,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             const end = Number((selected.at(-1) ?? clicked).dataset.diffLine);
             setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
           }}>
-            {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{row.text}</span></div>)}
+            {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>)}
           </pre>
           </div>
         </section>)}
