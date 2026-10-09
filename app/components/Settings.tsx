@@ -41,6 +41,8 @@ export function Settings({
   onWrap,
   scalePanes,
   onScalePanes,
+  minimumPaneScale,
+  onMinimumPaneScale,
   vim,
   onVim,
   onClose,
@@ -55,6 +57,8 @@ export function Settings({
   onWrap: (next: "off" | "on") => void;
   scalePanes: "off" | "on";
   onScalePanes: (next: "off" | "on") => void;
+  minimumPaneScale: string;
+  onMinimumPaneScale: (next: string) => void;
   vim: boolean;
   onVim: (next: boolean) => void;
   onClose: () => void;
@@ -113,11 +117,17 @@ export function Settings({
           detail="Shrink text, spacing and controls together in smaller panes."
           options={[
             { value: "off", label: "Off", detail: "Keep the normal size" },
-            { value: "on", label: "On", detail: "Scale down to 70% in narrow panes" },
+            { value: "on", label: "On", detail: `Scale down to ${minimumPaneScale}% in narrow panes` },
           ]}
           chosen={scalePanes}
           onChoose={onScalePanes}
         />
+        <label className="mb-4 flex items-center justify-between text-[12.5px]">
+          Minimum pane scale
+          <span><input type="number" aria-label="Minimum pane scale" min={10} max={100} step={1} value={minimumPaneScale}
+            onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isInteger(value) && value >= 10 && value <= 100) onMinimumPaneScale(String(value)); }}
+            className="w-16 border-b border-rule bg-transparent text-right outline-none" />%</span>
+        </label>
         <Choice
           title="Keyboard"
           detail="Whether the keys reach past what you are typing into."

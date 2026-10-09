@@ -181,6 +181,13 @@ export const wrap = choice("oxroute.wrap", "wrap", ["off", "on"] as const);
 /** Scale pane contents with their available width. */
 export const scalePanes = choice("oxroute.scalePanes", "scalePanes", ["off", "on"] as const);
 
+const scaleFloor = choice("oxroute.minimumPaneScale", "minimumPaneScale", ["70", ...Array.from({ length: 91 }, (_, index) => String(index + 10))]);
+export const minimumPaneScale = {
+  ...scaleFloor,
+  get() { const value = scaleFloor.get(); document.documentElement.style.setProperty("--minimum-pane-scale", String(Number(value) / 100)); return value; },
+  set(value: string) { document.documentElement.style.setProperty("--minimum-pane-scale", String(Number(value) / 100)); scaleFloor.set(value); },
+};
+
 /** Whether the call an agent is making right now stays in view. */
 export type Verbose = "off" | "on";
 export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);

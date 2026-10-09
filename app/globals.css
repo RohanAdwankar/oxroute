@@ -39,6 +39,7 @@
   --pane-x: 20px;
   --row-y: 7px;
   --said: 15px;
+  --minimum-pane-scale: 0.7;
 }
 
 [data-agent-pane] {
@@ -46,7 +47,7 @@
 }
 
 html[data-scale-panes="on"] [data-agent-panel] {
-  zoom: clamp(0.7, calc(100cqw / 800px), 1);
+  zoom: clamp(var(--minimum-pane-scale), calc(100cqw / 800px), 1);
 }
 
 @container agent-pane (max-width: 48px) {
