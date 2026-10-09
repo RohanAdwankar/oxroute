@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { movePane, readPanes, syncPanes, type PaneEdge, type PaneLayout } from "../lib/panes";
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
@@ -20,13 +20,23 @@ export function AgentPicker({ agents, selected, onSelect }: { agents: Agent[]; s
   </details>;
 }
 
-export function PaneWorkspace({ workspace, ids, onCustomize, children }: {
-  workspace: string; ids: string[]; onCustomize: () => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
+export function PaneWorkspace({ workspace, ids, onCustomize, onClose, children }: {
+  workspace: string; ids: string[]; onCustomize: () => void; onClose: (id: string) => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
 }) {
   const [layout, setTree] = useState<PaneLayout | null>(() => readPanes(workspace));
   const tree = useMemo(() => syncPanes(layout, ids), [layout, ids]);
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; edge: PaneEdge } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenu(null); } };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape, true); };
+  }, [menu]);
   useEffect(() => { if (tree && readPanes(workspace)) localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(tree)); }, [tree, workspace]);
   const save = (next: PaneLayout) => { setTree(next); localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(next)); onCustomize(); };
   const resize = (current: PaneLayout, path: string, ratio: number): PaneLayout => {
@@ -48,6 +58,7 @@ export function PaneWorkspace({ workspace, ids, onCustomize, children }: {
         event.preventDefault(); event.stopPropagation(); save(movePane(tree, drag, node, over.edge)); setDrag(null); setOver(null);
       }}>
       {children(node, ids.indexOf(node), <button draggable aria-label={`Move pane ${node}`} title="Drag to an edge of another pane" className="cursor-grab text-faint"
+        onContextMenu={event => { event.preventDefault(); setMenu({ id: node, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 120)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 36)) }); }}
         onDragStart={event => { event.dataTransfer.setData("application/x-oxroute-pane", node); event.dataTransfer.effectAllowed = "move"; setDrag(node); }}
         onDragEnd={() => { setDrag(null); setOver(null); }}>⋮</button>)}
       {over?.id === node && <div aria-label={`Place pane ${over.edge}`} className="pointer-events-none absolute z-40 bg-edge/20" style={over.edge === "left" || over.edge === "right" ? { top: 0, bottom: 0, width: "50%", [over.edge]: 0 } : { left: 0, right: 0, height: "50%", [over.edge]: 0 }} />}
@@ -70,5 +81,10 @@ export function PaneWorkspace({ workspace, ids, onCustomize, children }: {
       <div className="flex min-h-0 min-w-0 overflow-hidden" style={{ flex: `${1 - node.ratio} 1 0` }}>{render(node.second, path + "1")}</div>
     </div>;
   };
-  return <div className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>{tree && render(tree)}</div>;
+  return <div className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>
+    {tree && render(tree)}
+    {menu && <div ref={menuRef} role="menu" aria-label="Pane actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-1 shadow-md">
+      <button role="menuitem" className="cursor-pointer px-2 py-1 text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
+    </div>}
+  </div>;
 }

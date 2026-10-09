@@ -1001,7 +1001,7 @@ export default function Home() {
         ) : null}
 
         {open ? (
-          <PaneWorkspace key={open} workspace={open} ids={panes} onCustomize={() => { customPanes.current = true; }}>
+          <PaneWorkspace key={open} workspace={open} ids={panes} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
               const view = details[id] ?? (agent ? {
