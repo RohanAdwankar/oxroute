@@ -33,7 +33,7 @@ try {
   const unwrapped = await height();
   await settings(true);
   assert.ok(await height() > unwrapped * 2, 'Long diff lines wrap');
-  assert.equal(await added.locator('span').last().textContent(), line, 'Wrapping preserves code and indentation');
+  assert.equal(await added.evaluate(element => element.lastElementChild.textContent), line, 'Wrapping preserves code and indentation');
   assert.ok(await added.evaluate(el => el.closest('[data-diff]').parentElement.scrollWidth <= el.closest('[data-diff]').parentElement.clientWidth), 'Wrapped diff fits horizontally');
   await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
   const code = page.locator('.message-markdown pre');
