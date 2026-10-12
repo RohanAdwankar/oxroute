@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const agent = { id: 'syntax-test', name: 'Syntax test', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: 1 };
+const agent = { id: 'syntax-test', name: 'Syntax test', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const cases = [
+  { path: 'phrase.ts', before: 'const message = "amber silver bronze";', after: 'const message = "violet teal gold";', changes: ['violet teal gold'], segments: ['violet teal gold'], removedSegments: ['amber silver bronze'] },
+  { path: 'anchors.ts', before: 'const message = "old\tleft anchor old\tright";', after: 'const message = "new\ttop anchor new\tbottom";', changes: ['new\ttop', 'new\tbottom'], segments: ['new\ttop', 'new\tbottom'], removedSegments: ['old\tleft', 'old\tright'] },
   { path: 'settings.ts', before: 'const label = "before"; const limit = 20;', after: 'const label = "after"; const limit = 40;', changes: ['after', '40'] },
   { path: 'worker.py', before: 'return load("旧")', after: 'return load("新")', changes: ['新'] },
   { path: 'options.json', before: '{"enabled": false, "limit": 20}', after: '{"enabled": true, "limit": 20}', changes: ['true'] },
@@ -31,6 +33,11 @@ try {
     ], 'Source characters survive syntax tokenization, escaping and Unicode');
     const added = rows.filter({ hasText: /^\s*\d*\s*\+/ });
     const changes = (await added.locator('[data-diff-change]').allTextContents()).join('');
+    if (item.segments) {
+      assert.deepEqual(await highlightedRuns(added), item.segments, 'Changed segments include intervening whitespace but preserve unchanged anchors');
+      const removed = rows.filter({ hasText: /^\s*\d*\s*-/ });
+      assert.deepEqual(await highlightedRuns(removed), item.removedSegments);
+    }
     for (const changed of item.changes) assert.ok(changes.includes(changed), changed + ' is emphasized');
     assert.ok(changes.length < item.after.length, 'Common portions are not strongly highlighted');
   }
@@ -44,3 +51,19 @@ try {
   if (process.env.DARK_SCREENSHOT) await page.screenshot({ path: process.env.DARK_SCREENSHOT });
   console.log('Syntax colors, multiple changed words, inserted lines, multiline comments, Unicode and literal source text pass.');
 } finally { await browser.close(); }
+
+async function highlightedRuns(locator) {
+  return locator.evaluateAll(rows => rows.flatMap(row => {
+    const runs = [], walker = document.createTreeWalker(row.lastElementChild, NodeFilter.SHOW_TEXT);
+    let continuing = false;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement.closest('[data-diff-change]')) {
+        if (!continuing) runs.push('');
+        runs[runs.length - 1] += node.textContent;
+        continuing = true;
+      } else continuing = false;
+    }
+    return runs;
+  }));
+}

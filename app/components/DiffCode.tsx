@@ -53,6 +53,14 @@ export function diffCode(rows: Line[], path: string) {
         const length = rows[index].text.length - 1;
         spans[index] = ranges[side].flatMap(([a, b]) => b > offset && a < offset + length
           ? [[Math.max(0, a - offset), Math.min(length, b - offset)]] : []);
+        const merged: [number, number][] = [];
+        for (const range of spans[index]) {
+          const previous = merged.at(-1);
+          if (previous && !rows[index].text.slice(1 + previous[1], 1 + range[0]).trim()) {
+            previous[1] = range[1];
+          } else merged.push(range);
+        }
+        spans[index] = merged;
         offset += length + 1;
       }
     }
