@@ -448,29 +448,40 @@ async fn consent(
     Json(body): Json<Consent>,
 ) -> Result<Json<Terminal>, Failed> {
     state.control(&id, &body.controller)?;
-    let mut records = state.records.lock().unwrap();
-    let record = records
-        .iter_mut()
-        .find(|r| r.terminal.id == id)
-        .context("No such terminal")?;
-    if !record.terminal.pending.contains(&body.agent_id)
-        && !record.terminal.granted.contains(&body.agent_id)
-    {
-        return Err(anyhow::anyhow!("No access request for this agent").into());
+    let (result, newly_allowed) = {
+        let mut records = state.records.lock().unwrap();
+        let record = records
+            .iter_mut()
+            .find(|r| r.terminal.id == id)
+            .context("No such terminal")?;
+        if !record.terminal.pending.contains(&body.agent_id)
+            && !record.terminal.granted.contains(&body.agent_id)
+        {
+            return Err(anyhow::anyhow!("No access request for this agent").into());
+        }
+        let newly_allowed = body.allow && !record.terminal.granted.contains(&body.agent_id);
+        record
+            .terminal
+            .pending
+            .retain(|agent| agent != &body.agent_id);
+        record
+            .terminal
+            .granted
+            .retain(|agent| agent != &body.agent_id);
+        if body.allow {
+            record.terminal.granted.push(body.agent_id.clone());
+        }
+        let result = record.terminal.clone();
+        state.save(&records)?;
+        (result, newly_allowed)
+    };
+    if newly_allowed {
+        state.hub.ask_quietly(
+            &body.agent_id,
+            &format!("The user granted you access to terminal {} ({}). Resume the terminal work you were waiting to do. This grant applies only to this terminal and does not authorize unrelated actions.", result.id, result.name),
+            &format!("Terminal access granted: {}", result.name),
+        ).await?;
     }
-    record
-        .terminal
-        .pending
-        .retain(|agent| agent != &body.agent_id);
-    record
-        .terminal
-        .granted
-        .retain(|agent| agent != &body.agent_id);
-    if body.allow {
-        record.terminal.granted.push(body.agent_id);
-    }
-    let result = record.terminal.clone();
-    state.save(&records)?;
     Ok(Json(result))
 }
 async fn end(
@@ -499,6 +510,37 @@ mod tests {
         model::{AgentStatus, Backend},
         Agent, Config, Store,
     };
+    struct TerminalHarness(tokio::sync::mpsc::UnboundedSender<Vec<oxroute_core::model::TurnInput>>);
+    #[async_trait::async_trait]
+    impl oxroute_core::agent::Harness for TerminalHarness {
+        fn backend(&self) -> Backend {
+            Backend::Codex
+        }
+        fn capabilities(&self) -> oxroute_core::agent::Capabilities {
+            oxroute_core::agent::Capabilities {
+                fork: false,
+                inject: false,
+                resume: true,
+            }
+        }
+        fn events(&self) -> tokio::sync::broadcast::Receiver<oxroute_core::agent::HarnessEvent> {
+            tokio::sync::broadcast::channel(16).1
+        }
+        async fn open(&self, _: &oxroute_core::agent::SessionSpec) -> Result<String> {
+            Ok("terminal-fixture-session".into())
+        }
+        async fn start(
+            &self,
+            _: &str,
+            inputs: Vec<oxroute_core::model::TurnInput>,
+        ) -> Result<String> {
+            self.0.send(inputs).unwrap();
+            Ok("terminal-fixture-turn".into())
+        }
+        async fn interrupt(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
     #[tokio::test]
     async fn terminal_input_requires_owner_or_explicit_revocable_consent() {
         let root = std::env::temp_dir().join(new_id("terminal-test"));
@@ -530,7 +572,9 @@ mod tests {
                 })
                 .unwrap();
         }
-        let hub = Hub::new(config, store);
+        let (sent, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+        let mut hub = Hub::new(config, store);
+        hub.with_harness(Arc::new(TerminalHarness(sent)));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/terminals", listener.local_addr().unwrap());
         let router = routes(hub.clone()).unwrap();
@@ -615,6 +659,29 @@ mod tests {
             .error_for_status()
             .unwrap();
         let mut seen = false;
+        let notification =
+            tokio::time::timeout(std::time::Duration::from_secs(2), notifications.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(notification
+            .iter()
+            .filter_map(|input| input.as_text())
+            .any(|text| text.contains(id) && text.contains("Resume")));
+        let notices = hub.store.timeline("requester", 100).unwrap().len();
+        client
+            .post(format!("{target}/consent"))
+            .json(&json!({"controller":controller,"agentId":"requester","allow":true}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert_eq!(
+            hub.store.timeline("requester", 100).unwrap().len(),
+            notices,
+            "Repeating an existing grant must not schedule another turn"
+        );
         let mut captured = String::new();
         for _ in 0..50 {
             let result: Value = client
