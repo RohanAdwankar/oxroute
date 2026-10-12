@@ -29,7 +29,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       const palette = () => {
         const style = getComputedStyle(host.current!);
         terminal.options.theme = { background: style.backgroundColor, foreground: style.color, cursor: style.color, cursorAccent: style.backgroundColor,
-          selectionBackground: getComputedStyle(document.documentElement).getPropertyValue("--color-band").trim() };
+          selectionBackground: style.color, selectionInactiveBackground: style.color, selectionForeground: style.backgroundColor };
       };
       palette();
       const theme = new MutationObserver(palette);

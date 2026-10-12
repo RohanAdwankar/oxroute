@@ -28,10 +28,33 @@ try {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
   };
+  const selectText = async () => {
+    const text = pane.locator('.xterm-rows > div > span').first();
+    const cell = await text.boundingBox(), width = cell.width / (await text.textContent()).length;
+    await page.mouse.move(cell.x + 0.1, cell.y + cell.height / 2);
+    await page.mouse.down(); await page.mouse.move(cell.x + width * 5 + 0.1, cell.y + cell.height / 2); await page.mouse.up();
+    const selection = pane.locator('.xterm-selection div').first();
+    await selection.waitFor();
+    const contrast = await selection.evaluate(node => {
+      const channels = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => {
+        v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      const luminance = color => channels(color).reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i], 0);
+      const selected = luminance(getComputedStyle(node).backgroundColor);
+      const background = luminance(getComputedStyle(node.closest('[data-terminal-pane]')).backgroundColor);
+      return (Math.max(selected, background) + 0.05) / (Math.min(selected, background) + 0.05);
+    });
+    assert.ok(contrast >= 4.5, 'Terminal selection is clearly distinct from its background');
+    const background = await selection.evaluate(node => getComputedStyle(node).backgroundColor);
+    await page.getByRole('button', { name: 'Settings', exact: true }).focus();
+    assert.equal(await selection.evaluate(node => getComputedStyle(node).backgroundColor), background, 'Selection stays visible when focus moves away');
+  };
   await setTheme(0);
+  await selectText();
   const light = await foreground();
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/terminal-light.png` });
   await setTheme(1);
+  await selectText();
   assert.notEqual(await foreground(), light, 'Terminal palette follows the app theme');
   assert.ok((await pane.locator('.xterm-rows').innerText()).includes('Shell history survives theme changes.'));
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/terminal-dark.png` });
