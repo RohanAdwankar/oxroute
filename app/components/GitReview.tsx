@@ -1,17 +1,13 @@
 "use client";
 
 import { diffCode } from "./DiffCode";
+import { cachedReview, loadReview, reviewEndpoint, type Review } from "../lib/reviews";
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
 
-type Review = {
-  id: string; title: string; description: string; status: "pending" | "approved" | "stale";
-  snapshot: { repository: string; remote: string; remoteUrl: string; branch: string;
-    baseRef: string; baseCommit: string; headCommit: string; files: { path: string; patch: string }[] };
-};
 type Line = { text: string; old: number | null; next: number | null };
 
 function lines(patch: string): Line[] {
@@ -40,32 +36,33 @@ async function response<T>(request: Promise<Response>): Promise<T> {
 export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void;
 }) {
-  const [review, setReview] = useState<Review | null>(null);
-  const [file, setFile] = useState("");
+  const endpoint = reviewEndpoint(agentId, reviewId);
+  const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
+  const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
   const [error, setError] = useState("");
   const [approving, setApproving] = useState(false);
-  const loading = useRef<AbortController | null>(null);
+  const cancelLoad = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number; wholeFile?: boolean } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
-  const endpoint = `/api/agents/${encodeURIComponent(agentId)}/reviews/${encodeURIComponent(reviewId)}`;
   const snapshot = review?.snapshot;
   const files = useMemo(() => snapshot?.files.map(item => { const rows = lines(item.patch); return { ...item, rows, code: diffCode(rows, item.path) }; }) ?? [], [snapshot]);
 
   useEffect(() => {
     if (!active) return;
-    const controller = new AbortController();
-    loading.current = controller;
-    response<Review>(fetch(endpoint, { signal: controller.signal, cache: "no-store" })).then(data => {
+    let live = true;
+    cancelLoad.current = () => { live = false; };
+    loadReview(endpoint, true).then(data => {
+      if (!live) return;
       setReview(data);
       setFile(current => data.snapshot.files.some(item => item.path === current) ? current : data.snapshot.files[0]?.path ?? "");
       setError("");
-    }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
-    return () => controller.abort();
+    }).catch(error => { if (live) { setReview(null); setError(String(error)); } });
+    return () => { live = false; };
   }, [endpoint, active]);
 
   const approve = async () => {
-    loading.current?.abort();
+    cancelLoad.current?.();
     setApproving(true);
     try {
       setReview(await response<Review>(fetch(`${endpoint}/approve`, { method: "POST" })));

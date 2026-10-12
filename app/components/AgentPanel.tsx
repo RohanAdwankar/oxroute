@@ -9,6 +9,7 @@ import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, 
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
 import { GitReview } from "./GitReview";
+import { loadReview, reviewEndpoint } from "../lib/reviews";
 import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
@@ -202,6 +203,10 @@ export function AgentPanel({
   const [sketchReady, setSketchReady] = useState(false);
   const sketch = useRef<SketchHandle>(null);
   const { agent } = view;
+  const latestReview = view.timeline.findLast(entry => entry.kind === "review");
+  useEffect(() => {
+    if (latestReview) void loadReview(reviewEndpoint(agent.id, latestReview.detail)).catch(() => {});
+  }, [agent.id, latestReview?.detail]);
   const timeline = useRef<HTMLDivElement>(null);
   const timelineBody = useRef<HTMLDivElement>(null);
   const following = useRef(true);

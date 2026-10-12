@@ -93,6 +93,8 @@ export default function Home() {
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const requests = useRef(new Map<string, Promise<AgentView>>());
   const warmed = useRef(new Set<string>());
+  const warmQueue = useRef<string[]>([]);
+  const warming = useRef(0);
   const loadAgent = useCallback((id: string) => {
     const pending = requests.current.get(id);
     if (pending) return pending;
@@ -419,8 +421,19 @@ export default function Home() {
     for (const agent of snapshot.agents) {
       if (warmed.current.has(agent.id)) continue;
       warmed.current.add(agent.id);
-      void loadAgent(agent.id).catch(() => warmed.current.delete(agent.id));
+      warmQueue.current.push(agent.id);
     }
+    const drain = () => {
+      while (warming.current < 2 && warmQueue.current.length) {
+        const id = warmQueue.current.shift()!;
+        warming.current++;
+        void loadAgent(id).catch(() => warmed.current.delete(id)).finally(() => {
+          warming.current--;
+          drain();
+        });
+      }
+    };
+    drain();
   }, [snapshot.agents, loadAgent]);
 
   useEffect(() => {
