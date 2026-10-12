@@ -48,6 +48,11 @@ await page.addInitScript(() => {
 await page.route('**/api/**', async route => {
   const request = route.request(), url = new URL(request.url()), path = url.pathname;
   const json = value => route.fulfill({ json: value });
+  if (path === '/api/say' && request.method() === 'POST') {
+    const sent = request.postDataJSON();
+    timelines[0].push({ id: 4, agentId: agents[0].id, at: now, kind: 'you', text: sent.text, requestId: sent.requestId, detail: 'diff-attachments:' + JSON.stringify(sent.diffs) });
+    return json({});
+  }
   if (path === '/api/version') return json({ version });
   if (path === '/api/state') return json({ mode: 'ask', agents, archived: [], tasks, taskNotes: [], messages: {}, inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] });
   if (path === '/api/terminals') return json(terminals);
@@ -66,8 +71,8 @@ await page.route('**/api/**', async route => {
   }
   throw new Error(`Unhandled demo request: ${request.method()} ${path}`);
 });
-const caption = async text => {
-  await page.evaluate(text => {
+const caption = async (text, bottom = 110) => {
+  await page.evaluate(({ text, bottom }) => {
     let node = document.getElementById('demo-caption');
     if (!node) {
       node = document.createElement('div'); node.id = 'demo-caption';
@@ -75,7 +80,8 @@ const caption = async text => {
       document.body.append(node);
     }
     node.textContent = text;
-  }, text);
+    node.style.bottom = `${bottom}px`;
+  }, { text, bottom });
 };
 const hold = async name => { await page.waitForTimeout(2300); await page.screenshot({ path: `${out}/${name}.png` }); };
 const pane = i => page.locator(`[data-agent-pane="${agents[i].id}"]`);
@@ -87,6 +93,51 @@ const drag = async (separator, x, y) => {
 try {
   await page.goto(`${process.env.OXROUTE_DEMO_URL ?? 'http://127.0.0.1:3941'}/?agent=demo-0`);
   await pane(0).waitFor();
+  await caption('Review code with syntax colors and precise changed words');
+  await page.getByRole('button', { name: 'Review ' + review.title, exact: true }).click();
+  const diff = page.getByRole('region', { name: 'Diff src/routes.js', exact: true });
+  await diff.waitFor();
+  assert.ok(await diff.locator('.hljs-keyword').count());
+  await hold('review');
+  await caption('Select the lines you want to discuss');
+  const endpoints = await diff.evaluate(element => {
+    const rows = [...element.querySelectorAll('[data-diff-line]')];
+    const point = (row, end) => {
+      const walker = document.createTreeWalker(row.lastElementChild, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      const node = end ? nodes.at(-1) : nodes[0];
+      const range = document.createRange();
+      range.setStart(node, end ? node.length : 0); range.collapse(true);
+      const box = range.getBoundingClientRect();
+      return { x: box.x, y: box.y + box.height / 2 };
+    };
+    return { start: point(rows.find(row => row.textContent.includes('-  const version')), false), end: point(rows.find(row => row.textContent.includes('+  const commit')), true) };
+  });
+  await page.mouse.move(endpoints.start.x, endpoints.start.y);
+  await page.mouse.down();
+  await page.mouse.move(endpoints.end.x + 1, endpoints.end.y, { steps: 40 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => window.getSelection().toString());
+  assert.ok(selected.includes('0.1.0') && selected.includes('0.2.0') && selected.includes('const commit'));
+  await hold('selection');
+  await caption('Right-click the selection and quote it into chat');
+  await page.mouse.click(endpoints.start.x + 50, endpoints.start.y, { button: 'right' });
+  await page.waitForTimeout(1200);
+  await page.getByRole('button', { name: 'Quote diff into chat', exact: true }).click();
+  const attachment = pane(0).getByRole('region', { name: 'Attached diff src/routes.js', exact: true });
+  await attachment.waitFor();
+  assert.equal(await attachment.locator('[data-quoted-diff-line]').count(), 3);
+  await caption('The selected diff sits beside your question', 160);
+  await pane(0).locator('[data-composer]').pressSequentially('Should we report an unknown commit explicitly?', { delay: 45 });
+  await hold('quote');
+  await caption('Send the question. The selected diff stays in the conversation', 160);
+  await pane(0).getByRole('button', { name: 'Send message', exact: true }).click();
+  const sentDiff = pane(0).locator('[data-entry="4"]').getByRole('region', { name: 'Attached diff src/routes.js', exact: true });
+  await sentDiff.waitFor();
+  assert.equal(await sentDiff.locator('[data-quoted-diff-line]').count(), 3);
+  assert.equal(await pane(0).locator('[data-transcript] [data-entry]').filter({ hasText: 'Should we report an unknown commit explicitly?' }).count(), 1);
+  await hold('sent-diff');
   await caption('Keep several conversations in view');
   await page.getByLabel('Choose visible agents').click();
   await page.getByRole('checkbox', { name: agents[1].name, exact: true }).check();
@@ -133,18 +184,6 @@ try {
   await page.getByRole('checkbox', { name: 'Response tests', exact: true }).uncheck();
   await page.getByRole('checkbox', { name: agents[1].name, exact: true }).uncheck();
   await page.getByLabel('Choose visible agents').click();
-  await caption('Review code with syntax colors and precise changed words');
-  await page.getByRole('button', { name: 'Review ' + review.title, exact: true }).click();
-  const diff = page.getByRole('region', { name: 'Diff src/routes.js', exact: true });
-  await diff.waitFor();
-  assert.ok(await diff.locator('.hljs-keyword').count());
-  await hold('review');
-  await caption('Right-click a changed line to discuss that exact change');
-  await diff.locator('[data-diff-line]').filter({ hasText: 'const commit' }).click({ button: 'right' });
-  await page.waitForTimeout(1000);
-  await page.getByRole('button', { name: 'Quote diff into chat', exact: true }).click();
-  await pane(0).locator('[data-composer]').pressSequentially('Should we report an unknown commit explicitly?', { delay: 45 });
-  await hold('quote');
   await caption('Route work. Watch it happen. Steer the result.');
   await page.waitForTimeout(2300);
   assert.deepEqual(errors, []);

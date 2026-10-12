@@ -3,10 +3,11 @@
 Everything asking for your attention in one inbox, sorted into agents that
 do the work while you watch.
 
-[![Oxroute: route an inbox, steer agents, arrange panes, use terminals, and review code](demo/demo.gif)](demo/demo.mp4)
+[![Oxroute: select code, quote a diff into chat, arrange panes, and route work to agents](demo/demo.gif)](demo/demo.mp4)
 
-*[The video](demo/demo.mp4): inbox routing, tasks, diagrams, resizable panes,
-shared terminals, and code review. Refresh with [demo/run.sh](demo/run.sh).
+*[The video](demo/demo.mp4) opens with selecting code and quoting the diff into
+chat, followed by resizable panes, shared terminals, inbox routing, tasks,
+and diagrams. Refresh with [demo/run.sh](demo/run.sh).
 The inbox take uses [demo/oxroute.oxd](demo/oxroute.oxd); the new feature take
 uses the current UI with isolated [fixture data](demo/record-features.mjs).*
 
