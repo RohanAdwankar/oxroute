@@ -3,7 +3,7 @@
 import type { Mode, Snapshot } from "../lib/types";
 import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 /**
  * The top bar: the wordmark, the one global switch, and the counters.
@@ -42,8 +42,22 @@ export function Chrome({
   onSearchContinue: (agent: string) => void;
   panes?: ReactNode;
 }) {
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const update = () => {
+      const panels = Array.from(document.querySelectorAll<HTMLElement>("[data-agent-panel], [data-terminal-pane]"))
+        .filter(panel => panel.getBoundingClientRect().width > 0);
+      setScale(Math.min(1, ...panels.map(panel => Number(getComputedStyle(panel).zoom) || 1)));
+    };
+    const resize = new ResizeObserver(update);
+    for (const pane of document.querySelectorAll("[data-agent-pane]")) resize.observe(pane);
+    const settings = new MutationObserver(update);
+    settings.observe(document.documentElement, { attributes: true, attributeFilter: ["data-scale-panes", "style"] });
+    update();
+    return () => { resize.disconnect(); settings.disconnect(); };
+  }, [panes]);
   return (
-    <header className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
+    <header data-app-header style={{ zoom: scale }} className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
       <div className="flex items-stretch" role="group" aria-label="routing mode">
         <ModeButton
           label="Ask me first"
