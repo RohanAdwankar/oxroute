@@ -1,7 +1,7 @@
 # A minute of oxroute, recorded by oxdemo: three things arrive, two agents
 # get one each, and the rest is what you steer them with.
 #
-# demo/run.sh brings up a daemon and a build of the web UI on their own
+# demo/record-inbox.sh brings up a daemon and a build of the web UI on their own
 # ports first, against a scratch repository.
 
 url http://127.0.0.1:3100
