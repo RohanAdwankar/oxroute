@@ -1,5 +1,7 @@
 import { common, createLowlight } from "lowlight";
 import { diffWordsWithSpace } from "diff";
+import { newMatcherFn } from "diff2html/lib/rematch";
+import { distance } from "fastest-levenshtein";
 import type { RootContent } from "hast";
 
 type Line = { text: string; old: number | null; next: number | null };
@@ -27,44 +29,41 @@ function tokens(source: string, path: string): Token[][] {
 }
 
 export function diffCode(rows: Line[], path: string) {
-  const spans = rows.map(() => [] as [number, number][]);
-  // Compare complete replacement blocks so inserted lines do not shift pairing.
+  const spans: [number, number][][] = rows.map(row =>
+    (row.old === null) !== (row.next === null) ? [[0, row.text.length - 1]] : []);
+  const source = rows.map(row => row.text.slice(1).trim());
+  const match = newMatcherFn((a: number, b: number) =>
+    distance(source[a], source[b]) / Math.max(1, source[a].length + source[b].length));
   for (let start = 0; start < rows.length;) {
     if (rows[start].next !== null || rows[start].old === null) { start++; continue; }
     let end = start;
     while (end < rows.length && rows[end].old !== null && rows[end].next === null) end++;
     const addedStart = end;
     while (end < rows.length && rows[end].old === null && rows[end].next !== null) end++;
-    if (addedStart === end) { start = end; continue; }
-    const old = rows.slice(start, addedStart).map(row => row.text.slice(1)).join("\n");
-    const next = rows.slice(addedStart, end).map(row => row.text.slice(1)).join("\n");
-    const offsets = [0, 0];
-    const ranges: [number, number][][] = [[], []];
-    for (const part of diffWordsWithSpace(old, next)) {
-      for (const side of [0, 1]) {
-        if ((side === 0 && part.added) || (side === 1 && part.removed)) continue;
-        if (part.added || part.removed) ranges[side].push([offsets[side], offsets[side] + part.value.length]);
-        offsets[side] += part.value.length;
-      }
-    }
-    for (const [side, from, to] of [[0, start, addedStart], [1, addedStart, end]]) {
-      let offset = 0;
-      for (let index = from; index < to; index++) {
-        const length = rows[index].text.length - 1;
-        spans[index] = ranges[side].flatMap(([a, b]) => b > offset && a < offset + length
-          ? [[Math.max(0, a - offset), Math.min(length, b - offset)]] : []);
-        const merged: [number, number][] = [];
-        for (const range of spans[index]) {
-          const previous = merged.at(-1);
-          if (previous && !rows[index].text.slice(1 + previous[1], 1 + range[0]).trim()) {
-            previous[1] = range[1];
-          } else merged.push(range);
+    const indices = (from: number, to: number) => Array.from({ length: to - from }, (_, at) => from + at);
+    for (const [before, after] of match(indices(start, addedStart), indices(addedStart, end))) {
+      for (let at = 0; at < Math.min(before.length, after.length); at++) {
+        const offsets = [0, 0], pair = [before[at], after[at]];
+        for (const index of pair) spans[index] = [];
+        for (const part of diffWordsWithSpace(rows[pair[0]].text.slice(1), rows[pair[1]].text.slice(1))) {
+          for (const side of [0, 1]) {
+            if ((side === 0 && part.added) || (side === 1 && part.removed)) continue;
+            if (part.added || part.removed) spans[pair[side]].push([offsets[side], offsets[side] + part.value.length]);
+            offsets[side] += part.value.length;
+          }
         }
-        spans[index] = merged;
-        offset += length + 1;
       }
     }
     start = end;
+  }
+  for (const [index, ranges] of spans.entries()) {
+    const merged: [number, number][] = [];
+    for (const range of ranges) {
+      const previous = merged.at(-1);
+      if (previous && !rows[index].text.slice(1 + previous[1], 1 + range[0]).trim()) previous[1] = range[1];
+      else merged.push(range);
+    }
+    spans[index] = merged;
   }
   const oldTokens = tokens(rows.filter(row => row.old !== null).map(row => row.text.slice(1)).join("\n"), path);
   const nextTokens = tokens(rows.filter(row => row.next !== null).map(row => row.text.slice(1)).join("\n"), path);

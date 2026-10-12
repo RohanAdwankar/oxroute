@@ -3,6 +3,8 @@ import { chromium } from 'playwright';
 
 const agent = { id: 'syntax-test', name: 'Syntax test', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const cases = [
+  { path: 'inserted.ts', before: 'const total = 11;\nconst label = "quiet";', after: 'const enabled = true;\nconst total = 12;\nconst label = "loud";', changes: ['12', 'loud'], segments: ['const enabled = true;', '12', 'loud'], removedSegments: ['11', 'quiet'] },
+  { path: 'deleted.ts', before: 'const enabled = true;\nconst total = 11;', after: 'const total = 12;', changes: ['12'], segments: ['12'], removedSegments: ['const enabled = true;', '11'] },
   { path: 'phrase.ts', before: 'const message = "amber silver bronze";', after: 'const message = "violet teal gold";', changes: ['violet teal gold'], segments: ['violet teal gold'], removedSegments: ['amber silver bronze'] },
   { path: 'anchors.ts', before: 'const message = "old\tleft anchor old\tright";', after: 'const message = "new\ttop anchor new\tbottom";', changes: ['new\ttop', 'new\tbottom'], segments: ['new\ttop', 'new\tbottom'], removedSegments: ['old\tleft', 'old\tright'] },
   { path: 'settings.ts', before: 'const label = "before"; const limit = 20;', after: 'const label = "after"; const limit = 40;', changes: ['after', '40'] },
@@ -46,6 +48,7 @@ try {
   const block = page.getByRole('region', { name: 'Diff block.js', exact: true });
   assert.ok((await block.locator('.hljs-comment').allTextContents()).join('').includes('new comment'), 'Multiline syntax carries over lines');
   assert.deepEqual(writes, [], 'Rendering a diff never mutates data');
+  if (process.env.BLOCK_SCREENSHOT) await block.screenshot({ path: process.env.BLOCK_SCREENSHOT });
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
   if (process.env.DARK_SCREENSHOT) await page.screenshot({ path: process.env.DARK_SCREENSHOT });

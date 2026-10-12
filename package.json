@@ -12,6 +12,8 @@
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "diff": "^9.0.0",
+    "diff2html": "3.4.56",
+    "fastest-levenshtein": "1.0.16",
     "highlight.js": "^11.12.0",
     "lowlight": "^3.3.0",
     "next": "16.3.5",
