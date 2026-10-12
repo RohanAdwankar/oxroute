@@ -33,7 +33,8 @@ try {
     const count = reads.get(id) ?? 0;
     reads.set(id, count + 1);
     if (count) await new Promise(resolve => setTimeout(resolve, 200));
-    return r.fulfill({ json: { terminal, bytes: count ? [] : [...Buffer.from('Agent workspace ready.\r\n')], end: 23, reset: false } }).catch(() => {});
+    const bytes = new URL(request.url()).searchParams.get('after') === '0' ? [...Buffer.from('Agent workspace ready.\r\n')] : [];
+    return r.fulfill({ json: { terminal, bytes, end: 23, reset: false } }).catch(() => {});
   });
   await page.goto((process.env.TEST_URL ?? 'http://localhost:3941') + '/?agent=' + agent.id);
   await page.locator('[data-agent-pane]').waitFor();
