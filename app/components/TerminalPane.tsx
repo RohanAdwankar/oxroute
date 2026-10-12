@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
 
-export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[] }
+export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[]; agentId?: string }
 export async function terminalApi<T>(path: string, body?: object, method = "POST", signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/terminals${path}`, { signal, ...(body ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" }) });
   const result = await response.json();
@@ -74,6 +74,12 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         try {
           const result = await terminalApi<{ terminal: TerminalInfo; bytes: number[]; end: number; reset: boolean }>(`/${id}?after=${after}&wait=true`, undefined, "GET", controller.signal);
           if (!live) return;
+          if (result.terminal.agentId && !token()) {
+            const owner = await terminalApi<{ controller: string }>(`/${id}/claim`, {}, "POST", controller.signal);
+            if (!live) return;
+            localStorage.setItem(`oxroute.terminal.${id}`, owner.controller);
+            void terminalApi(`/${id}/resize`, { controller: owner.controller, rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
+          }
           setInfo(current => JSON.stringify(current) === JSON.stringify(result.terminal) ? current : result.terminal);
           if (result.reset) { replaying = true; terminal.reset(); }
           if (result.bytes.length) await new Promise<void>(resolve => terminal.write(new Uint8Array(result.bytes), resolve));

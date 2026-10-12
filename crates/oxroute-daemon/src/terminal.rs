@@ -5,7 +5,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use oxroute_core::{model::new_id, Hub};
+use oxroute_core::{
+    model::{new_id, Event},
+    Hub,
+};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,6 +28,8 @@ struct Terminal {
     name: String,
     granted: Vec<String>,
     pending: Vec<String>,
+    #[serde(default)]
+    agent_id: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
@@ -71,6 +76,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
         .route("/api/terminals/{id}/input", post(input))
         .route("/api/terminals/{id}/resize", post(resize))
         .route("/api/terminals/{id}/access", post(request_access))
+        .route("/api/terminals/{id}/claim", post(claim))
         .route("/api/terminals/{id}/consent", post(consent))
         .with_state(terminals))
 }
@@ -78,6 +84,7 @@ impl Terminals {
     fn save(&self, records: &[Record]) -> Result<()> {
         self.hub.store.set(KEY, &serde_json::to_string(records)?)?;
         self.changed.notify_waiters();
+        self.hub.emit(Event::Sync);
         Ok(())
     }
     fn record(&self, id: &str) -> Result<Record> {
@@ -225,27 +232,71 @@ async fn list(State(state): TermState) -> Json<Vec<Terminal>> {
             .collect(),
     )
 }
-async fn create(State(state): TermState) -> Result<Json<Value>, Failed> {
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Create {
+    #[serde(default)]
+    agent_id: String,
+}
+async fn create(State(state): TermState, Json(body): Json<Create>) -> Result<Json<Value>, Failed> {
+    if !body.agent_id.is_empty() {
+        if state.hub.store.agent(&body.agent_id)?.is_none() {
+            return Err(anyhow::anyhow!("No such agent").into());
+        }
+    }
     let id = new_id("terminal");
     let terminal = Terminal {
         name: format!("Terminal {}", &id[id.len() - 6..]),
         id,
-        granted: vec![],
+        granted: if body.agent_id.is_empty() {
+            vec![]
+        } else {
+            vec![body.agent_id.clone()]
+        },
         pending: vec![],
+        agent_id: body.agent_id,
     };
     let controller = new_id("control");
     {
         let mut records = state.records.lock().unwrap();
+        if !terminal.agent_id.is_empty()
+            && records
+                .iter()
+                .filter(|r| r.terminal.agent_id == terminal.agent_id)
+                .count()
+                >= 2
+        {
+            return Err(anyhow::anyhow!(
+                "This conversation already has two agent-created terminals"
+            )
+            .into());
+        }
         records.push(Record {
             terminal: terminal.clone(),
             controller: controller.clone(),
         });
         state.save(&records)?;
     }
-    state.attach(&terminal.id)?;
-    Ok(Json(
-        json!({"terminal": terminal, "controller": controller}),
-    ))
+    if let Err(error) = state.attach(&terminal.id) {
+        let mut records = state.records.lock().unwrap();
+        records.retain(|r| r.terminal.id != terminal.id);
+        state.save(&records)?;
+        return Err(error.into());
+    }
+    Ok(Json(if terminal.agent_id.is_empty() {
+        json!({"terminal": terminal, "controller": controller})
+    } else {
+        json!({"terminal": terminal})
+    }))
+}
+// The human UI adopts an agent-created pane to retain typing, resize, end and revoke controls.
+// Agent operations use agentId and never receive the browser controller credential.
+async fn claim(State(state): TermState, Path(id): Path<String>) -> Result<Json<Value>, Failed> {
+    let record = state.record(&id)?;
+    if record.terminal.agent_id.is_empty() {
+        return Err(anyhow::anyhow!("This is a user-created terminal").into());
+    }
+    Ok(Json(json!({"controller": record.controller})))
 }
 #[derive(Default, Deserialize)]
 struct Position {
@@ -663,6 +714,171 @@ mod tests {
         client
             .delete(&target)
             .json(&json!({"controller":controller}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let missing = client
+            .post(&url)
+            .json(&json!({"agentId":"missing"}))
+            .send()
+            .await
+            .unwrap();
+        assert!(!missing.status().is_success());
+        let mut opened = Vec::new();
+        for _ in 0..2 {
+            let created: Value = client
+                .post(&url)
+                .json(&json!({"agentId":"requester"}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert!(
+                created.get("controller").is_none(),
+                "Agent must not receive browser credentials"
+            );
+            assert_eq!(created["terminal"]["agentId"], "requester");
+            assert_eq!(created["terminal"]["granted"], json!(["requester"]));
+            opened.push(created["terminal"]["id"].as_str().unwrap().to_owned());
+        }
+        assert!(!client
+            .post(&url)
+            .json(&json!({"agentId":"requester"}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        let owned = format!("{url}/{}", opened[0]);
+        client
+            .post(format!("{owned}/input"))
+            .json(&json!({"agentId":"requester","data":"printf agent-owned\r"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        assert!(!client
+            .post(format!("{owned}/input"))
+            .json(&json!({"agentId":"other-agent","data":"printf unauthorized\r"}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        // The limit belongs to the creator, and human-created terminals are unaffected.
+        for body in [json!({"agentId":"other-agent"}), json!({})] {
+            let created: Value = client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let terminal_id = created["terminal"]["id"].as_str().unwrap();
+            let controller = if body.get("agentId").is_some() {
+                client
+                    .post(format!("{url}/{terminal_id}/claim"))
+                    .json(&json!({}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap()["controller"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            } else {
+                created["controller"].as_str().unwrap().to_owned()
+            };
+            client
+                .delete(format!("{url}/{terminal_id}"))
+                .json(&json!({"controller":controller}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        for terminal_id in &opened {
+            let owner: Value = client
+                .post(format!("{url}/{terminal_id}/claim"))
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let target = format!("{url}/{terminal_id}");
+            // Human revocation protects a pane taken over by the user.
+            client
+                .post(format!("{target}/consent"))
+                .json(
+                    &json!({"controller":owner["controller"],"agentId":"requester","allow":false}),
+                )
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+            assert!(!client
+                .post(format!("{target}/input"))
+                .json(&json!({"agentId":"requester","data":"printf revoked\r"}))
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success());
+            client
+                .delete(&target)
+                .json(&json!({"controller":owner["controller"]}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        // Ending a pane frees a slot.
+        let replacement: Value = client
+            .post(&url)
+            .json(&json!({"agentId":"requester"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let target = format!("{url}/{}", replacement["terminal"]["id"].as_str().unwrap());
+        let owner: Value = client
+            .post(format!("{target}/claim"))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        client
+            .delete(&target)
+            .json(&json!({"controller":owner["controller"]}))
             .send()
             .await
             .unwrap()

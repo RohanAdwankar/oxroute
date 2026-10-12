@@ -271,7 +271,17 @@ export default function Home() {
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
   );
-  useEffect(() => { void terminalApi<TerminalInfo[]>("").then(setTerminals).catch(complain); }, [complain]);
+  useEffect(() => { void terminalApi<TerminalInfo[]>("").then(setTerminals).catch(complain); }, [revision, complain]);
+
+  const revealedTerminals = useRef(new Set<string>());
+  useEffect(() => {
+    if (!open) return;
+    const added = terminals.filter(terminal => terminal.agentId && panes.includes(terminal.agentId) && !revealedTerminals.current.has(terminal.id));
+    if (!added.length) return;
+    for (const terminal of added) revealedTerminals.current.add(terminal.id);
+    customPanes.current = true;
+    setPanes(current => [...current, ...added.map(terminal => terminal.id).filter(id => !current.includes(id))]);
+  }, [open, terminals, panes]);
 
   useEffect(() => {
     const restore = () => {

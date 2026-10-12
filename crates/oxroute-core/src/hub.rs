@@ -1743,12 +1743,17 @@ impl Hub {
         inputs.push(TurnInput::text(format!(
             "Interactive terminal panes are listed by GET http://{listen}/api/terminals. \
              Read output at GET http://{listen}/api/terminals/<id>?after=<byte-offset>. \
-             Only when the user asks you to drive a terminal, POST /api/terminals/<id>/access \
-             with {{\"agentId\":\"{id}\"}} and wait until GET shows your agentId in granted. \
-             Then POST /api/terminals/<id>/input with {{\"agentId\":\"{id}\",\"data\":\"exact keystrokes\"}}. \
-             Use only your own agentId. Never call consent, create, resize or delete terminal \
-             endpoints, obtain controller credentials, or approve your own request. Terminal \
-             approval allows typing in that terminal only and does not authorize unrelated actions.",
+             You may open a terminal for this conversation using POST /api/terminals with \
+             {{\"agentId\":\"{id}\"}}. At most two agent-created terminals may be open per conversation; \
+             reuse an existing one when possible. New panes appear in the conversation automatically. \
+             Your new terminal grants you write access immediately. Write only while your agentId \
+             appears in granted; respect later revocation. To type, POST \
+             /api/terminals/<id>/input with {{\"agentId\":\"{id}\",\"data\":\"exact keystrokes\"}}. \
+             For any terminal where you lack a grant, only when asked to drive it, request access with POST \
+             /api/terminals/<id>/access and {{\"agentId\":\"{id}\"}}, then wait until GET shows you in granted. \
+             Use only your own agentId. Never call claim, consent, resize or delete endpoints, obtain \
+             browser controller credentials, or approve your own access to a user terminal. \
+             Terminal access does not authorize unrelated actions.",
             listen = self.config.listen, id = agent.id,
         )));
         if self.store.tags(&agent.id)?.iter().any(|tag| tag == "publication:direct") {
