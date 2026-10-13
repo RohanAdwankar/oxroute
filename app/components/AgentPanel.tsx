@@ -143,6 +143,7 @@ export function AgentPanel({
   onArchive,
   busy,
   focusEntry,
+  onEntryFocused,
   verbose,
   onSendDiagram,
   onCreateDiagram,
@@ -200,6 +201,7 @@ export function AgentPanel({
   onArchive: (archived: boolean) => void;
   busy: boolean;
   focusEntry: number | null;
+  onEntryFocused: (entry: number) => void;
   /// Keep the call the agent is making now in view, rather than behind its
   /// toggle with the rest.
   verbose: boolean;
@@ -252,6 +254,7 @@ export function AgentPanel({
   const timelineBody = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const previousAgent = useRef(agent.id);
+  const [highlightedEntry, setHighlightedEntry] = useState<number | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const renameCancelled = useRef(false);
@@ -312,13 +315,18 @@ export function AgentPanel({
     if (previousAgent.current !== agent.id) {
       previousAgent.current = agent.id;
       following.current = true;
+      setHighlightedEntry(null);
     }
     const target = focusEntry
       ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${focusEntry}"]`)
       : null;
-    if (target) target.scrollIntoView({ block: "center" });
-    else pin();
-  }, [tailRevision, agent.id, focusEntry, pin]);
+    if (target) {
+      following.current = false;
+      setHighlightedEntry(focusEntry);
+      target.scrollIntoView({ block: "center" });
+      onEntryFocused(focusEntry!);
+    } else pin();
+  }, [tailRevision, agent.id, focusEntry, pin, onEntryFocused]);
 
   // A picture or a drawn diagram arrives after the scroll that revealed it,
   // and grows the timeline under the reader. Keep following the tail.
@@ -781,7 +789,7 @@ export function AgentPanel({
                 <QuoteLinks.Provider key={entry.id} value={quoteLinkValues.get(entry.id) ?? null}><Message
                   key={entry.id}
                   entry={entry}
-                  focused={entry.id === focusEntry}
+                  focused={entry.id === (focusEntry ?? highlightedEntry)}
                   asked={asked}
                   onJump={jumpTo}
                   onOpenAgent={onOpenAgent}

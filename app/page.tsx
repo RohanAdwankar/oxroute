@@ -238,6 +238,15 @@ export default function Home() {
 
   const reload = useCallback(() => setRevision((current) => current + 1), []);
 
+  const entryFocused = useCallback((entry: number) => {
+    setFocusEntry(current => current === entry ? null : current);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("entry") === String(entry)) {
+      url.searchParams.delete("entry");
+      window.history.replaceState(null, "", url);
+    }
+  }, []);
+
   const showAgent = useCallback((id: string | null, entry?: number) => {
     setOpen(id);
     // Opening an agent is walking into it: the keys act on it from here.
@@ -1138,6 +1147,7 @@ export default function Home() {
                         void run(() => api.archive(id, archived));
                       }}
                       focusEntry={panes.length === 1 ? focusEntry : null}
+                      onEntryFocused={entryFocused}
                       verbose={loud === "on"}
                     />
                   ) : (
