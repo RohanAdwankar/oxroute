@@ -216,8 +216,7 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
-  const [discussion, setDiscussion] = useState<{ thread: QuoteThread; rect: DOMRect } | null>(null);
-  const [creatingThread, setCreatingThread] = useState(false);
+  const [discussion, setDiscussion] = useState<{ thread: QuoteThread; rect: DOMRect; ready?: Promise<QuoteThread> } | null>(null);
   const threadKey = JSON.stringify(quoteThreads);
   const threadData = useMemo(() => JSON.parse(threadKey) as QuoteThread[], [threadKey]);
   const closeDiscussion = useCallback(() => setDiscussion(null), []);
@@ -228,6 +227,17 @@ export function AgentPanel({
   const quoteLinkValues = useMemo(() => new Map(threadData.map(thread => [thread.entryId, {
     threads: threadData.filter(other => other.entryId === thread.entryId), open: openDiscussion,
   }])), [threadData, openDiscussion]);
+  const openingThreads = useRef(new Map<string, Promise<QuoteThread>>());
+  const startDiscussion = (thread: QuoteThread, rect: DOMRect) => {
+    const ready = openingThreads.current.get(thread.agentId) ?? api.quoteThread(thread.parentId, thread).then(({ agent }) => {
+      const actual = { ...thread, agentId: agent.id };
+      keepDraft(agent.id, draftFor(thread.agentId)); keepDraft(thread.agentId, "");
+      onThreadsChanged();
+      return actual;
+    }).finally(() => openingThreads.current.delete(thread.agentId));
+    openingThreads.current.set(thread.agentId, ready);
+    setDiscussion({ thread, rect, ready });
+  };
   const menu = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>("type");
   const [edits, setEdits] = useState<DiagramEdit[]>([]);
@@ -817,18 +827,13 @@ export function AgentPanel({
             </button>
           )}
           {quoteMenu.anchor && <button type="button" aria-label="quote into thread" title="Quote into thread"
-            disabled={busy || creatingThread || !can.fork} className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash disabled:opacity-30"
-            onClick={async () => {
+            disabled={busy || !can.fork} className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash disabled:opacity-30"
+            onClick={() => {
               const anchor = quoteMenu.anchor!;
+              const thread = { ...anchor, agentId: `quote:${agent.id}:${anchor.entryId}:${anchor.start}:${anchor.end}`, parentId: agent.id };
               const rect = new DOMRect(quoteMenu.x, quoteMenu.y, 0, 0);
-              setCreatingThread(true);
-              try {
-                const result = await api.quoteThread(agent.id, anchor);
-                setQuoteMenu(null); window.getSelection()?.removeAllRanges();
-                setDiscussion({ thread: { ...anchor, agentId: result.agent.id, parentId: agent.id }, rect });
-                onThreadsChanged();
-              } catch (error) { say(String(error)); }
-              finally { setCreatingThread(false); }
+              setQuoteMenu(null); window.getSelection()?.removeAllRanges();
+              startDiscussion(thread, rect);
             }}><Icon name="thread" /></button>}
           {quoteMenu.slackUrl && (
             <a
@@ -1022,7 +1027,7 @@ export function AgentPanel({
         </div>
       </footer>
     </section>
-    {discussion && <QuoteDiscussion key={discussion.thread.agentId} thread={discussion.thread} rect={discussion.rect} onClose={closeDiscussion} onChanged={onThreadsChanged} onOpen={() => { onOpenAgent(discussion.thread.agentId); closeDiscussion(); }} siblings={threadData.filter(thread => thread.entryId === discussion.thread.entryId && thread.start < discussion.thread.end && thread.end > discussion.thread.start)} onSwitch={thread => setDiscussion({ ...discussion, thread })} canMerge={can.merge} />}
+    {discussion && <QuoteDiscussion key={discussion.thread.agentId} thread={discussion.thread} ready={discussion.ready} onRetry={() => startDiscussion(discussion.thread, discussion.rect)} rect={discussion.rect} onClose={closeDiscussion} onChanged={onThreadsChanged} onOpen={id => { onOpenAgent(id); closeDiscussion(); }} siblings={threadData.filter(thread => thread.entryId === discussion.thread.entryId && thread.start < discussion.thread.end && thread.end > discussion.thread.start)} onSwitch={thread => setDiscussion({ thread, rect: discussion.rect })} canMerge={can.merge} />}
     </ReviewLinks.Provider>
   );
 }
