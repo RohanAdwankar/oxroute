@@ -75,6 +75,13 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         liveElement.style.visibility = "visible";
         terminal.focus();
       };
+      historyElement.addEventListener("paste", event => {
+        if (!event.clipboardData) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        returnLive();
+        terminal.paste(event.clipboardData.getData("text/plain"));
+      }, true);
       const historyInput = history.onData(data => { returnLive(); pendingInput += data; void flushInput(); });
       const historyScroll = history.onScroll(y => { if (historyReady && y === history.buffer.active.baseY) returnLive(); });
       const openHistory = async () => {

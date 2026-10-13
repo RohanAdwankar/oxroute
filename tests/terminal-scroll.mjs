@@ -53,6 +53,19 @@ try {
   await visibleRows.getByText('new live output').waitFor();
   await page.waitForTimeout(50);
   assert.ok(requests.some(r => r.path.endsWith('/input') && r.body.data.includes('l')), 'Typing returns to the running shell');
+  screen = '\x1b[?2004h';
+  await page.waitForTimeout(150);
+  await pane.locator('.xterm:visible .xterm-screen').hover();
+  await page.mouse.wheel(0, -180);
+  await visibleRows.getByText('earlier command 980', { exact: true }).waitFor();
+  await pane.locator('.xterm:visible .xterm-helper-textarea').evaluate(node => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', 'ls\npwd');
+    node.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await visibleRows.getByText('new live output').waitFor();
+  await page.waitForTimeout(50);
+  assert.ok(requests.some(r => r.body?.data === '\x1b[200~ls\rpwd\x1b[201~'), 'History paste preserves the live terminal bracketed-paste protocol');
   // History scrolling must not replace application mouse input.
   screen = '\x1b[?1000h\x1b[2J\x1b[Hmouse-aware application';
   await visibleRows.getByText('mouse-aware application').waitFor();
@@ -60,7 +73,7 @@ try {
   await page.mouse.click(app.x + 5, app.y + app.height / 2);
   await page.mouse.wheel(0, -180);
   await page.waitForTimeout(100);
-  assert.equal(requests.filter(r => r.path.endsWith('/history')).length, 1);
+  assert.equal(requests.filter(r => r.path.endsWith('/history')).length, 2);
   assert.ok(requests.some(r => r.body?.binary), 'Application mouse reports still reach the terminal');
   alternate = true;
   screen = '\x1b[?1000l\x1b[2J\x1b[Hfull-screen program';
