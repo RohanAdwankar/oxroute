@@ -28,8 +28,8 @@ try {
   });
   await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3942'}/?agent=${terminal.id}`);
   const pane = page.locator('[data-terminal-pane]');
-  await pane.locator('.xterm-rows').getByText('Ready for input.').waitFor();
-  await pane.locator('.xterm-helper-textarea').focus();
+  await pane.locator('.xterm:visible .xterm-rows').getByText('Ready for input.').waitFor();
+  await pane.locator('.xterm:visible .xterm-helper-textarea').focus();
   const expected = Array.from({ length: 40 }, (_, i) => String.fromCharCode(97 + i % 26)).join('');
   await page.keyboard.type(expected, { delay: 10 });
   const released = Date.now();

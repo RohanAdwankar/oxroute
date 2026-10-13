@@ -26,17 +26,26 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       if (!live || !host.current) return;
       const style = getComputedStyle(host.current);
       const terminal = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "monospace", theme: { background: style.backgroundColor, foreground: style.color }, scrollback: 1000 });
+      const history = new Terminal({ fontSize: 13, fontFamily: "monospace", convertEol: true, scrollback: 1000 });
+      const liveElement = document.createElement("div"), historyElement = document.createElement("div");
+      liveElement.className = "h-full";
+      historyElement.className = "absolute inset-1";
+      historyElement.style.visibility = "hidden";
+      host.current.style.position = "relative";
+      host.current.append(liveElement, historyElement);
       const palette = () => {
         const style = getComputedStyle(host.current!);
         terminal.options.theme = { background: style.backgroundColor, foreground: style.color, cursor: style.color, cursorAccent: style.backgroundColor,
           selectionBackground: style.color, selectionInactiveBackground: style.color, selectionForeground: style.backgroundColor };
+        history.options.theme = terminal.options.theme;
       };
       palette();
       const theme = new MutationObserver(palette);
       theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
       const fit = new FitAddon();
       terminal.loadAddon(fit);
-      terminal.open(host.current);
+      terminal.open(liveElement);
+      history.open(historyElement);
       let sending = Promise.resolve();
       const enqueue = (path: string, body: object) => {
         sending = sending.then(async () => { if (live) await terminalApi(path, body, "POST", controller.signal); })
@@ -57,32 +66,55 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
           }
         } finally { writing = false; }
       };
-      // tmux owns history in the alternate screen; xterm's normal buffer does not.
-      let pendingScroll = 0;
-      let scrolling = false;
-      const flushScroll = async () => {
-        if (scrolling) return;
-        scrolling = true;
-        try {
-          while (live && pendingScroll) {
-            const lines = pendingScroll;
-            pendingScroll = 0;
-            await enqueue(`/${id}/scroll`, { controller: token(), lines });
-          }
-        } finally { scrolling = false; }
+      // Read history once, then let xterm scroll locally while the live screen keeps updating.
+      let browsing = false, historyReady = false, loadingHistory = false, pendingScroll = 0, generation = 0;
+      const returnLive = () => {
+        generation++;
+        browsing = historyReady = false;
+        historyElement.style.visibility = "hidden";
+        liveElement.style.visibility = "visible";
+        terminal.focus();
       };
-      const wheel = (event: WheelEvent) => {
-        if (!token() || terminal.buffer.active.type !== "alternate" || terminal.modes.mouseTrackingMode !== "none" || !event.deltaY || event.ctrlKey) return true;
+      const historyInput = history.onData(data => { returnLive(); pendingInput += data; void flushInput(); });
+      const historyScroll = history.onScroll(y => { if (historyReady && y === history.buffer.active.baseY) returnLive(); });
+      const openHistory = async () => {
+        loadingHistory = true;
+        const current = generation;
+        try {
+          const snapshot = await terminalApi<{ text: string; alternate: boolean }>(`/${id}/history`, undefined, "GET", controller.signal);
+          if (!live || current !== generation) return;
+          if (snapshot.alternate) {
+            const key = pendingScroll < 0 ? "A" : "B";
+            void send(`\x1b${terminal.modes.applicationCursorKeysMode ? "O" : "["}${key}`.repeat(Math.abs(pendingScroll)));
+            return;
+          }
+          if (pendingScroll >= 0) return;
+          history.options.scrollback = Math.max(1000, snapshot.text.split("\n").length);
+          history.resize(terminal.cols, terminal.rows);
+          history.reset();
+          await new Promise<void>(resolve => history.write(snapshot.text.trimEnd(), resolve));
+          if (!live || current !== generation) return;
+          history.scrollToBottom();
+          history.scrollLines(pendingScroll);
+          browsing = historyReady = true;
+          liveElement.style.visibility = "hidden";
+          historyElement.style.visibility = "visible";
+          history.focus();
+        } catch (error) { if (live) setError(String(error)); }
+        finally { pendingScroll = 0; loadingHistory = false; }
+      };
+      terminal.attachCustomWheelEventHandler(event => {
+        if (terminal.buffer.active.type !== "alternate" || terminal.modes.mouseTrackingMode !== "none" || !event.deltaY || event.ctrlKey) return true;
         event.preventDefault();
+        if (event.deltaY > 0 && !loadingHistory) return false;
         const unit = event.deltaMode === 2 ? terminal.rows : event.deltaMode === 1 ? 1 : 1 / (terminal.options.fontSize! * 1.2);
         pendingScroll += Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) * unit));
-        void flushScroll();
+        if (!loadingHistory) void openHistory();
         return false;
-      };
-      terminal.attachCustomWheelEventHandler(wheel);
+      });
       let replaying = true;
       let userInput = false;
-      const markInput = () => { userInput = true; setTimeout(() => { userInput = false; }, 0); };
+      const markInput = () => { if (loadingHistory && !browsing) generation++; userInput = true; setTimeout(() => { userInput = false; }, 0); };
       const inputEvents = ["keydown", "keypress", "input", "paste"];
       const element = host.current;
       for (const event of inputEvents) element.addEventListener(event, markInput, true);
@@ -96,8 +128,9 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         // Keep xterm's mouse coordinates unzoomed and scale its font instead.
         const scale = Number(getComputedStyle(element.parentElement!).zoom);
         element.style.zoom = String(1 / scale);
-        terminal.options.fontSize = 13 * scale;
+        terminal.options.fontSize = history.options.fontSize = 13 * scale;
         fit.fit();
+        history.resize(terminal.cols, terminal.rows);
         if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
       });
       observer.observe(host.current);
@@ -123,7 +156,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         } catch (error) { if (live) { setError(String(error)); timer = setTimeout(poll, 200); } }
       };
       void poll();
-      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); input.dispose(); binary.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
+      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); input.dispose(); binary.dispose(); historyInput.dispose(); historyScroll.dispose(); terminal.dispose(); history.dispose(); liveElement.remove(); historyElement.remove(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
     })().catch(error => setError(String(error)));
     return () => { live = false; controller.abort(); dispose(); };
   }, [id, token]);

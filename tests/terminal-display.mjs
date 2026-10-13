@@ -19,8 +19,8 @@ try {
   });
   await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3941'}/?agent=${terminal.id}`);
   const pane = page.locator('[data-terminal-pane]');
-  await pane.locator('.xterm-rows').getByText('Shell history survives theme changes.').waitFor();
-  const foreground = () => pane.locator('.xterm-rows > div').first().evaluate(node => getComputedStyle(node).color);
+  await pane.locator('.xterm:visible .xterm-rows').getByText('Shell history survives theme changes.').waitFor();
+  const foreground = () => pane.locator('.xterm:visible .xterm-rows > div').first().evaluate(node => getComputedStyle(node).color);
   const setTheme = async index => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'settings' });
@@ -29,11 +29,11 @@ try {
     await page.waitForTimeout(100);
   };
   const selectText = async () => {
-    const text = pane.locator('.xterm-rows > div > span').first();
+    const text = pane.locator('.xterm:visible .xterm-rows > div > span').first();
     const cell = await text.boundingBox(), width = cell.width / (await text.textContent()).length;
     await page.mouse.move(cell.x + 0.1, cell.y + cell.height / 2);
     await page.mouse.down(); await page.mouse.move(cell.x + width * 5 + 0.1, cell.y + cell.height / 2); await page.mouse.up();
-    const selection = pane.locator('.xterm-selection div').first();
+    const selection = pane.locator('.xterm:visible .xterm-selection div').first();
     await selection.waitFor();
     const contrast = await selection.evaluate(node => {
       const channels = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => {
@@ -56,9 +56,9 @@ try {
   await setTheme(1);
   await selectText();
   assert.notEqual(await foreground(), light, 'Terminal palette follows the app theme');
-  assert.ok((await pane.locator('.xterm-rows').innerText()).includes('Shell history survives theme changes.'));
+  assert.ok((await pane.locator('.xterm:visible .xterm-rows').innerText()).includes('Shell history survives theme changes.'));
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/terminal-dark.png` });
-  const text = pane.locator('.xterm-rows > div > span').first();
+  const text = pane.locator('.xterm:visible .xterm-rows > div > span').first();
   const originalText = await text.boundingBox();
   const originalHeader = await pane.locator('[data-pane-header]').boundingBox();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -70,12 +70,12 @@ try {
   assert.equal(await pane.evaluate(node => Number(getComputedStyle(node).zoom)), 0.7, 'Terminal uses the shared scale floor');
   assert.ok(Math.abs((await text.boundingBox()).height - originalText.height * 0.7) <= 1, 'Terminal text scales with its pane');
   assert.ok(Math.abs((await pane.locator('[data-pane-header]').boundingBox()).height - originalHeader.height * 0.7) < 0.5, 'Terminal titlebar scales with its pane');
-  const screen = await pane.locator('.xterm-screen').boundingBox(), host = await pane.getByLabel('Interactive terminal').boundingBox();
+  const screen = await pane.locator('.xterm:visible .xterm-screen').boundingBox(), host = await pane.getByLabel('Interactive terminal').boundingBox();
   assert.ok(screen.width <= host.width && screen.height <= host.height, 'Terminal cells still fit the scaled viewport');
   const cell = await text.boundingBox(), cellWidth = cell.width / (await text.textContent()).length;
   await page.mouse.move(cell.x + 0.1, cell.y + cell.height / 2);
   await page.mouse.down(); await page.mouse.move(cell.x + cellWidth * 5 + 0.1, cell.y + cell.height / 2); await page.mouse.up();
-  const copied = await pane.locator('.xterm').evaluate(node => {
+  const copied = await pane.locator('.xterm:visible').evaluate(node => {
     const data = new DataTransfer();
     node.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true }));
     return data.getData('text/plain');

@@ -77,6 +77,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
         .route("/api/terminals/{id}/input", post(input))
         .route("/api/terminals/{id}/resize", post(resize))
         .route("/api/terminals/{id}/scroll", post(scroll))
+        .route("/api/terminals/{id}/history", get(history))
         .route("/api/terminals/{id}/access", post(request_access))
         .route("/api/terminals/{id}/claim", post(claim))
         .route("/api/terminals/{id}/consent", post(consent))
@@ -400,6 +401,19 @@ async fn input(
     };
     state.write(&id, &data, &body.controller, &body.agent_id)?;
     Ok(Json(json!({"ok":true})))
+}
+async fn history(State(state): TermState, Path(id): Path<String>) -> Result<Json<Value>, Failed> {
+    let snapshot = tokio::task::spawn_blocking(move || -> Result<Value> {
+        state.attach(&id)?;
+        let alternate = state
+            .tmux(&id, &["display-message", "-p", "#{alternate_on}"])?
+            .trim()
+            == "1";
+        let text = state.tmux(&id, &["capture-pane", "-p", "-e", "-S", "-"])?;
+        Ok(json!({"text": text, "alternate": alternate}))
+    })
+    .await??;
+    Ok(Json(snapshot))
 }
 #[derive(Deserialize)]
 struct Scroll {
@@ -847,6 +861,17 @@ mod tests {
             .error_for_status()
             .unwrap();
         let tail = wait_output(&client, &target, 0, "history-120").await;
+        let snapshot: Value = client
+            .get(format!("{target}/history"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(snapshot["alternate"], false);
+        assert!(snapshot["text"].as_str().unwrap().contains("history-001"));
+        assert!(snapshot["text"].as_str().unwrap().contains("history-120"));
         client
             .post(format!("{target}/scroll"))
             .json(&json!({"controller": controller, "lines": -1000}))

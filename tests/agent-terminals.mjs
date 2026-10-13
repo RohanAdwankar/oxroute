@@ -49,7 +49,7 @@ try {
   await pane.getByText('Agent workspace ready.', { exact: false }).waitFor();
   await pane.getByText(agent.name + ' can write', { exact: true }).waitFor();
   assert.equal(await pane.getByRole('alertdialog').count(), 0, 'Creator already has access without a consent dialog');
-  await pane.locator('.xterm-helper-textarea').focus();
+  await pane.locator('.xterm:visible .xterm-helper-textarea').focus();
   await page.keyboard.type('user input');
   await page.waitForTimeout(100);
   assert.ok(writes.some(w => w.path.endsWith('/input') && w.body.controller === 'fixture-owner'), 'The human can type in the agent-created pane');
