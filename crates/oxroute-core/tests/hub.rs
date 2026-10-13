@@ -993,6 +993,47 @@ async fn a_busy_parent_accepts_a_merge_without_being_interrupted() {
 }
 
 #[tokio::test]
+async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lifecycle() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "discuss a design")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let entry = w.hub.timeline(&parent.id, 50).unwrap().into_iter().find(|entry| entry.kind == EntryKind::Said).unwrap();
+    let anchor = QuoteAnchor { entry_id: entry.id, start: 0, end: entry.text.encode_utf16().count(), text: entry.text };
+    let child = w.hub.fork_quote(&parent.id, anchor.clone()).await.unwrap();
+    let snapshot = w.hub.snapshot(10).unwrap();
+    assert_eq!(snapshot.quote_threads[0].anchor.text, anchor.text);
+    assert_eq!(snapshot.quote_threads[0].parent_id, parent.id);
+    assert!(!snapshot.pane_links.contains_key(&child.id));
+    let database = std::env::temp_dir().join(format!("{}.sqlite3", new_id("quote-store")));
+    {
+        let store = Store::open(&database).unwrap();
+        store.save_agent(&child).unwrap();
+        store.save_quote_thread(&snapshot.quote_threads[0]).unwrap();
+    }
+    assert_eq!(Store::open(&database).unwrap().quote_threads().unwrap()[0].anchor.text, anchor.text);
+    std::fs::remove_file(database).unwrap();
+    assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent.id);
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+    w.hub.archive(&child.id, true).unwrap();
+    assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
+    w.hub.archive(&child.id, false).unwrap();
+    assert_eq!(w.hub.snapshot(10).unwrap().quote_threads[0].anchor.text, anchor.text);
+    w.hub.say_to(&child.id, "Consider an alternate design").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert!(serde_json::to_string(&w.calls.lock().unwrap().started[1].1).unwrap().contains(&anchor.text));
+    assert!(settle(|| w.hub.store.agent(&child.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    w.hub.merge(&child.id).await.unwrap();
+    assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
+    assert!(w.calls.lock().unwrap().injected.iter().any(|(session, count)| session == &parent.session_id && *count == 1));
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+    let bad = QuoteAnchor { entry_id: i64::MAX, ..anchor };
+    let count = w.calls.lock().unwrap().forked.len();
+    assert!(w.hub.fork_quote(&parent.id, bad).await.is_err());
+    assert_eq!(w.calls.lock().unwrap().forked.len(), count);
+}
+
+#[tokio::test]
 async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();

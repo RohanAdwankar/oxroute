@@ -154,6 +154,7 @@ export interface Snapshot {
   messages: Record<string, string>;
   /** Child pane -> parent pane for forks that stay in the same chat. */
   paneLinks: Record<string, string>;
+  quoteThreads?: QuoteThread[];
   inbox: InboxItem[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];
@@ -269,6 +270,17 @@ export interface AgentView {
   agent: Agent;
   timeline: Entry[];
   delivery: Delivery;
+}
+
+export interface QuoteAnchor {
+  entryId: number;
+  start: number;
+  end: number;
+  text: string;
+}
+export interface QuoteThread extends QuoteAnchor {
+  agentId: string;
+  parentId: string;
 }
 
 export type DaemonEvent =

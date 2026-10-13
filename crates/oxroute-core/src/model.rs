@@ -7,6 +7,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Character offsets use UTF-16, matching the browser's rendered text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuoteAnchor {
+    pub entry_id: i64,
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuoteThread {
+    pub agent_id: String,
+    pub parent_id: String,
+    #[serde(flatten)]
+    pub anchor: QuoteAnchor,
+}
+
 /// Seconds since the epoch. One clock, so the store, the dashboard and the UI
 /// all agree on what "stalled for ten minutes" means.
 pub fn now() -> f64 {

@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
 import { isTyping } from "../lib/keys";
-import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem } from "../lib/types";
+import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem, QuoteAnchor, QuoteThread } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
 import { GitReview } from "./GitReview";
@@ -18,7 +18,8 @@ import { draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
-import { Markdown, ReviewLinks } from "./Markdown";
+import { Markdown, ReviewLinks, QuoteLinks } from "./Markdown";
+import { QuoteDiscussion } from "./QuoteDiscussion";
 import { SplitAction } from "./SplitAction";
 
 /// What the person said needs no label: it is the one that sits on the
@@ -60,7 +61,21 @@ function splitAttached(text: string): { body: string; names: string[] } {
   };
 }
 /// Quote the selection or the clicked message, and react to that message.
-type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number };
+type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null };
+
+function quoteAnchor(row: Element | null, entryId: number | null): QuoteAnchor | null {
+  const content = row?.querySelector(".message-markdown");
+  const selection = window.getSelection();
+  if (!content || entryId === null || !selection?.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!content.contains(range.startContainer) || !content.contains(range.endContainer)) return null;
+  const prefix = range.cloneRange();
+  prefix.selectNodeContents(content); prefix.setEnd(range.startContainer, range.startOffset);
+  const start = prefix.toString().length;
+  const end = start + range.toString().length;
+  const text = content.textContent?.slice(start, end) ?? "";
+  return text.trim() ? { entryId, start, end, text } : null;
+}
 
 function selectedText(node: HTMLElement | null): string {
   const selection = window.getSelection();
@@ -140,11 +155,15 @@ export function AgentPanel({
   onModel,
   initialPreview,
   paneHandle,
+  quoteThreads,
+  onThreadsChanged,
 }: {
   view: AgentView;
   /** The card's latest message while the full history arrives. */
   initialPreview?: string;
   paneHandle?: ReactNode;
+  quoteThreads: QuoteThread[];
+  onThreadsChanged: () => void;
   /// What this agent's harness can do.
   can: BackendInfo;
   onBack: () => void;
@@ -197,6 +216,18 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
+  const [discussion, setDiscussion] = useState<{ thread: QuoteThread; rect: DOMRect } | null>(null);
+  const [creatingThread, setCreatingThread] = useState(false);
+  const threadKey = JSON.stringify(quoteThreads);
+  const threadData = useMemo(() => JSON.parse(threadKey) as QuoteThread[], [threadKey]);
+  const closeDiscussion = useCallback(() => setDiscussion(null), []);
+  const openDiscussion = useCallback((id: string, rect: DOMRect) => {
+    const thread = threadData.find(thread => thread.agentId === id);
+    if (thread) setDiscussion({ thread, rect });
+  }, [threadData]);
+  const quoteLinkValues = useMemo(() => new Map(threadData.map(thread => [thread.entryId, {
+    threads: threadData.filter(other => other.entryId === thread.entryId), open: openDiscussion,
+  }])), [threadData, openDiscussion]);
   const menu = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>("type");
   const [edits, setEdits] = useState<DiagramEdit[]>([]);
@@ -656,11 +687,12 @@ export function AgentPanel({
           if (!text && entry === null) return;
           event.preventDefault();
           setQuoteMenu({
+            anchor: quoteAnchor(row, entry),
             text,
             entry,
             reaction: line?.reaction ?? "",
             slackUrl: line?.slackUrl ?? "",
-            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 146) - 8)),
+            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 190) - 8)),
             y: Math.max(8, Math.min(event.clientY, window.innerHeight - 46)),
           });
         }}
@@ -736,14 +768,14 @@ export function AgentPanel({
                 </button>
               </div>;
               return (
-                <Message
+                <QuoteLinks.Provider key={entry.id} value={quoteLinkValues.get(entry.id) ?? null}><Message
                   key={entry.id}
                   entry={entry}
                   focused={entry.id === focusEntry}
                   asked={asked}
                   onJump={jumpTo}
                   onOpenAgent={onOpenAgent}
-                />
+                /></QuoteLinks.Provider>
               );
             })
           )}
@@ -784,6 +816,20 @@ export function AgentPanel({
               <Icon name="quote" />
             </button>
           )}
+          {quoteMenu.anchor && <button type="button" aria-label="quote into thread" title="Quote into thread"
+            disabled={busy || creatingThread || !can.fork} className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash disabled:opacity-30"
+            onClick={async () => {
+              const anchor = quoteMenu.anchor!;
+              const rect = new DOMRect(quoteMenu.x, quoteMenu.y, 0, 0);
+              setCreatingThread(true);
+              try {
+                const result = await api.quoteThread(agent.id, anchor);
+                setQuoteMenu(null); window.getSelection()?.removeAllRanges();
+                setDiscussion({ thread: { ...anchor, agentId: result.agent.id, parentId: agent.id }, rect });
+                onThreadsChanged();
+              } catch (error) { say(String(error)); }
+              finally { setCreatingThread(false); }
+            }}><Icon name="thread" /></button>}
           {quoteMenu.slackUrl && (
             <a
               href={quoteMenu.slackUrl}
@@ -976,6 +1022,7 @@ export function AgentPanel({
         </div>
       </footer>
     </section>
+    {discussion && <QuoteDiscussion key={discussion.thread.agentId} thread={discussion.thread} rect={discussion.rect} onClose={closeDiscussion} onChanged={onThreadsChanged} onOpen={() => { onOpenAgent(discussion.thread.agentId); closeDiscussion(); }} siblings={threadData.filter(thread => thread.entryId === discussion.thread.entryId && thread.start < discussion.thread.end && thread.end > discussion.thread.start)} onSwitch={thread => setDiscussion({ ...discussion, thread })} canMerge={can.merge} />}
     </ReviewLinks.Provider>
   );
 }

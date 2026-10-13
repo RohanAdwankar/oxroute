@@ -656,11 +656,20 @@ async fn fork(
     Ok(Json(json!({ "agent": forked })))
 }
 
+#[derive(Deserialize)]
+struct ForkInChatBody {
+    agent: String,
+    quote: Option<oxroute_core::model::QuoteAnchor>,
+}
+
 async fn fork_in_chat(
     State(hub): Hubs,
-    Json(body): Json<AgentBody>,
+    Json(body): Json<ForkInChatBody>,
 ) -> Result<Json<serde_json::Value>, Failed> {
-    let forked = hub.fork_in_chat(&body.agent).await?;
+    let forked = match body.quote {
+        Some(quote) => hub.fork_quote(&body.agent, quote).await?,
+        None => hub.fork_in_chat(&body.agent).await?,
+    };
     Ok(Json(json!({ "agent": forked })))
 }
 

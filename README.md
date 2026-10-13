@@ -26,6 +26,7 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Drawing** | Mark up a screenshot and hand that to the agent, or file it as work |
 | **Search** | Find the session by a line someone said in it, across oxroute's sessions and the harnesses' own |
 | **Forks** | Branch a session into this card or one beside it, and merge it back when it is done |
+| **Quoted threads** | Select text to open a linked discussion; click its underline to return, then merge or archive it |
 | **Harnesses** | Claude Code and Codex, behind one interface |
 | **Surfaces** | A web UI, a terminal UI and Slack, all on the same sessions |
 | **Settings** | Light or dark, minimum pane scale, how much of each tool call you see, whether blocked work is drawn, keyboard hints |

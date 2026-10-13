@@ -1080,6 +1080,8 @@ export default function Home() {
                     <AgentPanel
                       paneHandle={paneHandle}
                       view={view}
+                      quoteThreads={(snapshot.quoteThreads ?? []).filter(thread => thread.parentId === id)}
+                      onThreadsChanged={reload}
                       initialPreview={details[id] ? undefined : snapshot.messages[id] ?? ""}
                       can={
                         snapshot.backends.find((b) => b.backend === view.agent.backend) ?? {

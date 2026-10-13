@@ -1001,7 +1001,7 @@ impl Hub {
         // on the timeline, because the timeline already shows the reaction
         // beside the line it belongs to, and you did not type this.
         let preface = reaction_preface(&self.store.pending_reactions(&agent.id)?);
-        let spoken = format!("{preface}{text}");
+        let spoken = self.with_quote_context(&agent.id, &format!("{preface}{text}"))?;
         let mut inputs = Vec::with_capacity(images.len() + 1);
         if !spoken.trim().is_empty() {
             inputs.push(TurnInput::text(&spoken));
@@ -1310,15 +1310,29 @@ impl Hub {
     /// lives, if it lives anywhere; a machine with no source configured
     /// forks just the same, into a pane.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_with_layout(agent_id, false).await
+        self.fork_with_layout(agent_id, false, None).await
     }
 
     /// A fork that remains in the parent's chat panes, without a source thread.
     pub async fn fork_in_chat(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_with_layout(agent_id, true).await
+        self.fork_with_layout(agent_id, true, None).await
     }
 
-    async fn fork_with_layout(self: &Arc<Self>, agent_id: &str, in_chat: bool) -> Result<Agent> {
+    fn with_quote_context(&self, agent_id: &str, text: &str) -> Result<String> {
+        Ok(match self.store.quote_thread(agent_id)? {
+            Some(thread) => format!("Quoted passage from the parent conversation:\n{}\n\n{text}", thread.anchor.text.lines().map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n")),
+            None => text.to_string(),
+        })
+    }
+
+    pub async fn fork_quote(self: &Arc<Self>, agent_id: &str, quote: QuoteAnchor) -> Result<Agent> {
+        anyhow::ensure!(quote.start < quote.end && quote.end - quote.start == quote.text.encode_utf16().count(), "invalid quote range");
+        anyhow::ensure!(!quote.text.trim().is_empty(), "select text for the thread");
+        anyhow::ensure!(self.store.timeline(agent_id, usize::MAX)?.iter().any(|entry| entry.id == quote.entry_id), "quote entry does not belong to this session");
+        self.fork_with_layout(agent_id, true, Some(quote)).await
+    }
+
+    async fn fork_with_layout(self: &Arc<Self>, agent_id: &str, in_chat: bool, quote: Option<QuoteAnchor>) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1370,6 +1384,9 @@ impl Hub {
         if in_chat {
             self.store.link_pane(&forked.id, agent_id)?;
         }
+        if let Some(anchor) = quote {
+            self.store.save_quote_thread(&QuoteThread { agent_id: forked.id.clone(), parent_id: agent_id.to_string(), anchor })?;
+        }
         // A branch of the work sits where the work sits, until someone says not.
         self.store.set_tags(&forked.id, &self.store.tags(agent_id)?)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
@@ -1411,7 +1428,7 @@ impl Hub {
                 EntryKind::Received | EntryKind::You => pending = Some(entry.text.clone()),
                 EntryKind::Said => {
                     if let Some(question) = pending.take() {
-                        exchanges.push((question, entry.text.clone()));
+                        exchanges.push((self.with_quote_context(agent_id, &question)?, entry.text.clone()));
                     }
                 }
                 _ => {}
@@ -2619,13 +2636,17 @@ impl Hub {
                 .ok()
                 .flatten();
         }
+        let quote_threads = self.store.quote_threads()?;
+        let mut pane_links = self.store.pane_links()?;
+        for thread in &quote_threads { pane_links.remove(&thread.agent_id); }
         Ok(Snapshot {
             mode: self.mode().as_str().to_string(),
             default_model: self.config.default_model.clone(),
             agents,
             archived,
             messages: self.store.message_previews()?,
-            pane_links: self.store.pane_links()?,
+            pane_links,
+            quote_threads,
             inbox,
             tasks: self.store.tasks()?,
             task_notes: self.store.task_notes()?,
@@ -3383,6 +3404,7 @@ pub struct Snapshot {
     pub messages: HashMap<String, String>,
     #[serde(default)]
     pub pane_links: HashMap<String, String>,
+    pub quote_threads: Vec<QuoteThread>,
     pub inbox: Vec<InboxItem>,
     pub tasks: Vec<TaskItem>,
     /// Why each task is where it is, oldest first.

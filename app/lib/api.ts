@@ -82,6 +82,7 @@ export const api = {
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
   fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),
   forkInChat: (agent: string) => post<{ agent: Agent }>("/api/fork-in-chat", { agent }),
+  quoteThread: (agent: string, quote: import("./types").QuoteAnchor) => post<{ agent: Agent }>("/api/fork-in-chat", { agent, quote }),
   merge: (agent: string) => post<{ agent: Agent }>("/api/merge", { agent }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
   archive: (agent: string, archived: boolean) =>

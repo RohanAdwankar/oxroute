@@ -5,11 +5,38 @@ import rehypeHighlight from "rehype-highlight";
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import type { QuoteThread } from "../lib/types";
 
 export const ReviewLinks = createContext<{ titles: Map<string, string>; open: (id: string) => void } | null>(null);
 export const TaskLinks = createContext<{ titles: Map<string, string>; open: (id: string) => void } | null>(null);
+export const QuoteLinks = createContext<{ threads: QuoteThread[]; open: (id: string, rect: DOMRect) => void } | null>(null);
 
-type Node = { type: string; value?: string; url?: string; children?: Node[] };
+type Node = { type: string; value?: string; url?: string; tagName?: string; properties?: Record<string, string>; children?: Node[] };
+function quoteLinks(threads: QuoteThread[]) {
+  return () => (tree: Node) => {
+    const text = (node: Node): string => node.type === "text" ? node.value ?? "" : (node.children ?? []).map(text).join("");
+    const source = text(tree);
+    const valid = threads.filter(thread => source.slice(thread.start, thread.end) === thread.text);
+    if (!valid.length) return;
+    let offset = 0;
+    const visit = (node: Node) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap(child => {
+        if (child.type !== "text") { visit(child); return [child]; }
+        const value = child.value ?? "", start = offset;
+        offset += value.length;
+        const boundaries = [...new Set([start, offset, ...valid.flatMap(thread => [thread.start, thread.end]).filter(at => at > start && at < offset)])].sort((a, b) => a - b);
+        return boundaries.slice(0, -1).map((at, i) => {
+          const next = boundaries[i + 1];
+          const content = { type: "text", value: value.slice(at - start, next - start) };
+          const thread = valid.findLast(thread => thread.start <= at && thread.end >= next);
+          return thread ? { type: "element", tagName: "span", properties: { "data-quote-thread": thread.agentId }, children: [content] } : content;
+        });
+      });
+    };
+    visit(tree);
+  };
+}
 function referenceLinks(titles: Map<string, string>) {
   const link = (id: string) => ({ type: "link", url: `#${id.startsWith("task_") ? "task" : "review"}/${id}`, children: [{ type: "text", value: titles.get(id) }] });
   return () => (tree: Node) => {
@@ -36,6 +63,7 @@ function referenceLinks(titles: Map<string, string>) {
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
   const reviews = useContext(ReviewLinks);
   const tasks = useContext(TaskLinks);
+  const quotes = useContext(QuoteLinks);
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
@@ -45,8 +73,17 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
         remarkPlugins={[[remarkGfm, { singleTilde: false }], ...((reviews || tasks) ? [referenceLinks(new Map([...(reviews?.titles ?? []), ...(tasks?.titles ?? [])]))] : [])]}
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : [])]}
         components={{
+          span: ({ node, children, ...props }) => {
+            const id = node?.properties?.["data-quote-thread"];
+            if (typeof id !== "string" || !quotes) return <span {...props}>{children}</span>;
+            const open = (element: HTMLElement) => quotes.open(id, element.getBoundingClientRect());
+            return <span {...props} data-quote-thread={id} role="button" tabIndex={0} aria-label="Open quoted thread"
+              className="cursor-pointer underline decoration-mid decoration-1 underline-offset-4 hover:decoration-ink"
+              onClick={event => { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); }}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); } }}>{children}</span>;
+          },
           // A fence is something you take: wrap it in the thing that lets
           // you, rather than leaving the reader to select it by hand.
           pre: ({ children, ...props }) => (

@@ -15,7 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
-    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskNote, TaskStatus,
+    SearchDestination, SearchGroup, Signal, Target, TaskItem, TaskNote, TaskStatus, QuoteThread,
 };
 use crate::tags::Board;
 
@@ -50,6 +50,11 @@ CREATE INDEX IF NOT EXISTS bindings_agent ON bindings (agent_id);
 CREATE TABLE IF NOT EXISTS pane_links (
     child_id TEXT PRIMARY KEY,
     parent_id TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS quote_threads (
+    child_id TEXT PRIMARY KEY,
+    thread TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS signals (
@@ -855,6 +860,28 @@ impl Store {
         self.with(|c| {
             c.execute("INSERT INTO pane_links (child_id, parent_id) VALUES (?1, ?2)", params![child_id, parent_id])?;
             Ok(())
+        })
+    }
+
+    pub fn save_quote_thread(&self, thread: &QuoteThread) -> Result<()> {
+        self.with(|c| {
+            c.execute("INSERT INTO quote_threads (child_id, thread) VALUES (?1, ?2)", params![thread.agent_id, serde_json::to_string(thread)?])?;
+            Ok(())
+        })
+    }
+
+    pub fn quote_thread(&self, agent_id: &str) -> Result<Option<QuoteThread>> {
+        self.with(|c| {
+            let json: Option<String> = c.query_row("SELECT thread FROM quote_threads WHERE child_id = ?1", [agent_id], |row| row.get(0)).optional()?;
+            json.map(|json| Ok(serde_json::from_str(&json)?)).transpose()
+        })
+    }
+
+    pub fn quote_threads(&self) -> Result<Vec<QuoteThread>> {
+        self.with(|c| {
+            let mut statement = c.prepare("SELECT q.thread FROM quote_threads q JOIN agents a ON a.id = q.child_id WHERE a.archived = 0")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
         })
     }
 
