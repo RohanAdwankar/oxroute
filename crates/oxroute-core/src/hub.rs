@@ -764,7 +764,7 @@ impl Hub {
         }
     }
 
-    fn record_fork(&self, parent: &str, child: &str) {
+    fn record_fork(&self, parent: &str, child: &str, quoted: bool) {
         self.record(
             child,
             EntryKind::ForkedFrom,
@@ -772,7 +772,7 @@ impl Hub {
             parent,
             "",
         );
-        self.record(parent, EntryKind::Forked, "Session forked", child, "");
+        if !quoted { self.record(parent, EntryKind::Forked, "Session forked", child, ""); }
     }
 
     // -- signals ---------------------------------------------------------
@@ -1384,13 +1384,14 @@ impl Hub {
         if in_chat {
             self.store.link_pane(&forked.id, agent_id)?;
         }
+        let quoted = quote.is_some();
         if let Some(anchor) = quote {
             self.store.save_quote_thread(&QuoteThread { agent_id: forked.id.clone(), parent_id: agent_id.to_string(), anchor })?;
         }
         // A branch of the work sits where the work sits, until someone says not.
         self.store.set_tags(&forked.id, &self.store.tags(agent_id)?)?;
         self.sessions.lock().await.insert(session, forked.id.clone());
-        self.record_fork(agent_id, &forked.id);
+        self.record_fork(agent_id, &forked.id, quoted);
         self.emit(Event::Sync);
         Ok(forked)
     }
@@ -3098,7 +3099,13 @@ impl Hub {
     }
 
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
-        self.store.timeline(agent_id, limit)
+        let mut visible = Vec::new();
+        for entry in self.store.timeline(agent_id, limit)? {
+            // Older quoted discussions recorded the ordinary fork notice.
+            if entry.kind == EntryKind::Forked && self.store.quote_thread(&entry.detail)?.is_some() { continue; }
+            visible.push(entry);
+        }
+        Ok(visible)
     }
 
     /// The sessions oxroute keeps, ranked by how well they answer the words

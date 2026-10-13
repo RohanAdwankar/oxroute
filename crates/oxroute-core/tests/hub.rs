@@ -1001,6 +1001,11 @@ async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lif
     let entry = w.hub.timeline(&parent.id, 50).unwrap().into_iter().find(|entry| entry.kind == EntryKind::Said).unwrap();
     let anchor = QuoteAnchor { entry_id: entry.id, start: 0, end: entry.text.encode_utf16().count(), text: entry.text };
     let child = w.hub.fork_quote(&parent.id, anchor.clone()).await.unwrap();
+    assert!(!w.hub.store.timeline(&parent.id, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::Forked && entry.detail == child.id));
+    // Existing persisted notices also disappear, while ancestry stays available.
+    w.hub.store.add_entry(&parent.id, now(), EntryKind::Forked, "Session forked", &child.id, "").unwrap();
+    assert!(!w.hub.timeline(&parent.id, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::Forked && entry.detail == child.id));
+    assert_eq!(w.hub.store.fork_parent(&child.id).unwrap().as_deref(), Some(parent.id.as_str()));
     let snapshot = w.hub.snapshot(10).unwrap();
     assert_eq!(snapshot.quote_threads[0].anchor.text, anchor.text);
     assert_eq!(snapshot.quote_threads[0].parent_id, parent.id);
@@ -1016,6 +1021,7 @@ async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lif
     assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent.id);
     assert!(w.posts.lock().unwrap().threads.is_empty());
     w.hub.archive(&child.id, true).unwrap();
+    assert!(!w.hub.timeline(&parent.id, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::Forked && entry.detail == child.id));
     assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
     w.hub.archive(&child.id, false).unwrap();
     assert_eq!(w.hub.snapshot(10).unwrap().quote_threads[0].anchor.text, anchor.text);
