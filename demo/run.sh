@@ -30,6 +30,6 @@ ffmpeg="$(uv run --with imageio-ffmpeg python -c 'import imageio_ffmpeg; print(i
   -filter_complex '[0:v]fps=30,setsar=1[a];[1:v]scale=1440:900:flags=lanczos,fps=30,setsar=1[b];[b][a]concat=n=2:v=1:a=0[v]' \
   -map '[v]' -c:v libx264 -crf 23 -preset medium -pix_fmt yuv420p -movflags +faststart demo/demo.mp4
 "$ffmpeg" -hide_banner -loglevel error -y -i demo/demo.mp4 \
-  -vf 'fps=6,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3' \
+  -vf 'fps=15,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none' \
   -loop 0 demo/demo.gif
 echo "Wrote demo/demo.mp4, demo/demo.gif and $out/*.png"
