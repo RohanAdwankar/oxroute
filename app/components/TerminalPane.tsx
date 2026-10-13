@@ -37,7 +37,13 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       const fit = new FitAddon();
       terminal.loadAddon(fit);
       terminal.open(host.current);
-      const send = (data: string) => token() && terminalApi(`/${id}/input`, { controller: token(), data }, "POST", controller.signal).catch(error => { if (live) setError(String(error)); });
+      let sending = Promise.resolve();
+      const enqueue = (path: string, body: object) => {
+        sending = sending.then(async () => { if (live) await terminalApi(path, body, "POST", controller.signal); })
+          .catch(error => { if (live) setError(String(error)); });
+        return sending;
+      };
+      const send = (data: string) => token() && enqueue(`/${id}/input`, { controller: token(), data });
       let pendingInput = "";
       let writing = false;
       const flushInput = async () => {
@@ -51,6 +57,29 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
           }
         } finally { writing = false; }
       };
+      // tmux owns history in the alternate screen; xterm's normal buffer does not.
+      let pendingScroll = 0;
+      let scrolling = false;
+      const flushScroll = async () => {
+        if (scrolling) return;
+        scrolling = true;
+        try {
+          while (live && pendingScroll) {
+            const lines = pendingScroll;
+            pendingScroll = 0;
+            await enqueue(`/${id}/scroll`, { controller: token(), lines });
+          }
+        } finally { scrolling = false; }
+      };
+      const wheel = (event: WheelEvent) => {
+        if (!token() || terminal.buffer.active.type !== "alternate" || terminal.modes.mouseTrackingMode !== "none" || !event.deltaY || event.ctrlKey) return true;
+        event.preventDefault();
+        const unit = event.deltaMode === 2 ? terminal.rows : event.deltaMode === 1 ? 1 : 1 / (terminal.options.fontSize! * 1.2);
+        pendingScroll += Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) * unit));
+        void flushScroll();
+        return false;
+      };
+      terminal.attachCustomWheelEventHandler(wheel);
       let replaying = true;
       let userInput = false;
       const markInput = () => { userInput = true; setTimeout(() => { userInput = false; }, 0); };
@@ -58,6 +87,11 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       const element = host.current;
       for (const event of inputEvents) element.addEventListener(event, markInput, true);
       const input = terminal.onData(data => { if (!replaying || userInput) { pendingInput += data; void flushInput(); } });
+      const binary = terminal.onBinary(data => {
+        if (replaying && !userInput) return;
+        if (pendingInput) { const text = pendingInput; pendingInput = ""; void send(text); }
+        if (token()) void enqueue(`/${id}/input`, { controller: token(), data, binary: true });
+      });
       const observer = new ResizeObserver(() => {
         // Keep xterm's mouse coordinates unzoomed and scale its font instead.
         const scale = Number(getComputedStyle(element.parentElement!).zoom);
@@ -89,7 +123,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         } catch (error) { if (live) { setError(String(error)); timer = setTimeout(poll, 200); } }
       };
       void poll();
-      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); input.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
+      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); input.dispose(); binary.dispose(); terminal.dispose(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
     })().catch(error => setError(String(error)));
     return () => { live = false; controller.abort(); dispose(); };
   }, [id, token]);

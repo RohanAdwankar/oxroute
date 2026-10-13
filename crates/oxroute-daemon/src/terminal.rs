@@ -46,6 +46,7 @@ struct Live {
     writer: Box<dyn Write + Send>,
     output: Arc<Mutex<Output>>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
+    scrolling: bool,
 }
 struct Terminals {
     hub: Arc<Hub>,
@@ -75,6 +76,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
         .route("/api/terminals/{id}", get(output).delete(end))
         .route("/api/terminals/{id}/input", post(input))
         .route("/api/terminals/{id}/resize", post(resize))
+        .route("/api/terminals/{id}/scroll", post(scroll))
         .route("/api/terminals/{id}/access", post(request_access))
         .route("/api/terminals/{id}/claim", post(claim))
         .route("/api/terminals/{id}/consent", post(consent))
@@ -186,9 +188,25 @@ impl Terminals {
                 writer,
                 output,
                 _child: child,
+                scrolling: self
+                    .tmux(id, &["display-message", "-p", "#{@oxroute-scrolling}"])?
+                    .trim()
+                    == "1",
             },
         );
         Ok(())
+    }
+    fn tmux(&self, id: &str, args: &[&str]) -> Result<String> {
+        let output = std::process::Command::new("tmux")
+            .args(["-L", &self.socket, args[0], "-t", id])
+            .args(&args[1..])
+            .output()?;
+        anyhow::ensure!(
+            output.status.success(),
+            "tmux: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
     fn control(&self, id: &str, token: &str) -> Result<Record> {
         let record = self.record(id)?;
@@ -198,7 +216,7 @@ impl Terminals {
         );
         Ok(record)
     }
-    fn write(&self, id: &str, data: &str, controller: &str, agent: &str) -> Result<()> {
+    fn write(&self, id: &str, data: &[u8], controller: &str, agent: &str) -> Result<()> {
         let record = self.record(id)?;
         if controller.is_empty() {
             anyhow::ensure!(
@@ -216,7 +234,18 @@ impl Terminals {
         self.attach(id)?;
         let mut live = self.live.lock().unwrap();
         let terminal = live.get_mut(id).context("Terminal disconnected")?;
-        terminal.writer.write_all(data.as_bytes())?;
+        if terminal.scrolling {
+            if self
+                .tmux(id, &["display-message", "-p", "#{pane_in_mode}"])?
+                .trim()
+                == "1"
+            {
+                self.tmux(id, &["send-keys", "-X", "cancel"])?;
+            }
+            self.tmux(id, &["set-option", "@oxroute-scrolling", "0"])?;
+            terminal.scrolling = false;
+        }
+        terminal.writer.write_all(data)?;
         terminal.writer.flush()?;
         Ok(())
     }
@@ -348,6 +377,8 @@ fn output_snapshot(state: &Terminals, id: &str, after: u64) -> Result<Value> {
 #[serde(rename_all = "camelCase")]
 struct Input {
     #[serde(default)]
+    binary: bool,
+    #[serde(default)]
     data: String,
     #[serde(default)]
     controller: String,
@@ -359,7 +390,73 @@ async fn input(
     Path(id): Path<String>,
     Json(body): Json<Input>,
 ) -> Result<Json<Value>, Failed> {
-    state.write(&id, &body.data, &body.controller, &body.agent_id)?;
+    let data = if body.binary {
+        body.data
+            .chars()
+            .map(|c| u8::try_from(u32::from(c)))
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        body.data.into_bytes()
+    };
+    state.write(&id, &data, &body.controller, &body.agent_id)?;
+    Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+struct Scroll {
+    controller: String,
+    lines: i32,
+}
+async fn scroll(
+    State(state): TermState,
+    Path(id): Path<String>,
+    Json(body): Json<Scroll>,
+) -> Result<Json<Value>, Failed> {
+    state.control(&id, &body.controller)?;
+    if body.lines == 0 {
+        return Ok(Json(json!({"ok":true})));
+    }
+    state.attach(&id)?;
+    let mut live = state.live.lock().unwrap();
+    let terminal = live.get_mut(&id).context("Terminal disconnected")?;
+    // Preserve wheel-key input in full-screen applications that own the inner screen.
+    if !terminal.scrolling
+        && state
+            .tmux(&id, &["display-message", "-p", "#{alternate_on}"])?
+            .trim()
+            == "1"
+    {
+        state.tmux(
+            &id,
+            &["send-keys", if body.lines < 0 { "Up" } else { "Down" }],
+        )?;
+        return Ok(Json(json!({"ok":true})));
+    }
+    let in_mode = state
+        .tmux(&id, &["display-message", "-p", "#{pane_in_mode}"])?
+        .trim()
+        == "1";
+    if body.lines < 0 && !in_mode {
+        state.tmux(&id, &["copy-mode", "-e"])?;
+        state.tmux(&id, &["set-option", "@oxroute-scrolling", "1"])?;
+        terminal.scrolling = true;
+    } else if !in_mode {
+        return Ok(Json(json!({"ok":true})));
+    }
+    let count = body.lines.unsigned_abs().min(1000).to_string();
+    state.tmux(
+        &id,
+        &[
+            "send-keys",
+            "-X",
+            "-N",
+            &count,
+            if body.lines < 0 {
+                "scroll-up"
+            } else {
+                "scroll-down"
+            },
+        ],
+    )?;
     Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
@@ -510,6 +607,37 @@ mod tests {
         model::{AgentStatus, Backend},
         Agent, Config, Store,
     };
+    async fn wait_output(
+        client: &reqwest::Client,
+        target: &str,
+        mut after: u64,
+        expected: &str,
+    ) -> u64 {
+        let mut text = String::new();
+        for _ in 0..100 {
+            let snapshot: Value = client
+                .get(format!("{target}?after={after}"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let bytes: Vec<u8> = snapshot["bytes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_u64().unwrap() as u8)
+                .collect();
+            text.push_str(&String::from_utf8_lossy(&bytes));
+            after = snapshot["end"].as_u64().unwrap();
+            if text.contains(expected) {
+                return after;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("Expected {expected:?} in terminal output: {text:?}");
+    }
     struct TerminalHarness(tokio::sync::mpsc::UnboundedSender<Vec<oxroute_core::model::TurnInput>>);
     #[async_trait::async_trait]
     impl oxroute_core::agent::Harness for TerminalHarness {
@@ -710,6 +838,34 @@ mod tests {
             seen,
             "Real PTY output or resized terminal dimensions missing: {captured:?}"
         );
+        client
+            .post(format!("{target}/input"))
+            .json(&json!({"controller": controller, "data": "seq -f 'history-%03g' 1 120\r"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let tail = wait_output(&client, &target, 0, "history-120").await;
+        client
+            .post(format!("{target}/scroll"))
+            .json(&json!({"controller": controller, "lines": -1000}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let tail = wait_output(&client, &target, tail, "history-001").await;
+        // Typing from history reaches the running shell, rather than copy-mode keys.
+        client
+            .post(format!("{target}/input"))
+            .json(&json!({"controller": controller, "data": "printf 'back-to-shell\\n'\r"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        wait_output(&client, &target, tail, "back-to-shell\r\n").await;
         let listing = client.get(&url).send().await.unwrap().text().await.unwrap();
         assert!(
             !listing.contains(controller),
