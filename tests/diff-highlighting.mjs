@@ -3,15 +3,17 @@ import { chromium } from 'playwright';
 
 const agent = { id: 'syntax-test', name: 'Syntax test', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const cases = [
-  { path: 'inserted.ts', before: 'const total = 11;\nconst label = "quiet";', after: 'const enabled = true;\nconst total = 12;\nconst label = "loud";', changes: ['12', 'loud'], segments: ['const enabled = true;', '12', 'loud'], removedSegments: ['11', 'quiet'] },
-  { path: 'deleted.ts', before: 'const enabled = true;\nconst total = 11;', after: 'const total = 12;', changes: ['12'], segments: ['12'], removedSegments: ['const enabled = true;', '11'] },
+  { path: 'replacement.txt', before: 'fetch distant records', after: 'display local summary', changes: [], segments: [], removedSegments: [] },
+  { path: 'new-file.ts', before: '', after: 'const ready = true;', changes: [], segments: [], removedSegments: [] },
+  { path: 'inserted.ts', before: 'const total = 11;\nconst label = "quiet";', after: 'const enabled = true;\nconst total = 12;\nconst label = "loud";', changes: ['12', 'loud'], segments: ['12', 'loud'], removedSegments: ['11', 'quiet'] },
+  { path: 'deleted.ts', before: 'const enabled = true;\nconst total = 11;', after: 'const total = 12;', changes: ['12'], segments: ['12'], removedSegments: ['11'] },
   { path: 'phrase.ts', before: 'const message = "amber silver bronze";', after: 'const message = "violet teal gold";', changes: ['violet teal gold'], segments: ['violet teal gold'], removedSegments: ['amber silver bronze'] },
   { path: 'anchors.ts', before: 'const message = "old\tleft anchor old\tright";', after: 'const message = "new\ttop anchor new\tbottom";', changes: ['new\ttop', 'new\tbottom'], segments: ['new\ttop', 'new\tbottom'], removedSegments: ['old\tleft', 'old\tright'] },
   { path: 'settings.ts', before: 'const label = "before"; const limit = 20;', after: 'const label = "after"; const limit = 40;', changes: ['after', '40'] },
   { path: 'worker.py', before: 'return load("旧")', after: 'return load("新")', changes: ['新'] },
   { path: 'options.json', before: '{"enabled": false, "limit": 20}', after: '{"enabled": true, "limit": 20}', changes: ['true'] },
   { path: 'notes.txt', before: '<b>read & keep</b>', after: '<b>read & save</b>', changes: ['save'] },
-  { path: 'block.js', before: '/* opening\nold comment\n*/\nconst count = 20;', after: '/* opening\nnew comment\n*/\nconst extra = true;\nconst count = 40;', changes: ['new', 'extra', '40'] },
+  { path: 'block.js', before: '/* opening\nold comment\n*/\nconst count = 20;', after: '/* opening\nnew comment\n*/\nconst extra = true;\nconst count = 40;', changes: ['new', '40'], segments: ['new', '40'], removedSegments: ['old', '20'] },
 ];
 const files = cases.map(item => ({ path: item.path, patch: '@@ -1 +1 @@\n' + item.before.split('\n').map(line => '-' + line).join('\n') + '\n' + item.after.split('\n').map(line => '+' + line).join('\n') }));
 const review = { id: 'syntax-review', title: 'Syntax and changed words', description: '', status: 'pending', snapshot: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: '', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
@@ -40,6 +42,7 @@ try {
       const removed = rows.filter({ hasText: /^\s*\d*\s*-/ });
       assert.deepEqual(await highlightedRuns(removed), item.removedSegments);
     }
+    if (item.path === 'new-file.ts') assert.notEqual(await added.last().evaluate(row => getComputedStyle(row).backgroundColor), 'rgba(0, 0, 0, 0)', 'Entire added lines retain the lighter background');
     for (const changed of item.changes) assert.ok(changes.includes(changed), changed + ' is emphasized');
     assert.ok(changes.length < item.after.length, 'Common portions are not strongly highlighted');
   }

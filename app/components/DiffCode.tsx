@@ -29,8 +29,7 @@ function tokens(source: string, path: string): Token[][] {
 }
 
 export function diffCode(rows: Line[], path: string) {
-  const spans: [number, number][][] = rows.map(row =>
-    (row.old === null) !== (row.next === null) ? [[0, row.text.length - 1]] : []);
+  const spans: [number, number][][] = rows.map(() => []);
   const source = rows.map(row => row.text.slice(1).trim());
   const match = newMatcherFn((a: number, b: number) =>
     distance(source[a], source[b]) / Math.max(1, source[a].length + source[b].length));
@@ -45,7 +44,10 @@ export function diffCode(rows: Line[], path: string) {
       for (let at = 0; at < Math.min(before.length, after.length); at++) {
         const offsets = [0, 0], pair = [before[at], after[at]];
         for (const index of pair) spans[index] = [];
-        for (const part of diffWordsWithSpace(rows[pair[0]].text.slice(1), rows[pair[1]].text.slice(1))) {
+        const parts = diffWordsWithSpace(rows[pair[0]].text.slice(1), rows[pair[1]].text.slice(1));
+        const shared = parts.filter(part => !part.added && !part.removed).reduce((length, part) => length + (part.value.trim() ? part.value.length : 0), 0);
+        if (shared < Math.max(...pair.map(index => source[index].length)) / 2) continue;
+        for (const part of parts) {
           for (const side of [0, 1]) {
             if ((side === 0 && part.added) || (side === 1 && part.removed)) continue;
             if (part.added || part.removed) spans[pair[side]].push([offsets[side], offsets[side] + part.value.length]);
