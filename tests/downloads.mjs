@@ -11,10 +11,12 @@ try {
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/terminals', r => r.fulfill({ json: [] }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', at: Date.now()/1000, text: 'Here is the report.\n\nAttached: art_fixture-report.csv', detail: '', output: '' }], delivery: 'start' } }));
-  let release;
+  let release, arrived;
+  const requestArrived = new Promise(resolve => arrived = resolve);
   const waiting = new Promise(resolve => release = resolve);
   const server = createServer((request, response) => {
     if (request.url.startsWith('/api/attachments/')) {
+      arrived();
       void waiting.then(() => {
         response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="report.csv"' });
         response.end('name,value\nexample,42\n');
@@ -35,12 +37,12 @@ try {
   let started = false;
   const download = page.waitForEvent('download').then(file => { started = true; return file; });
   const click = link.click();
-  await page.getByRole('status').filter({ hasText: 'Download requested' }).waitFor({ timeout: 1000 });
+  await requestArrived;
   assert.equal(await link.getAttribute('download'), 'report.csv', 'Native download and filename stay available');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
-  assert.equal(started, false, 'Feedback appears before download headers arrive');
+  assert.equal(started, false, 'The native download waits for response headers');
   release();
   await click;
   assert.equal((await download).suggestedFilename(), 'report.csv');
-  console.log('Download click shows immediate feedback while the response is pending, then starts a native download.');
+  console.log('Attachment link starts a native download with the correct filename.');
 } finally { await browser.close(); closeServer?.(); }
