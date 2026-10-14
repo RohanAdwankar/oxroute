@@ -1186,6 +1186,7 @@ const Message = memo(function Message({
 /// Preview media inline; offer other artifacts as downloads.
 function Attached({ name }: { name: string }) {
   const [missing, setMissing] = useState(false);
+  const [requested, setRequested] = useState(false);
   const url = `/api/attachments/${encodeURIComponent(name)}`;
   const shape = "max-h-64 max-w-[min(520px,100%)] rounded-[3px] border border-rule";
   if (missing) return <span className="text-[12px] text-faint">{name}</span>;
@@ -1204,10 +1205,13 @@ function Attached({ name }: { name: string }) {
   if (!/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
     const label = name.startsWith("art_") ? name.slice(name.indexOf("-") + 1) : name;
     return (
-      <a href={url} download={label} title="Download file" className="flex items-center gap-2 text-[13px] text-ink underline underline-offset-2">
-        <Icon name="attach" />
-        {label}
-      </a>
+      <div>
+        <a href={url} download={label} title="Download file" onClick={() => setRequested(true)} className="flex items-center gap-2 text-[13px] text-ink underline underline-offset-2">
+          <Icon name="attach" />
+          {label}
+        </a>
+        {requested && <span role="status" className="text-[11px] text-faint">Download requested</span>}
+      </div>
     );
   }
   return (
