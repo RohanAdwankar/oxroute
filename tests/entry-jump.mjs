@@ -11,6 +11,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
   await page.addInitScript(() => {
+    window.SharedWorker = undefined;
     window.EventSource = class { constructor() { window.stream = this; } close() {} };
     const scroll = Element.prototype.scrollIntoView;
     window.jumps = [];

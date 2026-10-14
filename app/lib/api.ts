@@ -173,21 +173,29 @@ export const api = {
     post<{ svg: string }>("/api/diagram/render", { source, added }),
 };
 
-/**
- * Follow the daemon's event stream.
- *
- * `EventSource` reconnects on its own, and the daemon opens every connection
- * with a `sync`, so a reconnect resyncs without either side tracking what was
- * missed.
- */
+/** Share the live event connection across tabs so downloads have free connections. */
 export function follow(onEvent: (event: DaemonEvent) => void): () => void {
-  const stream = new EventSource("/api/events");
-  stream.onmessage = (message) => {
+  const receive = (message: MessageEvent<string>) => {
     try {
       onEvent(JSON.parse(message.data) as DaemonEvent);
     } catch {
-      /* a frame we cannot read is not worth taking the stream down for */
+      /* Ignore malformed frames. Reconnection starts with a fresh sync. */
     }
   };
-  return () => stream.close();
+  // Keep live updates available on browsers without shared workers.
+  if (typeof SharedWorker === "undefined") {
+    const stream = new EventSource("/api/events");
+    stream.onmessage = receive;
+    return () => stream.close();
+  }
+  const worker = new SharedWorker("/events-worker.js");
+  worker.port.onmessage = receive;
+  const close = () => {
+    worker.port.postMessage("close");
+    worker.port.close();
+    window.removeEventListener("pagehide", leave);
+  };
+  const leave = (event: PageTransitionEvent) => { if (!event.persisted) close(); };
+  window.addEventListener("pagehide", leave);
+  return close;
 }

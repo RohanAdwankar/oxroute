@@ -5,7 +5,7 @@ const agent = { id: 'upload-fixture', name: 'Upload fixture', status: 'complete'
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
-  await page.addInitScript(() => { window.EventSource = class { constructor() { window.testStream = this; } close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { constructor() { window.testStream = this; } close() {} }; });
   const entries = [];
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline: entries, delivery: 'start' } }));
