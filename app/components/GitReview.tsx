@@ -112,7 +112,10 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       <nav aria-label="Changed files" className="hidden w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] @min-[640px]:block">
         {files.map(item => <button key={item.path} title={item.path} onContextMenu={event => quoteFile(event, item)} onClick={() => {
           const section = sections.current.get(item.path), container = scroll.current;
-          if (section && container) container.scrollTo({ top: section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop });
+          if (section && container) {
+            const bounds = container.getBoundingClientRect(), scale = bounds.height / parseFloat(getComputedStyle(container).height);
+            container.scrollTo({ top: (section.getBoundingClientRect().top - bounds.top) / scale + container.scrollTop });
+          }
           setFile(item.path);
         }} aria-current={item.path === file ? "location" : undefined} className={`block w-full cursor-pointer break-all px-2 py-2 text-left ${item.path === file ? "bg-band font-semibold" : "hover:bg-band"}`}>{item.path}</button>)}
       </nav>
