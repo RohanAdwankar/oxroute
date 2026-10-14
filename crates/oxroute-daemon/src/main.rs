@@ -27,6 +27,7 @@ use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::broadcast;
 
 use oxroute_core::config::Mode;
@@ -1296,32 +1297,44 @@ async fn attachment(
     let Some(kind) = attachment_type(&name) else {
         return Ok((StatusCode::NOT_FOUND, "no such attachment").into_response());
     };
-    let Ok(bytes) = tokio::fs::read(hub.config.attachments.join(&name)).await else {
+    attachment_response(&hub.config.attachments.join(&name), kind, &headers).await
+}
+
+async fn attachment_response(
+    path: &std::path::Path,
+    kind: &str,
+    headers: &HeaderMap,
+) -> Result<Response, Failed> {
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
         return Ok((StatusCode::NOT_FOUND, "no such attachment").into_response());
     };
-    let mut whole = Response::builder()
+    let size = file.metadata().await?.len() as usize;
+    let mut response = Response::builder()
         .header(header::CONTENT_TYPE, kind)
         .header(header::CACHE_CONTROL, "private, max-age=86400")
         .header(header::ACCEPT_RANGES, "bytes");
     if !kind.starts_with("image/") && !kind.starts_with("video/") {
-        whole = whole.header(header::CONTENT_DISPOSITION, "attachment");
+        response = response.header(header::CONTENT_DISPOSITION, "attachment");
     }
-
-    // A video is watched by asking for parts of it. Without this a player
-    // can show the first frame and nothing else.
-    let Some(range) = headers.get(header::RANGE).and_then(|value| value.to_str().ok()) else {
-        return Ok(whole.body(Body::from(bytes))?);
+    let length = if let Some(range) = headers.get(header::RANGE).and_then(|value| value.to_str().ok()) {
+        let Some((from, to)) = wanted(range, size) else {
+            return Ok((StatusCode::RANGE_NOT_SATISFIABLE, "no such range").into_response());
+        };
+        file.seek(std::io::SeekFrom::Start(from as u64)).await?;
+        response = response.status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_RANGE, format!("bytes {from}-{to}/{size}"));
+        to - from + 1
+    } else {
+        size
     };
-    let Some((from, to)) = wanted(range, bytes.len()) else {
-        return Ok((StatusCode::RANGE_NOT_SATISFIABLE, "no such range").into_response());
-    };
-    Ok(whole
-        .status(StatusCode::PARTIAL_CONTENT)
-        .header(
-            header::CONTENT_RANGE,
-            format!("bytes {from}-{to}/{}", bytes.len()),
-        )
-        .body(Body::from(bytes[from..=to].to_vec()))?)
+    // Send headers before reading the body, so a download can start immediately.
+    let stream = futures_util::stream::try_unfold(file.take(length as u64), |mut file| async move {
+        let mut buffer = vec![0; 64 * 1024];
+        let read = file.read(&mut buffer).await?;
+        buffer.truncate(read);
+        Ok::<_, std::io::Error>((read != 0).then_some((buffer, file)))
+    });
+    Ok(response.header(header::CONTENT_LENGTH, length).body(Body::from_stream(stream))?)
 }
 
 /// The slice a player asked for, as `bytes=from-to`. An open end means the
@@ -1567,6 +1580,47 @@ mod tests {
         for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.mp4", ""] {
             assert_eq!(attachment_type(refused), None, "{refused} was served");
         }
+    }
+
+    #[tokio::test]
+    async fn downloads_send_headers_before_reading_large_files_and_preserve_ranges() {
+        use futures_util::StreamExt;
+        let path = std::env::temp_dir().join(oxroute_core::model::new_id("attachment"));
+        let mut file = tokio::fs::File::create(&path).await.unwrap();
+        let size = 1_u64 << 40;
+        file.set_len(size).await.unwrap();
+        file.seek(std::io::SeekFrom::Start(size - 4)).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut file, b"tail").await.unwrap();
+        drop(file);
+
+        let response = tokio::time::timeout(Duration::from_secs(2),
+            attachment_response(&path, "application/octet-stream", &HeaderMap::new())
+        ).await.unwrap().map_err(|error| error.0).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], size.to_string());
+        assert_eq!(response.headers()[header::CONTENT_DISPOSITION], "attachment");
+        let mut body = response.into_body().into_data_stream();
+        let first = body.next().await.unwrap().unwrap();
+        assert!(!first.is_empty());
+        assert!(first.len() < size as usize);
+        drop(body);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, format!("bytes={}-", size - 4).parse().unwrap());
+        let response = attachment_response(&path, "video/mp4", &headers).await.map_err(|error| error.0).unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+        assert_eq!(response.headers()[header::CONTENT_RANGE], format!("bytes {}-{}/{size}", size - 4, size - 1));
+        assert!(!response.headers().contains_key(header::CONTENT_DISPOSITION));
+        assert_eq!(axum::body::to_bytes(response.into_body(), 4).await.unwrap().as_ref(), b"tail");
+        headers.insert(header::RANGE, format!("bytes={size}-").parse().unwrap());
+        assert_eq!(attachment_response(&path, "video/mp4", &headers).await.map_err(|error| error.0).unwrap().status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        tokio::fs::write(&path, b"").await.unwrap();
+        let response = attachment_response(&path, "application/octet-stream", &HeaderMap::new()).await.map_err(|error| error.0).unwrap();
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "0");
+        assert!(axum::body::to_bytes(response.into_body(), 0).await.unwrap().is_empty());
+        tokio::fs::remove_file(&path).await.unwrap();
+        assert_eq!(attachment_response(&path, "application/octet-stream", &HeaderMap::new()).await.map_err(|error| error.0).unwrap().status(), StatusCode::NOT_FOUND);
     }
 
     /// A player asks for a slice at a time, and the last one runs off the end.
