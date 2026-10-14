@@ -31,15 +31,17 @@ export function AgentPicker({ agents, selected, onSelect, onTerminal }: { agents
   </details>;
 }
 
-export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomize, onClose, children }: {
+export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomize, onClose, mergeTargets = [], onMerge, children }: {
+  mergeTargets?: Pick<Agent, "id" | "name">[]; onMerge?: (source: string, target: string, archive: boolean) => void;
   workspace: string; ids: string[]; keyboard: boolean; onActivate: () => void; onCustomize: () => void; onClose: (id: string) => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
 }) {
   const [layout, setTree] = useState<PaneLayout | null>(() => readPanes(workspace));
   const tree = useMemo(() => syncPanes(layout, ids), [layout, ids]);
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; edge: PaneEdge } | null>(null);
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; merge?: boolean; filter?: string; archive?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const destinations = mergeTargets.filter(target => target.id !== menu?.id && target.name.toLowerCase().includes((menu?.filter ?? "").toLowerCase()));
   const root = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState(ids[0]);
   const active = ids.includes(focused) ? focused : ids[0];
@@ -117,7 +119,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
         event.preventDefault(); event.stopPropagation(); save(movePane(tree, drag, node, over.edge)); setDrag(null); setOver(null);
       }}>
       {children(node, ids.indexOf(node), <button data-pane-handle draggable aria-label={`Move pane ${node}`} title="Drag to an edge of another pane" className="cursor-grab text-faint"
-        onContextMenu={event => { event.preventDefault(); setMenu({ id: node, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 120)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 36)) }); }}
+        onContextMenu={event => { event.preventDefault(); setMenu({ id: node, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 280)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 360)) }); }}
         onDragStart={event => { event.dataTransfer.setData("application/x-oxroute-pane", node); event.dataTransfer.effectAllowed = "move"; setDrag(node); }}
         onDragEnd={() => { setDrag(null); setOver(null); }}>⋮</button>)}
       {over?.id === node && <div aria-label={`Place pane ${over.edge}`} className="pointer-events-none absolute z-40 bg-edge/20" style={over.edge === "left" || over.edge === "right" ? { top: 0, bottom: 0, width: "50%", [over.edge]: 0 } : { left: 0, right: 0, height: "50%", [over.edge]: 0 }} />}
@@ -159,8 +161,18 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
   };
   return <div ref={root} data-pane-zoomed={zoomed} className="flex min-h-0 min-w-0 flex-1" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(null); }}>
     {tree && render(tree)}
-    {menu && <div ref={menuRef} role="menu" aria-label="Pane actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-1 shadow-md">
-      <button role="menuitem" className="cursor-pointer px-2 py-1 text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
+    {menu && <div ref={menuRef} role={menu.merge ? "dialog" : "menu"} aria-label={menu.merge ? "Merge into thread" : "Pane actions"} style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-1 shadow-md">
+      {menu.merge ? <div className="w-64 p-1">
+        <input autoFocus aria-label="Find destination thread" placeholder="Merge into…" value={menu.filter ?? ""} onChange={event => setMenu({ ...menu, filter: event.target.value })} className="mb-1 w-full bg-band px-2 py-1 text-[12px] outline-none" />
+        <label className="flex items-center gap-2 px-2 py-1 text-[12px] text-faint"><input type="checkbox" checked={menu.archive ?? false} onChange={event => setMenu({ ...menu, archive: event.target.checked })} />Archive source</label>
+        <div className="max-h-64 overflow-y-auto">
+          {!destinations.length && <p className="px-2 py-1 text-[12px] text-faint">No matching threads</p>}
+          {destinations.map(target => <button key={target.id} title={`${target.name} · ${target.id}`} className="block w-full cursor-pointer truncate px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onMerge?.(menu.id, target.id, menu.archive ?? false); setMenu(null); }}>{target.name}</button>)}
+        </div>
+      </div> : <>
+        <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
+        {onMerge && !menu.id.startsWith("terminal_") && <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => setMenu({ ...menu, merge: true })}>Merge into…</button>}
+      </>}
     </div>}
   </div>;
 }

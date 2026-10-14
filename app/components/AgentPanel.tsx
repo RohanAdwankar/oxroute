@@ -1147,8 +1147,8 @@ const Message = memo(function Message({
               <button
                 type="button"
                 onClick={() => onOpenAgent(entry.detail)}
-                aria-label={entry.kind === "forked" || entry.kind === "merged" ? "open child session" : "open parent session"}
-                title={entry.kind === "forked" || entry.kind === "merged" ? "Open child session" : "Open parent session"}
+                aria-label={entry.kind === "merged" ? "open source session" : entry.kind === "mergedInto" ? "open destination session" : entry.kind === "forked" ? "open child session" : "open parent session"}
+                title={entry.kind === "merged" ? "Open source session" : entry.kind === "mergedInto" ? "Open destination session" : entry.kind === "forked" ? "Open child session" : "Open parent session"}
                 className="flex h-6 w-6 cursor-pointer items-center justify-center text-merge"
               >
                 <Icon name="open" size={13} />

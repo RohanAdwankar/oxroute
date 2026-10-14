@@ -1299,6 +1299,32 @@ impl Store {
         })
     }
 
+    /// Save an immutable import with its timeline link and optional pending delivery.
+    pub fn add_merge_context(&self, target: &str, source: &str, title: &str, question: &str, context: &str, pending: bool) -> Result<Entry> {
+        self.with(|c| {
+            let transaction = c.unchecked_transaction()?;
+            let key = crate::model::new_id("merge-context");
+            transaction.execute("INSERT INTO kv (key, value) VALUES (?1, ?2)", params![key, serde_json::to_string(&(question, context))?])?;
+            if pending {
+                transaction.execute("INSERT INTO pending_context (agent_id, ordinal, question, answer) VALUES (?1, ?2, ?3, ?4)", params![target, key, question, context])?;
+            }
+            transaction.execute("INSERT INTO entries (agent_id, at, kind, text, detail, item_id) VALUES (?1, ?2, 'merged', ?3, ?4, ?5)",
+                params![target, crate::model::now(), title, source, key])?;
+            let entry = transaction.query_row("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries WHERE id = ?1",
+                params![transaction.last_insert_rowid()], read_entry)?;
+            transaction.commit()?;
+            Ok(entry)
+        })
+    }
+
+    pub fn merged_context(&self, agent_id: &str, after: i64) -> Result<Vec<(String, String)>> {
+        self.with(|c| {
+            let mut statement = c.prepare("SELECT kv.value FROM entries e JOIN kv ON kv.key = e.item_id WHERE e.agent_id = ?1 AND e.kind = 'merged' AND e.id > ?2 ORDER BY e.id")?;
+            let values = statement.query_map(params![agent_id, after], |row| row.get::<_, String>(0))?;
+            values.map(|value| Ok(serde_json::from_str(&value?)?)).collect()
+        })
+    }
+
     pub fn pending_context(&self, agent_id: &str) -> Result<Vec<(i64, String, String)>> {
         self.with(|c| {
             let mut stmt = c.prepare(
@@ -1517,6 +1543,25 @@ fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
 mod tests {
     use super::*;
     use crate::model::now;
+
+    #[test]
+    fn merged_context_survives_delivery_forking_and_reopening() {
+        let path = std::env::temp_dir().join(format!("{}.sqlite3", crate::model::new_id("merge-store")));
+        {
+            let store = Store::open(&path).unwrap();
+            store.add_merge_context("target", "source", "Context imported", "Compare options", "The comparison", true).unwrap();
+            let ids = store.pending_context("target").unwrap().iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+            store.clear_context(&ids).unwrap();
+            store.copy_timeline("target", "fork").unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert!(store.pending_context("target").unwrap().is_empty());
+        for id in ["target", "fork"] {
+            assert_eq!(store.merged_context(id, 0).unwrap(), vec![("Compare options".into(), "The comparison".into())]);
+        }
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn review_migration_removes_patch_content_and_preserves_metadata() {

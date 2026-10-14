@@ -674,12 +674,23 @@ async fn fork_in_chat(
     Ok(Json(json!({ "agent": forked })))
 }
 
+#[derive(Deserialize)]
+struct MergeBody {
+    agent: String,
+    into: Option<String>,
+    #[serde(default)]
+    archive: bool,
+}
+
 async fn merge(
     State(hub): Hubs,
-    Json(body): Json<AgentBody>,
+    Json(body): Json<MergeBody>,
 ) -> Result<Json<serde_json::Value>, Failed> {
-    let parent = hub.merge(&body.agent).await?;
-    Ok(Json(json!({ "agent": parent })))
+    let destination = match body.into {
+        Some(target) => hub.merge_into(&body.agent, &target, body.archive)?,
+        None => hub.merge(&body.agent).await?,
+    };
+    Ok(Json(json!({ "agent": destination })))
 }
 
 #[derive(Deserialize)]

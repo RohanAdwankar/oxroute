@@ -1423,7 +1423,7 @@ impl Hub {
             .rposition(|entry| entry.kind == EntryKind::ForkedFrom && entry.detail == parent_id)
             .context("the direct fork point is missing")?;
         let mut pending = None;
-        let mut exchanges = Vec::new();
+        let mut exchanges = self.store.merged_context(agent_id, timeline[fork_at].id)?;
         for entry in &timeline[fork_at + 1..] {
             match entry.kind {
                 EntryKind::Received | EntryKind::You => pending = Some(entry.text.clone()),
@@ -1459,13 +1459,55 @@ impl Hub {
         Ok(parent)
     }
 
+    /// Pass a conversation snapshot to any session without interrupting either turn.
+    pub fn merge_into(&self, agent_id: &str, target_id: &str, archive: bool) -> Result<Agent> {
+        anyhow::ensure!(agent_id != target_id, "choose a different destination thread");
+        let source = self.store.agent(agent_id)?.context("no such source session")?;
+        let target = self.store.agent(target_id)?.context("no such destination session")?;
+        anyhow::ensure!(!archive || source.status != AgentStatus::Working, "stop the source's active turn before archiving it");
+        let mut context = Vec::new();
+        if let Some(thread) = self.store.quote_thread(agent_id)? {
+            context.push(format!("Quoted passage:\n{}", thread.anchor.text));
+        }
+        let imported = self.store.merged_context(agent_id, 0)?;
+        for (question, answer) in &imported {
+            context.push(format!("User:\n{question}\n\nAssistant:\n{answer}"));
+        }
+        for (_, question, answer) in self.store.pending_context(agent_id)? {
+            if !imported.iter().any(|(q, a)| q == &question && a == &answer) {
+                context.push(format!("User:\n{question}\n\nAssistant:\n{answer}"));
+            }
+        }
+        for entry in self.store.timeline(agent_id, usize::MAX)? {
+            let role = match entry.kind {
+                EntryKind::You | EntryKind::Received | EntryKind::Asked => "User",
+                EntryKind::Said => "Assistant",
+                _ => continue,
+            };
+            context.push(format!("{role}:\n{}", entry.text));
+        }
+        anyhow::ensure!(!context.is_empty(), "this thread has no conversation context to merge");
+        let entry = self.store.add_merge_context(target_id, agent_id,
+            &format!("Context merged from {}", source.name),
+            &format!("Conversation context imported from {} ({agent_id}). Treat it as background for the next user request.", source.name),
+            &context.join("\n\n"), true)?;
+        self.emit(Event::Timeline { entry: Box::new(entry) });
+        self.record(agent_id, EntryKind::MergedInto, &format!("Context passed to {}", target.name), target_id, "");
+        if archive { self.store.set_agent_archived(agent_id, true)?; }
+        self.emit(Event::Sync);
+        Ok(target)
+    }
+
     async fn apply_merge(&self, parent: &Agent, child: &Agent, exchanges: &[(String, String)]) -> Result<()> {
         if !exchanges.is_empty() {
             self.harness(parent.backend)
                 .inject(&parent.session_id, exchanges)
                 .await?;
         }
-        self.record(&parent.id, EntryKind::Merged, "Fork merged", &child.id, "");
+        let context = exchanges.iter().map(|(q, a)| format!("User:\n{q}\n\nAssistant:\n{a}")).collect::<Vec<_>>().join("\n\n");
+        let entry = self.store.add_merge_context(&parent.id, &child.id, "Fork merged",
+            &format!("Context imported from fork {} ({})", child.name, child.id), &context, false)?;
+        self.emit(Event::Timeline { entry: Box::new(entry) });
         self.record(
             &child.id,
             EntryKind::MergedInto,
@@ -1717,6 +1759,12 @@ impl Hub {
             }
         }
 
+        let context_ids = if !pending.is_empty() && !harness.capabilities().inject {
+            let context = pending.iter().map(|(_, q, a)| format!("{q}\n\n{a}")).collect::<Vec<_>>().join("\n\n");
+            inputs.insert(0, TurnInput::text(format!("Previously imported conversation context:\n\n{context}")));
+            pending.iter().map(|(id, _, _)| *id).collect::<Vec<_>>()
+        } else { vec![] };
+
         let artifact_dir = self.config.artifacts.join(&agent.id).join(new_id("turn"));
         tokio::fs::create_dir_all(&artifact_dir).await?;
         let prompt_at = inputs.len();
@@ -1887,11 +1935,13 @@ impl Hub {
         self.refresh_dashboard().await;
 
         match harness.start(&session, inputs).await {
-            Ok(turn_id) if !turn_id.is_empty() => {
-                turn.mark_ready(turn_id.clone());
-                self.store.set_active_turn_id(&agent.id, &turn_id)?;
+            Ok(turn_id) => {
+                self.store.clear_context(&context_ids)?;
+                if !turn_id.is_empty() {
+                    turn.mark_ready(turn_id.clone());
+                    self.store.set_active_turn_id(&agent.id, &turn_id)?;
+                }
             }
-            Ok(_) => {}
             Err(error) => {
                 tracing::error!(agent = agent.id, %error, "could not start turn");
                 turn.finish("failed".into());

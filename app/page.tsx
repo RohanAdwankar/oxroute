@@ -608,6 +608,17 @@ export default function Home() {
       if (open === agent) setUrlAgent(parent.id);
     });
 
+  const mergeInto = (source: string, target: string, archive: boolean) =>
+    run(async () => {
+      await api.merge(source, target, archive);
+      customPanes.current = true;
+      setPanes(current => {
+        const next = archive ? current.filter(id => id !== source) : current;
+        return next.includes(target) ? next : [...next, target];
+      });
+      setUrlAgent(target);
+    });
+
   const choosePanes = (ids: string[]) => {
     const key = open ?? ids[0];
     if (key) {
@@ -1070,7 +1081,7 @@ export default function Home() {
         ) : null}
 
         {open ? (
-          <PaneWorkspace key={open} workspace={open} ids={panes} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
+          <PaneWorkspace key={open} workspace={open} ids={panes} mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
               if (id.startsWith("terminal_")) return <TerminalPane id={id} handle={paneHandle} agents={[...snapshot.agents, ...snapshot.archived]} onEnd={() => { setTerminals(current => current.filter(terminal => terminal.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);

@@ -83,7 +83,7 @@ export const api = {
   fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),
   forkInChat: (agent: string) => post<{ agent: Agent }>("/api/fork-in-chat", { agent }),
   quoteThread: (agent: string, quote: import("./types").QuoteAnchor) => post<{ agent: Agent }>("/api/fork-in-chat", { agent, quote }),
-  merge: (agent: string) => post<{ agent: Agent }>("/api/merge", { agent }),
+  merge: (agent: string, into?: string, archive = false) => post<{ agent: Agent }>("/api/merge", { agent, into, archive }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),

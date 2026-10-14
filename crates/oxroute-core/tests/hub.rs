@@ -55,6 +55,7 @@ struct FakeHarness {
     /// model implies, or the hub would look the harness up under the other
     /// one and find the real thing.
     backend: Backend,
+    inject: bool,
     recovery: Mutex<Option<RecoveredTurn>>,
     native: Arc<Mutex<Vec<NativeSession>>>,
 }
@@ -71,6 +72,7 @@ impl FakeHarness {
             delay: Duration::ZERO,
             open_delay: Duration::ZERO,
             backend: Backend::Codex,
+            inject: true,
             recovery: Mutex::new(None),
             native: Arc::new(Mutex::new(vec![])),
         }
@@ -86,7 +88,7 @@ impl Harness for FakeHarness {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             fork: true,
-            inject: true,
+            inject: self.inject,
             resume: true,
         }
     }
@@ -363,6 +365,7 @@ struct Harnessed {
     delay: Duration,
     open_delay: Duration,
     backend: Backend,
+    inject: bool,
 }
 
 impl Default for Harnessed {
@@ -375,6 +378,7 @@ impl Default for Harnessed {
             delay: Duration::ZERO,
             open_delay: Duration::ZERO,
             backend: Backend::Codex,
+            inject: true,
         }
     }
 }
@@ -477,6 +481,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         delay: options.delay,
         open_delay: options.open_delay,
         backend: options.backend,
+        inject: options.inject,
         ..FakeHarness::new(calls.clone(), options.hang)
     };
     let harness_events = harness.events.clone();
@@ -1089,6 +1094,127 @@ async fn a_leaf_fork_merges_its_new_exchanges_into_the_parent() {
     let child_notice = w.hub.timeline(&child.id, 1).unwrap().pop().unwrap();
     assert_eq!(child_notice.kind, EntryKind::MergedInto);
     assert_eq!(child_notice.detail, parent.id);
+}
+
+#[tokio::test]
+async fn unrelated_threads_pass_complete_context_without_starting_or_archiving_them() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "compare storage choices")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let source = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut target = source.clone();
+    target.id = new_id("destination");
+    target.session_id = new_id("session");
+    w.hub.store.save_agent(&target).unwrap();
+    w.hub.store.add_entry(&source.id, now(), EntryKind::You, "an unanswered follow-up", "", "").unwrap();
+    w.hub.store.queue_context(&source.id, "imported", "earlier context", "prior result").unwrap();
+    assert!(w.hub.store.fork_parent(&source.id).unwrap().is_none());
+    assert_eq!(w.hub.merge_into(&source.id, &target.id, false).unwrap().id, target.id);
+    let pending = w.hub.store.pending_context(&target.id).unwrap();
+    assert_eq!(pending.len(), 1);
+    for text in ["compare storage choices", "an unanswered follow-up", "earlier context", "prior result"] {
+        assert!(pending[0].2.contains(text));
+    }
+    assert!(w.hub.store.archived_agents().unwrap().is_empty());
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    assert!(w.hub.merge_into(&source.id, &source.id, false).is_err());
+    assert!(w.hub.merge_into(&source.id, "missing", false).is_err());
+    w.hub.say_to(&target.id, "use the imported comparison").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().injected.is_empty()).await);
+    assert_eq!(w.calls.lock().unwrap().injected, vec![(target.session_id.clone(), 1)]);
+    assert!(w.hub.store.pending_context(&target.id).unwrap().is_empty());
+    assert!(settle(|| w.hub.store.agent(&target.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    let branch = w.hub.fork(&target.id).await.unwrap();
+    let mut onward = target.clone();
+    onward.id = new_id("onward");
+    w.hub.store.save_agent(&onward).unwrap();
+    w.hub.merge_into(&branch.id, &onward.id, false).unwrap();
+    let forwarded = w.hub.store.pending_context(&onward.id).unwrap();
+    for text in ["compare storage choices", "an unanswered follow-up", "earlier context", "prior result"] {
+        assert!(forwarded[0].2.contains(text));
+    }
+}
+
+#[tokio::test]
+async fn imported_context_survives_a_normal_fork_merge() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "investigate a scheduling issue")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let source = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut parent = source.clone();
+    parent.id = new_id("parent");
+    w.hub.store.save_agent(&parent).unwrap();
+    let child = w.hub.fork(&parent.id).await.unwrap();
+    w.hub.merge_into(&source.id, &child.id, false).unwrap();
+    w.hub.merge(&child.id).await.unwrap();
+    let context = w.hub.store.merged_context(&parent.id, 0).unwrap();
+    assert!(context[0].1.contains("investigate a scheduling issue"));
+    assert_eq!(w.calls.lock().unwrap().injected[0].1, 1);
+}
+
+#[tokio::test]
+async fn quoted_threads_pass_their_selected_passage_to_unrelated_destinations() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "review a proposal")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let entry = w.hub.timeline(&parent.id, 50).unwrap().into_iter().find(|entry| entry.kind == EntryKind::Said).unwrap();
+    let anchor = QuoteAnchor { entry_id: entry.id, start: 0, end: entry.text.encode_utf16().count(), text: entry.text.clone() };
+    let source = w.hub.fork_quote(&parent.id, anchor).await.unwrap();
+    let mut destination = parent.clone();
+    destination.id = new_id("destination");
+    w.hub.store.save_agent(&destination).unwrap();
+    w.hub.merge_into(&source.id, &destination.id, false).unwrap();
+    let pending = w.hub.store.pending_context(&destination.id).unwrap();
+    assert!(pending[0].2.contains(&format!("Quoted passage:\n{}", entry.text)));
+}
+
+#[tokio::test]
+async fn context_can_cross_backends_and_reaches_harnesses_without_history_injection() {
+    let w = build(Mode::Auto, Harnessed { backend: Backend::ClaudeCode, inject: false, ..Default::default() }).await;
+    w.hub.accept(signal("100.0", "100.0", "evaluate deployment options")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let target = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut source = target.clone();
+    source.id = new_id("source");
+    source.backend = Backend::Codex;
+    w.hub.store.save_agent(&source).unwrap();
+    w.hub.store.add_entry(&source.id, now(), EntryKind::Said, "Use a staged rollout", "", "").unwrap();
+    w.hub.merge_into(&source.id, &target.id, true).unwrap();
+    assert!(w.hub.store.archived_agents().unwrap().iter().any(|agent| agent.id == source.id));
+    w.hub.say_to(&target.id, "continue from that context").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let calls = w.calls.lock().unwrap();
+    let inputs = serde_json::to_string(&calls.started[1].1).unwrap();
+    assert!(inputs.contains("Use a staged rollout"));
+    assert!(inputs.contains("continue from that context"));
+    assert!(calls.injected.is_empty());
+    drop(calls);
+    assert!(settle(|| w.hub.store.pending_context(&target.id).unwrap().is_empty()).await);
+}
+
+#[tokio::test]
+async fn busy_destinations_accept_context_without_interrupting_and_sources_can_have_children() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "keep working")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let target = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut source = target.clone();
+    source.id = new_id("source");
+    source.status = AgentStatus::Complete;
+    w.hub.store.save_agent(&source).unwrap();
+    w.hub.store.add_entry(&source.id, now(), EntryKind::Said, "Research findings", "", "").unwrap();
+    let child = w.hub.fork(&source.id).await.unwrap();
+    assert!(!w.hub.store.fork_children(&source.id).unwrap().is_empty());
+    w.hub.merge_into(&source.id, &target.id, false).unwrap();
+    assert_eq!(w.hub.store.pending_context(&target.id).unwrap().len(), 1);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    assert!(w.calls.lock().unwrap().injected.is_empty());
+    assert!(w.hub.store.agent(&child.id).unwrap().is_some());
+    assert!(w.hub.merge_into(&target.id, &source.id, true).is_err());
+    w.hub.interrupt(&target.id).await.unwrap();
 }
 
 #[tokio::test]
