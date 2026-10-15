@@ -41,6 +41,8 @@ export function Settings({
   onWrap,
   scalePanes,
   onScalePanes,
+  terminalFontScale,
+  onTerminalFontScale,
   minimumPaneScale,
   onMinimumPaneScale,
   vim,
@@ -57,6 +59,8 @@ export function Settings({
   onWrap: (next: "off" | "on") => void;
   scalePanes: "off" | "on";
   onScalePanes: (next: "off" | "on") => void;
+  terminalFontScale: string;
+  onTerminalFontScale: (next: string) => void;
   minimumPaneScale: string;
   onMinimumPaneScale: (next: string) => void;
   vim: boolean;
@@ -128,6 +132,15 @@ export function Settings({
             onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isInteger(value) && value >= 10 && value <= 100) onMinimumPaneScale(String(value)); }}
             onBlur={event => { event.currentTarget.value = minimumPaneScale; }}
             className="w-16 border-b border-rule bg-transparent text-right outline-none" />%</span>
+        </label>
+        <label className="mb-4 block text-[12.5px]">
+          <span className="flex items-center justify-between">Terminal text scale
+            <span><input type="number" aria-label="Terminal text scale" min={25} max={200} step={1} defaultValue={terminalFontScale}
+              onChange={event => { const value = event.currentTarget.valueAsNumber; if (Number.isInteger(value) && value >= 25 && value <= 200) onTerminalFontScale(String(value)); }}
+              onBlur={event => { event.currentTarget.value = terminalFontScale; }}
+              className="w-16 border-b border-rule bg-transparent text-right outline-none" />%</span>
+          </span>
+          <span className="text-[11.5px] text-faint">100% is the default size. Other pane text stays unchanged.</span>
         </label>
         <Choice
           title="Keyboard"

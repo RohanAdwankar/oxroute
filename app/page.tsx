@@ -31,6 +31,7 @@ import {
   wrap,
   scalePanes,
   minimumPaneScale,
+  terminalFontScale,
   getVimMode,
   isTyping,
   setVimMode,
@@ -139,6 +140,7 @@ export default function Home() {
   const wrapped = useSyncExternalStore(wrap.subscribe, wrap.get, wrap.fallback);
   const scaled = useSyncExternalStore(scalePanes.subscribe, scalePanes.get, scalePanes.fallback);
   const scaleFloor = useSyncExternalStore(minimumPaneScale.subscribe, minimumPaneScale.get, minimumPaneScale.fallback);
+  const terminalScale = useSyncExternalStore(terminalFontScale.subscribe, terminalFontScale.get, terminalFontScale.fallback);
   const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
@@ -987,6 +989,8 @@ export default function Home() {
           onWrap={wrap.set}
           scalePanes={scaled}
           onScalePanes={scalePanes.set}
+          terminalFontScale={terminalScale}
+          onTerminalFontScale={terminalFontScale.set}
           minimumPaneScale={scaleFloor}
           onMinimumPaneScale={minimumPaneScale.set}
           vim={vim}

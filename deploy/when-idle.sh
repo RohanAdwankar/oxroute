@@ -89,6 +89,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/inline-task-links.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/quote-threads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/agent-terminals.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-display.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-font.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-scroll.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-input-flow.mjs"
 curl -fsS "$api/api/terminals" | jq -e 'type == "array"' >/dev/null

@@ -188,6 +188,9 @@ export const minimumPaneScale = {
   set(value: string) { document.documentElement.style.setProperty("--minimum-pane-scale", String(Number(value) / 100)); scaleFloor.set(value); },
 };
 
+/** Terminal contents relative to their existing text size, independent of pane scaling. */
+export const terminalFontScale = choice("oxroute.terminalFontScale", "terminalFontScale", ["100", ...Array.from({ length: 176 }, (_, index) => String(index + 25))]);
+
 /** Whether the call an agent is making right now stays in view. */
 export type Verbose = "off" | "on";
 export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on"]);

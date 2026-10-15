@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const terminal = { id: 'terminal_font', name: 'Shell', pending: [], granted: [] };
+const agent = { id: 'font-fixture', name: 'Conversation', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } });
+  await page.addInitScript(({ agent, terminal }) => {
+    window.SharedWorker = undefined;
+    window.EventSource = class { close() {} };
+    localStorage.setItem(`oxroute.panes.${agent}`, JSON.stringify({ axis: 'row', ratio: 0.5, first: agent, second: terminal }));
+  }, { agent: agent.id, terminal: terminal.id });
+  const writes = [];
+  page.on('request', request => { if (request.method() !== 'GET') writes.push(request.url()); });
+  await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
+  await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', at: Date.now()/1000, text: 'Conversation text keeps its normal size.', detail: '' }], delivery: 'start' } }));
+  await page.route('**/api/terminals', r => r.fulfill({ json: [terminal] }));
+  const bytes = [...Buffer.from('\x1b[?1049hIndependent terminal text.\r\n$ ')];
+  await page.route(`**/api/terminals/${terminal.id}?*`, async r => {
+    const first = new URL(r.request().url()).searchParams.get('after') === '0';
+    if (!first) await new Promise(resolve => setTimeout(resolve, 1000));
+    await r.fulfill({ json: { terminal, bytes: first ? bytes : [], end: bytes.length, reset: false } }).catch(() => {});
+  });
+  await page.route(`**/api/terminals/${terminal.id}/history`, r => r.fulfill({ json: { text: Array.from({ length: 200 }, (_, i) => `Earlier command ${i}`).join('\r\n'), alternate: false } }));
+  await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3942'}/?agent=${agent.id}`);
+  const pane = page.locator('[data-terminal-pane]');
+  const rows = pane.locator('.xterm:visible .xterm-rows');
+  await rows.getByText('Independent terminal text.').waitFor();
+  const chat = page.getByText('Conversation text keeps its normal size.', { exact: true });
+  const font = locator => locator.evaluate(node => parseFloat(getComputedStyle(node).fontSize));
+  const normal = await font(chat), title = await font(pane.locator('[data-pane-title]'));
+  const initial = await font(rows);
+  const settings = page.getByRole('dialog', { name: 'settings' });
+  const openSettings = () => page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const waitFont = async expected => {
+    await page.waitForFunction(({ id, expected }) => [...document.querySelectorAll(`[data-terminal-pane="${id}"] .xterm-rows`)].every(node => Math.abs(parseFloat(getComputedStyle(node).fontSize) - expected) < 0.02), { id: terminal.id, expected });
+  };
+  await pane.locator('.xterm').first().evaluate(node => window.originalTerminal = node);
+  await openSettings();
+  const scale = settings.getByRole('spinbutton', { name: 'Terminal text scale' });
+  assert.equal(await scale.inputValue(), '100');
+  await scale.fill('75');
+  await waitFont(initial * 0.75);
+  assert.equal(await pane.locator('.xterm').first().evaluate(node => node === window.originalTerminal), true, 'Updating the font keeps the existing emulator');
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/terminal-font-settings.png` });
+  await page.keyboard.press('Escape');
+  assert.equal(await font(chat), normal);
+  assert.equal(await font(pane.locator('[data-pane-title]')), title);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/terminal-font-small.png` });
+  await pane.locator('.xterm:visible .xterm-screen').hover();
+  await page.mouse.wheel(0, -400);
+  await rows.getByText(/Earlier command/).first().waitFor();
+  await openSettings();
+  await scale.fill('125');
+  await waitFont(initial * 1.25);
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await rows.getByText('Independent terminal text.').waitFor();
+  await waitFont(initial * 1.25);
+  await openSettings();
+  assert.equal(await scale.inputValue(), '125', 'The selected size survives reload');
+  await scale.fill('75');
+  await settings.locator('section').filter({ has: page.getByText('Scale panes with width', { exact: true }) }).getByRole('button').nth(1).click();
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 600, height: 1000 });
+  await page.waitForTimeout(100);
+  const paneScale = await pane.evaluate(node => Number(getComputedStyle(node).zoom));
+  await waitFont(initial * 0.75 * paneScale);
+  assert.equal(await font(chat), normal, 'The terminal preference leaves conversation font rules unchanged');
+  assert.deepEqual(writes, [], 'Font settings never create or mutate terminal sessions');
+  console.log('Terminal size updates live and history, persists across reload, composes with pane scaling, and preserves other text and emulator state.');
+} finally { await browser.close(); }
