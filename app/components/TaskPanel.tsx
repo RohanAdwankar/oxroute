@@ -6,6 +6,7 @@ import type { TaskRow } from "../lib/tasks";
 import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
 import { clock } from "../lib/format";
 import { Icon } from "./Icon";
+import { TaskApproval } from "./TaskApproval";
 
 const STATES: { value: TaskStatus; label: string }[] = [
   { value: "incomplete", label: "Incomplete" },
@@ -225,29 +226,11 @@ export function TaskPanel({
           {task.text}
         </button>
       )}
-      {task.status === "done" && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={busy(task.id)}
-            onClick={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
-            className="flex h-7 cursor-pointer items-center rounded-[3px] bg-ink px-3 text-[11.5px] font-semibold text-paper disabled:opacity-40"
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            disabled={busy(task.id)}
-            // Saying what is still wrong is saying something to the agent,
-            // so it is said in the composer: room to write, and somewhere
-            // to drop a picture of what you mean.
-            onClick={() => onCorrect(task)}
-            className="flex h-7 cursor-pointer items-center rounded-[3px] border border-edge px-3 text-[11.5px] text-mid hover:text-ink disabled:opacity-40"
-          >
-            Not yet
-          </button>
-        </div>
-      )}
+      {task.status === "done" && <div className="mt-2">
+        <TaskApproval task={task} busy={busy(task.id)}
+          approve={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
+          correct={() => onCorrect(task)} />
+      </div>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {task.images.map((image) => (

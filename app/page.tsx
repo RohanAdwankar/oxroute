@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { TaskLinks } from "./components/Markdown";
+import { TaskActions } from "./components/TaskReference";
 
 import { AgentPanel } from "./components/AgentPanel";
 import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
@@ -490,6 +491,12 @@ export default function Home() {
     [reload, complain],
   );
 
+  const correctTask = (task: TaskItem) => {
+    if (!task.agentId) return say("Nobody has this task to correct");
+    setCorrecting(task);
+    if (!panes.includes(task.agentId)) showAgent(task.agentId);
+  };
+
   // Task edits are independent. Show each edit immediately and lock only
   // that row until it is saved; snapshots cannot erase an in-flight edit.
   const updateTask = async (task: TaskItem, note?: string, approved?: boolean) => {
@@ -974,6 +981,11 @@ export default function Home() {
 
   return (
     <TaskLinks.Provider value={taskLinks}>
+    <TaskActions.Provider value={{ tasks: taskItems,
+      busy: id => busy || id in savingTasks || id in creatingTasks,
+      approve: task => void updateTask({ ...task, status: "complete" }, "approved", true),
+      correct: correctTask,
+    }}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {help && <Help onClose={() => setHelp(false)} />}
@@ -1279,11 +1291,7 @@ export default function Home() {
               clearRouting();
               showAgent(id);
             }}
-            onCorrect={(task) => {
-              if (!task.agentId) return say("Nobody has this task to correct");
-              setCorrecting(task);
-              if (!panes.includes(task.agentId)) showAgent(task.agentId);
-            }}
+            onCorrect={correctTask}
             onHandOff={(task, fork) =>
               void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
             }
@@ -1294,6 +1302,7 @@ export default function Home() {
         )}
       </div>
     </main>
+    </TaskActions.Provider>
     </TaskLinks.Provider>
   );
 }

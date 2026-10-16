@@ -1774,7 +1774,9 @@ impl Hub {
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(
-            "Oxroute has a shared task list. When the user asks you to read or change it, \
+            "Oxroute has a shared task list. Reference tasks in replies using their exact IDs; \
+             chat shows live task references with approval controls for finished work. \
+             When the user asks you to read or change it, \
              use GET/POST http://{}/api/tasks and PUT/DELETE \
              http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
              \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \

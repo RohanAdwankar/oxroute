@@ -5,6 +5,7 @@ import rehypeHighlight from "rehype-highlight";
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
 
 export const ReviewLinks = createContext<{ titles: Map<string, string>; open: (id: string) => void } | null>(null);
@@ -95,6 +96,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
             const task = href?.startsWith("#task/");
             const links = task ? tasks : reviews;
             const id = task ? href!.slice(6) : href?.startsWith("#review/") ? href.slice(8) : "";
+            if (task && tasks?.titles.has(id)) return <TaskReference id={id} open={() => tasks.open(id)} />;
             if (links?.titles.has(id)) return <button type="button" aria-label={`${task ? "Task" : "Review"} ${links.titles.get(id)}`} title={task ? "Open task" : "Open change review"}
               onClick={() => links.open(id)} className="inline-flex cursor-pointer items-center gap-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em] text-ink hover:text-mid">
               <Icon name={task ? "tasks" : "diff"} size={12} />{children}
