@@ -66,6 +66,7 @@ export interface TaskItem {
   id: string;
   text: string;
   status: TaskStatus;
+  parentTaskId: string;
   blockedByTaskId: string;
   agentId: string;
   createdAt: number;

@@ -94,18 +94,19 @@ export const api = {
   /// Move a running session onto another model its harness can run.
   setModel: (agent: string, model: string) =>
     post<{ model: string }>(`/api/agents/${encodeURIComponent(agent)}/model`, { model }),
-  createTask: (text: string, agentId = "") =>
-    post<TaskItem>("/api/tasks", { text, agentId }),
+  createTask: (text: string, agentId = "", parentTaskId = "") =>
+    post<TaskItem>("/api/tasks", { text, agentId, parentTaskId }),
   /// Hand a task to an agent that does not exist yet: a new one, or a fork
   /// of whoever has it.
   handOffTask: (id: string, fork: boolean, model?: string) =>
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
   /// A task made in a composer, with whatever was attached to it.
-  createTaskWithImages: (text: string, agentId: string, images: File[]) => {
-    if (images.length === 0) return api.createTask(text, agentId);
+  createTaskWithImages: (text: string, agentId: string, images: File[], parentTaskId = "") => {
+    if (images.length === 0) return api.createTask(text, agentId, parentTaskId);
     const form = new FormData();
     form.append("text", text);
     form.append("agentId", agentId);
+    form.append("parentTaskId", parentTaskId);
     images.forEach((image) => form.append("files", image));
     return call<TaskItem>("/api/task-attachments", { method: "POST", body: form });
   },
@@ -131,6 +132,7 @@ export const api = {
         text: task.text,
         status: task.status,
         blockedByTaskId: task.blockedByTaskId,
+        parentTaskId: task.parentTaskId,
         agentId: task.agentId,
         note,
         approved,

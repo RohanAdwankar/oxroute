@@ -434,6 +434,8 @@ pub struct TaskItem {
     pub id: String,
     pub text: String,
     pub status: TaskStatus,
+    #[serde(default)]
+    pub parent_task_id: String,
     pub blocked_by_task_id: String,
     pub agent_id: String,
     /// Where it sits in the queue. The list is read in this order, and a new
@@ -785,6 +787,7 @@ mod tests {
             id: "t".into(),
             text: "ship".into(),
             status: TaskStatus::WaitingForHuman,
+            parent_task_id: String::new(),
             blocked_by_task_id: String::new(),
             agent_id: "a".into(),
             position: 0.0,

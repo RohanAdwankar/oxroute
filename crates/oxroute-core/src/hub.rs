@@ -1774,13 +1774,15 @@ impl Hub {
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(
-            "Oxroute has a shared task list. Reference tasks in replies using their exact IDs; \
+            "Oxroute has a shared task list. Group contributing work under an existing task \
+             using parentTaskId on creation or update; subtasks keep independent status \
+             and approval. Reference tasks in replies using their exact IDs; \
              chat shows live task references with approval controls for finished work. \
              When the user asks you to read or change it, \
              use GET/POST http://{}/api/tasks and PUT/DELETE \
              http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
              \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \
-             \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
+             \"parentTaskId\": string, \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
              another task. This session's agent id is {}. Keep your own tasks current as \
              you work: mark one complete when it is done, and set it to blocked or \
              waiting_for_human when you cannot go further, because that is how you say \
@@ -2749,7 +2751,9 @@ impl Hub {
         text: &str,
         agent_id: &str,
         images: Vec<String>,
+        parent_task_id: &str,
     ) -> Result<TaskItem> {
+        validate_task_parent(&self.store.tasks()?, "", parent_task_id)?;
         let text = text.trim();
         anyhow::ensure!(!text.is_empty() || !images.is_empty(), "a task cannot be empty");
         if !agent_id.is_empty() {
@@ -2761,6 +2765,7 @@ impl Hub {
             id: new_id("task"),
             text: text.into(),
             status: TaskStatus::Incomplete,
+            parent_task_id: parent_task_id.into(),
             blocked_by_task_id: String::new(),
             agent_id: agent_id.into(),
             position: last + 1.0,
@@ -2810,6 +2815,7 @@ impl Hub {
         agent_id: &str,
         note: Option<&str>,
         approved: bool,
+        parent_task_id: Option<&str>,
     ) -> Result<TaskItem> {
         let text = text.trim();
         anyhow::ensure!(!text.is_empty(), "a task cannot be empty");
@@ -2830,6 +2836,8 @@ impl Hub {
              that did it",
             status.as_str(),
         );
+        let parent_task_id = parent_task_id.unwrap_or(&current.parent_task_id);
+        validate_task_parent(&tasks, id, parent_task_id)?;
         let created_at = current.created_at;
         let position = current.position;
         let current_status = current.status;
@@ -2838,6 +2846,7 @@ impl Hub {
             id: id.into(),
             text: text.into(),
             status,
+            parent_task_id: parent_task_id.into(),
             blocked_by_task_id: blocked_by_task_id.into(),
             agent_id: agent_id.into(),
             position,
@@ -3291,6 +3300,16 @@ impl Hub {
     }
 }
 
+fn validate_task_parent(tasks: &[TaskItem], id: &str, parent: &str) -> Result<()> {
+    let mut next = parent;
+    let mut seen = std::collections::HashSet::new();
+    while !next.is_empty() {
+        anyhow::ensure!(next != id && seen.insert(next), "a task cannot contain itself or its ancestors");
+        next = &tasks.iter().find(|task| task.id == next).context("no such parent task")?.parent_task_id;
+    }
+    Ok(())
+}
+
 fn validate_task_dependency(
     tasks: &[TaskItem],
     id: &str,
@@ -3328,6 +3347,7 @@ mod chains {
             id: "task_1".into(),
             text: "paint the shed".into(),
             status: TaskStatus::Incomplete,
+            parent_task_id: String::new(),
             blocked_by_task_id: String::new(),
             agent_id: "a1".into(),
             position: 0.0,
@@ -3363,6 +3383,7 @@ mod task_tests {
             id: id.into(),
             text: id.into(),
             status,
+            parent_task_id: String::new(),
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
             position: 0.0,

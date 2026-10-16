@@ -20,7 +20,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { BoardView } from "./components/BoardView";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
-import { taskRows } from "./lib/tasks";
+import { taskAncestors, taskRows } from "./lib/tasks";
 import { acceptsFileDrop } from "./lib/uploads";
 import {
   HINTS,
@@ -522,11 +522,11 @@ export default function Home() {
   /// Filing a task from a composer. It goes to the bottom of a long list,
   /// so the list has to be open and looking at it, or nothing happened as
   /// far as anyone can see.
-  const file = async (text: string, images: File[], agentId = "") => {
+  const file = async (text: string, images: File[], agentId = "", parentTaskId = "") => {
     const id = crypto.randomUUID();
     const at = Date.now() / 1000;
     const pending = {
-      id, text, agentId, status: "incomplete", blockedByTaskId: "",
+      id, text, agentId, parentTaskId, status: "incomplete", blockedByTaskId: "",
       images: [], createdAt: at, updatedAt: at,
       existing: new Set(snapshot.tasks.map((task) => task.id)),
     } satisfies TaskItem & { existing: Set<string> };
@@ -534,7 +534,7 @@ export default function Home() {
     showTasks(true);
     setShownTask(id);
     try {
-      const task = await api.createTaskWithImages(text, agentId, images);
+      const task = await api.createTaskWithImages(text, agentId, images, parentTaskId);
       setSnapshot((current) => ({
         ...current, tasks: [...current.tasks.filter((item) => item.id !== task.id), task],
       }));
@@ -647,14 +647,14 @@ export default function Home() {
   const pendingTasks = Object.values(creatingTasks);
   for (const task of snapshot.tasks) {
     const at = pendingTasks.findIndex((pending) => !pending.existing.has(task.id) &&
-      pending.text === task.text && pending.agentId === task.agentId);
+      pending.text === task.text && pending.agentId === task.agentId && pending.parentTaskId === task.parentTaskId);
     if (at >= 0) pendingTasks.splice(at, 1);
   }
   const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...pendingTasks];
   const taskSearch = taskQuery.trim().toLowerCase();
   const taskNames = new Map([...snapshot.agents, ...snapshot.archived].map(agent => [agent.id, agent.name]));
   const taskMatches = taskItems.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
-  const tasks = taskRows(taskMatches, tasksDone || !!taskSearch);
+  const tasks = taskRows(taskAncestors(taskItems, taskMatches), tasksDone || !!taskSearch);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
@@ -1286,6 +1286,7 @@ export default function Home() {
               (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
             )}
             busy={(id) => busy || id in savingTasks || id in creatingTasks}
+            onCreate={(text, parent) => { setTaskQuery(""); return file(text, [], parent.agentId, parent.id); }}
             onUpdate={(task, note, approved) => void updateTask(task, note, approved)}
             onOpenAgent={(id) => {
               clearRouting();

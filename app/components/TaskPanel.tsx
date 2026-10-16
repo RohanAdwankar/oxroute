@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { canParent } from "../lib/tasks";
 import type { TaskRow } from "../lib/tasks";
 import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
 import { clock } from "../lib/format";
@@ -33,7 +34,11 @@ function Row({
   focused,
   shown,
   children,
+  depth,
+  onContextMenu,
 }: {
+  depth: number;
+  onContextMenu: (event: React.MouseEvent) => void;
   focused: boolean;
   /// Just filed, somewhere down a long list: bring it where it can be seen.
   shown: boolean;
@@ -47,6 +52,8 @@ function Row({
     <div
       ref={row}
       data-task-row
+      onContextMenu={onContextMenu}
+      style={{ paddingLeft: 17 + depth * 18 }}
       aria-current={focused ? "true" : undefined}
       className={`group flex items-start gap-3 border-b border-hair border-l-[3px] py-4 pr-5 pl-[17px] ${
         focused ? "border-l-ink bg-wash" : "border-l-transparent"
@@ -108,6 +115,7 @@ export function TaskPanel({
   named,
   busy,
   onUpdate,
+  onCreate,
   onHandOff,
   onCorrect,
   onOpenAgent,
@@ -134,6 +142,7 @@ export function TaskPanel({
   busy: (id: string) => boolean;
   /// A status change carries why it changed, and only a person approves.
   onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
+  onCreate: (text: string, parent: TaskItem) => Promise<boolean>;
   /// Move a task to an agent that does not exist yet.
   onHandOff: (task: TaskItem, fork: boolean) => void;
   /// Saying no to finished work: what is wrong goes to the agent.
@@ -142,6 +151,20 @@ export function TaskPanel({
   onOpenAgent: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const outside = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(null); };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("pointerdown", outside); window.removeEventListener("keydown", key); };
+  }, [menu]);
+  const menuTask = tasks.find(task => task.id === menu?.id);
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   /// A status waiting on its account of itself.
@@ -159,11 +182,14 @@ export function TaskPanel({
       task.blockedByTaskId && tasks.some((other) => other.id === task.blockedByTaskId),
   );
 
-  const row = (task: TaskItem, at: number) => {
+  const row = (task: TaskItem, at: number, depth: number) => {
     const blockers = tasks.filter((candidate) => candidate.id !== task.id);
     const mine = notes.filter((note) => note.taskId === task.id);
     const asking = pending?.task.id === task.id ? pending : null;
-    return <Row key={task.id} focused={active && at === cursor} shown={task.id === shown}>
+    return <Row key={task.id} depth={depth} onContextMenu={event => {
+      event.preventDefault(); setAdding(false); setDraft("");
+      setMenu({ id: task.id, x: Math.min(event.clientX, window.innerWidth - 300), y: Math.min(event.clientY, window.innerHeight - 180) });
+    }} focused={active && at === cursor} shown={task.id === shown}>
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
         // A task reads over several lines, so it is edited over several:
@@ -340,6 +366,27 @@ export function TaskPanel({
 
   return (
     <aside data-task-panel aria-label="Tasks" className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-rule bg-card">
+      {menu && menuTask && <div ref={menuRef} role="dialog" aria-label="Task options" className="fixed z-50 w-72 bg-paper p-3 shadow-lg ring-1 ring-rule" style={{ left: menu.x, top: menu.y }}>
+        {adding ? <form onSubmit={async event => {
+          event.preventDefault(); if (!draft.trim() || creating) return;
+          setCreating(true);
+          try { if (await onCreate(draft.trim(), menuTask)) setMenu(null); }
+          finally { setCreating(false); }
+        }} className="flex flex-col gap-2">
+          <textarea autoFocus aria-label="Subtask" placeholder="What needs doing?" value={draft} onChange={event => setDraft(event.target.value)} className="min-h-16 w-full resize-y bg-transparent text-[12px] outline-none" />
+          <button type="submit" disabled={creating || !draft.trim()} className="self-start cursor-pointer bg-ink px-2 py-1 text-[11px] text-paper disabled:opacity-40">Add subtask</button>
+        </form> : <>
+          <button type="button" onClick={() => setAdding(true)} className="mb-3 block cursor-pointer text-[12px]">Add subtask</button>
+          <label className="block text-[11px] text-mid">Parent task
+            <select aria-label="Parent task" value={menuTask.parentTaskId ?? ""} disabled={busy(menuTask.id)} className="mt-1 w-full bg-paper text-[12px] text-ink" onChange={event => {
+              onUpdate({ ...menuTask, parentTaskId: event.target.value }); setMenu(null);
+            }}>
+              <option value="">None</option>
+              {tasks.filter(task => canParent(tasks, menuTask.id, task.id)).map(task => <option key={task.id} value={task.id}>{task.text}</option>)}
+            </select>
+          </label>
+        </>}
+      </div>}
       <div data-task-rail title="Drag the left edge to expand tasks" className="hidden h-[var(--bar)] shrink-0 items-center justify-center border-b border-rule text-faint"><Icon name="tasks" /></div>
       <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="h-[var(--bar)] w-full shrink-0 border-b border-rule bg-transparent px-5 text-[12px] outline-none" />
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
@@ -369,7 +416,7 @@ export function TaskPanel({
                 Done · {entry.count}
               </button>
             ) : (
-              row(entry.task, at)
+              row(entry.task, at, entry.depth)
             ),
           )}
         </>}

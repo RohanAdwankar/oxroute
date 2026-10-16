@@ -840,6 +840,8 @@ fn render_task_diagram(tasks: &[oxroute_core::TaskItem]) -> Result<String> {
 struct CreateTaskBody {
     text: String,
     #[serde(default)]
+    parent_task_id: String,
+    #[serde(default)]
     agent_id: String,
 }
 
@@ -901,11 +903,13 @@ async fn create_task_with_attachments(
     State(hub): Hubs,
     mut form: Multipart,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
+    let mut parent_task_id = String::new();
     let mut text = String::new();
     let mut agent_id = String::new();
     let mut images = Vec::new();
     while let Some(field) = form.next_field().await? {
         match field.name() {
+            Some("parentTaskId") => parent_task_id = field.text().await?,
             Some("text") => text = field.text().await?,
             Some("agentId") => agent_id = field.text().await?,
             Some("files") => images.push(keep_file(&hub.config.attachments, field).await?),
@@ -917,7 +921,7 @@ async fn create_task_with_attachments(
         .filter_map(|path| std::path::Path::new(path).file_name())
         .map(|name| name.to_string_lossy().to_string())
         .collect();
-    Ok(Json(hub.create_task(&text, &agent_id, names).await?))
+    Ok(Json(hub.create_task(&text, &agent_id, names, &parent_task_id).await?))
 }
 
 /// Saying no to finished work, with whatever you drew or dropped on it:
@@ -945,13 +949,15 @@ async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
 ) -> Result<Json<oxroute_core::TaskItem>, Failed> {
-    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![]).await?))
+    Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![], &body.parent_task_id).await?))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateTaskBody {
     text: String,
+    #[serde(default)]
+    parent_task_id: Option<String>,
     status: oxroute_core::TaskStatus,
     /// Why it moved. Required when the status changes.
     #[serde(default)]
@@ -978,6 +984,7 @@ async fn update_task(
         &body.agent_id,
         body.note.as_deref(),
         body.approved,
+        body.parent_task_id.as_deref(),
     )
     .await?))
 }
@@ -1571,6 +1578,7 @@ mod tests {
             id: id.into(),
             text: text.into(),
             status,
+            parent_task_id: String::new(),
             blocked_by_task_id: blocker.into(),
             agent_id: String::new(),
             position: 0.0,
