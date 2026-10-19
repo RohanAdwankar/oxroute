@@ -982,6 +982,8 @@ export default function Home() {
   return (
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={{ tasks: taskItems,
+      threads: new Map([...snapshot.agents, ...snapshot.archived].map(agent => [agent.id, agent.name])),
+      openThread: id => { clearRouting(); showAgent(id); },
       busy: id => busy || id in savingTasks || id in creatingTasks,
       approve: task => void updateTask({ ...task, status: "complete" }, "approved", true),
       correct: correctTask,
