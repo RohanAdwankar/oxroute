@@ -5,7 +5,7 @@ import { mkdir } from 'node:fs/promises';
 const agent = { id: 'review-test', name: 'Review test', cwd: '/workspace/review', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const patch = 'diff --git a/config.yaml b/config.yaml\nindex 1234567..abcdef0 100644\n--- a/config.yaml\n+++ b/config.yaml\n@@ -2,2 +2,2 @@\n setting: true\n-value: before\n+value: after\n@@ -20 +30 @@\n-later: before\n+later: after\n';
 const otherPatch = 'diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -7,51 +7,51 @@\n-old note\n+new note\n' + Array.from({ length: 50 }, (_, index) => ` context ${index}`).join('\n');
-const review = { id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
+const review = { agentId: agent.id, id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
   snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
     baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }, { path: 'notes.txt', patch: otherPatch }] } };
 const authorization = `Authorize publishing revision ${review.snapshot.headCommit} from ${agent.cwd}; merge and deployment require separate approval.`;

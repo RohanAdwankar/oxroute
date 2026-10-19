@@ -522,10 +522,10 @@ struct ChangeReview {
     approved_at: Option<f64>,
 }
 
-fn review_record(hub: &Hub, agent_id: &str, id: &str) -> anyhow::Result<(ChangeReview, String)> {
+fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(ChangeReview, String)> {
     let data = hub.store.get(&format!("review:{id}"))?.context("no such review")?;
     let review: ChangeReview = serde_json::from_str(&data)?;
-    anyhow::ensure!(review.agent_id == agent_id, "Review belongs to another session");
+    anyhow::ensure!(review.agent_id == agent_id || (inherited && hub.store.has_review(agent_id, id)?), "Review belongs to another session");
     Ok((review, data))
 }
 
@@ -559,12 +559,12 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
 
 async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
-    let body = review_response(review_record(&hub, &agent_id, &id)?.0).await?;
+    let body = review_response(review_record(&hub, &agent_id, &id, true)?.0).await?;
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
 }
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
-    let (mut review, before) = review_record(&hub, &agent_id, &id)?;
+    let (mut review, before) = review_record(&hub, &agent_id, &id, false)?;
     if !git::current(&review.snapshot).await? {
         return Err(anyhow::anyhow!("This revision changed. Ask the agent to present a new review before publishing.").into());
     }
@@ -586,7 +586,7 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
             }
         }
     }
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await?))
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id, false)?.0).await?))
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1501,6 +1501,19 @@ mod tests {
         assert_eq!(saved["snapshot"]["headCommit"], review["snapshot"]["headCommit"]);
         assert_eq!(client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap()["snapshot"], review["snapshot"]);
         assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}")).send().await.unwrap().status().is_success());
+        // Inherited cards remain readable, while publication consent belongs to the source review.
+        let mut fork = hub.store.agent(agent_id).unwrap().unwrap();
+        fork.id = "review-fork".into();
+        hub.store.save_agent(&fork).unwrap();
+        hub.store.copy_timeline(agent_id, &fork.id).unwrap();
+        let inherited = client.get(format!("http://{address}/api/agents/{}/reviews/{id}", fork.id)).send().await.unwrap();
+        assert!(inherited.status().is_success());
+        assert!(inherited.headers().get("server-timing").unwrap().to_str().unwrap().starts_with("review;dur="));
+        let inherited: serde_json::Value = inherited.json().await.unwrap();
+        assert_eq!(inherited["snapshot"], review["snapshot"]);
+        assert_eq!(inherited["agentId"], agent_id);
+        assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
+
         for _ in 0..2 {
             let approved = client.post(format!("{endpoint}/approve")).send().await.unwrap();
             assert!(approved.status().is_success(), "{}", approved.text().await.unwrap());

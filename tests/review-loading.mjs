@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
 const agent = { id: 'review-loading', name: 'Review loading', cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: 1 };
-const review = { id: 'loading-review', title: 'Prepared change', description: '', status: 'pending', snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: '', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'value.ts', patch: '@@ -1 +1 @@\n-const value = 10;\n+const value = 20;\n' }] } };
+const review = { agentId: agent.id, id: 'loading-review', title: 'Prepared change', description: '', status: 'pending', snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: '', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'value.ts', patch: '@@ -1 +1 @@\n-const value = 10;\n+const value = 20;\n' }] } };
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });

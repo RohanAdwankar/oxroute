@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const agent = { id: 'review-jump', name: 'Review jump', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const files = ['first.js', 'second.js', 'third.js'].map(path => ({ path, patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,200 +1,200 @@\n` + Array.from({ length: 200 }, (_, i) => ` const value${i} = ${i};`).join('\n') }));
-const review = { id: 'jump', title: 'Review navigation', description: '', status: 'pending', snapshot: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
+const review = { agentId: agent.id, id: 'jump', title: 'Review navigation', description: '', status: 'pending', snapshot: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

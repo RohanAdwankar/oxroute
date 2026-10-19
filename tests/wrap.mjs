@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 
 const agent = { id: 'wrap-fixture', name: 'Wrap fixture', cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
 const line = '+    ' + 'long_token'.repeat(60);
-const review = { id: 'wrap-review', title: 'Long lines', description: '', status: 'pending', snapshot: {
+const review = { agentId: agent.id, id: 'wrap-review', title: 'Long lines', description: '', status: 'pending', snapshot: {
   repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40),
   files: [{ path: 'settings.txt', patch: `@@ -1 +1 @@\n-old\n${line}\n` }],
 } };

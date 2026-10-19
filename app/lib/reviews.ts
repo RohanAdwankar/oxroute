@@ -1,5 +1,5 @@
 export type Review = {
-  id: string; title: string; description: string; status: "pending" | "approved" | "stale";
+  id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale";
   snapshot: { repository: string; remote: string; remoteUrl: string; branch: string;
     baseRef: string; baseCommit: string; headCommit: string; files: { path: string; patch: string }[] };
 };

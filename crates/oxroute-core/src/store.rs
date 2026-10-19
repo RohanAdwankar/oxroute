@@ -1099,6 +1099,14 @@ impl Store {
         })
     }
 
+    /// A fork retains the exact review references copied into its timeline.
+    pub fn has_review(&self, agent_id: &str, review_id: &str) -> Result<bool> {
+        self.with(|c| Ok(c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE agent_id = ?1 AND kind = 'review' AND detail = ?2)",
+            params![agent_id, review_id], |row| row.get(0),
+        )?))
+    }
+
     /// The most recent line on an agent's timeline.
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
         self.with(|c| {
