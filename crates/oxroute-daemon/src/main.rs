@@ -530,7 +530,12 @@ fn review_record(hub: &Hub, agent_id: &str, id: &str) -> anyhow::Result<(ChangeR
 }
 
 async fn review_response(review: ChangeReview) -> anyhow::Result<serde_json::Value> {
-    let (files, current) = tokio::join!(git::files(&review.snapshot), git::current(&review.snapshot));
+    let started = std::time::Instant::now();
+    let ((files, diff_ms), (current, check_ms)) = tokio::join!(
+        async { let start = std::time::Instant::now(); (git::files(&review.snapshot).await, start.elapsed().as_secs_f64() * 1000.0) },
+        async { let start = std::time::Instant::now(); (git::current(&review.snapshot).await, start.elapsed().as_secs_f64() * 1000.0) },
+    );
+    tracing::info!(review = %review.id, diff_ms, check_ms, total_ms = started.elapsed().as_secs_f64() * 1000.0, "review prepared");
     let files = files?;
     let status = if !current.unwrap_or(false) { "stale" }
         else if review.approved_at.is_some() { "approved" } else { "pending" };
@@ -552,8 +557,10 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     Ok(Json(review_response(review).await?))
 }
 
-async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id)?.0).await?))
+async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Response, Failed> {
+    let started = std::time::Instant::now();
+    let body = review_response(review_record(&hub, &agent_id, &id)?.0).await?;
+    Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
 }
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
