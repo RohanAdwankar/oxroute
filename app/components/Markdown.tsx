@@ -1,5 +1,5 @@
 import { createContext, memo, useContext } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
 import { Copyable } from "./Copyable";
@@ -57,6 +57,40 @@ function referenceLinks(titles: Map<string, string>) {
   };
 }
 
+// Stable renderer identities preserve native selections when Markdown updates.
+const markdownComponents: Components = {
+  span: function QuoteSpan({ node, children, ...props }) {
+    const quotes = useContext(QuoteLinks);
+    const id = node?.properties?.["data-quote-thread"];
+    if (typeof id !== "string" || !quotes) return <span {...props}>{children}</span>;
+    const open = (element: HTMLElement) => quotes.open(id, element.getBoundingClientRect());
+    return <span {...props} data-quote-thread={id} role="button" tabIndex={0} aria-label="Open quoted thread"
+      className="cursor-pointer underline decoration-mid decoration-1 underline-offset-4 hover:decoration-ink"
+      onClick={event => { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); }}
+      onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); } }}>{children}</span>;
+  },
+  // A fence is something you take: wrap it in the thing that lets
+  // you, rather than leaving the reader to select it by hand.
+  pre: ({ children, ...props }) => (
+    <Copyable>
+      <pre {...props}>{children}</pre>
+    </Copyable>
+  ),
+  a: function ReferenceLink({ children, href, ...props }) {
+    const reviews = useContext(ReviewLinks);
+    const tasks = useContext(TaskLinks);
+    const task = href?.startsWith("#task/");
+    const links = task ? tasks : reviews;
+    const id = task ? href!.slice(6) : href?.startsWith("#review/") ? href.slice(8) : "";
+    if (task && tasks?.titles.has(id)) return <TaskReference id={id} open={() => tasks.open(id)} />;
+    if (links?.titles.has(id)) return <button type="button" aria-label={`${task ? "Task" : "Review"} ${links.titles.get(id)}`} title={task ? "Open task" : "Open change review"}
+      onClick={() => links.open(id)} className="inline-flex cursor-pointer items-center gap-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em] text-ink hover:text-mid">
+      <Icon name={task ? "tasks" : "diff"} size={12} />{children}
+    </button>;
+    return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
+  },
+};
+
 /// Memoised on the text: a refetch replaces every entry object, so the
 /// messages re-render even though not a character of them changed, and
 /// re-parsing a transcript through remark and a highlighter is the most
@@ -75,35 +109,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : [])]}
-        components={{
-          span: ({ node, children, ...props }) => {
-            const id = node?.properties?.["data-quote-thread"];
-            if (typeof id !== "string" || !quotes) return <span {...props}>{children}</span>;
-            const open = (element: HTMLElement) => quotes.open(id, element.getBoundingClientRect());
-            return <span {...props} data-quote-thread={id} role="button" tabIndex={0} aria-label="Open quoted thread"
-              className="cursor-pointer underline decoration-mid decoration-1 underline-offset-4 hover:decoration-ink"
-              onClick={event => { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); }}
-              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); open(event.currentTarget); } }}>{children}</span>;
-          },
-          // A fence is something you take: wrap it in the thing that lets
-          // you, rather than leaving the reader to select it by hand.
-          pre: ({ children, ...props }) => (
-            <Copyable>
-              <pre {...props}>{children}</pre>
-            </Copyable>
-          ),
-          a: ({ children, href, ...props }) => {
-            const task = href?.startsWith("#task/");
-            const links = task ? tasks : reviews;
-            const id = task ? href!.slice(6) : href?.startsWith("#review/") ? href.slice(8) : "";
-            if (task && tasks?.titles.has(id)) return <TaskReference id={id} open={() => tasks.open(id)} />;
-            if (links?.titles.has(id)) return <button type="button" aria-label={`${task ? "Task" : "Review"} ${links.titles.get(id)}`} title={task ? "Open task" : "Open change review"}
-              onClick={() => links.open(id)} className="inline-flex cursor-pointer items-center gap-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em] text-ink hover:text-mid">
-              <Icon name={task ? "tasks" : "diff"} size={12} />{children}
-            </button>;
-            return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
-          },
-        }}
+        components={markdownComponents}
       >
         {children}
       </ReactMarkdown>
