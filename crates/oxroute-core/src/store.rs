@@ -1,17 +1,16 @@
 //! Durable state. SQLite, because it survives a restart and a VM reboot and
 //! needs no server next to it.
 //!
-//! The calls here are synchronous. SQLite on a local file answers in
-//! microseconds and the whole point of a WAL database is that a short
-//! critical section is cheaper than the machinery to avoid one, so the hub
-//! holds the connection behind a plain mutex rather than a worker pool.
+//! Calls stay synchronous for the hub and TUI. A multithreaded Tokio runtime
+//! hands off its HTTP worker before waiting on SQLite or its mutex. Persistent
+//! stores use a separate read-only WAL connection for review metadata reads.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 
 use crate::model::{
     Agent, AgentStatus, Attachment, Backend, Binding, Entry, EntryKind, InboxItem, InboxState,
@@ -151,6 +150,7 @@ CREATE TABLE IF NOT EXISTS boards (
 
 pub struct Store {
     conn: Mutex<Connection>,
+    reader: Option<Mutex<Connection>>,
     path: PathBuf,
 }
 
@@ -263,10 +263,12 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
-        Ok(Store {
-            conn: Mutex::new(conn),
-            path,
-        })
+        let reader = if let Some(path) = conn.path().filter(|path| !path.is_empty()) {
+            let reader = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            reader.pragma_update(None, "busy_timeout", 30_000)?;
+            Some(Mutex::new(reader))
+        } else { None };
+        Ok(Store { conn: Mutex::new(conn), reader, path })
     }
 
     pub fn in_memory() -> Result<Self> {
@@ -275,6 +277,7 @@ impl Store {
         migrate(&conn)?;
         Ok(Store {
             conn: Mutex::new(conn),
+            reader: None,
             path: PathBuf::from(":memory:"),
         })
     }
@@ -283,9 +286,34 @@ impl Store {
         &self.path
     }
 
+    fn connection<T, F: FnOnce(&Connection) -> Result<T>>(conn: &Mutex<Connection>, f: F) -> Result<T> {
+        let work = || {
+            let started = std::time::Instant::now();
+            let guard = conn.lock().map_err(|_| anyhow::anyhow!("store poisoned"))?;
+            let wait_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let executing = std::time::Instant::now();
+            let result = f(&guard);
+            let execute_ms = executing.elapsed().as_secs_f64() * 1000.0;
+            drop(guard);
+            if wait_ms + execute_ms >= 250.0 {
+                tracing::warn!(operation = std::any::type_name::<F>(), wait_ms, execute_ms, "slow database operation");
+            }
+            result
+        };
+        // block_in_place is defined only on multithreaded runtimes. Synchronous
+        // and single-threaded callers retain the same synchronous Store API.
+        if tokio::runtime::Handle::try_current().is_ok_and(|handle|
+            handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread) {
+            tokio::task::block_in_place(work)
+        } else { work() }
+    }
+
     fn with<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let guard = self.conn.lock().map_err(|_| anyhow::anyhow!("store poisoned"))?;
-        f(&guard)
+        Self::connection(&self.conn, f)
+    }
+
+    fn read<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        Self::connection(self.reader.as_ref().unwrap_or(&self.conn), f)
     }
 
     // -- agents ----------------------------------------------------------
@@ -1101,7 +1129,7 @@ impl Store {
 
     /// A fork retains the exact review references copied into its timeline.
     pub fn has_review(&self, agent_id: &str, review_id: &str) -> Result<bool> {
-        self.with(|c| Ok(c.query_row(
+        self.read(|c| Ok(c.query_row(
             "SELECT EXISTS(SELECT 1 FROM entries WHERE agent_id = ?1 AND kind = 'review' AND detail = ?2)",
             params![agent_id, review_id], |row| row.get(0),
         )?))
@@ -1459,7 +1487,7 @@ impl Store {
     // -- scratch ---------------------------------------------------------
 
     pub fn get(&self, key: &str) -> Result<Option<String>> {
-        self.with(|c| {
+        self.read(|c| {
             Ok(c.query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| r.get(0))
                 .optional()?)
         })
@@ -1560,6 +1588,58 @@ fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
 mod tests {
     use super::*;
     use crate::model::now;
+
+    // A stalled writer is released even if the runtime under test is starved.
+    fn hold_writer(store: std::sync::Arc<Store>) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<bool>) {
+        let (ready, started) = std::sync::mpsc::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || store.with(|_| {
+            ready.send(()).unwrap();
+            Ok(held.recv_timeout(std::time::Duration::from_secs(1)).is_err())
+        }).unwrap());
+        started.recv().unwrap();
+        (release, holder)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn contended_database_calls_leave_async_workers_available() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let store = Arc::new(Store::in_memory().unwrap());
+        let (release, holder) = hold_writer(store.clone());
+        let started = Arc::new(AtomicUsize::new(0));
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let store = store.clone();
+            let started = started.clone();
+            readers.push(tokio::spawn(async move {
+                started.fetch_add(1, Ordering::SeqCst);
+                store.tasks().unwrap()
+            }));
+        }
+        while started.load(Ordering::SeqCst) < 2 { tokio::task::yield_now().await; }
+        // This stands in for a health request that does not use the database.
+        tokio::spawn(async {}).await.unwrap();
+        let _ = release.send(());
+        let rescued = holder.join().unwrap();
+        for reader in readers { reader.await.unwrap(); }
+        assert!(!rescued, "Database contention starved an unrelated async request");
+    }
+
+    #[test]
+    fn review_metadata_reads_do_not_wait_for_the_writer_connection() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let store = std::sync::Arc::new(Store::open(&path).unwrap());
+        store.set("metadata", "committed snapshot").unwrap();
+        let (release, holder) = hold_writer(store.clone());
+        let value = store.get("metadata").unwrap();
+        assert!(!store.has_review("absent", "absent").unwrap());
+        let _ = release.send(());
+        let rescued = holder.join().unwrap();
+        assert_eq!(value.as_deref(), Some("committed snapshot"));
+        assert!(!rescued, "Metadata reads waited for a contended writer");
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn merged_context_survives_delivery_forking_and_reopening() {
