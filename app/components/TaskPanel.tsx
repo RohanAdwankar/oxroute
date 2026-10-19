@@ -8,7 +8,6 @@ import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
 import { clock } from "../lib/format";
 import { Icon } from "./Icon";
 import { TaskApproval } from "./TaskApproval";
-import { TaskThread } from "./TaskReference";
 
 const STATES: { value: TaskStatus; label: string }[] = [
   { value: "incomplete", label: "Incomplete" },
@@ -192,8 +191,6 @@ export function TaskPanel({
       setMenu({ id: task.id, x: Math.min(event.clientX, window.innerWidth - 300), y: Math.min(event.clientY, window.innerHeight - 180) });
     }} focused={active && at === cursor} shown={task.id === shown}>
     <div className="min-w-0 flex-1">
-      <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0 flex-1">
       {editing === task.id ? (
         // A task reads over several lines, so it is edited over several:
         // a box that shows one line of what you are changing is a box you
@@ -255,9 +252,6 @@ export function TaskPanel({
           {task.text}
         </button>
       )}
-      </div>
-      <TaskThread task={task} />
-      </div>
       {task.status === "done" && <div className="mt-2">
         <TaskApproval task={task} busy={busy(task.id)}
           approve={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
