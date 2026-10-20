@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
   // the web UI as if it were the whole project.
   agentRules: false,
 
+  // Match the daemon limit, including multipart headers and all attachments.
+  experimental: { proxyClientMaxBodySize: 256 * 1024 * 1024 },
+
   // The daemon and dev.sh speak in 127.0.0.1, so the UI gets opened there
   // too. Next treats that as a foreign origin and blocks hot reload.
   allowedDevOrigins: ["127.0.0.1"],

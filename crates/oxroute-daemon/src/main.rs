@@ -27,7 +27,7 @@ use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::Deserialize;
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::broadcast;
 
 use oxroute_core::config::Mode;
@@ -38,6 +38,7 @@ use oxroute_core::{Config, Hub, Store};
 mod diagram;
 mod terminal;
 
+const UPLOAD_BODY_LIMIT: usize = 256 * 1024 * 1024;
 const INBOX_LIMIT: usize = 200;
 const TIMELINE_LIMIT: usize = 500;
 const SEARCH_LIMIT: usize = 200;
@@ -257,7 +258,7 @@ async fn serve() -> Result<()> {
         .route("/api/attachments/{name}", get(attachment))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
-        .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(hub.clone())
         .merge(terminal::routes(hub.clone())?);
@@ -631,7 +632,7 @@ async fn say_attachments(
 ///
 /// The name it is stored under is ours, not the browser's, so a file cannot
 /// name a place outside that directory or overwrite another upload.
-async fn keep_file(directory: &std::path::Path, field: axum::extract::multipart::Field<'_>) -> Result<String> {
+async fn keep_file(directory: &std::path::Path, mut field: axum::extract::multipart::Field<'_>) -> Result<String> {
     let given = std::path::Path::new(field.file_name().unwrap_or("file"))
         .file_name()
         .and_then(|name| name.to_str())
@@ -639,7 +640,18 @@ async fn keep_file(directory: &std::path::Path, field: axum::extract::multipart:
         .unwrap_or("file");
     let name = format!("{}-{given}", oxroute_core::model::new_id("web"));
     let path = directory.join(&name);
-    tokio::fs::write(&path, field.bytes().await?).await?;
+    let result: Result<()> = async {
+        let mut file = tokio::fs::File::create(&path).await?;
+        while let Some(chunk) = field.chunk().await? {
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+        Ok(())
+    }.await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+    result?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -1572,13 +1584,13 @@ mod tests {
                 let field = form.next_field().await.unwrap().unwrap();
                 Json(keep_file(&directory, field).await.unwrap())
             }
-        }));
+        })).layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let client = reqwest::Client::new();
         let mut paths = Vec::new();
-        for bytes in [vec![0, 255, 17], vec![8, 0, 91]] {
+        for bytes in [vec![0, 255, 17], (0..100 * 1024 * 1024).map(|index| index as u8).collect()] {
             let part = reqwest::multipart::Part::bytes(bytes.clone()).file_name("../payload.bin");
             let response = client.post(format!("http://{address}/"))
                 .multipart(reqwest::multipart::Form::new().part("files", part))
@@ -1591,6 +1603,35 @@ mod tests {
         assert_ne!(paths[0], paths[1]);
         server.abort();
         tokio::fs::remove_dir_all(&directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn incomplete_uploads_leave_no_partial_files() {
+        let directory = std::env::temp_dir().join(oxroute_core::model::new_id("upload-test"));
+        tokio::fs::create_dir_all(&directory).await.unwrap();
+        let destination = directory.clone();
+        let router = Router::new().route("/", post(move |mut form: Multipart| {
+            let directory = destination.clone();
+            async move {
+                let field = form.next_field().await?.unwrap();
+                Ok::<_, Failed>(Json(keep_file(&directory, field).await?))
+            }
+        })).layer(DefaultBodyLimit::max(1024));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        for bytes in [vec![42; 2048], vec![42; 16]] {
+            // No closing boundary: both a size rejection and an interrupted upload must clean up.
+            let body = [b"--upload\r\nContent-Disposition: form-data; name=\"files\"; filename=\"partial.bin\"\r\n\r\n".as_slice(), &bytes].concat();
+            let response = client.post(format!("http://{address}/"))
+                .header("content-type", "multipart/form-data; boundary=upload").body(body)
+                .send().await.unwrap();
+            assert!(!response.status().is_success());
+            assert!(tokio::fs::read_dir(&directory).await.unwrap().next_entry().await.unwrap().is_none());
+        }
+        server.abort();
+        tokio::fs::remove_dir_all(directory).await.unwrap();
     }
 
     fn task(id: &str, text: &str, status: TaskStatus, blocker: &str) -> TaskItem {
