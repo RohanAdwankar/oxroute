@@ -19,7 +19,7 @@ export function SessionTabs({ sessions, active, onSelect }: {
   useEffect(() => { selected.current?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [active, ids]);
   const tabs = ids.flatMap(id => sessions.find(session => session.id === id) ?? []);
   if (!tabs.length) return null;
-  return <nav aria-label="Session tabs" className="flex h-[var(--cell)] shrink-0 overflow-x-auto border-b border-rule bg-card text-[12px]">
+  return <nav aria-label="Session tabs" className="flex h-[var(--cell)] min-w-0 flex-1 overflow-x-auto bg-card text-[12px]">
     <div role="tablist" aria-label="Sessions" className="flex min-w-0 items-stretch">
       {tabs.map((session, index) => <div key={session.id} className={`flex shrink-0 items-stretch border-b ${active === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
         <button type="button" role="tab" ref={active === session.id ? selected : null} aria-selected={active === session.id} title={session.name}

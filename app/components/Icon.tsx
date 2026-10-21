@@ -26,6 +26,7 @@ export type IconName =
   | "refresh"
   | "restore"
   | "send"
+  | "search"
   | "settings"
   | "split"
   | "stop"
@@ -67,6 +68,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
+    search: <><circle cx="6.5" cy="6.5" r="4.5" /><path d="m10 10 4 4" /></>,
     settings: (
       <g transform="scale(.6667)" strokeWidth="2.25">
         <circle cx="12" cy="12" r="3" />

@@ -1012,8 +1012,8 @@ export default function Home() {
         />
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
-      <SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} active={open} onSelect={showAgent} />
       <Chrome
+        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} active={open} onSelect={showAgent} />}
         panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onTerminal={() => {
           void terminalApi<{ terminal: TerminalInfo; controller: string }>("", {}).then(({ terminal, controller }) => {
             localStorage.setItem(`oxroute.terminal.${terminal.id}`, controller);

@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const agent = { id: 'search-fixture', name: 'Search fixture', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
+const continued = { ...agent, id: 'continued-fixture', name: 'Continued session' };
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });
+  const writes = [];
+  page.on('request', request => { if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname); });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents: [agent, continued], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] } }));
+  await page.route('**/api/terminals', route => route.fulfill({ json: [] }));
+  await page.route('**/api/agents/*', route => {
+    const selected = route.request().url().endsWith(agent.id) ? agent : continued;
+    return route.fulfill({ json: { agent: selected, timeline: [{ id: 1, agentId: selected.id, kind: 'said', text: 'Stored target context.', at: 1, detail: '' }], delivery: 'start' } });
+  });
+  await page.route('**/api/search?*', route => route.fulfill({ json: [{ at: 1, kind: 'said', text: 'Stored target context.', detail: '', origin: '', destinations: [{ agentId: agent.id, agentName: agent.name, entryId: 1 }] }] }));
+  await page.route('**/api/search/native?*', route => route.fulfill({ json: [{ backend: 'codex', sessionId: 'native-fixture', name: 'Native context', preview: 'Native context preview.', cwd: '/workspace', model: 'fixture', updatedAt: 1 }] }));
+  await page.route('**/api/native-preview?*', route => route.fulfill({ json: [{ role: 'user', text: 'Native conversation context.' }] }));
+  await page.route('**/api/continue', route => {
+    assert.deepEqual(route.request().postDataJSON(), { backend: 'codex', sessionId: 'native-fixture' });
+    return route.fulfill({ json: continued });
+  });
+  await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3942'}/?agent=${agent.id}`);
+  const icon = page.getByRole('button', { name: 'Search sessions', exact: true });
+  const input = page.getByRole('searchbox', { name: 'search all sessions', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Session search', exact: true });
+  await icon.waitFor();
+  assert.equal(await input.count(), 0, 'The toolbar uses an icon instead of a permanent search field');
+  const iconBox = await icon.boundingBox(), settingsBox = await page.getByRole('button', { name: 'Settings', exact: true }).boundingBox();
+  assert.equal(iconBox.width, settingsBox.width, 'Search matches the existing toolbar cells');
+  await icon.click();
+  assert.equal(await input.evaluate(el => el === document.activeElement), true, 'Opening search focuses its field');
+  await input.fill('context');
+  await dialog.getByRole('button', { name: 'Continue', exact: true }).waitFor();
+  await dialog.getByText('Stored target context.', { exact: true }).last().waitFor();
+  await input.press('ArrowDown');
+  await dialog.getByText('Native conversation context.', { exact: true }).waitFor();
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
+  await input.press('ArrowUp');
+  await input.press('Enter');
+  await dialog.waitFor({ state: 'detached' });
+  assert.equal(new URL(page.url()).searchParams.get('agent'), agent.id, 'Managed search still opens the matching conversation');
+  await icon.click();
+  assert.equal(await input.inputValue(), 'context', 'Closing search retains the query');
+  await input.press('Escape');
+  assert.equal(await dialog.count(), 0);
+  assert.equal(await icon.evaluate(el => el === document.activeElement), true, 'Escape restores focus to the icon');
+  await icon.click();
+  await dialog.getByRole('button', { name: 'Close search', exact: true }).click();
+  assert.equal(await dialog.count(), 0);
+  await icon.click();
+  await page.mouse.click(10, 200);
+  assert.equal(await dialog.count(), 0, 'Outside clicks dismiss search');
+  await icon.click();
+  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get('agent') === continued.id);
+  assert.equal(await dialog.count(), 0);
+  assert.deepEqual(writes, ['/api/continue'], 'Only the explicit native continuation creates a session, through the fixture');
+  console.log('Icon search preserves managed results, native previews, continuation, keyboard selection and dismissal.');
+} finally { await browser.close(); }

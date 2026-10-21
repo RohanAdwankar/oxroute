@@ -34,8 +34,18 @@ export function Search({ onOpen, onContinue }: {
   const [preview, setPreview] = useState<{ key: string; lines: ConversationLine[] }>({ key: "", lines: [] });
   const [continuing, setContinuing] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const request = useRef(0);
   const previewRequest = useRef(0);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
   const choices = useMemo<Choice[]>(() => [
     ...managed.map((result) => ({
       key: `managed:${result.destinations[0]?.agentId}:${result.destinations[0]?.entryId}`,
@@ -116,8 +126,19 @@ export function Search({ onOpen, onContinue }: {
   };
 
   return (
-    <div className="relative flex min-w-[180px] flex-1 basis-[260px] items-stretch">
-      <input
+    <div ref={container} className="flex shrink-0 items-stretch" onKeyDown={event => {
+      if (event.key === "Escape" && open) {
+        event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();
+      }
+    }}>
+      <button ref={trigger} type="button" aria-label="Search sessions" title="Search sessions" aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink">
+        <Icon name="search" size={14} />
+      </button>
+      {open && <div role="dialog" aria-label="Session search" className="fixed top-[calc(var(--bar)+8px)] right-[5vw] left-[5vw] z-50 flex flex-col overflow-hidden border border-edge bg-card shadow-md">
+      <div className="flex h-[var(--cell)] shrink-0">
+      <input autoFocus
         type="search"
         value={query}
         onChange={(event) => {
@@ -128,14 +149,9 @@ export function Search({ onOpen, onContinue }: {
           setLoading(Boolean(value.trim()));
           setError("");
           if (!value.trim()) request.current += 1;
-          setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setOpen(false);
-            event.currentTarget.blur();
-          } else if (event.key === "ArrowDown") {
+          if (event.key === "ArrowDown") {
             event.preventDefault();
             setSelected((current) => Math.min(current + 1, Math.max(choices.length - 1, 0)));
           } else if (event.key === "ArrowUp") {
@@ -150,9 +166,10 @@ export function Search({ onOpen, onContinue }: {
         aria-label="search all sessions"
         className="tnum w-full bg-card px-4 text-[12px] outline-none placeholder:text-faint focus:bg-paper"
       />
-
-      {open && query.trim() && (
-        <div className="fixed top-[76px] right-[5vw] left-[5vw] z-30 flex h-[min(72vh,720px)] overflow-hidden border border-edge bg-card shadow-[0_18px_45px_rgba(33,29,25,0.2)]">
+      <button type="button" aria-label="Close search" title="Close search" className="cursor-pointer px-3 text-faint hover:text-ink" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button>
+      </div>
+      {query.trim() && (
+        <div className="flex h-[min(72vh,720px)] min-h-0 overflow-hidden border-t border-rule">
           <div className="quiet-scroll w-[42%] overflow-y-auto border-r border-rule">
             {loading || choices.length === 0 ? (
               <p className="px-4 py-4 text-[12px] text-faint">
@@ -231,6 +248,7 @@ export function Search({ onOpen, onContinue }: {
           </div>
         </div>
       )}
+      </div>}
     </div>
   );
 }

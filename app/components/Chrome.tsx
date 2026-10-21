@@ -26,6 +26,7 @@ export function Chrome({
   onSearchOpen,
   onSearchContinue,
   panes,
+  tabs,
 }: {
   snapshot: Snapshot;
   notice: string | null;
@@ -41,6 +42,7 @@ export function Chrome({
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
   panes?: ReactNode;
+  tabs?: ReactNode;
 }) {
   const [scale, setScale] = useState(1);
   useEffect(() => {
@@ -104,7 +106,7 @@ export function Chrome({
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
-      <div className="flex-1" />
+      <div className="flex min-w-0 flex-1 items-stretch">{tabs}</div>
 
       {notice && (
         <span className="min-w-0 flex-1 basis-[180px] truncate text-[12.5px] text-merge" role="status">

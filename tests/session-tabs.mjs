@@ -19,7 +19,7 @@ try {
   const tab = id => strip.getByRole('tab', { name: `${id} session`, exact: true });
   await tab('alpha').waitFor();
   const stripBox = await strip.boundingBox(), toolbar = await page.locator('[data-app-header]').boundingBox();
-  assert.ok(stripBox.y + stripBox.height <= toolbar.y + 1, 'Tabs sit immediately above the toolbar');
+  assert.ok(Math.abs(stripBox.y - toolbar.y) < 1 && stripBox.x > toolbar.x, 'Tabs share the toolbar row');
   const composer = id => page.locator(`[data-agent-pane="${id}"] [data-composer]`);
   await composer('alpha').fill('Keep my draft.');
   const open = async id => {
