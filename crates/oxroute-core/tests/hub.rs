@@ -624,6 +624,18 @@ async fn a_new_thread_starts_an_agent_and_answers_in_place() {
 }
 
 #[tokio::test]
+async fn a_bang_message_runs_as_a_shell_command_without_starting_an_agent() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "!echo $((6*7))")).await.unwrap();
+
+    assert_eq!(
+        w.posts.lock().unwrap().replies.clone(),
+        vec![("100.0".to_string(), "```\n42\n```".to_string())]
+    );
+    assert!(w.hub.store.agents(10).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn a_reply_resumes_the_same_agent_rather_than_starting_another() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();

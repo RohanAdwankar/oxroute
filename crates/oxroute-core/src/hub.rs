@@ -966,6 +966,27 @@ impl Hub {
         let bound = self
             .store
             .bound_agent(&signal.source, &signal.conversation, &signal.thread_key)?;
+        if let Some(command) = signal.text.trim().strip_prefix('!') {
+            let cwd = match bound.as_deref() {
+                Some(id) => self.store.agent(id)?.map(|agent| agent.cwd),
+                None => None,
+            }
+            .filter(|cwd| !cwd.is_empty())
+            .unwrap_or_else(|| self.config.workspace.clone());
+            let run = tokio::process::Command::new("sh")
+                .args(["-c", command])
+                .current_dir(cwd)
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .output();
+            let output = match tokio::time::timeout(std::time::Duration::from_secs(60), run).await {
+                Ok(Ok(out)) => format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "timed out after 60s".into(),
+            };
+            self.say(&target, &format!("```\n{}\n```", output.trim_end())).await;
+            return Ok(());
+        }
         let parsed = parse_message(
             &signal.text,
             !signal.root,
