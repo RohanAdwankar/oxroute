@@ -9,6 +9,10 @@
 //! oxroute needs is eight methods wide and the socket loop is the interesting
 //! part: it must reconnect on its own, since Slack cycles the connection
 //! every few minutes by design.
+//!
+//! Socket Mode delivers to whoever is connected. A message sent while the
+//! socket is down is not kept for later, so every connection begins by
+//! reading recent history and replaying what it missed.
 
 use std::time::Duration;
 
@@ -26,6 +30,13 @@ pub const SOURCE: &str = "slack";
 const API: &str = "https://slack.com/api";
 /// Slack rejects anything longer, so a long answer arrives as several posts.
 const MAX_MESSAGE: usize = 3_500;
+/// How far back a fresh connection looks for messages Slack never delivered.
+/// Long enough to cover a night offline, short enough that a request nobody
+/// is waiting on any more does not start work on its own.
+const CATCH_UP: Duration = Duration::from_secs(12 * 60 * 60);
+/// Conversations are a DM each, so these bound one sweep, not a mailbox.
+const CATCH_UP_MESSAGES: usize = 50;
+const CATCH_UP_REPLIES: usize = 50;
 
 pub struct SlackSource {
     app_token: String,
@@ -160,6 +171,118 @@ impl SlackSource {
         })
     }
 
+    /// Every DM the bot is part of. There is one person here, so this is a
+    /// short list, but it is asked for rather than remembered: a DM opened
+    /// while oxroute was away is exactly the one worth reading.
+    async fn dm_channels(&self) -> Result<Vec<String>> {
+        let response = self
+            .call(
+                "users.conversations",
+                json!({ "types": "im", "exclude_archived": true, "limit": 100 }),
+            )
+            .await?;
+        Ok(response
+            .get("channels")
+            .and_then(Value::as_array)
+            .map(|channels| {
+                channels
+                    .iter()
+                    .filter_map(|channel| channel.get("id").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// History hands back bare messages: no `channel`, and no `channel_type`,
+    /// both of which decide whether a message is ours. Put them back so one
+    /// set of rules judges a replayed message and a delivered one.
+    fn as_event(&self, message: &Value, channel: &str) -> Value {
+        let mut event = message.clone();
+        if let Some(fields) = event.as_object_mut() {
+            fields.insert("channel".into(), json!(channel));
+            fields.insert("channel_type".into(), json!("im"));
+        }
+        event
+    }
+
+    fn offer(&self, message: &Value, channel: &str, inbox: &Inbox) -> bool {
+        let event = self.as_event(message, channel);
+        if !self.accepted(&event) {
+            return false;
+        }
+        match self.to_signal(&event) {
+            Some(signal) => inbox.send(SourceEvent::Arrived(Box::new(signal))).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Read back what the socket could not deliver.
+    ///
+    /// Nothing is remembered between sweeps and nothing needs to be: the hub
+    /// keeps a signal's Slack timestamp and ignores one it already holds, so
+    /// a message that did arrive costs a comparison and a message that did
+    /// not is picked up here. Thread replies are fetched separately because
+    /// `conversations.history` returns roots alone, and a reply is the usual
+    /// shape of a follow-up.
+    async fn catch_up(&self, inbox: &Inbox) -> Result<usize> {
+        let oldest = format!("{:.6}", now() - CATCH_UP.as_secs_f64());
+        let mut offered = 0;
+        for channel in self.dm_channels().await? {
+            let history = self
+                .call(
+                    "conversations.history",
+                    json!({
+                        "channel": channel,
+                        "oldest": oldest,
+                        "limit": CATCH_UP_MESSAGES,
+                    }),
+                )
+                .await?;
+            let Some(messages) = history.get("messages").and_then(Value::as_array) else {
+                continue;
+            };
+            for message in messages {
+                if self.offer(message, &channel, inbox) {
+                    offered += 1;
+                }
+                // A root with replies may be answered in a thread we never saw.
+                let replies = message
+                    .get("reply_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let Some(root) = message.get("ts").and_then(Value::as_str) else {
+                    continue;
+                };
+                if replies == 0 {
+                    continue;
+                }
+                let thread = self
+                    .call(
+                        "conversations.replies",
+                        json!({
+                            "channel": channel,
+                            "ts": root,
+                            "oldest": oldest,
+                            "limit": CATCH_UP_REPLIES,
+                        }),
+                    )
+                    .await?;
+                for reply in thread
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if self.offer(reply, &channel, inbox) {
+                        offered += 1;
+                    }
+                }
+            }
+        }
+        Ok(offered)
+    }
+
     async fn socket_url(&self) -> Result<String> {
         let response = self
             .call_with(&self.app_token, "apps.connections.open", json!({}))
@@ -180,6 +303,19 @@ impl SlackSource {
             .context("opening the slack socket")?;
         let (mut sink, mut source) = stream.split();
         tracing::info!(target: "oxroute::slack", "socket connected");
+
+        // Before reading anything new, read what arrived while there was no
+        // socket to read it. A failure here is not worth dropping a working
+        // connection over: the next reconnect sweeps the same window again.
+        match self.catch_up(inbox).await {
+            Ok(0) => {}
+            Ok(offered) => {
+                tracing::info!(target: "oxroute::slack", offered, "replayed missed messages")
+            }
+            Err(error) => {
+                tracing::warn!(target: "oxroute::slack", %error, "catch-up failed")
+            }
+        }
 
         while let Some(frame) = source.next().await {
             let Message::Text(raw) = frame.context("reading from the slack socket")? else {
@@ -639,6 +775,40 @@ mod tests {
             "text": "", "subtype": "file_share",
             "files": [{ "id": "F1", "name": "a.png", "mimetype": "image/png" }],
         })));
+    }
+
+    #[test]
+    fn a_replayed_message_is_judged_the_same_as_a_delivered_one() {
+        let s = source();
+        // What history returns: no channel, no channel_type, so the live
+        // rules would reject it however ordinary the message is.
+        let bare = json!({ "user": "U_ME", "ts": "1.0", "text": "while you were away" });
+        assert!(!s.accepted(&bare));
+
+        let replayed = s.as_event(&bare, "D1");
+        assert!(s.accepted(&replayed));
+
+        let signal = s.to_signal(&replayed).unwrap();
+        assert_eq!(signal.conversation, "D1");
+        // The Slack timestamp is what the hub recognises a repeat by, so a
+        // replay has to carry the original rather than a new one.
+        assert_eq!(signal.external_id, "1.0");
+    }
+
+    #[test]
+    fn a_replay_still_refuses_what_the_socket_would_refuse() {
+        let s = source();
+        for message in [
+            json!({ "user": "U_THEM", "ts": "1.0", "text": "not yours" }),
+            json!({ "user": "U_ME", "ts": "1.0", "text": "", "bot_id": "B1" }),
+            json!({ "user": "U_ME", "ts": "1.0", "text": "" }),
+            json!({ "user": "U_ME", "ts": "1.0", "text": "x", "subtype": "channel_join" }),
+        ] {
+            assert!(
+                !s.accepted(&s.as_event(&message, "D1")),
+                "replay accepted something the socket would not: {message}"
+            );
+        }
     }
 
     #[test]
