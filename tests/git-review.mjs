@@ -193,7 +193,7 @@ try {
   const [quoteRemovedRed, quoteRemovedGreen] = await color(attachedRemoved);
   assert.ok(quoteRemovedRed > quoteRemovedGreen, 'Attachment deletions are red');
   await page.getByRole('button', { name: 'back to the fleet', exact: true }).click();
-  await page.getByText('Review test', { exact: true }).click();
+  await page.getByRole('button', { name: 'Review test', exact: true }).click();
   await attachment.waitFor();
   assert.ok((await page.locator('[data-composer]').inputValue()).includes('Explain this change.'), 'Question and attached diff survive navigation');
   await page.setViewportSize({ width: 1280, height: 800 });
