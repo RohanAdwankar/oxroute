@@ -9,6 +9,7 @@ import { TerminalPane, terminalApi, type TerminalInfo } from "./components/Termi
 import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
 import { paneIds, readPanes, syncPanes } from "./lib/panes";
 import { Chrome } from "./components/Chrome";
+import { SessionTabs } from "./components/SessionTabs";
 import { Fleet } from "./components/Fleet";
 import { FrontendVersion } from "./components/FrontendVersion";
 import { Help } from "./components/Help";
@@ -1011,6 +1012,7 @@ export default function Home() {
         />
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
+      <SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} active={open} onSelect={showAgent} />
       <Chrome
         panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onTerminal={() => {
           void terminalApi<{ terminal: TerminalInfo; controller: string }>("", {}).then(({ terminal, controller }) => {

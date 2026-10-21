@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const agents = ['alpha', 'bravo', 'charlie'].map(id => ({ id, name: `${id} session`, backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 }));
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });
+  const writes = [];
+  page.on('request', request => { if (request.method() !== 'GET') writes.push(request.url()); });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents, archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] } }));
+  await page.route('**/api/terminals', route => route.fulfill({ json: [] }));
+  await page.route('**/api/agents/*', route => {
+    const agent = agents.find(agent => route.request().url().endsWith(agent.id));
+    return route.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', text: `Working in ${agent.name}.`, at: 1, detail: '' }], delivery: 'start' } });
+  });
+  await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3942'}/?agent=alpha`);
+  const strip = page.getByRole('navigation', { name: 'Session tabs', exact: true });
+  const tab = id => strip.getByRole('tab', { name: `${id} session`, exact: true });
+  await tab('alpha').waitFor();
+  const stripBox = await strip.boundingBox(), toolbar = await page.locator('[data-app-header]').boundingBox();
+  assert.ok(stripBox.y + stripBox.height <= toolbar.y + 1, 'Tabs sit immediately above the toolbar');
+  const composer = id => page.locator(`[data-agent-pane="${id}"] [data-composer]`);
+  await composer('alpha').fill('Keep my draft.');
+  const open = async id => {
+    await page.getByRole('button', { name: 'Show the fleet', exact: true }).click();
+    await page.getByRole('button', { name: `${id} session`, exact: true }).click();
+    await tab(id).waitFor();
+  };
+  await open('bravo');
+  await open('charlie');
+  await tab('alpha').click();
+  assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true');
+  assert.equal(await composer('alpha').inputValue(), 'Keep my draft.', 'Switching tabs preserves drafts');
+  await tab('alpha').press('ArrowRight');
+  assert.equal(await tab('bravo').getAttribute('aria-selected'), 'true', 'Arrow keys switch tabs');
+  assert.equal(new URL(page.url()).searchParams.get('agent'), 'bravo');
+  await page.goBack();
+  assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Browser back updates the selected tab');
+  await page.reload();
+  await tab('charlie').waitFor();
+  assert.equal(await strip.getByRole('tab').count(), 3, 'The strip survives a page reload');
+  await strip.getByRole('button', { name: 'Close tab bravo session', exact: true }).click();
+  assert.equal(await tab('bravo').count(), 0);
+  assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Closing a background tab keeps the active conversation');
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
+  await page.setViewportSize({ width: 420, height: 750 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Tabs do not widen the page');
+  await strip.getByRole('button', { name: 'Close tab alpha session', exact: true }).click();
+  assert.equal(await tab('charlie').getAttribute('aria-selected'), 'true', 'Closing the active tab selects its neighbor');
+  await strip.getByRole('button', { name: 'Close tab charlie session', exact: true }).click();
+  assert.equal(new URL(page.url()).searchParams.has('agent'), false, 'Closing the last tab returns to the fleet');
+  await page.getByRole('button', { name: 'bravo session', exact: true }).click();
+  await tab('bravo').waitFor();
+  await open('alpha');
+  await open('charlie');
+  await page.setViewportSize({ width: 260, height: 750 });
+  await tab('alpha').click();
+  await tab('alpha').press('End');
+  const selected = await tab('charlie').boundingBox();
+  assert.ok(selected.x >= 0 && selected.x + selected.width <= 260, 'Keyboard switching reveals the active tab in an overflowing strip');
+  assert.deepEqual(writes, [], 'Tabs navigate locally without archiving or mutating sessions');
+  console.log('Session tabs switch conversations, preserve drafts, restore on reload, follow browser history and close without mutating sessions.');
+} finally { await browser.close(); }
