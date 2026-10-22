@@ -1171,20 +1171,22 @@ impl Store {
     /// The newest human-facing line for each agent. Tool work is deliberately
     /// excluded so fleet cards stay about the conversation.
     pub fn message_previews(&self) -> Result<HashMap<String, String>> {
-        self.with(|c| {
+        self.read(|c| {
+            // Walk the covering agent index, then fetch only each latest message.
+            // Reading every historical text here stalls all snapshot consumers.
             let mut stmt = c.prepare(
-                "SELECT agent_id, text FROM entries
-                 WHERE kind IN ('received', 'said', 'asked', 'you') AND text != ''
-                 ORDER BY id DESC",
+                "SELECT e.agent_id, e.text
+                 FROM (SELECT DISTINCT agent_id FROM entries) owners
+                 JOIN entries e ON e.id = (
+                     SELECT id FROM entries WHERE agent_id = owners.agent_id
+                     AND kind IN ('received', 'said', 'asked', 'you') AND text != ''
+                     ORDER BY id DESC LIMIT 1
+                 )",
             )?;
-            let mut previews = HashMap::new();
-            for row in stmt.query_map([], |row| {
+            let rows = stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })? {
-                let (agent, text) = row?;
-                previews.entry(agent).or_insert(text);
-            }
-            Ok(previews)
+            })?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
     }
 
@@ -1626,13 +1628,15 @@ mod tests {
     }
 
     #[test]
-    fn review_metadata_reads_do_not_wait_for_the_writer_connection() {
+    fn preview_and_review_metadata_reads_do_not_wait_for_the_writer_connection() {
         let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
         let store = std::sync::Arc::new(Store::open(&path).unwrap());
         store.set("metadata", "committed snapshot").unwrap();
+        store.add_entry("conversation", 1.0, EntryKind::Said, "Latest answer", "", "").unwrap();
         let (release, holder) = hold_writer(store.clone());
         let value = store.get("metadata").unwrap();
         assert!(!store.has_review("absent", "absent").unwrap());
+        assert_eq!(store.message_previews().unwrap().get("conversation").map(String::as_str), Some("Latest answer"));
         let _ = release.send(());
         let rescued = holder.join().unwrap();
         assert_eq!(value.as_deref(), Some("committed snapshot"));
@@ -2220,6 +2224,23 @@ mod tests {
             store.message_previews().unwrap().get("a1").map(String::as_str),
             Some("check the deploy")
         );
+    }
+
+    #[test]
+    fn previews_select_the_last_nonempty_conversation_entry_for_every_timeline() {
+        let store = Store::in_memory().unwrap();
+        for (index, kind) in [EntryKind::Received, EntryKind::Said, EntryKind::Asked, EntryKind::You].into_iter().enumerate() {
+            let id = format!("timeline-{index}");
+            // Timelines without agent records, including imported history, still have previews.
+            store.add_entry(&id, 100.0, EntryKind::Said, "Earlier answer", "", "").unwrap();
+            store.add_entry(&id, 1.0, kind, "Newest inserted answer", "", "").unwrap();
+            store.add_entry(&id, 200.0, EntryKind::Worked, "Tool output", "", "").unwrap();
+            store.add_entry(&id, 300.0, EntryKind::Said, "", "", "").unwrap();
+        }
+        store.add_entry("tools-only", 1.0, EntryKind::Worked, "No conversation", "", "").unwrap();
+        let previews = store.message_previews().unwrap();
+        assert_eq!(previews.len(), 4);
+        for text in previews.values() { assert_eq!(text, "Newest inserted answer"); }
     }
 
     #[test]
