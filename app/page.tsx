@@ -39,7 +39,7 @@ import {
   setVimMode,
   subscribeVimMode,
 } from "./lib/keys";
-import type { Agent, AgentView, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
+import type { Agent, AgentView, DaemonEvent, Entry, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
 
 /** The screen, left to right. h and l step along it. */
 const COLUMNS = ["inbox", "fleet", "tasks"] as const;
@@ -61,6 +61,20 @@ const EMPTY: Snapshot = {
   models: [],
   backends: [],
 };
+
+const MESSAGE_KINDS = new Set<Entry["kind"]>(["received", "said", "asked", "you"]);
+
+function streamedSnapshot(snapshot: Snapshot, event: DaemonEvent): Snapshot {
+  if (event.type === "progress") return {
+    ...snapshot,
+    agents: snapshot.agents.map(agent => agent.id === event.agentId ? { ...agent, activity: event.text } : agent),
+  };
+  if (event.type === "timeline" && MESSAGE_KINDS.has(event.entry.kind)) return {
+    ...snapshot,
+    messages: { ...snapshot.messages, [event.entry.agentId]: event.entry.text },
+  };
+  return snapshot;
+}
 
 function linkedPanes(id: string, links: Record<string, string>): string[] {
   let root = id;
@@ -94,18 +108,24 @@ export default function Home() {
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
-  const requests = useRef(new Map<string, Promise<AgentView>>());
+  const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry> }>());
+  const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
   const warmed = useRef(new Set<string>());
   const warmQueue = useRef<string[]>([]);
   const warming = useRef(0);
   const loadAgent = useCallback((id: string) => {
     const pending = requests.current.get(id);
-    if (pending) return pending;
+    if (pending) return pending.promise;
+    const updates = new Map<number, Entry>();
     const request = api.agent(id).then((view) => {
-      setDetails((current) => ({ ...current, [id]: view }));
-      return view;
+      // An in-flight read must not erase entries already received live.
+      const timeline = new Map(view.timeline.map(entry => [entry.id, entry]));
+      for (const [id, entry] of updates) timeline.set(id, entry);
+      const reconciled = { ...view, timeline: [...timeline.values()].sort((a, b) => a.id - b.id) };
+      setDetails((current) => ({ ...current, [id]: reconciled }));
+      return reconciled;
     }).finally(() => requests.current.delete(id));
-    requests.current.set(id, request);
+    requests.current.set(id, { promise: request, updates });
     return request;
   }, []);
   const [notice, setNotice] = useState<string | null>(null);
@@ -322,16 +342,13 @@ export default function Home() {
   useEffect(
     () =>
       follow((event) => {
+        if (event.type === "progress") snapshotUpdates.current?.set(`progress:${event.agentId}`, event);
+        if (event.type === "timeline" && MESSAGE_KINDS.has(event.entry.kind)) snapshotUpdates.current?.set(`message:${event.entry.agentId}`, event);
         switch (event.type) {
           case "progress":
             // High-frequency and one field wide, so it is patched in place
             // rather than costing a refetch several times a second.
-            setSnapshot((current) => ({
-              ...current,
-              agents: current.agents.map((agent) =>
-                agent.id === event.agentId ? { ...agent, activity: event.text } : agent,
-              ),
-            }));
+            setSnapshot(current => streamedSnapshot(current, event));
             setDetails((current) => {
               const view = current[event.agentId];
               return view
@@ -340,12 +357,8 @@ export default function Home() {
             });
             break;
           case "timeline":
-            if (["received", "said", "asked", "you"].includes(event.entry.kind)) {
-              setSnapshot((current) => ({
-                ...current,
-                messages: { ...current.messages, [event.entry.agentId]: event.entry.text },
-              }));
-            }
+            requests.current.get(event.entry.agentId)?.updates.set(event.entry.id, event.entry);
+            setSnapshot(current => streamedSnapshot(current, event));
             // Append in place. A full refetch per tool call would make the
             // timeline stutter exactly when there is most to watch.
             setDetails((current) => {
@@ -374,6 +387,21 @@ export default function Home() {
     [reload, say],
   );
 
+  useEffect(() => {
+    let scheduled = 0;
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || scheduled) return;
+      scheduled = window.requestAnimationFrame(() => { scheduled = 0; reload(); });
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.cancelAnimationFrame(scheduled);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [reload]);
+
   // The fleet is passed in rather than read from state, so a snapshot that
   // has only just arrived can open the question it brought with it.
   const openRouting = useCallback(
@@ -391,11 +419,13 @@ export default function Home() {
 
   useEffect(() => {
     let live = true;
+    const updates = new Map<string, DaemonEvent>();
+    snapshotUpdates.current = updates;
     api.snapshot().then(
       (next) => {
         if (!live) return;
         paneLinks.current = next.paneLinks ?? {};
-        setSnapshot(next);
+        setSnapshot([...updates.values()].reduce(streamedSnapshot, next));
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
         if (selectedAgent && !customPanes.current) {
           const group = linkedPanes(selectedAgent, next.paneLinks ?? {});
@@ -423,9 +453,10 @@ export default function Home() {
         else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
-    );
+    ).finally(() => { if (snapshotUpdates.current === updates) snapshotUpdates.current = null; });
     return () => {
       live = false;
+      if (snapshotUpdates.current === updates) snapshotUpdates.current = null;
     };
   }, [revision, complain, openRouting, setInboxVisible]);
 
