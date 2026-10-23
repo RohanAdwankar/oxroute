@@ -10,7 +10,7 @@ const base = process.env.TEST_URL ?? 'http://127.0.0.1:3939';
 const browser = await (process.env.TEST_BROWSER === 'webkit' ? webkit : chromium).launch(process.env.WEBKIT_EXECUTABLE ? { executablePath: process.env.WEBKIT_EXECUTABLE } : {});
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { constructor() { window.fixtureEvents = this; } close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { constructor() { super(); window.fixtureEvents = this; } close() {} }; });
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: child ? [agent, child] : [agent], archived: [], messages: {}, tasks, taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: threads, tags: {}, boards: [], sources: [], models: [], backends: [{backend:'codex',fork:true,merge:true}] } }));
   await page.route('**/api/terminals', r => r.fulfill({ json: [] }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: r.request().url().endsWith(agent.id) ? { agent, timeline, delivery: 'start' } : { agent: child, timeline: [], delivery: 'start' } }));

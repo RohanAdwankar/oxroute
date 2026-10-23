@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+use axum::response::sse::{Event as SseEvent, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -399,22 +399,26 @@ async fn native_preview(
 async fn events(State(hub): Hubs) -> Sse<impl Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
     let stream = async_stream::stream! {
         let mut events = hub.subscribe();
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
         yield Ok(SseEvent::default().json_data(json!({ "type": "sync" })).unwrap());
         loop {
-            match events.recv().await {
-                Ok(event) => {
-                    if let Ok(frame) = SseEvent::default().json_data(&event) {
-                        yield Ok(frame);
+            tokio::select! {
+                _ = heartbeat.tick() => yield Ok(SseEvent::default().event("heartbeat").data("{}")),
+                event = events.recv() => match event {
+                    Ok(event) => {
+                        if let Ok(frame) = SseEvent::default().json_data(&event) {
+                            yield Ok(frame);
+                        }
                     }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        yield Ok(SseEvent::default().json_data(json!({ "type": "sync" })).unwrap());
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    yield Ok(SseEvent::default().json_data(json!({ "type": "sync" })).unwrap());
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     };
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+    Sse::new(stream)
 }
 
 /// A signal pushed in over HTTP.
@@ -1439,6 +1443,33 @@ mod tests {
     }
 
     struct ReviewHarness;
+
+    #[tokio::test]
+    async fn idle_event_connections_send_readable_heartbeats() {
+        use futures_util::StreamExt;
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("events-api"));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let path = root.join("config.toml");
+        tokio::fs::write(&path, "owner = 'fixture'\n").await.unwrap();
+        let config = Config::load_from(&path).unwrap();
+        let store = Store::open(&root.join("state.sqlite")).unwrap();
+        let hub = Hub::new(config, store);
+        let router = Router::new().route("/api/events", get(events)).with_state(hub);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let response = reqwest::get(format!("http://{address}/api/events")).await.unwrap();
+        let mut chunks = response.bytes_stream();
+        let mut body = String::new();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while body.matches("event: heartbeat").count() < 2 {
+                body.push_str(std::str::from_utf8(&chunks.next().await.unwrap().unwrap()).unwrap());
+            }
+        }).await.expect("Idle connections must deliver application-visible heartbeats");
+        assert!(body.contains("\"type\":\"sync\""));
+        server.abort();
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 
     #[async_trait::async_trait]
     impl oxroute_core::agent::Harness for ReviewHarness {

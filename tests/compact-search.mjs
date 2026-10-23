@@ -8,7 +8,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });
   const writes = [];
   page.on('request', request => { if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname); });
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents: [agent, continued], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/terminals', route => route.fulfill({ json: [] }));
   await page.route('**/api/agents/*', route => {

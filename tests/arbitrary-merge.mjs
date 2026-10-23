@@ -13,7 +13,7 @@ const entries = {
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   let retired = false, failNext = false;
   const requests = [];
   await page.route('**/api/state', r => r.fulfill({ json: {

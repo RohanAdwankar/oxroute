@@ -8,7 +8,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } });
   await page.addInitScript(({ agent, terminal }) => {
     window.SharedWorker = undefined;
-    window.EventSource = class { close() {} };
+    window.EventSource = class extends EventTarget { close() {} };
     localStorage.setItem(`oxroute.panes.${agent}`, JSON.stringify({ axis: 'row', ratio: 0.5, first: agent, second: terminal }));
   }, { agent: agent.id, terminal: terminal.id });
   const writes = [];

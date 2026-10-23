@@ -7,7 +7,7 @@ const history = [entry(1, 'Earlier context.')];
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { constructor() { window.testStream = this; } close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { constructor() { super(); window.testStream = this; } close() {} }; });
   let holdSnapshot = false, snapshotArrived, releaseSnapshot;
   const snapshotWaiting = new Promise(resolve => { snapshotArrived = resolve; });
   const snapshotHeld = new Promise(resolve => { releaseSnapshot = resolve; });

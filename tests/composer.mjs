@@ -20,8 +20,8 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.addInitScript(() => {
   window.SharedWorker = undefined;
-  window.EventSource = class {
-    constructor() { window.testStream = this; }
+  window.EventSource = class extends EventTarget {
+    constructor() { super(); window.testStream = this; }
     close() {}
   };
 });

@@ -7,7 +7,7 @@ let closeServer;
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, acceptDownloads: true });
   const agent = { id: 'download-fixture', name: 'Download fixture', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/terminals', r => r.fulfill({ json: [] }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', at: Date.now()/1000, text: 'Here is the report.\n\nAttached: art_fixture-report.csv', detail: '', output: '' }], delivery: 'start' } }));

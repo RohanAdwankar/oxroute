@@ -64,7 +64,7 @@ try {
   browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });
   const agent = { id: 'upload-fixture', name: 'Upload fixture', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/terminals', route => route.fulfill({ json: [] }));
   await page.route('**/api/agents/*', route => route.fulfill({ json: { agent, timeline: [], delivery: 'start' } }));

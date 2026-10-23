@@ -21,7 +21,7 @@ let releaseAccepted;
 const acceptedGate = new Promise(resolve => { releaseAccepted = resolve; });
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
-  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class { constructor() { window.fixtureEvents = this; } close() {} }; });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { constructor() { super(); window.fixtureEvents = this; } close() {} }; });
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     const json = value => route.fulfill({ json: value });

@@ -186,11 +186,24 @@ export function follow(onEvent: (event: DaemonEvent) => void): () => void {
   };
   // Keep live updates available on browsers without shared workers.
   if (typeof SharedWorker === "undefined") {
-    const stream = new EventSource("/api/events");
-    stream.onmessage = receive;
-    return () => stream.close();
+    let stream: EventSource;
+    let timer: ReturnType<typeof setTimeout>;
+    const connect = () => {
+      stream?.close();
+      stream = new EventSource("/api/events");
+      const alive = () => {
+        clearTimeout(timer);
+        timer = setTimeout(connect, 15000);
+      };
+      stream.addEventListener("heartbeat", alive);
+      stream.onmessage = event => { alive(); receive(event); };
+      alive();
+    };
+    connect();
+    return () => { stream.close(); clearTimeout(timer); };
   }
-  const worker = new SharedWorker("/events-worker.js");
+  // Idle tabs keep workers alive. Change this revision when the worker changes.
+  const worker = new SharedWorker("/events-worker.js?v=2");
   worker.port.onmessage = receive;
   const close = () => {
     worker.port.postMessage("close");

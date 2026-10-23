@@ -12,7 +12,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
   await page.addInitScript(() => {
     window.SharedWorker = undefined;
-    window.EventSource = class { constructor() { window.stream = this; } close() {} };
+    window.EventSource = class extends EventTarget { constructor() { super(); window.stream = this; } close() {} };
     const scroll = Element.prototype.scrollIntoView;
     window.jumps = [];
     Element.prototype.scrollIntoView = function (...args) { if (this.dataset.entry) window.jumps.push(this.dataset.entry); return scroll.apply(this, args); };
