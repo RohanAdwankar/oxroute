@@ -33,6 +33,22 @@ async function response<T>(request: Promise<Response>): Promise<T> {
   return body;
 }
 
+function ReviewImage({ endpoint, path, side, present }: { endpoint: string; path: string; side: "before" | "after"; present: boolean }) {
+  const [failed, setFailed] = useState("");
+  const label = side === "before" ? "Before" : "After";
+  const url = `${endpoint}/image?${new URLSearchParams({ path, side })}`;
+  return <figure className="min-w-0 flex-1">
+    <figcaption className="mb-2 text-[11px] text-faint">{label}</figcaption>
+    {present ? <a href={url} target="_blank" rel="noreferrer" title={`Open ${side} image`}>
+      {failed === url ? <span role="alert">Could not load image</span> :
+        // Git blobs retain their exact bytes and load only as their preview enters view.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={`${label} ${path}`} loading="lazy" onError={() => setFailed(url)} className="mx-auto max-h-96 max-w-full object-contain"
+          style={{ backgroundImage: "repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }} />}
+    </a> : <div className="py-6 text-faint">{side === "before" ? "Added image" : "Deleted image"}</div>}
+  </figure>;
+}
+
 export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void;
 }) {
@@ -130,6 +146,10 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
           else sections.current.delete(item.path);
         }}>
           <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-1 text-[10px] text-mid">{item.path}</h3>
+          {item.image && <div aria-label={`Image comparison ${item.path}`} className="flex gap-4 bg-band/30 p-4">
+            <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} />
+            <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} />
+          </div>}
           <div className="overflow-x-auto px-3 py-1">
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");

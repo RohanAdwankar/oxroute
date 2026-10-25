@@ -46,6 +46,11 @@ into a question. The checkmark approves publication of that revision and queues
 the authorization to the owning agent without interrupting its current turn.
 Approval does not authorize merging or deploying.
 
+PNG, JPEG, GIF, WebP, SVG, AVIF, BMP and ICO files show before-and-after previews,
+including added and deleted images. Click a preview to open it at full size.
+Images load on demand from the reviewed Git revisions; SVG source diffs remain
+available below their previews.
+
 Before pushing, the agent must GET `/api/agents/<agent-id>/reviews/<review-id>`
 and require `status: approved`. Publish the recorded head commit to the recorded
 remote and branch, using the stored PR title and description. Changed commits,

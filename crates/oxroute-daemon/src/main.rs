@@ -222,6 +222,7 @@ async fn serve() -> Result<()> {
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews", post(create_review))
         .route("/api/agents/{id}/reviews/{review}", get(get_review))
+        .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
@@ -566,6 +567,35 @@ async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String
     let started = std::time::Instant::now();
     let body = review_response(review_record(&hub, &agent_id, &id, true)?.0).await?;
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ImageSide { Before, After }
+
+#[derive(Deserialize)]
+struct ReviewImageQuery { path: String, side: ImageSide }
+
+async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {
+    let review = review_record(&hub, &agent_id, &id, true)?.0;
+    let (mut child, mime) = git::image(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before)).await?;
+    let stdout = child.stdout.take().expect("Git image stdout is piped");
+    let stream = futures_util::stream::try_unfold((stdout, child), |(mut stdout, mut child)| async move {
+        let mut bytes = vec![0; 64 * 1024];
+        let length = stdout.read(&mut bytes).await?;
+        if length == 0 {
+            if !child.wait().await?.success() { return Err(std::io::Error::other("Could not read review image")); }
+            return Ok(None);
+        }
+        bytes.truncate(length);
+        Ok(Some((bytes, (stdout, child))))
+    });
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox")
+        .body(Body::from_stream(stream))?)
 }
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1494,11 +1524,28 @@ mod tests {
         command(vec!["config", "user.email", "fixture@example.invalid"]);
         command(vec!["remote", "add", "origin", "https://example.invalid/proposed.git"]);
         tokio::fs::write(root.join("settings.txt"), "original\n").await.unwrap();
-        command(vec!["add", "settings.txt"]);
+        let original_image = "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'><path fill='red' d='M0 0h8v8H0z'/></svg>";
+        let proposed_image = original_image.replace("red", "blue");
+        tokio::fs::write(root.join("diagram.svg"), original_image).await.unwrap();
+        tokio::fs::write(root.join("removed.svg"), original_image).await.unwrap();
+        tokio::fs::write(root.join("unchanged.svg"), original_image).await.unwrap();
+        command(vec!["add", "."]);
         command(vec!["commit", "-m", "Initial"]);
         command(vec!["checkout", "-b", "proposal"]);
         tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
+        tokio::fs::write(root.join("diagram.svg"), &proposed_image).await.unwrap();
+        tokio::fs::remove_file(root.join("removed.svg")).await.unwrap();
+        let image_path = "added #? λ.PNG";
+        let mut large_image = vec![0; 3 * 1024 * 1024];
+        large_image[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        tokio::fs::write(root.join(image_path), &large_image).await.unwrap();
+        command(vec!["add", "."]);
         command(vec!["commit", "-am", "Propose"]);
+        // Three-dot review comparisons use the merge base, not the base tip.
+        command(vec!["checkout", "main"]);
+        tokio::fs::write(root.join("diagram.svg"), original_image.replace("red", "green")).await.unwrap();
+        command(vec!["commit", "-am", "Advance base independently"]);
+        command(vec!["checkout", "proposal"]);
         let config_path = root.join("config.toml");
         tokio::fs::write(&config_path, "owner = 'fixture'\n").await.unwrap();
         let mut config = Config::load_from(&config_path).unwrap();
@@ -1519,6 +1566,7 @@ mod tests {
         hub.with_harness(Arc::new(ReviewHarness));
         let router = Router::new().route("/api/agents/{id}/reviews", post(create_review))
             .route("/api/agents/{id}/reviews/{review}", get(get_review))
+            .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
             .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
             .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1533,6 +1581,26 @@ mod tests {
         assert_eq!(review["status"], "pending");
         let id = review["id"].as_str().unwrap();
         let endpoint = format!("{url}/{id}");
+        let image_files = review["snapshot"]["files"].as_array().unwrap();
+        let diagram = image_files.iter().find(|file| file["path"] == "diagram.svg").unwrap();
+        assert_eq!(diagram["image"], json!({"before":true,"after":true}));
+        assert!(diagram["patch"].as_str().unwrap().contains("<svg"));
+        assert_eq!(image_files.iter().find(|file| file["path"] == image_path).unwrap()["image"], json!({"before":false,"after":true}));
+        assert_eq!(image_files.iter().find(|file| file["path"] == "removed.svg").unwrap()["image"], json!({"before":true,"after":false}));
+        for (path, side, expected) in [("diagram.svg", "before", original_image), ("diagram.svg", "after", proposed_image.as_str()), ("removed.svg", "before", original_image)] {
+            let response = client.get(format!("{endpoint}/image")).query(&[("path",path),("side",side)]).send().await.unwrap();
+            assert!(response.status().is_success());
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
+            assert!(response.headers()["content-security-policy"].to_str().unwrap().contains("sandbox"));
+            assert_eq!(response.text().await.unwrap(), expected);
+        }
+        let response = client.get(format!("{endpoint}/image")).query(&[("path",image_path),("side","after")]).send().await.unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(response.bytes().await.unwrap().as_ref(), large_image);
+        for (path, side) in [("removed.svg","after"),(image_path,"before"),("unchanged.svg","after"),("../outside.svg","after"),("diagram.svg","invalid")] {
+            assert!(!client.get(format!("{endpoint}/image")).query(&[("path",path),("side",side)]).send().await.unwrap().status().is_success());
+        }
+        assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().status().is_success());
         let card = hub.store.timeline(agent_id, 10).unwrap();
         assert_eq!(card.len(), 1);
         assert_eq!(card[0].kind, oxroute_core::model::EntryKind::Review);
@@ -1555,6 +1623,7 @@ mod tests {
         let inherited: serde_json::Value = inherited.json().await.unwrap();
         assert_eq!(inherited["snapshot"], review["snapshot"]);
         assert_eq!(inherited["agentId"], agent_id);
+        assert_eq!(client.get(format!("http://{address}/api/agents/{}/reviews/{id}/image", fork.id)).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
 
         for _ in 0..2 {
@@ -1573,10 +1642,12 @@ mod tests {
         let stored: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
         assert!(stored.approved_at.is_some());
         tokio::fs::write(root.join("settings.txt"), "revised\n").await.unwrap();
+        tokio::fs::write(root.join("diagram.svg"), "changed after review").await.unwrap();
         command(vec!["commit", "-am", "Revise"]);
         let stale = client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
         assert_eq!(stale["status"], "stale");
         assert_eq!(stale["snapshot"], review["snapshot"]);
+        assert_eq!(client.get(format!("{endpoint}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
         let diffs = json!([{ "text":"Quoted revision", "path":"settings.txt", "rows":[
             {"text":"-previous", "old":1, "next":null}, {"text":"+updated", "old":null, "next":1}

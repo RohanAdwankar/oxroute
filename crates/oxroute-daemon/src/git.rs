@@ -6,7 +6,37 @@ use tokio::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FileDiff { pub path: String, pub patch: String }
+pub struct FileDiff {
+    pub path: String,
+    pub patch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageDiff { pub before: bool, pub after: bool }
+
+fn image_type(path: &str) -> Option<&'static str> {
+    match Path::new(path).extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "avif" => Some("image/avif"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        _ => None,
+    }
+}
+
+async fn blob(root: &Path, commit: &str, path: &str) -> Result<Option<String>> {
+    let entry = git(root, &["ls-tree", "-z", commit, "--", path]).await?;
+    let Some((metadata, name)) = entry.trim_end_matches('\0').split_once('\t') else { return Ok(None) };
+    let fields: Vec<_> = metadata.split(' ').collect();
+    Ok((name == path && fields.len() == 3 && fields[1] == "blob")
+        .then(|| fields[2].to_string()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,19 +96,34 @@ pub async fn capture(workspace: &Path, repository: &str, base: &str, remote: &st
     Ok(snapshot)
 }
 
-pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
+async fn paths(snapshot: &Snapshot) -> Result<Vec<String>> {
     let root = Path::new(&snapshot.repository);
     anyhow::ensure!(root.is_dir(), "Review worktree was removed; its diff is no longer available");
     anyhow::ensure!(Path::new(&git(root, &["rev-parse", "--show-toplevel"]).await?) == root,
         "Review worktree is no longer a repository root");
     let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
     let names = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", &range, "--"]).await?;
+    Ok(names.split('\0').filter(|path| !path.is_empty()).map(String::from).collect())
+}
+
+pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
+    let root = Path::new(&snapshot.repository);
+    let names = paths(snapshot).await?;
+    let before = if names.iter().any(|path| image_type(path).is_some()) {
+        git(root, &["merge-base", &snapshot.base_commit, &snapshot.head_commit]).await?
+    } else { String::new() };
+    let before = before.as_str();
+    let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
     let mut files = Vec::new();
     let mut size = 0;
     let range = range.as_str();
-    let jobs: Vec<_> = names.split('\0').filter(|path| !path.is_empty()).map(|path| async move {
+    let jobs: Vec<_> = names.iter().map(|path| async move {
         let patch = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--unified=5", &range, "--", path]).await?;
-        Ok::<_, anyhow::Error>(FileDiff { path: path.into(), patch })
+        let image = if image_type(path).is_some() {
+            let (old, new) = tokio::try_join!(blob(root, before, path), blob(root, &snapshot.head_commit, path))?;
+            Some(ImageDiff { before: old.is_some(), after: new.is_some() })
+        } else { None };
+        Ok::<_, anyhow::Error>(FileDiff { path: path.into(), patch, image })
     }).collect();
     let mut patches = stream::iter(jobs).buffered(8);
     while let Some(file) = patches.try_next().await? {
@@ -88,6 +133,21 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     }
     anyhow::ensure!(!files.is_empty(), "No committed changes to review");
     Ok(files)
+}
+
+/// Read only a changed image from the pinned Git revision, never the worktree.
+pub async fn image(snapshot: &Snapshot, path: &str, before: bool) -> Result<(tokio::process::Child, &'static str)> {
+    let mime = image_type(path).context("Not a supported image file")?;
+    anyhow::ensure!(paths(snapshot).await?.iter().any(|name| name == path), "Image is not part of this review");
+    let root = Path::new(&snapshot.repository);
+    let revision = if before {
+        git(root, &["merge-base", &snapshot.base_commit, &snapshot.head_commit]).await?
+    } else { snapshot.head_commit.clone() };
+    let oid = blob(root, &revision, path).await?.context("Image is absent from this side of the review")?;
+    let child = Command::new("git").arg("--no-pager").arg("-C").arg(root)
+        .args(["cat-file", "blob", &oid]).env("GIT_OPTIONAL_LOCKS", "0")
+        .stdout(std::process::Stdio::piped()).kill_on_drop(true).spawn()?;
+    Ok((child, mime))
 }
 
 pub async fn current(snapshot: &Snapshot) -> Result<bool> {

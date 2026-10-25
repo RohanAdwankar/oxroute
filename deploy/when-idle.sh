@@ -69,6 +69,7 @@ curl -fsS --max-time 10 "$api/api/state" | jq -e '(.agents | type == "array") an
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/queued-corrections.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/git-review.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-images.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-file-jump.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-loading.mjs"
 node "$repository/tests/review-priority.mjs"
