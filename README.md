@@ -18,7 +18,7 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Inbox** | Slack, email or anything that can POST waits in one place until you say where it goes |
 | **Routing** | Send a request to a new session, to one already running, or throw it away |
 | **Fleet** | Every session on one screen, with what it is doing now and what it just said |
-| **Panes** | Arrange conversations and terminals, drag shared edges, or collapse a pane to its handle |
+| **Panes** | Arrange conversations and terminals, resize shared edges, or collapse a pane to its handle. Drag handles and tabs between Oxroute windows, onto pane edges, or onto the tab bar; drag outside to detach, or right-click **Move to new window**. Drafts and attachments move with the pane |
 | **Terminals** | Agents can open two panes per conversation; access to another terminal requires your consent |
 | **Tasks** | A shared list the agents work through: they mark a task done, you approve it or send it back |
 | **Corrections** | "Not yet" puts the task above the composer, so what is wrong is said with room and pictures |

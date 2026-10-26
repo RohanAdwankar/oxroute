@@ -25,6 +25,7 @@ binary=$HOME/.local/bin/oxrouted
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
 backup=$(mktemp -d "$state/deploy-backup.XXXXXX")
+export TMPDIR=$backup
 cleanup() { find "$backup" -depth -delete; }
 trap cleanup EXIT
 uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True).backup(sqlite3.connect(sys.argv[2]))' "$database" "$backup/database.sqlite3"
@@ -77,6 +78,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/inherited-review.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/diff-highlighting.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/session-tabs.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pane-windows.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/compact-search.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/arbitrary-merge.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pane-highlight-edges.mjs"

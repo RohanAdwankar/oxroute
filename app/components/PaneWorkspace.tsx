@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { movePane, paneIds, readPanes, syncPanes, type PaneEdge, type PaneLayout } from "../lib/panes";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { movePane, paneIds, readPanes, syncPanes, writePanes, type PaneEdge, type PaneLayout } from "../lib/panes";
+import { carriesPane } from "../lib/pane-transfer";
 import { isTyping } from "../lib/keys";
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
@@ -31,11 +32,16 @@ export function AgentPicker({ agents, selected, onSelect, onTerminal }: { agents
   </details>;
 }
 
-export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomize, onClose, mergeTargets = [], onMerge, children }: {
+export function PaneWorkspace({ workspace, ids, revision, keyboard, onActivate, onCustomize, onClose, onDragStart, onDragEnd, onDock, onDetach, mergeTargets = [], onMerge, children }: {
   mergeTargets?: Pick<Agent, "id" | "name">[]; onMerge?: (source: string, target: string, archive: boolean) => void;
   workspace: string; ids: string[]; keyboard: boolean; onActivate: () => void; onCustomize: () => void; onClose: (id: string) => void; children: (id: string, index: number, handle: ReactNode) => ReactNode;
+  onDragStart: (event: DragEvent, id: string) => void; onDragEnd: (event: DragEvent) => void;
+  onDock: (event: DragEvent, id: string, edge: PaneEdge) => void; onDetach: (id: string) => void;
+  revision: number;
 }) {
   const [layout, setTree] = useState<PaneLayout | null>(() => readPanes(workspace));
+  const [previousRevision, setPreviousRevision] = useState(revision);
+  if (revision !== previousRevision) { setPreviousRevision(revision); setTree(readPanes(workspace)); }
   const tree = useMemo(() => syncPanes(layout, ids), [layout, ids]);
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; edge: PaneEdge } | null>(null);
@@ -81,8 +87,8 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
     document.addEventListener("keydown", escape, true);
     return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape, true); };
   }, [menu]);
-  useEffect(() => { if (tree && readPanes(workspace)) localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(tree)); }, [tree, workspace]);
-  const save = (next: PaneLayout) => { setTree(next); localStorage.setItem(`oxroute.panes.${workspace}`, JSON.stringify(next)); onCustomize(); };
+  useEffect(() => { if (tree && readPanes(workspace)) writePanes(workspace, tree); }, [tree, workspace]);
+  const save = (next: PaneLayout) => { setTree(next); writePanes(workspace, next); onCustomize(); };
   const minimumSize = (node: PaneLayout, axis: "row" | "column"): number => {
     if (typeof node === "string") return root.current!.querySelector(`[data-agent-pane="${node}"] [data-pane-header]`)!.getBoundingClientRect().height;
     const first = minimumSize(node.first, axis), second = minimumSize(node.second, axis);
@@ -108,20 +114,22 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
       className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden border ${node === active ? "border-edge [&_[data-pane-title]]:font-bold" : "border-rule"}`}
       onPointerDownCapture={() => { setFocused(node); onActivate(); }} onFocusCapture={() => { setFocused(node); onActivate(); }}
       onDragOver={event => {
-        if (!drag || drag === node) return;
+        if ((!drag && !carriesPane(event.dataTransfer)) || drag === node) return;
         event.preventDefault(); event.dataTransfer.dropEffect = "move";
         const box = event.currentTarget.getBoundingClientRect();
         const x = (event.clientX - box.left) / box.width, y = (event.clientY - box.top) / box.height;
         const edge: PaneEdge = Math.min(x, 1 - x) < Math.min(y, 1 - y) ? (x < 0.5 ? "left" : "right") : (y < 0.5 ? "top" : "bottom");
         setOver({ id: node, edge });
       }} onDrop={event => {
-        if (!drag || !over || over.id !== node || !tree) return;
-        event.preventDefault(); event.stopPropagation(); save(movePane(tree, drag, node, over.edge)); setDrag(null); setOver(null);
+        if (!over || over.id !== node || !tree) return;
+        if (drag) { event.preventDefault(); event.stopPropagation(); save(movePane(tree, drag, node, over.edge)); }
+        else onDock(event, node, over.edge);
+        setDrag(null); setOver(null);
       }}>
       {children(node, ids.indexOf(node), <button data-pane-handle draggable aria-label={`Move pane ${node}`} title="Drag to an edge of another pane" className="cursor-grab text-faint"
         onContextMenu={event => { event.preventDefault(); setMenu({ id: node, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 280)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 360)) }); }}
-        onDragStart={event => { event.dataTransfer.setData("application/x-oxroute-pane", node); event.dataTransfer.effectAllowed = "move"; setDrag(node); }}
-        onDragEnd={() => { setDrag(null); setOver(null); }}>⋮</button>)}
+        onDragStart={event => { event.dataTransfer.setData("application/x-oxroute-pane", node); onDragStart(event, node); setDrag(node); }}
+        onDragEnd={event => { onDragEnd(event); setDrag(null); setOver(null); }}>⋮</button>)}
       {over?.id === node && <div aria-label={`Place pane ${over.edge}`} className="pointer-events-none absolute z-40 bg-edge/20" style={over.edge === "left" || over.edge === "right" ? { top: 0, bottom: 0, width: "50%", [over.edge]: 0 } : { left: 0, right: 0, height: "50%", [over.edge]: 0 }} />}
     </div>;
     const junctions = ancestors.filter((ancestor, index) => ancestor.axis !== node.axis && ancestors.slice(index + 1).every(next => next.axis !== ancestor.axis || next.side !== ancestor.side))
@@ -171,6 +179,7 @@ export function PaneWorkspace({ workspace, ids, keyboard, onActivate, onCustomiz
         </div>
       </div> : <>
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
+        <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onDetach(menu.id); setMenu(null); }}>Move to new window</button>
         {onMerge && !menu.id.startsWith("terminal_") && <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => setMenu({ ...menu, merge: true })}>Merge into…</button>}
       </>}
     </div>}

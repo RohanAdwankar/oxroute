@@ -14,7 +14,7 @@ import { Code } from "./Code";
 import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
-import { draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
+import { DRAFT_CHANGED, draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -213,7 +213,7 @@ export function AgentPanel({
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [pending, setPending] = useState<Entry[]>([]);
   const nextPending = useRef(0);
-  const pictures = useUploads();
+  const pictures = useUploads(view.agent.id);
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -282,6 +282,13 @@ export function AgentPanel({
 
   useEffect(() => keepDraft(agent.id, draft), [agent.id, draft]);
   useEffect(() => keepDiffs(agent.id, diffs), [agent.id, diffs]);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === agent.id) { setDraft(draftFor(agent.id)); setDiffs(diffsFor(agent.id)); }
+    };
+    window.addEventListener(DRAFT_CHANGED, receive);
+    return () => window.removeEventListener(DRAFT_CHANGED, receive);
+  }, [agent.id]);
 
   /// Every question you asked, in order, so a question can lead to the one
   /// before or after it without reading everything in between.

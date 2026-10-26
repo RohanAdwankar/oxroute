@@ -7,7 +7,8 @@ import { TaskActions } from "./components/TaskReference";
 import { AgentPanel } from "./components/AgentPanel";
 import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
 import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
-import { paneIds, readPanes, syncPanes } from "./lib/panes";
+import { dockPanes, paneIds, readPanes, removePane, syncPanes, writePanes, type PaneLayout } from "./lib/panes";
+import { usePaneTransfer, type PaneOffer } from "./lib/pane-transfer";
 import { Chrome } from "./components/Chrome";
 import { SessionTabs } from "./components/SessionTabs";
 import { Fleet } from "./components/Fleet";
@@ -104,7 +105,17 @@ export default function Home() {
   const [routing, setRouting] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
+  const [tabIds, setTabIds] = useState<string[]>(() => {
+    try {
+      if (new URLSearchParams(location.search).has("transfer")) return [];
+      const saved: unknown = JSON.parse(sessionStorage.getItem("oxroute.sessionTabs") ?? "[]");
+      return Array.isArray(saved) ? [...new Set(saved.filter((id): id is string => typeof id === "string"))] : [];
+    } catch { return []; }
+  });
+  if (open && !tabIds.includes(open)) setTabIds([...tabIds, open]);
+  useEffect(() => { sessionStorage.setItem("oxroute.sessionTabs", JSON.stringify(tabIds)); }, [tabIds]);
   const [panes, setPanes] = useState<string[]>([]);
+  const [paneRevision, setPaneRevision] = useState(0);
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
@@ -323,6 +334,7 @@ export default function Home() {
       const url = new URL(window.location.href);
       setBoardId(url.searchParams.get("board"));
       const agent = url.searchParams.get("agent");
+      if (url.searchParams.has("transfer")) { setOpen(null); setPanes([]); return; }
       setOpen(agent);
       // Arriving at an agent is the same as walking into one: the keys act
       // on the conversation in front of you, not on the column beside it.
@@ -610,9 +622,7 @@ export default function Home() {
   };
 
   const closePane = (index: number) => {
-    const next = panes.filter((_, at) => at !== index);
-    setPanes(next);
-    setUrlAgent(next[0] ?? null);
+    choosePanes(panes.filter((_, at) => at !== index));
   };
 
   /// Put a session in its own pane beside the one at `index`, sharing that
@@ -661,16 +671,62 @@ export default function Home() {
     });
 
   const choosePanes = (ids: string[]) => {
-    const key = open ?? ids[0];
+    const key = open && ids.includes(open) ? open : ids[0];
     if (key) {
-      const tree = syncPanes(readPanes(key), ids);
-      if (tree) localStorage.setItem(`oxroute.panes.${key}`, JSON.stringify(tree));
-      else localStorage.removeItem(`oxroute.panes.${key}`);
+      const tree = syncPanes(readPanes(open ?? key), ids);
+      writePanes(key, tree);
+    } else if (open) writePanes(open, null);
+    if (open && !ids.includes(open)) {
+      writePanes(open, null);
+      setTabIds(current => [...new Set(current.flatMap(id => id === open ? key ? [key] : [] : [id]))]);
     }
     customPanes.current = true;
     setPanes(ids);
-    if (!open || !ids.length) setUrlAgent(ids[0] ?? null);
+    if (key !== open) setUrlAgent(key ?? null);
   };
+
+  const tabLayout = (id: string): PaneLayout => id === open ? syncPanes(readPanes(id), panes) ?? id : readPanes(id) ?? id;
+  const removeTransferred = (offer: PaneOffer, closeWindow: boolean) => {
+    if (!tabIds.includes(offer.root) && open !== offer.root) return;
+    const initial = open === offer.root ? tabLayout(open) : readPanes(offer.root) ?? offer.origin;
+    let remaining: PaneLayout | null = initial;
+    for (const id of paneIds(offer.layout)) remaining = removePane(remaining, id);
+    const root = remaining ? (paneIds(remaining).includes(offer.root) ? offer.root : paneIds(remaining)[0]) : null;
+    if (root !== offer.root) writePanes(offer.root, null);
+    if (remaining && root) writePanes(root, remaining);
+    const tabs = [...new Set(tabIds.flatMap(id => id === offer.root ? root ? [root] : [] : [id]))];
+    setTabIds(tabs);
+    if (open === offer.root) { setPanes(paneIds(remaining)); setUrlAgent(root); setPaneRevision(value => value + 1); }
+    if (closeWindow && !tabs.length && new URLSearchParams(location.search).has("detached")) window.close();
+  };
+  const transfer = usePaneTransfer({
+    ready,
+    known: [...snapshot.agents, ...snapshot.archived, ...terminals].map(session => session.id),
+    error: say,
+    depart: offer => removeTransferred(offer, true),
+    receive: (offer, destination, local) => {
+      const ids = paneIds(offer.layout);
+      if (destination.kind === "pane") {
+        if (!open || !panes.includes(destination.id)) return false;
+        if (local && offer.root === open && ids.length === panes.length && ids.every(id => panes.includes(id))) return () => {};
+        const tree = dockPanes(tabLayout(open), offer.layout, destination.id, destination.edge);
+        return () => {
+          if (local && offer.root !== open) removeTransferred(offer, false);
+          writePanes(open, tree); customPanes.current = true;
+          setPanes(paneIds(tree)); setPaneRevision(value => value + 1);
+        };
+      }
+      const root = ids.includes(offer.root) ? offer.root : ids[0];
+      const existing = tabIds.includes(root) && (!local || offer.root !== root) ? readPanes(root) : null;
+      const tree = existing ? syncPanes(existing, [...new Set([...paneIds(existing), ...ids])])! : offer.layout;
+      return () => {
+        if (local) removeTransferred(offer, false);
+        writePanes(root, tree); customPanes.current = true;
+        setTabIds(current => [...new Set([...current, root])]);
+        setPanes(paneIds(tree)); setUrlAgent(root); setPaneRevision(value => value + 1);
+      };
+    },
+  });
 
   // Both columns as they are drawn, so the keyboard counts the rows on
   // screen rather than the data behind them.
@@ -1044,7 +1100,14 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
-        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} active={open} onSelect={showAgent} />}
+        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} onSelect={showAgent}
+          onClose={id => {
+            const known = new Set([...snapshot.agents, ...snapshot.archived, ...terminals].map(session => session.id));
+            const visible = tabIds.filter(tab => known.has(tab));
+            const index = visible.indexOf(id); setTabIds(current => current.filter(tab => tab !== id));
+            if (open === id) showAgent(visible[index + 1] ?? visible[index - 1] ?? null);
+          }} onDragStart={(event, id) => transfer.start(event, id, tabLayout(id))} onDragEnd={transfer.end}
+          onDrop={event => transfer.drop(event, { kind: "tab" })} onDetach={id => transfer.detach(id, tabLayout(id))} />}
         panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onTerminal={() => {
           void terminalApi<{ terminal: TerminalInfo; controller: string }>("", {}).then(({ terminal, controller }) => {
             localStorage.setItem(`oxroute.terminal.${terminal.id}`, controller);
@@ -1130,7 +1193,10 @@ export default function Home() {
         ) : null}
 
         {open ? (
-          <PaneWorkspace key={open} workspace={open} ids={panes} mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
+          <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
+            onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
+            onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}
+            mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
               if (id.startsWith("terminal_")) return <TerminalPane id={id} handle={paneHandle} agents={[...snapshot.agents, ...snapshot.archived]} onEnd={() => { setTerminals(current => current.filter(terminal => terminal.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);

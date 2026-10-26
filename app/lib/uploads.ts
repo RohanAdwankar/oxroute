@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DRAFT_CHANGED, filesFor, keepFiles } from "./drafts";
 
 export type Upload = { file: File; preview: string };
 
@@ -13,14 +14,26 @@ export const acceptsFileDrop = (transfer: DataTransfer) =>
  * Every box you can type into takes them the same way -- pasted, dropped or
  * picked -- so the holding of them belongs here rather than in one composer.
  */
-export function useUploads() {
-  const [uploads, setUploads] = useState<Upload[]>([]);
+export function useUploads(who?: string) {
+  const [uploads, setUploads] = useState<Upload[]>(() => who ? filesFor(who).map(file => ({ file, preview: URL.createObjectURL(file) })) : []);
   const [error, setError] = useState("");
   const held = useRef<Upload[]>([]);
 
   useEffect(() => {
     held.current = uploads;
-  }, [uploads]);
+    if (who) keepFiles(who, uploads.map(upload => upload.file));
+  }, [uploads, who]);
+
+  useEffect(() => {
+    if (!who) return;
+    const receive = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== who) return;
+      held.current.forEach(upload => URL.revokeObjectURL(upload.preview));
+      setUploads(filesFor(who).map(file => ({ file, preview: URL.createObjectURL(file) })));
+    };
+    window.addEventListener(DRAFT_CHANGED, receive);
+    return () => window.removeEventListener(DRAFT_CHANGED, receive);
+  }, [who]);
 
   // The browser keeps a preview alive until it is told not to.
   useEffect(() => () => {
