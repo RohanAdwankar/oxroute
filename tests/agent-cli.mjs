@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 
 const binary = process.env.CLI_BINARY ?? `${homedir()}/.local/bin/oxroute-agent`;
 const schema = process.env.SCHEMA_FILE ? JSON.parse(await readFile(process.env.SCHEMA_FILE, 'utf8'))
-  : await (await fetch('http://127.0.0.1:8787/api/agent-openapi.json')).json();
+  : await (await fetch(`${process.env.OXROUTE_URL ?? 'http://127.0.0.1:8787'}/api/agent-openapi.json`)).json();
 // An interchangeable route proves commands come from discovery, not an endpoint table in the CLI.
 schema.paths['/api/widgets/{key}'] = { post: { operationId: 'widgets.inspect', parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { enabled: { type: 'boolean' }, optionalText: { type: ['string', 'null'] }, labels: { type: 'array', items: { type: 'string' } } } } } } } } };
 const actor = 'agent-fixture', id = 'task /?# λ';

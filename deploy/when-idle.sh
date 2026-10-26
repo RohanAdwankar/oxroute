@@ -79,7 +79,7 @@ curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev
 test "$(curl --retry 30 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:3939/api/version | jq -er .version)" = "$version"
 cmp -s "$release/bin/oxrouted" "$binary"
 cmp -s "$release/bin/oxroute-agent" "$agent_binary"
-node "$repository/tests/agent-cli.mjs"
+OXROUTE_URL="$api" node "$repository/tests/agent-cli.mjs"
 curl -fsS --max-time 10 "$api/api/state" | jq -e '(.agents | type == "array") and (.messages | type == "object")' >/dev/null
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/queued-corrections.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"
