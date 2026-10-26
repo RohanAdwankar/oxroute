@@ -2639,15 +2639,10 @@ async fn every_turn_tells_the_agent_how_to_tag_itself() {
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
     let started = w.calls.lock().unwrap().started.clone();
-    let told = started[0]
-        .1
-        .iter()
-        .filter_map(TurnInput::as_text)
-        .find(|text| text.contains("/api/agents/"))
-        .expect("no tagging instruction")
-        .to_string();
-    assert!(told.contains(&format!("/api/agents/{agent}/tags")), "{told}");
-    assert!(told.contains("/api/boards"));
+    let told = started[0].1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
+    assert!(told.contains(&format!("--agent {agent}")), "Tag operations need this session's identity");
+    assert!(told.contains("tags change --set") && told.contains("--add") && told.contains("--remove"));
+    assert!(told.contains("Boards commands include list") && told.contains("show, create, update and delete"));
 }
 
 #[tokio::test]

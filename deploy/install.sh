@@ -15,6 +15,7 @@ set -euo pipefail
 
 source_dir=$(cd "$(dirname "$0")/.." && pwd)
 bin_dir="$HOME/.local/bin"
+target_dir=${CARGO_TARGET_DIR:-$source_dir/target}
 unit_dir="$HOME/.config/systemd/user"
 config_dir="$HOME/.config/oxroute"
 share_dir="$HOME/.local/share/oxroute"
@@ -34,8 +35,9 @@ cargo build --release --manifest-path "$source_dir/Cargo.toml"
 
 say "installing binaries into $bin_dir"
 mkdir -p "$bin_dir"
-install -m 0755 "$source_dir/target/release/oxrouted" "$bin_dir/oxrouted"
-install -m 0755 "$source_dir/target/release/oxroute" "$bin_dir/oxroute"
+install -m 0755 "$target_dir/release/oxrouted" "$bin_dir/oxrouted"
+install -m 0755 "$target_dir/release/oxroute" "$bin_dir/oxroute"
+install -m 0755 "$target_dir/release/oxroute-agent" "$bin_dir/oxroute-agent"
 
 mkdir -p "$config_dir" "$unit_dir" "$share_dir"
 install -d -m 0700 "$share_dir/tmp" "$HOME/.local/state/oxroute"

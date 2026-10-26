@@ -27,6 +27,8 @@ axum = { version = "0.8", features = ["multipart"] }
 tower-http = { version = "0.6", features = ["cors"] }
 async-stream = "0.3.6"
 portable-pty = "0.9.0"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
 [dev-dependencies]
 reqwest.workspace = true
 async-trait = "0.1.92"

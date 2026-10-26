@@ -19,9 +19,12 @@ version=$(jq -er '.version' "$request")
 test "$(git -C "$repository" rev-parse HEAD)" = "$commit"
 test -z "$(git -C "$repository" status --porcelain --untracked-files=no)"
 test -x "$release/bin/oxrouted"
+test -x "$release/bin/oxroute-agent"
 test "$(cat "$release/web/.next/BUILD_ID")" = "$version"
 test "$(sha256sum "$release/bin/oxrouted" | cut -d ' ' -f1)" = "$(jq -er '.binarySha256' "$request")"
+test "$(sha256sum "$release/bin/oxroute-agent" | cut -d ' ' -f1)" = "$(jq -er '.agentBinarySha256' "$request")"
 binary=$HOME/.local/bin/oxrouted
+agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
 backup=$(mktemp -d "$state/deploy-backup.XXXXXX")
@@ -30,6 +33,7 @@ cleanup() { find "$backup" -depth -delete; }
 trap cleanup EXIT
 uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True).backup(sqlite3.connect(sys.argv[2]))' "$database" "$backup/database.sqlite3"
 cp -a "$binary" "$backup/oxrouted"
+if test -e "$agent_binary"; then cp -a "$agent_binary" "$backup/oxroute-agent"; fi
 cp -a "$web" "$backup/web"
 task_status() {
   jq -c --arg status "$1" --arg note "$2" --arg group "${3:-tasks}" '. as $r | .[$group][]? | {id, text, agentId:$r.agentId, status:$status, note:$note}' "$request" |
@@ -46,6 +50,12 @@ rollback() {
   mv -Tf "$web.next" "$web"
   cp -a "$backup/oxrouted" "$binary.next"
   mv -Tf "$binary.next" "$binary"
+  if test -e "$backup/oxroute-agent"; then
+    cp -a "$backup/oxroute-agent" "$agent_binary.next"
+    mv -Tf "$agent_binary.next" "$agent_binary"
+  else
+    rm -f "$agent_binary"
+  fi
   # Restore review bodies stripped by migration, without reverting other data.
   uv run --no-project python -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("ATTACH DATABASE ? AS previous",(sys.argv[2],)); c.execute("INSERT OR REPLACE INTO kv SELECT * FROM previous.kv WHERE key GLOB '\''review:*'\''"); c.commit()' "$database" "$backup/database.sqlite3"
   systemctl --user start oxroute.service oxroute-web.service
@@ -60,12 +70,16 @@ trap rollback ERR
 systemctl --user stop oxroute-web.service oxroute.service
 ln -s "$release/bin/oxrouted" "$binary.next"
 mv -Tf "$binary.next" "$binary"
+ln -s "$release/bin/oxroute-agent" "$agent_binary.next"
+mv -Tf "$agent_binary.next" "$agent_binary"
 ln -s "$release/web" "$web.next"
 mv -Tf "$web.next" "$web"
 systemctl --user start oxroute.service oxroute-web.service
 curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
 test "$(curl --retry 30 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:3939/api/version | jq -er .version)" = "$version"
 cmp -s "$release/bin/oxrouted" "$binary"
+cmp -s "$release/bin/oxroute-agent" "$agent_binary"
+node "$repository/tests/agent-cli.mjs"
 curl -fsS --max-time 10 "$api/api/state" | jq -e '(.agents | type == "array") and (.messages | type == "object")' >/dev/null
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/queued-corrections.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"

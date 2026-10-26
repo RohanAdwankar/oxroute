@@ -208,11 +208,11 @@ async fn serve() -> Result<()> {
     }
     hub.start().await?;
 
+    let (agent_routes, _) = agent_api();
     let app = Router::new()
+        .merge(agent_routes)
         .route("/api/health", get(health))
-        .route("/api/state", get(state))
         .route("/api/events", get(events))
-        .route("/api/agents/{id}", get(agent))
         .route("/api/search", get(search))
         .route("/api/search/native", get(search_native))
         .route("/api/continue", post(continue_session))
@@ -220,8 +220,6 @@ async fn serve() -> Result<()> {
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/say", post(say))
-        .route("/api/agents/{id}/reviews", post(create_review))
-        .route("/api/agents/{id}/reviews/{review}", get(get_review))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
         .route("/api/say-attachments", post(say_attachments))
@@ -233,23 +231,13 @@ async fn serve() -> Result<()> {
         .route("/api/archive", post(archive))
         .route("/api/pin", post(pin))
         .route("/api/react", post(react))
-        .route("/api/tasks", get(tasks).post(create_task))
-        .route("/api/tasks/{id}", axum::routing::put(update_task).delete(delete_task))
         .route("/api/tasks/{id}/hand-off", post(hand_off_task))
-        .route("/api/task-notes", get(task_notes))
-        .route("/api/tasks/{id}/notes", post(add_task_note))
         .route("/api/tasks/{id}/move", post(move_task))
         .route("/api/tasks/{id}/correction", post(correct_task))
         .route("/api/task-attachments", post(create_task_with_attachments))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
-        .route("/api/agents/{id}/tags", get(tags).post(change_tags))
         .route("/api/agents/{id}/model", post(change_model))
-        .route("/api/boards", get(boards).post(create_board))
-        .route(
-            "/api/boards/{id}",
-            get(arrange).put(update_board).delete(delete_board),
-        )
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
         .route("/api/agents/{id}/diagram/preview", post(diagram_preview))
@@ -293,6 +281,23 @@ async fn serve() -> Result<()> {
     Ok(())
 }
 
+
+/// Agent command discovery and HTTP registration share these annotations.
+fn agent_api() -> (Router<Arc<Hub>>, serde_json::Value) {
+    use utoipa_axum::{router::OpenApiRouter, routes};
+    let (router, schema) = OpenApiRouter::new()
+        .routes(routes!(state)).routes(routes!(agent))
+        .routes(routes!(tasks, create_task)).routes(routes!(update_task, delete_task))
+        .routes(routes!(task_notes)).routes(routes!(add_task_note))
+        .routes(routes!(tags, change_tags)).routes(routes!(boards, create_board))
+        .routes(routes!(arrange, update_board, delete_board)).routes(routes!(create_review)).routes(routes!(get_review))
+        .split_for_parts();
+    let schema = serde_json::to_value(schema).expect("OpenAPI is serializable");
+    let served = schema.clone();
+    let router = router.route("/api/agent-openapi.json", get(move || { let schema = served.clone(); async move { Json(schema) } }));
+    (router, schema)
+}
+
 type Hubs = State<Arc<Hub>>;
 
 /// Anything that goes wrong becomes a message a surface can show, rather than
@@ -323,10 +328,12 @@ async fn health() -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
 }
 
+#[utoipa::path(get, path = "/api/state", operation_id = "state.show", responses((status = 200, body = serde_json::Value)))]
 async fn state(State(hub): Hubs) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
+#[utoipa::path(get, path = "/api/agents/{id}", operation_id = "agents.show", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn agent(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -514,7 +521,7 @@ fn diff_detail(text: &str, diffs: &[DiffQuote]) -> anyhow::Result<String> {
     Ok(format!("diff-attachments:{serialized}"))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct ReviewBody { repository: String, base: String, remote: String, title: String, description: String }
 
 #[derive(Clone, serde::Serialize, Deserialize)]
@@ -554,6 +561,7 @@ async fn review_response(review: ChangeReview, full: bool) -> anyhow::Result<ser
     Ok(response)
 }
 
+#[utoipa::path(post, path = "/api/agents/{id}/reviews", operation_id = "reviews.create", params(("id" = String, Path)), request_body = ReviewBody, responses((status = 200, body = serde_json::Value)))]
 async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body): Json<ReviewBody>) -> Result<Json<serde_json::Value>, Failed> {
     hub.store.agent(&agent_id)?.context("no such agent")?;
     if body.title.trim().is_empty() || body.title.len() > 300 || body.description.len() > 32_000 {
@@ -573,6 +581,7 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
 #[derive(Default, Deserialize)]
 struct ReviewQuery { #[serde(default)] full: bool }
 
+#[utoipa::path(get, path = "/api/agents/{id}/reviews/{review}", operation_id = "reviews.show", params(("id" = String, Path), ("review" = String, Path), ("full" = Option<bool>, Query)), responses((status = 200, body = serde_json::Value)))]
 async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
     let body = review_response(review_record(&hub, &agent_id, &id, true)?.0, query.full).await?;
@@ -815,6 +824,7 @@ async fn pin(
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
+#[utoipa::path(get, path = "/api/tasks", operation_id = "tasks.list", responses((status = 200, body = serde_json::Value)))]
 async fn tasks(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskItem>>, Failed> {
     Ok(Json(hub.tasks()?))
 }
@@ -899,7 +909,7 @@ fn render_task_diagram(tasks: &[oxroute_core::TaskItem]) -> Result<String> {
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct CreateTaskBody {
     text: String,
@@ -927,7 +937,7 @@ async fn hand_off_task(
     Ok(Json(hub.hand_off_task(&id, body.fork, body.model.as_deref()).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct NoteBody {
     text: String,
     /// The agent writing it; empty when a person is.
@@ -935,10 +945,12 @@ struct NoteBody {
     agent_id: String,
 }
 
+#[utoipa::path(get, path = "/api/task-notes", operation_id = "notes.list", responses((status = 200, body = serde_json::Value)))]
 async fn task_notes(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskNote>>, Failed> {
     Ok(Json(hub.task_notes()?))
 }
 
+#[utoipa::path(post, path = "/api/tasks/{id}/notes", operation_id = "notes.add", params(("id" = String, Path)), request_body = NoteBody, responses((status = 200, body = serde_json::Value)))]
 async fn add_task_note(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1009,6 +1021,7 @@ async fn correct_task(
     Ok(Json(hub.correct_task(&id, &text, images, queued).await?))
 }
 
+#[utoipa::path(post, path = "/api/tasks", operation_id = "tasks.create", request_body = CreateTaskBody, responses((status = 200, body = serde_json::Value)))]
 async fn create_task(
     State(hub): Hubs,
     Json(body): Json<CreateTaskBody>,
@@ -1016,18 +1029,20 @@ async fn create_task(
     Ok(Json(hub.create_task(&body.text, &body.agent_id, vec![], &body.parent_task_id).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct UpdateTaskBody {
     text: String,
     #[serde(default)]
     parent_task_id: Option<String>,
+    #[schema(value_type = String)]
     status: oxroute_core::TaskStatus,
     /// Why it moved. Required when the status changes.
     #[serde(default)]
     note: Option<String>,
     /// A person signing the work off. Only they can mark a task complete.
     #[serde(default)]
+    #[schema(ignore)]
     approved: bool,
     #[serde(default)]
     blocked_by_task_id: String,
@@ -1035,6 +1050,7 @@ struct UpdateTaskBody {
     agent_id: String,
 }
 
+#[utoipa::path(put, path = "/api/tasks/{id}", operation_id = "tasks.update", params(("id" = String, Path)), request_body = UpdateTaskBody, responses((status = 200, body = serde_json::Value)))]
 async fn update_task(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1053,6 +1069,7 @@ async fn update_task(
     .await?))
 }
 
+#[utoipa::path(delete, path = "/api/tasks/{id}", operation_id = "tasks.delete", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn delete_task(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1076,12 +1093,13 @@ async fn mode(
 
 // -- tags and boards ---------------------------------------------------------
 
+#[utoipa::path(get, path = "/api/agents/{id}/tags", operation_id = "tags.list", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn tags(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<String>>, Failed> {
     hub.store.agent(&id)?.context("no such agent").map_err(Failed)?;
     Ok(Json(hub.store.tags(&id)?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct TagsBody {
     #[serde(default)]
     add: Vec<String>,
@@ -1092,6 +1110,7 @@ struct TagsBody {
     set: Vec<String>,
 }
 
+#[utoipa::path(post, path = "/api/agents/{id}/tags", operation_id = "tags.change", params(("id" = String, Path)), request_body = TagsBody, responses((status = 200, body = serde_json::Value)))]
 async fn change_tags(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1115,13 +1134,14 @@ async fn change_model(
     Ok(Json(json!({ "model": model })))
 }
 
+#[utoipa::path(get, path = "/api/boards", operation_id = "boards.list", responses((status = 200, body = serde_json::Value)))]
 async fn boards(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::tags::Board>>, Failed> {
     Ok(Json(hub.boards()?))
 }
 
 /// A board as sent: every setting is optional, so `{"name": "Ideas"}` or
 /// `{"columns": "stage"}` alone makes one.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct BoardBody {
     #[serde(default)]
@@ -1160,6 +1180,7 @@ impl From<BoardBody> for oxroute_core::tags::Board {
     }
 }
 
+#[utoipa::path(post, path = "/api/boards", operation_id = "boards.create", request_body = BoardBody, responses((status = 200, body = serde_json::Value)))]
 async fn create_board(
     State(hub): Hubs,
     Json(body): Json<BoardBody>,
@@ -1167,6 +1188,7 @@ async fn create_board(
     Ok(Json(hub.create_board(body.into())?))
 }
 
+#[utoipa::path(put, path = "/api/boards/{id}", operation_id = "boards.update", params(("id" = String, Path)), request_body = BoardBody, responses((status = 200, body = serde_json::Value)))]
 async fn update_board(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1175,6 +1197,7 @@ async fn update_board(
     Ok(Json(hub.update_board(&id, body.into())?))
 }
 
+#[utoipa::path(delete, path = "/api/boards/{id}", operation_id = "boards.delete", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn delete_board(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1183,6 +1206,7 @@ async fn delete_board(
     Ok(Json(json!({ "ok": true })))
 }
 
+#[utoipa::path(get, path = "/api/boards/{id}", operation_id = "boards.show", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn arrange(
     State(hub): Hubs,
     Path(id): Path<String>,
@@ -1454,6 +1478,25 @@ mod tests {
     use oxroute_core::{Backend, TaskItem, TaskStatus};
 
     #[test]
+    fn agent_openapi_describes_the_registered_agent_interface() {
+        let (_, schema) = agent_api();
+        let operations: Vec<_> = schema["paths"].as_object().unwrap().values()
+            .flat_map(|methods| methods.as_object().unwrap().values())
+            .filter_map(|operation| operation["operationId"].as_str()).collect();
+        for operation in ["tasks.list", "tasks.create", "tasks.update", "notes.list", "notes.add", "reviews.create", "reviews.show", "boards.show", "tags.change"] {
+            assert!(operations.contains(&operation));
+        }
+        assert_eq!(operations.len(), operations.iter().collect::<std::collections::HashSet<_>>().len());
+        assert!(schema["paths"].get("/api/agents/{id}/reviews/{review}/approve").is_none(), "Human approval stays outside the agent command interface; its HTTP workflow is preserved");
+        let fields = &schema["components"]["schemas"]["UpdateTaskBody"]["properties"];
+        assert!(fields.get("parentTaskId").is_some() && fields.get("agentId").is_some());
+        assert!(fields.get("approved").is_none(), "Human sign-off is not an agent flag");
+        if let Ok(path) = std::env::var("OXROUTE_SCHEMA_OUTPUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
     fn diff_attachments_preserve_literal_rows_and_original_message() {
         let diffs: Vec<DiffQuote> = serde_json::from_value(json!([
             {"path":"settings.txt", "text":"Quoted change\n> -old\n> +new", "rows":[
@@ -1575,8 +1618,7 @@ mod tests {
         }).unwrap();
         let mut hub = Hub::new(config, store);
         hub.with_harness(Arc::new(ReviewHarness));
-        let router = Router::new().route("/api/agents/{id}/reviews", post(create_review))
-            .route("/api/agents/{id}/reviews/{review}", get(get_review))
+        let router = Router::new().merge(agent_api().0)
             .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
             .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
             .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());

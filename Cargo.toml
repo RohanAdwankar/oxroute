@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/oxroute-core", "crates/oxroute-daemon", "crates/oxroute-tui"]
+members = ["crates/oxroute-core", "crates/oxroute-daemon", "crates/oxroute-tui", "crates/oxroute-agent"]
 
 [workspace.package]
 version = "0.1.0"

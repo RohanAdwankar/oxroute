@@ -32,6 +32,35 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Settings** | Light or dark, minimum pane scale, how much of each tool call you see, whether blocked work is drawn, keyboard hints |
 | **Change review** | Syntax colors and changed-word highlights; quote diff lines and approve the exact revision before publication |
 
+## Agent CLI
+
+`oxroute-agent` discovers named commands and request flags from
+`/api/agent-openapi.json`. The same handler annotations register the daemon's
+routes and generate that schema, so the client has no separate endpoint table.
+The existing HTTP API and TUI remain available.
+
+```sh
+oxroute-agent --agent agent_ID tasks list --filter status=incomplete --fields id,text,status
+oxroute-agent --agent agent_ID tasks update --id task_ID --status done --note 'Implemented and tested.'
+oxroute-agent --agent agent_ID notes list --filter taskId=task_ID
+oxroute-agent --agent agent_ID tags change --set '["stage:testing"]'
+oxroute-agent --agent agent_ID reviews show --review review_ID --full true
+```
+
+Commands cover tasks, notes, tags, boards, review creation and reading, session
+reading, and state. Use generated `--help` for each command. `--agent` binds the
+calling session; `OXROUTE_AGENT_ID` can supply it instead. Task lists show that
+session's tasks unless `--all` is supplied. `--fields` projects JSON output and
+repeatable `--filter field=value` filters returned objects. Dotted fields such as
+`snapshot.headCommit` return only that value under the requested dotted key.
+
+Task updates preserve omitted fields, clearing an obsolete blocker when leaving
+the blocked state. Human task sign-off and publication approval keep their
+existing UI controls and HTTP routes; they are not generated agent approval
+commands. `--json` accepts an object or `@path`; `--server` selects the daemon,
+and `--schema path` uses an explicitly exported OpenAPI document. The installer
+and idle release flow install the client alongside the daemon.
+
 ## Review before publication
 
 The agent commits its proposed change locally, then POSTs to

@@ -1774,41 +1774,31 @@ impl Hub {
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(
-            "Oxroute has a shared task list. Group contributing work under an existing task \
-             using parentTaskId on creation or update; subtasks keep independent status \
-             and approval. Reference tasks in replies using their exact IDs; \
-             chat shows live task references with approval controls for finished work. \
-             When the user asks you to read or change it, \
-             use GET/POST http://{}/api/tasks and PUT/DELETE \
-             http://{}/api/tasks/<id>. Task JSON is {{\"text\": string, \"status\": \
-             \"incomplete\" | \"complete\" | \"waiting_for_human\" | \"blocked\", \
-             \"parentTaskId\": string, \"blockedByTaskId\": string, \"agentId\": string}}. A blocked task must name \
-             another task. This session's agent id is {}. Keep your own tasks current as \
-             you work: mark one complete when it is done, and set it to blocked or \
-             waiting_for_human when you cannot go further, because that is how you say \
-             you have stopped. Finishing a task means setting it to \"done\", not \
-             \"complete\": complete is what a person marks it once they have looked. \
-             Every status change needs a \"note\" in the same request saying why, in \
-             three sentences or fewer -- as short as the commit that did it. Leave other \
-             agents' tasks alone unless you are asked. Read saved feedback from \
-             GET http://{}/api/task-notes, matching each note's taskId to your task.",
-            self.config.listen,
-            self.config.listen,
-            agent.id,
-            self.config.listen,
-        )));
-        inputs.push(TurnInput::text(format!(
-            "This session carries tags such as stage:idea or priority:p2; boards in oxroute \
-             arrange sessions into columns by them. To change this session's tags, POST \
-             http://{listen}/api/agents/{id}/tags with {{\"set\": [...], \"add\": [...], \
-             \"remove\": [...]}} -- set replaces any tag with the same key. Boards are \
-             GET/POST http://{listen}/api/boards and PUT/DELETE \
-             http://{listen}/api/boards/<id>, as {{\"name\", \"columns\": key, \"columnOrder\": \
-             [values], \"rows\": key, \"rowOrder\": [values], \"filters\": [keys], \
-             \"selected\": [tags], \"sort\": key}}. Tag this session when asked, and keep a \
-             tag like stage: true as the work moves on.",
+            "Oxroute has a shared task list. Use oxroute-agent --server http://{listen} \
+             --agent {id} for task work. Commands: tasks list --filter status=incomplete \
+             --fields id,text,status,parentTaskId; tasks create --text TEXT \
+             --parent-task-id PARENT; tasks update --id TASK --status STATUS --note REASON; \
+             notes list --filter taskId=TASK. CLI help and flags are generated from the API. \
+             Omitted update fields are preserved. Group contributing work under an existing \
+             task using parentTaskId; subtasks keep independent status and approval. \
+             Reference tasks in replies using exact IDs for live cards and approval controls. \
+             Your session is {id}. Keep your tasks current: use done when finished, \
+             waiting_for_human for a specific human dependency, or blocked with \
+             --blocked-by-task-id TASK for a task dependency. Reserve complete for human \
+             approval. Every status change needs a note of at most three sentences explaining \
+             the result or dependency. Leave other agents' tasks alone unless asked. Read \
+             saved feedback with notes list, matching taskId to your task. The HTTP API \
+             remains available at http://{listen}/api.",
             listen = self.config.listen,
             id = agent.id,
+        )));
+        inputs.push(TurnInput::text(String::from(
+            "This session carries tags such as stage:idea or priority:p2; boards arrange \
+             sessions into columns by tags. With the same oxroute-agent identity binding, \
+             use tags change --set '[\"stage:testing\"]' to replace a tag by key; \
+             --add and --remove also accept JSON arrays. Boards commands include list, \
+             show, create, update and delete; use their generated --help for fields. \
+             Tag this session when asked and keep its stage tag current.",
         )));
         inputs.push(TurnInput::text(format!(
             "Interactive terminal panes are listed by GET http://{listen}/api/terminals. \
@@ -1837,13 +1827,14 @@ impl Hub {
         } else {
             inputs.push(TurnInput::text(format!(
             "Before pushing a branch or creating a PR, present the committed local change \
-             for human review using POST http://{listen}/api/agents/{id}/reviews with \
-             {{\"repository\": \"absolute worktree root\", \"base\": \"base branch\", \
-             \"remote\": \"remote name\", \"title\": \"proposed PR title\", \
-             \"description\": \"proposed PR description\"}}. It returns a review ID and \
+             for human review using oxroute-agent --server http://{listen} --agent {id} \
+             reviews create --repository ROOT --base BASE --remote REMOTE --title TITLE \
+             --description DESCRIPTION. It returns a review ID and \
              captures the exact diff in this conversation. Do not push to make it reviewable. \
-             Wait for the user's approval. Immediately before publication, GET \
-             http://{listen}/api/agents/{id}/reviews/<review-id> and require status approved. \
+             Wait for the user's approval. Immediately before publication, use the same \
+             CLI binding with reviews show --review REVIEW --fields \
+             status,snapshot.headCommit,snapshot.remote,snapshot.branch,title,description \
+             and require status approved. \
              Push only its snapshot.headCommit to snapshot.remote and snapshot.branch, \
              and use its stored title and description for the PR; \
              approval does not authorize merging or deploying. Any changed commits, base, \
