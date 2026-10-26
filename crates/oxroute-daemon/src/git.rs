@@ -51,12 +51,10 @@ pub struct Snapshot {
 }
 
 async fn git(directory: &Path, args: &[&str]) -> Result<String> {
-    let output = tokio::time::timeout(std::time::Duration::from_secs(15),
-        Command::new("git").arg("--no-pager").arg("--literal-pathspecs")
+    let output = Command::new("git").arg("--no-pager").arg("--literal-pathspecs")
             .arg("-C").arg(directory).args(args).env("GIT_OPTIONAL_LOCKS", "0")
-            .kill_on_drop(true).output()).await.context("Git review timed out")??;
+            .kill_on_drop(true).output().await?;
     anyhow::ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr).trim());
-    anyhow::ensure!(output.stdout.len() <= 2 * 1024 * 1024, "Diff is too large to preview");
     Ok(String::from_utf8(output.stdout)?.trim_end_matches('\n').to_string())
 }
 
@@ -115,7 +113,6 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     let before = before.as_str();
     let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
     let mut files = Vec::new();
-    let mut size = 0;
     let range = range.as_str();
     let jobs: Vec<_> = names.iter().map(|path| async move {
         let patch = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--unified=5", &range, "--", path]).await?;
@@ -127,8 +124,6 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     }).collect();
     let mut patches = stream::iter(jobs).buffered(8);
     while let Some(file) = patches.try_next().await? {
-        size += file.patch.len();
-        anyhow::ensure!(size <= 2 * 1024 * 1024, "Review is too large; split the proposed change");
         files.push(file);
     }
     anyhow::ensure!(!files.is_empty(), "No committed changes to review");
@@ -166,6 +161,34 @@ pub async fn current(snapshot: &Snapshot) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn large_review_ranges_preserve_every_changed_file_and_line() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("large-review"));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        git(&root, &["init", "-b", "main"]).await.unwrap();
+        git(&root, &["config", "user.name", "Test"]).await.unwrap();
+        git(&root, &["config", "user.email", "test@example.invalid"]).await.unwrap();
+        git(&root, &["remote", "add", "origin", "https://example.invalid/repo.git"]).await.unwrap();
+        git(&root, &["commit", "--allow-empty", "-m", "Base"]).await.unwrap();
+        git(&root, &["checkout", "-b", "proposal"]).await.unwrap();
+        for index in 0..67 {
+            git(&root, &["commit", "--allow-empty", "-m", &format!("Revision {index}")]).await.unwrap();
+        }
+        let content = "An interchangeable line of review content.\n".repeat(75_000);
+        tokio::fs::write(root.join("large.txt"), &content).await.unwrap();
+        tokio::fs::write(root.join("companion.txt"), "Another change.\n").await.unwrap();
+        git(&root, &["add", "."]).await.unwrap();
+        git(&root, &["commit", "-m", "Large change"]).await.unwrap();
+        let result = capture(&root, root.to_str().unwrap(), "main", "origin").await;
+        let snapshot = result.unwrap();
+        let files = files(&snapshot).await.unwrap();
+        assert_eq!(files.len(), 2);
+        let patch = &files.iter().find(|file| file.path == "large.txt").unwrap().patch;
+        assert_eq!(patch.lines().filter(|line| line.starts_with("+An interchangeable")).count(), content.lines().count());
+        assert!(current(&snapshot).await.unwrap());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 
     #[tokio::test]
     async fn review_is_immutable_and_approval_expires_when_publication_changes() {
