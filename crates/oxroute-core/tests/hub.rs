@@ -3023,6 +3023,25 @@ async fn queued_corrections_save_feedback_without_chat_or_delivery() {
 }
 
 #[tokio::test]
+async fn empty_corrections_reopen_tasks_with_only_a_status_reason() {
+    for (text, queued) in [("", false), (" \n\t", true)] {
+        let w = world(Mode::Auto, false).await;
+        w.hub.accept(signal("100.0", "100.0", "original work")).await.unwrap();
+        assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+        let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+        let task = w.hub.create_task("finish the work", &agent, vec![], "").await.unwrap();
+        w.hub.update_task(&task.id, &task.text, TaskStatus::Done, "", &agent, Some("finished"), false, None).await.unwrap();
+        let back = w.hub.correct_task(&task.id, text, vec![], queued).await.unwrap();
+        assert_eq!(back.status, TaskStatus::Incomplete);
+        let notes = w.hub.task_notes().unwrap();
+        assert_eq!(notes.iter().filter(|note| note.task_id == task.id && note.text == "Not yet").count(), 1);
+        if !queued {
+            assert!(w.hub.timeline(&agent, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::You && entry.text.contains("Not yet")));
+        }
+    }
+}
+
+#[tokio::test]
 async fn an_answer_is_written_down_once_even_with_an_attachment_after_it() {
     // Claude Code streams an answer and then repeats it in the frame that
     // closes the turn; anything recorded in between must not hide that.

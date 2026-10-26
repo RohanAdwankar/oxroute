@@ -8,6 +8,7 @@ const timeline = [];
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(5000);
   await page.route('**/api/events', r => r.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' }));
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [task], taskNotes: notes, inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline, delivery: 'steer' } }));
@@ -17,34 +18,39 @@ try {
     const body = r.request().postData();
     requests.push(body);
     const queued = body.includes('name="queued"\r\n\r\ntrue');
-    const text = `Another pass via ${queued ? 'Tab' : 'Enter'}`;
+    const form = await new Response(body, { headers: { 'content-type': r.request().headers()['content-type'] } }).formData();
+    const text = form.get('text').trim() || 'Not yet';
     task.status = 'incomplete';
     notes.push({ id: `note-${notes.length}`, taskId: task.id, text, agentId: '', at: Date.now()/1000 });
-    if (!queued) timeline.push({ id: 1, agentId: agent.id, kind: 'you', text, detail: '', at: Date.now()/1000 });
+    if (!queued) timeline.push({ id: timeline.length + 1, agentId: agent.id, kind: 'you', text, detail: '', at: Date.now()/1000 });
     await r.fulfill({ json: task });
   });
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
   await page.getByRole('button', { name: 'Show or hide tasks', exact: true }).click();
   const composer = page.locator('[data-composer]');
-  for (const [key, queued] of [['Tab', 'true'], ['Enter', 'false']]) {
+  for (const [key, queued, feedback] of [['Tab', 'true', 'Another pass via Tab'], ['Enter', 'false', 'Another pass via Enter'], ['Enter', 'false', ''], ['Tab', 'true', '   ']]) {
     task.status = 'done';
-    if (key === 'Enter') await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
+    await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
     await page.getByRole('button', { name: 'Not yet', exact: true }).click();
-    await composer.fill(`Another pass via ${key}`);
+    await composer.fill(feedback);
+    assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isEnabled(), true);
+    const previousMessages = timeline.length;
     const request = page.waitForRequest('**/api/tasks/finished-task/correction');
     await composer.press(key);
     const body = (await request).postData();
     assert.ok(body.includes(`name="queued"\r\n\r\n${queued}`));
-    assert.ok(body.includes(`Another pass via ${key}`));
+    assert.ok(body.includes(`name="text"\r\n\r\n${feedback.trim()}\r\n`));
     await page.waitForTimeout(100);
     assert.equal(await composer.inputValue(), '');
-    await page.locator('[data-task-row] li').filter({ hasText: `Another pass via ${key}` }).waitFor();
+    await page.locator('[data-task-row] li').filter({ hasText: feedback.trim() || 'Not yet' }).first().waitFor();
     assert.equal(await page.getByRole('button', { name: 'Not yet', exact: true }).count(), 0);
     if (key === 'Tab') {
-      assert.equal(timeline.length, 0);
+      assert.equal(timeline.length, previousMessages);
       if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
     }
   }
-  assert.equal(requests.length, 2, 'Both actions correct the existing task');
-  console.log('Passed: Tab saves feedback on the reopened task without chat; Enter sends immediately.');
+  await composer.press('Enter');
+  assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isEnabled(), false);
+  assert.equal(requests.length, 4, 'Empty correction is allowed; an ordinary empty message is still ignored');
+  console.log('Passed: Enter and Tab reopen tasks with optional feedback; Tab stays off chat.');
 } finally { await browser.close(); }

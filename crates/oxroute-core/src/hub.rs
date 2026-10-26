@@ -2907,7 +2907,7 @@ impl Hub {
         queued: bool,
     ) -> Result<TaskItem> {
         let text = text.trim();
-        anyhow::ensure!(!text.is_empty(), "say what is wrong with it");
+        let text = if text.is_empty() { "Not yet" } else { text };
         let tasks = self.store.tasks()?;
         let task = tasks.iter().find(|task| task.id == id).context("no such task")?.clone();
         anyhow::ensure!(!task.agent_id.is_empty(), "nobody has this task to correct");

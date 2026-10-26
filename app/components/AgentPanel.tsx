@@ -402,7 +402,7 @@ export function AgentPanel({
 
   const canSend =
     mode === "type"
-      ? draft.trim().length > 0 || diffs.length > 0 || pictures.uploads.length > 0
+      ? !!correcting || draft.trim().length > 0 || diffs.length > 0 || pictures.uploads.length > 0
       : mode === "diagram"
         ? edits.length > 0
         : sketchReady;
@@ -413,7 +413,7 @@ export function AgentPanel({
       return;
     }
     const text = composed;
-    if ((!text && pictures.uploads.length === 0) || busy) return;
+    if ((!correcting && !text && pictures.uploads.length === 0) || busy) return;
     // What you just said is what you want to see, wherever you had scrolled
     // to before saying it.
     following.current = true;
