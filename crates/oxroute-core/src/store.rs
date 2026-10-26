@@ -1495,6 +1495,20 @@ impl Store {
         })
     }
 
+    /// Last accepted revision of this publication target, across conversations.
+    pub fn last_approved_review(&self, repository: &str, remote: &str, branch: &str, base: &str) -> Result<Option<String>> {
+        self.read(|c| Ok(c.query_row(
+            "SELECT value FROM kv WHERE key GLOB 'review:*'
+             AND json_extract(value, '$.approvedAt') IS NOT NULL
+             AND json_extract(value, '$.snapshot.repository') = ?1
+             AND json_extract(value, '$.snapshot.remoteUrl') = ?2
+             AND json_extract(value, '$.snapshot.branch') = ?3
+             AND json_extract(value, '$.snapshot.baseRef') = ?4
+             ORDER BY json_extract(value, '$.approvedAt') DESC LIMIT 1",
+            params![repository, remote, branch, base], |row| row.get(0),
+        ).optional()?))
+    }
+
     /// Capture a proposal and its conversation card atomically.
     pub fn add_review(&self, agent_id: &str, id: &str, title: &str, data: &str) -> Result<Entry> {
         self.with(|c| {

@@ -1,7 +1,8 @@
 export type Review = {
   id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale";
+  full: boolean;
   snapshot: { repository: string; remote: string; remoteUrl: string; branch: string;
-    baseRef: string; baseCommit: string; headCommit: string; files: { path: string; patch: string; image?: { before: boolean; after: boolean } }[] };
+    baseRef: string; baseCommit: string; headCommit: string; reviewBaseCommit?: string; files: { path: string; patch: string; image?: { before: boolean; after: boolean } }[] };
 };
 
 const ready = new Map<string, Review>();

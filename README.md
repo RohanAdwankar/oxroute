@@ -46,6 +46,12 @@ into a question. The checkmark approves publication of that revision and queues
 the authorization to the owning agent without interrupting its current turn.
 Approval does not authorize merging or deploying.
 
+Follow-up reviews on the same publication target start with changes since the
+last approved revision. Click **Since approval** to switch to the **Full PR**
+view, or click it again to return. Quotes and image previews use the displayed
+comparison. Approval still binds the complete publication base, head, branch,
+and remote; changing views never grants approval.
+
 PNG, JPEG, GIF, WebP, SVG, AVIF, BMP and ICO files show before-and-after previews,
 including added and deleted images. Click a preview to open it at full size.
 Images load on demand from the reviewed Git revisions; SVG source diffs remain

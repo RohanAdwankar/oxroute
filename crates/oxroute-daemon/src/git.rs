@@ -48,6 +48,8 @@ pub struct Snapshot {
     pub base_ref: String,
     pub base_commit: String,
     pub head_commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_base_commit: Option<String>,
 }
 
 async fn git(directory: &Path, args: &[&str]) -> Result<String> {
@@ -88,8 +90,8 @@ pub async fn capture(workspace: &Path, repository: &str, base: &str, remote: &st
     let base_commit = commit(&root, base).await?;
     let head_commit = commit(&root, "HEAD").await?;
     let snapshot = Snapshot { repository: root.to_string_lossy().into(), remote: remote.into(), remote_url,
-        branch, base_ref: base.into(), base_commit, head_commit };
-    files(&snapshot).await?;
+        branch, base_ref: base.into(), base_commit, head_commit, review_base_commit: None };
+    anyhow::ensure!(!files(&snapshot).await?.is_empty(), "No committed changes to review");
     anyhow::ensure!(current(&snapshot).await?, "Repository changed while capturing the review; present it again");
     Ok(snapshot)
 }
@@ -99,19 +101,26 @@ async fn paths(snapshot: &Snapshot) -> Result<Vec<String>> {
     anyhow::ensure!(root.is_dir(), "Review worktree was removed; its diff is no longer available");
     anyhow::ensure!(Path::new(&git(root, &["rev-parse", "--show-toplevel"]).await?) == root,
         "Review worktree is no longer a repository root");
-    let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
+    let range = format!("{}...{}", snapshot.review_base_commit.as_ref().unwrap_or(&snapshot.base_commit), snapshot.head_commit);
     let names = git(&root, &["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", &range, "--"]).await?;
     Ok(names.split('\0').filter(|path| !path.is_empty()).map(String::from).collect())
+}
+
+pub async fn since_approval(snapshot: &mut Snapshot, previous_head: &str) {
+    if previous_head != snapshot.head_commit && git(Path::new(&snapshot.repository),
+        &["merge-base", previous_head, &snapshot.head_commit]).await.ok().as_deref() == Some(previous_head) {
+        snapshot.review_base_commit = Some(previous_head.into());
+    }
 }
 
 pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     let root = Path::new(&snapshot.repository);
     let names = paths(snapshot).await?;
     let before = if names.iter().any(|path| image_type(path).is_some()) {
-        git(root, &["merge-base", &snapshot.base_commit, &snapshot.head_commit]).await?
+        git(root, &["merge-base", snapshot.review_base_commit.as_ref().unwrap_or(&snapshot.base_commit), &snapshot.head_commit]).await?
     } else { String::new() };
     let before = before.as_str();
-    let range = format!("{}...{}", snapshot.base_commit, snapshot.head_commit);
+    let range = format!("{}...{}", snapshot.review_base_commit.as_ref().unwrap_or(&snapshot.base_commit), snapshot.head_commit);
     let mut files = Vec::new();
     let range = range.as_str();
     let jobs: Vec<_> = names.iter().map(|path| async move {
@@ -126,7 +135,6 @@ pub async fn files(snapshot: &Snapshot) -> Result<Vec<FileDiff>> {
     while let Some(file) = patches.try_next().await? {
         files.push(file);
     }
-    anyhow::ensure!(!files.is_empty(), "No committed changes to review");
     Ok(files)
 }
 
@@ -136,7 +144,7 @@ pub async fn image(snapshot: &Snapshot, path: &str, before: bool) -> Result<(tok
     anyhow::ensure!(paths(snapshot).await?.iter().any(|name| name == path), "Image is not part of this review");
     let root = Path::new(&snapshot.repository);
     let revision = if before {
-        git(root, &["merge-base", &snapshot.base_commit, &snapshot.head_commit]).await?
+        git(root, &["merge-base", snapshot.review_base_commit.as_ref().unwrap_or(&snapshot.base_commit), &snapshot.head_commit]).await?
     } else { snapshot.head_commit.clone() };
     let oid = blob(root, &revision, path).await?.context("Image is absent from this side of the review")?;
     let child = Command::new("git").arg("--no-pager").arg("-C").arg(root)

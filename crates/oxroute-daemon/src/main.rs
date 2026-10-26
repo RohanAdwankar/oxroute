@@ -535,10 +535,12 @@ fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow
     Ok((review, data))
 }
 
-async fn review_response(review: ChangeReview) -> anyhow::Result<serde_json::Value> {
+async fn review_response(review: ChangeReview, full: bool) -> anyhow::Result<serde_json::Value> {
     let started = std::time::Instant::now();
+    let mut comparison = review.snapshot.clone();
+    if full { comparison.review_base_commit = None; }
     let ((files, diff_ms), (current, check_ms)) = tokio::join!(
-        async { let start = std::time::Instant::now(); (git::files(&review.snapshot).await, start.elapsed().as_secs_f64() * 1000.0) },
+        async { let start = std::time::Instant::now(); (git::files(&comparison).await, start.elapsed().as_secs_f64() * 1000.0) },
         async { let start = std::time::Instant::now(); (git::current(&review.snapshot).await, start.elapsed().as_secs_f64() * 1000.0) },
     );
     tracing::info!(review = %review.id, diff_ms, check_ms, total_ms = started.elapsed().as_secs_f64() * 1000.0, "review prepared");
@@ -547,6 +549,7 @@ async fn review_response(review: ChangeReview) -> anyhow::Result<serde_json::Val
         else if review.approved_at.is_some() { "approved" } else { "pending" };
     let mut response = serde_json::to_value(review).expect("review is serializable");
     response["status"] = json!(status);
+    response["full"] = json!(full);
     response["snapshot"]["files"] = serde_json::to_value(files)?;
     Ok(response)
 }
@@ -556,16 +559,23 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     if body.title.trim().is_empty() || body.title.len() > 300 || body.description.len() > 32_000 {
         return Err(anyhow::anyhow!("Provide a concise PR title and description").into());
     }
-    let snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &body.repository, &body.base, &body.remote).await?;
+    let mut snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &body.repository, &body.base, &body.remote).await?;
+    if let Some(previous) = hub.store.last_approved_review(&snapshot.repository, &snapshot.remote_url, &snapshot.branch, &snapshot.base_ref)? {
+        let previous: ChangeReview = serde_json::from_str(&previous)?;
+        git::since_approval(&mut snapshot, &previous.snapshot.head_commit).await;
+    }
     let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None };
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
-    Ok(Json(review_response(review).await?))
+    Ok(Json(review_response(review, false).await?))
 }
 
-async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Response, Failed> {
+#[derive(Default, Deserialize)]
+struct ReviewQuery { #[serde(default)] full: bool }
+
+async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
-    let body = review_response(review_record(&hub, &agent_id, &id, true)?.0).await?;
+    let body = review_response(review_record(&hub, &agent_id, &id, true)?.0, query.full).await?;
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
 }
 
@@ -574,10 +584,11 @@ async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String
 enum ImageSide { Before, After }
 
 #[derive(Deserialize)]
-struct ReviewImageQuery { path: String, side: ImageSide }
+struct ReviewImageQuery { path: String, side: ImageSide, #[serde(default)] full: bool }
 
 async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {
-    let review = review_record(&hub, &agent_id, &id, true)?.0;
+    let mut review = review_record(&hub, &agent_id, &id, true)?.0;
+    if query.full { review.snapshot.review_base_commit = None; }
     let (mut child, mime) = git::image(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before)).await?;
     let stdout = child.stdout.take().expect("Git image stdout is piped");
     let stream = futures_util::stream::try_unfold((stdout, child), |(mut stdout, mut child)| async move {
@@ -621,7 +632,7 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
             }
         }
     }
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id, false)?.0).await?))
+    Ok(Json(review_response(review_record(&hub, &agent_id, &id, false)?.0, false).await?))
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1649,6 +1660,26 @@ mod tests {
         assert_eq!(stale["snapshot"], review["snapshot"]);
         assert_eq!(client.get(format!("{endpoint}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
+            .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(revision["snapshot"]["reviewBaseCommit"], review["snapshot"]["headCommit"]);
+        assert_eq!(revision["snapshot"]["baseCommit"], review["snapshot"]["baseCommit"], "Publication still binds the PR target base");
+        let changed = revision["snapshot"]["files"].as_array().unwrap();
+        assert_eq!(changed.len(), 2, "Unchanged earlier PR files are omitted from the follow-up view");
+        let settings = changed.iter().find(|file| file["path"] == "settings.txt").unwrap()["patch"].as_str().unwrap();
+        assert!(settings.contains("-proposed") && settings.contains("+revised") && !settings.contains("-original"));
+        let revision_url = format!("{url}/{}", revision["id"].as_str().unwrap());
+        let full: serde_json::Value = client.get(&revision_url).query(&[("full", "true")]).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert!(full["snapshot"]["files"].as_array().unwrap().len() > changed.len());
+        assert_eq!(full["snapshot"]["headCommit"], revision["snapshot"]["headCommit"]);
+        assert_eq!(full["status"], "pending");
+        assert_eq!(client.get(format!("{revision_url}/image")).query(&[("path","diagram.svg"),("side","before")]).send().await.unwrap().text().await.unwrap(), proposed_image);
+        assert_eq!(client.get(format!("{revision_url}/image")).query(&[("path","diagram.svg"),("side","before"),("full","true")]).send().await.unwrap().text().await.unwrap(), original_image);
+        let accepted = &stored.snapshot;
+        assert!(hub.store.last_approved_review("/another/repository", &accepted.remote_url, &accepted.branch, &accepted.base_ref).unwrap().is_none());
+        assert!(hub.store.last_approved_review(&accepted.repository, "https://example.invalid/another.git", &accepted.branch, &accepted.base_ref).unwrap().is_none());
+        assert!(hub.store.last_approved_review(&accepted.repository, &accepted.remote_url, "another-branch", &accepted.base_ref).unwrap().is_none());
+        assert!(hub.store.last_approved_review(&accepted.repository, &accepted.remote_url, &accepted.branch, "refs/heads/another-base").unwrap().is_none());
         let diffs = json!([{ "text":"Quoted revision", "path":"settings.txt", "rows":[
             {"text":"-previous", "old":1, "next":null}, {"text":"+updated", "old":null, "next":1}
         ]}]);

@@ -33,10 +33,10 @@ async function response<T>(request: Promise<Response>): Promise<T> {
   return body;
 }
 
-function ReviewImage({ endpoint, path, side, present }: { endpoint: string; path: string; side: "before" | "after"; present: boolean }) {
+function ReviewImage({ endpoint, path, side, present, full }: { endpoint: string; path: string; side: "before" | "after"; present: boolean; full: boolean }) {
   const [failed, setFailed] = useState("");
   const label = side === "before" ? "Before" : "After";
-  const url = `${endpoint}/image?${new URLSearchParams({ path, side })}`;
+  const url = `${endpoint}/image?${new URLSearchParams({ path, side, ...(full ? { full: "true" } : {}) })}`;
   return <figure className="min-w-0 flex-1">
     <figcaption className="mb-2 text-[11px] text-faint">{label}</figcaption>
     {present ? <a href={url} target="_blank" rel="noreferrer" title={`Open ${side} image`}>
@@ -53,6 +53,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void;
 }) {
   const endpoint = reviewEndpoint(agentId, reviewId);
+  const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
   const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
   const [error, setError] = useState("");
@@ -68,14 +69,14 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     if (!active) return;
     let live = true;
     cancelLoad.current = () => { live = false; };
-    loadReview(endpoint, true).then(data => {
+    loadReview(`${endpoint}${full ? "?full=true" : ""}`, true).then(data => {
       if (!live) return;
       setReview(data);
       setFile(current => data.snapshot.files.some(item => item.path === current) ? current : data.snapshot.files[0]?.path ?? "");
       setError("");
     }).catch(error => { if (live) { setReview(null); setError(String(error)); } });
     return () => { live = false; };
-  }, [endpoint, active]);
+  }, [endpoint, active, full]);
 
   const approve = async () => {
     if (!review) return;
@@ -95,7 +96,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
     const range = menu.wholeFile ? "whole file" : `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
-    onQuote({ path: menu.file, rows: selected, text: `Review ${review.id}: ${review.title}\n${snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${menu.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
+    onQuote({ path: menu.file, rows: selected, text: `Review ${review.id}: ${review.title}\n${!review.full && snapshot.reviewBaseCommit ? snapshot.reviewBaseCommit : snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${menu.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
     setMenu(null);
   };
 
@@ -113,6 +114,8 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
           className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}
       </span>
       {review && <>
+        {snapshot?.reviewBaseCommit && <button className="cursor-pointer text-faint hover:text-ink" title={full ? "Show only changes since the previous approval" : "Show the complete PR diff"}
+          onClick={() => { setMenu(null); setReview(null); setFull(!full); }}>{full ? "Full PR" : "Since approval"}</button>}
         <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? "Revision changed" : "Awaiting approval"}</span>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}
           disabled={approving || review.status !== "pending"}
@@ -125,6 +128,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       <Markdown>{review.description}</Markdown>
     </details>}
     {error && <p role="alert" className="px-4 py-2 text-[12px]">{error}</p>}
+    {review && !files.length && <p className="px-4 py-2 text-[12px] text-faint">No changes in this comparison.</p>}
     <div className="flex min-h-0 flex-1">
       <nav aria-label="Changed files" className="hidden w-36 shrink-0 overflow-y-auto border-r border-rule text-[10px] @min-[640px]:block">
         {files.map(item => <button key={item.path} title={item.path} onContextMenu={event => quoteFile(event, item)} onClick={() => {
@@ -147,8 +151,8 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
         }}>
           <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-1 text-[10px] text-mid">{item.path}</h3>
           {item.image && <div aria-label={`Image comparison ${item.path}`} className="flex gap-4 bg-band/30 p-4">
-            <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} />
-            <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} />
+            <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} full={!!review?.full} />
+            <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} full={!!review?.full} />
           </div>}
           <div className="overflow-x-auto px-3 py-1">
           <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
