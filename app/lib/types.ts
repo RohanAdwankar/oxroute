@@ -290,6 +290,7 @@ export type DaemonEvent =
   | { type: "inboxChanged"; item: InboxItem }
   | { type: "agentChanged"; agent: Agent }
   | { type: "timeline"; entry: Entry }
+  | { type: "reaction"; agentId: string; entryId: number; reaction: string }
   | { type: "progress"; agentId: string; text: string }
   | { type: "turnStarted"; agentId: string }
   | { type: "turnFinished"; agentId: string; status: string }

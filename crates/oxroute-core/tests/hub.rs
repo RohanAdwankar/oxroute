@@ -3023,6 +3023,29 @@ async fn queued_corrections_save_feedback_without_chat_or_delivery() {
 }
 
 #[tokio::test]
+async fn reactions_stream_without_a_global_refresh_or_turn() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "original work")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let entry = w.hub.store.add_entry(&agent, 1.0, EntryKind::Said, "Answer with context", "detail", "").unwrap();
+    let turns = w.calls.lock().unwrap().started.len();
+    let mut events = w.hub.subscribe();
+    for reaction in ["up", "down", ""] {
+        w.hub.react(entry.id, reaction).unwrap();
+        let Event::Reaction { entry_id, agent_id, reaction: changed } = events.try_recv().unwrap() else {
+            panic!("a reaction should update its message without a global refresh");
+        };
+        assert_eq!(entry_id, entry.id);
+        assert_eq!(agent_id, agent);
+        assert_eq!(changed, reaction);
+        assert_eq!(w.hub.store.timeline(&agent, 100).unwrap().iter().find(|e| e.id == entry.id).unwrap().reaction, reaction);
+        assert!(events.try_recv().is_err());
+    }
+    assert_eq!(w.calls.lock().unwrap().started.len(), turns);
+}
+
+#[tokio::test]
 async fn empty_corrections_reopen_tasks_with_only_a_status_reason() {
     for (text, queued) in [("", false), (" \n\t", true)] {
         let w = world(Mode::Auto, false).await;

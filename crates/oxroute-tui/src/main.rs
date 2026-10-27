@@ -524,7 +524,7 @@ async fn run(
                     | Event::SignalReceived { .. }
                     | Event::TurnStarted { .. }
                     | Event::TurnFinished { .. } => app.resync().await,
-                    Event::Timeline { .. } => {
+                    Event::Timeline { .. } | Event::Reaction { .. } => {
                         if matches!(app.view, View::Agent(_)) {
                             app.resync().await;
                         }

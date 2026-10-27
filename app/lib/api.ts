@@ -88,8 +88,8 @@ export const api = {
   archive: (agent: string, archived: boolean) =>
     post<Snapshot>("/api/archive", { agent, archived }),
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
-  /// "" takes the reaction back. The daemon answers 204 and syncs, so the
-  /// pane redraws from the same event any other change arrives on.
+  /// "" takes the reaction back. The daemon streams the reaction
+  /// without refetching the snapshot or locking unrelated controls.
   react: (entry: number, reaction: string) => post<void>("/api/react", { entry, reaction }),
   /// Move a running session onto another model its harness can run.
   setModel: (agent: string, model: string) =>

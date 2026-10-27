@@ -1267,8 +1267,9 @@ impl Hub {
     /// reaction twice is how you take it back, which the surfaces do by
     /// sending an empty string.
     pub fn react(&self, entry_id: i64, reaction: &str) -> Result<()> {
-        self.store.set_entry_reaction(entry_id, reaction)?;
-        self.emit(Event::Sync);
+        if let Some(agent_id) = self.store.set_entry_reaction(entry_id, reaction)? {
+            self.emit(Event::Reaction { agent_id, entry_id, reaction: reaction.into() });
+        }
         Ok(())
     }
 

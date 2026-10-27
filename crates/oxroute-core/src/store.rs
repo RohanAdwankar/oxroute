@@ -442,15 +442,15 @@ impl Store {
     /// Empty clears it. Nothing validates the word here: the surfaces agree
     /// on `up` and `down`, and a row that holds something else is a row that
     /// simply shows nothing.
-    pub fn set_entry_reaction(&self, entry_id: i64, reaction: &str) -> Result<()> {
+    pub fn set_entry_reaction(&self, entry_id: i64, reaction: &str) -> Result<Option<String>> {
         self.with(|c| {
             // Changing your mind makes it unsent again: the agent heard the
             // thumbs up, and now it should hear that it became a thumbs down.
-            c.execute(
-                "UPDATE entries SET reaction = ?2, reaction_sent = 0 WHERE id = ?1",
-                params![entry_id, reaction],
-            )?;
-            Ok(())
+            Ok(c.query_row(
+                "UPDATE entries SET reaction = ?2, reaction_sent = 0 WHERE id = ?1
+                 RETURNING agent_id",
+                params![entry_id, reaction], |row| row.get(0),
+            ).optional()?)
         })
     }
 

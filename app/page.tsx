@@ -119,7 +119,7 @@ export default function Home() {
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
-  const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry> }>());
+  const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry>; reactions: Map<number, string> }>());
   const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
   const warmed = useRef(new Set<string>());
   const warmQueue = useRef<string[]>([]);
@@ -128,15 +128,20 @@ export default function Home() {
     const pending = requests.current.get(id);
     if (pending) return pending.promise;
     const updates = new Map<number, Entry>();
+    const reactions = new Map<number, string>();
     const request = api.agent(id).then((view) => {
       // An in-flight read must not erase entries already received live.
       const timeline = new Map(view.timeline.map(entry => [entry.id, entry]));
       for (const [id, entry] of updates) timeline.set(id, entry);
+      for (const [id, reaction] of reactions) {
+        const entry = timeline.get(id);
+        if (entry) timeline.set(id, { ...entry, reaction });
+      }
       const reconciled = { ...view, timeline: [...timeline.values()].sort((a, b) => a.id - b.id) };
       setDetails((current) => ({ ...current, [id]: reconciled }));
       return reconciled;
     }).finally(() => requests.current.delete(id));
-    requests.current.set(id, { promise: request, updates });
+    requests.current.set(id, { promise: request, updates, reactions });
     return request;
   }, []);
   const [notice, setNotice] = useState<string | null>(null);
@@ -387,6 +392,15 @@ export default function Home() {
                     : [...view.timeline, event.entry],
                 },
               };
+            });
+            break;
+          case "reaction":
+            requests.current.get(event.agentId)?.reactions.set(event.entryId, event.reaction);
+            setDetails(current => {
+              const view = current[event.agentId];
+              return view ? { ...current, [event.agentId]: { ...view,
+                timeline: view.timeline.map(entry => entry.id === event.entryId ? { ...entry, reaction: event.reaction } : entry),
+              } } : current;
             });
             break;
           case "notice":
@@ -1249,7 +1263,7 @@ export default function Home() {
                       tags={snapshot.tags[id] ?? []}
                       knownTags={knownTags}
                       onTag={(change) => void run(() => api.tag(id, change))}
-                      onReact={(entry, reaction) => void run(() => api.react(entry, reaction))}
+                      onReact={(entry, reaction) => void api.react(entry, reaction).catch(complain)}
                       models={snapshot.models}
                       onModel={(model) => void run(() => api.setModel(id, model))}
                       onInterrupt={() => void run(() => api.interrupt(id))}

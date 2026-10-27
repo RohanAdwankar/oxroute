@@ -654,6 +654,8 @@ pub enum Event {
     InboxChanged { item: Box<InboxItem> },
     AgentChanged { agent: Box<Agent> },
     Timeline { entry: Box<Entry> },
+    /// A timeline annotation changed; message content and previews are unchanged.
+    Reaction { agent_id: String, entry_id: i64, reaction: String },
     /// Live tool activity during a turn. Replaces the previous progress for
     /// this agent rather than appending.
     Progress { agent_id: String, text: String },

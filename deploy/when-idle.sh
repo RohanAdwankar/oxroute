@@ -82,6 +82,7 @@ cmp -s "$release/bin/oxroute-agent" "$agent_binary"
 OXROUTE_URL="$api" node "$repository/tests/agent-cli.mjs"
 curl -fsS --max-time 10 "$api/api/state" | jq -e '(.agents | type == "array") and (.messages | type == "object")' >/dev/null
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/queued-corrections.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/reactions.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/git-review.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-revisions.mjs"
