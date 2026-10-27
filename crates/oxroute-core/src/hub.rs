@@ -1832,10 +1832,15 @@ impl Hub {
              reviews create --repository ROOT --base BASE --remote REMOTE --title TITLE \
              --description DESCRIPTION. It returns a review ID and \
              captures the exact diff in this conversation. Do not push to make it reviewable. \
-             Wait for the user's approval. Immediately before publication, use the same \
-             CLI binding with reviews show --review REVIEW --fields \
-             status,snapshot.headCommit,snapshot.remote,snapshot.branch,title,description \
-             and require status approved. \
+             Wait for the user's approval of that exact committed change. Explicit approval \
+             from the user in Slack or chat is equivalent to approval on the review card: \
+             publish the reviewed commit and create its PR even if the card remains pending. \
+             Record the user's approval in a task note; do not ask for another approval or \
+             require a card click. Immediately before publication, use the same CLI binding \
+             with reviews show --review REVIEW --fields \
+             status,snapshot.headCommit,snapshot.remote,snapshot.branch,title,description. \
+             A stale review requires presenting the changed work for new approval; \
+             a pending review with explicit chat approval is ready to publish. \
              Push only its snapshot.headCommit to snapshot.remote and snapshot.branch, \
              and use its stored title and description for the PR; \
              approval does not authorize merging or deploying. Any changed commits, base, \

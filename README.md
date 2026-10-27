@@ -86,9 +86,16 @@ including added and deleted images. Click a preview to open it at full size.
 Images load on demand from the reviewed Git revisions; SVG source diffs remain
 available below their previews.
 
-Before pushing, the agent must GET `/api/agents/<agent-id>/reviews/<review-id>`
-and require `status: approved`. Publish the recorded head commit to the recorded
-remote and branch, using the stored PR title and description. Changed commits,
+Explicit user approval in Slack or chat is equivalent to approval on the review
+card. After presenting the exact committed change, the agent can push it and
+create its PR even if the card remains pending. Record the user's approval in
+a task note; do not ask for a card click or call the approval endpoint.
+
+Before pushing, read `/api/agents/<agent-id>/reviews/<review-id>` to verify that
+the reviewed change is current. A stale review requires new approval; a pending
+review with explicit chat approval is ready to publish. Publish the recorded
+head commit to the recorded remote and branch, using the stored PR title and
+description. Approval does not authorize merging or deployment. Changed commits,
 base, branch, destination, or tracked edits make the review stale and require
 a new review. Stored diffs survive those changes and restarts.
 

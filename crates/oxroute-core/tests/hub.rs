@@ -2089,8 +2089,18 @@ async fn direct_publication_is_scoped_to_the_session_the_user_exempted() {
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
     let review_required = |inputs: &[TurnInput]| inputs.iter().filter_map(TurnInput::as_text)
-        .any(|text| text.contains("require status approved"));
-    assert!(review_required(&w.calls.lock().unwrap().started[0].1));
+        .any(|text| text.contains("reviews create"));
+    {
+        let calls = w.calls.lock().unwrap();
+        let policy = calls.started[0].1.iter().filter_map(TurnInput::as_text)
+            .find(|text| text.contains("reviews create")).unwrap();
+        assert!(policy.contains("Explicit approval") && policy.contains("Slack or chat"));
+        assert!(policy.contains("even if the card remains pending"));
+        assert!(policy.contains("Record the user's approval in a task note"));
+        assert!(policy.contains("A stale review requires"));
+        assert!(policy.contains("approval does not authorize merging or deploying"));
+        assert!(policy.contains("Never call the approval endpoint yourself"));
+    }
     w.hub.tag(&agent, &[], &[], &["publication:direct".into()]).unwrap();
     w.hub.accept(signal("100.0", "101.0", "continue exempted work")).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
