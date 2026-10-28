@@ -952,7 +952,7 @@ async fn local_forks_nest_and_open_source_threads() {
 }
 
 #[tokio::test]
-async fn in_chat_forks_remain_linked_until_merged_without_opening_threads() {
+async fn in_chat_forks_keep_their_panes_and_mirror_to_distinct_source_threads() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "the original")).await.unwrap();
     assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
@@ -960,14 +960,39 @@ async fn in_chat_forks_remain_linked_until_merged_without_opening_threads() {
     let child = w.hub.fork_in_chat(&parent).await.unwrap();
     let grandchild = w.hub.fork_in_chat(&child.id).await.unwrap();
 
-    assert!(w.posts.lock().unwrap().threads.is_empty());
-    assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+    assert_eq!(w.posts.lock().unwrap().threads.len(), 2);
+    let child_binding = w.hub.store.bindings_for(&child.id).unwrap().pop().unwrap();
+    let grandchild_binding = w.hub.store.bindings_for(&grandchild.id).unwrap().pop().unwrap();
+    assert_ne!(child_binding.thread_key, grandchild_binding.thread_key);
+    assert!(!child.permalink.is_empty());
+    w.hub.say_to(&child.id, "Explore another approach").await.unwrap();
+    assert!(settle(|| w.posts.lock().unwrap().replies.iter().any(|(thread, text)| thread == &child_binding.thread_key && text.contains("done"))).await);
     assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&child.id], parent);
     assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&grandchild.id], child.id);
 
     w.hub.merge(&grandchild.id).await.unwrap();
     assert!(!w.hub.snapshot(10).unwrap().pane_links.contains_key(&grandchild.id));
     assert_eq!(w.hub.snapshot(10).unwrap().pane_links[&child.id], parent);
+}
+
+#[tokio::test]
+async fn pane_forks_still_work_when_the_source_is_unavailable() {
+    for configured in [false, true] {
+        let w = build(Mode::Auto, Harnessed { source: configured, ..Default::default() }).await;
+        w.hub.accept(signal("100.0", "100.0", "Explore options")).await.unwrap();
+        assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+        let parent = w.hub.store.agents(10).unwrap()[0].id.clone();
+        w.fail_open.store(true, Ordering::Relaxed);
+        let child = w.hub.fork_in_chat(&parent).await.unwrap();
+        assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent);
+        assert!(w.hub.store.bindings_for(&child.id).unwrap().is_empty());
+        if configured {
+            w.fail_open.store(false, Ordering::Relaxed);
+            w.hub.say_to(&child.id, "Continue the branch").await.unwrap();
+            assert_eq!(w.hub.store.bindings_for(&child.id).unwrap().len(), 1);
+            assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent);
+        }
+    }
 }
 
 #[tokio::test]

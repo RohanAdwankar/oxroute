@@ -112,3 +112,7 @@ Failed browser API requests retain diagnostic metadata across reloads and upload
 when connectivity returns. `GET /api/client-failures` returns the latest 100 reports
 with time, conversation, request ID, endpoint, status, error and frontend version.
 Reports exclude submitted message text and file contents.
+
+Pane forks keep their layout beside the parent and open independent Slack threads.
+Existing pane forks without a thread connect on their next message. Slack outages
+do not prevent pane creation; quoted side discussions remain local.

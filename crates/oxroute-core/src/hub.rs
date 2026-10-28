@@ -1012,7 +1012,7 @@ impl Hub {
         let spoken_entry = Some(entry);
         let (target, opened) = match self.home_target(&agent.id).await {
             Some(target) => (Some(target), false),
-            None if self.store.pane_links()?.contains_key(&agent.id) => (None, false),
+            None if self.store.quote_thread(&agent.id)?.is_some() => (None, false),
             None => match self.open_current_thread(&shown).await? {
                 Some((target, permalink)) => {
                     for binding in self.store.bindings_for(&agent.id)? {
@@ -1314,7 +1314,7 @@ impl Hub {
         self.fork_with_layout(agent_id, false, None).await
     }
 
-    /// A fork that remains in the parent's chat panes, without a source thread.
+    /// A fork beside its parent, with its own source thread when available.
     pub async fn fork_in_chat(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
         self.fork_with_layout(agent_id, true, None).await
     }
@@ -1367,17 +1367,25 @@ impl Hub {
         let home = match self.home_binding(agent_id) {
             Some(binding) => Some((binding.source, binding.conversation)),
             None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
-        }.filter(|_| !in_chat);
+        }.filter(|_| quote.is_none());
         let home = home.and_then(|(name, conversation)| {
             self.source(&name).map(|source| (name, conversation, source))
         });
 
         if let Some((source_name, conversation, source)) = home {
-            let (thread_key, permalink) = source.open_thread(&conversation, &title).await?;
-            forked.permalink = permalink;
-            self.store.save_agent(&forked)?;
-            self.store
-                .bind(&source_name, &conversation, &thread_key, &forked.id)?;
+            match source.open_thread(&conversation, &title).await {
+                Ok((thread_key, permalink)) => {
+                    forked.permalink = permalink;
+                    self.store.save_agent(&forked)?;
+                    self.store.bind(&source_name, &conversation, &thread_key, &forked.id)?;
+                }
+                Err(error) if in_chat => {
+                    tracing::warn!(agent = forked.id, %error, "pane fork created without source mirror");
+                    self.store.save_agent(&forked)?;
+                    self.emit(Event::Notice { text: format!("{source_name} mirror failed: {error}. Fork created locally.") });
+                }
+                Err(error) => return Err(error),
+            }
         } else {
             self.store.save_agent(&forked)?;
         }
