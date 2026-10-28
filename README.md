@@ -107,3 +107,8 @@ a new review. Stored diffs survive those changes and restarts.
 This is a consent workflow in a single-user app. It does not sandbox an agent's
 shell or intercept arbitrary Git commands. Approval is a user action; agents
 must never call the approval endpoint themselves.
+
+Failed browser API requests retain diagnostic metadata across reloads and upload it
+when connectivity returns. `GET /api/client-failures` returns the latest 100 reports
+with time, conversation, request ID, endpoint, status, error and frontend version.
+Reports exclude submitted message text and file contents.

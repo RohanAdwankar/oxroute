@@ -1488,6 +1488,14 @@ impl Store {
 
     // -- scratch ---------------------------------------------------------
 
+    pub fn client_failures(&self) -> Result<Vec<serde_json::Value>> {
+        self.read(|c| {
+            let mut statement = c.prepare("SELECT value FROM kv WHERE key GLOB 'client-failure:*' ORDER BY json_extract(value, '$.at') DESC LIMIT 100")?;
+            let values = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            values.into_iter().map(|value| Ok(serde_json::from_str(&value)?)).collect()
+        })
+    }
+
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         self.read(|c| {
             Ok(c.query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| r.get(0))

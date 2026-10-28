@@ -20,6 +20,7 @@ import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
 import { BoardView } from "./components/BoardView";
+import { captureClientFailures } from "./lib/client-failures";
 import { api, follow } from "./lib/api";
 import { inboxRows } from "./lib/inbox";
 import { taskAncestors, taskRows } from "./lib/tasks";
@@ -318,6 +319,8 @@ export default function Home() {
     },
     [showAgent],
   );
+
+  useEffect(captureClientFailures, []);
 
   const complain = useCallback(
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),

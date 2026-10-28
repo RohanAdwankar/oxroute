@@ -1,5 +1,7 @@
 "use client";
 
+import { recordClientFailure } from "./client-failures";
+
 import type { DiffQuote } from "./drafts";
 
 import type {
@@ -22,25 +24,32 @@ import type {
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const multipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  const response = await fetch(path, {
-    ...init,
-    headers: { ...(multipart ? {} : { "content-type": "application/json" }), ...(init?.headers ?? {}) },
-    cache: "no-store",
-  });
-  const body = await response.text();
-  if (!response.ok) {
-    // The daemon puts a readable reason in the body. Surface that rather
-    // than a status code nobody can act on.
-    let reason = body;
-    try {
-      reason = JSON.parse(body).error ?? body;
-    } catch {
-      /* the body was not JSON; show it as it came */
+  let status = 0;
+  try {
+    const multipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
+    const response = await fetch(path, {
+      ...init,
+      headers: { ...(multipart ? {} : { "content-type": "application/json" }), ...(init?.headers ?? {}) },
+      cache: "no-store",
+    });
+    status = response.status;
+    const body = await response.text();
+    if (!response.ok) {
+      // The daemon puts a readable reason in the body. Surface that rather
+      // than a status code nobody can act on.
+      let reason = body;
+      try {
+        reason = JSON.parse(body).error ?? body;
+      } catch {
+        /* the body was not JSON; show it as it came */
+      }
+      throw new Error(reason || `${response.status} ${response.statusText}`);
     }
-    throw new Error(reason || `${response.status} ${response.statusText}`);
+    return body ? (JSON.parse(body) as T) : (undefined as T);
+  } catch (error) {
+    recordClientFailure(path, init, status, error);
+    throw error;
   }
-  return body ? (JSON.parse(body) as T) : (undefined as T);
 }
 
 const post = <T,>(path: string, payload: unknown) =>

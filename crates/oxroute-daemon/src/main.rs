@@ -212,6 +212,7 @@ async fn serve() -> Result<()> {
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
+        .route("/api/client-failures", get(client_failures).post(client_failure))
         .route("/api/events", get(events))
         .route("/api/search", get(search))
         .route("/api/search/native", get(search_native))
@@ -327,6 +328,29 @@ impl<E: Into<anyhow::Error>> From<E> for Failed {
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
+}
+
+// Browser failures can happen before a request reaches the daemon. Keep their
+// correlation metadata independently of chat content and model execution.
+#[derive(serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientFailure {
+    id: String, at: f64, path: String, method: String, status: u16,
+    agent: String, request_id: String, message: String, version: String, online: bool, browser: String,
+}
+
+async fn client_failure(State(hub): Hubs, Json(body): Json<ClientFailure>) -> Result<StatusCode, Failed> {
+    let value = serde_json::to_string(&body)?;
+    if value.len() > 16_384 || body.id.is_empty() || body.id.len() > 128 {
+        return Err(anyhow::anyhow!("invalid client failure").into());
+    }
+    hub.store.set(&format!("client-failure:{}", body.id), &value)?;
+    tracing::warn!(agent = body.agent, request_id = body.request_id, path = body.path, status = body.status, at = body.at, error = body.message, "browser request failed");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn client_failures(State(hub): Hubs) -> Result<Json<Vec<serde_json::Value>>, Failed> {
+    Ok(Json(hub.store.client_failures()?))
 }
 
 #[utoipa::path(get, path = "/api/state", operation_id = "state.show", responses((status = 200, body = serde_json::Value)))]

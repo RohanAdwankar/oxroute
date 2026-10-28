@@ -109,6 +109,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/message-reconciliation.mj
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/live-answers.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/downloads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/artifact-links.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/client-failures.mjs"
 node "$repository/tests/shared-events.mjs"
 node "$repository/tests/large-uploads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/entry-jump.mjs"
