@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { TaskLinks } from "./components/Markdown";
+import { ArtifactRoot, TaskLinks } from "./components/Markdown";
 import { TaskActions } from "./components/TaskReference";
 
 import { AgentPanel } from "./components/AgentPanel";
@@ -49,6 +49,7 @@ type Column = (typeof COLUMNS)[number];
 const EMPTY: Snapshot = {
   mode: "ask",
   defaultModel: "",
+  artifactRoot: "",
   agents: [],
   archived: [],
   messages: {},
@@ -1082,6 +1083,7 @@ export default function Home() {
   }
 
   return (
+    <ArtifactRoot.Provider value={snapshot.artifactRoot}>
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={{ tasks: taskItems,
       busy: id => busy || id in savingTasks || id in creatingTasks,
@@ -1418,5 +1420,6 @@ export default function Home() {
     </main>
     </TaskActions.Provider>
     </TaskLinks.Provider>
+    </ArtifactRoot.Provider>
   );
 }

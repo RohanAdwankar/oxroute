@@ -245,6 +245,7 @@ async fn serve() -> Result<()> {
         .route("/api/agents/{id}/diagram/create", post(diagram_create))
         .route("/api/diagram/render", post(diagram_render))
         .route("/api/attachments/{name}", get(attachment))
+        .route("/api/artifacts", get(artifact))
         // The web UI is served by Next on its own port in development and
         // proxied in production, so anything on this host may call in.
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
@@ -1406,6 +1407,24 @@ async fn attachment(
     attachment_response(&hub.config.attachments.join(&name), kind, &headers).await
 }
 
+#[derive(Deserialize)]
+struct ArtifactQuery { path: String }
+
+async fn artifact(State(hub): Hubs, Query(query): Query<ArtifactQuery>, headers: HeaderMap) -> Result<Response, Failed> {
+    artifact_response(&hub.config.artifacts, std::path::Path::new(&query.path), &headers).await
+}
+
+async fn artifact_response(root: &std::path::Path, path: &std::path::Path, headers: &HeaderMap) -> Result<Response, Failed> {
+    let (Ok(root), Ok(path)) = (tokio::fs::canonicalize(root).await, tokio::fs::canonicalize(path).await) else {
+        return Ok((StatusCode::NOT_FOUND, "no such artifact").into_response());
+    };
+    if !path.starts_with(&root) || !path.is_file() {
+        return Ok((StatusCode::NOT_FOUND, "no such artifact").into_response());
+    }
+    let kind = oxroute_core::model::attachment_mime(&path.to_string_lossy());
+    attachment_response(&path, kind, headers).await
+}
+
 async fn attachment_response(
     path: &std::path::Path,
     kind: &str,
@@ -1835,6 +1854,31 @@ mod tests {
         for refused in ["../config.toml", "..", ".env.png", "a/b.png", "a\\b.mp4", ""] {
             assert_eq!(attachment_type(refused), None, "{refused} was served");
         }
+    }
+
+    #[tokio::test]
+    async fn artifact_files_are_served_from_the_configured_root_with_ranges() {
+        let temp = std::env::temp_dir().join(oxroute_core::model::new_id("artifact-api"));
+        let root = temp.join("artifacts");
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let image = root.join("diagram # λ.svg");
+        let contents = "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'/>";
+        tokio::fs::write(&image, contents).await.unwrap();
+        let response = artifact_response(&root, &image, &HeaderMap::new()).await.map_err(|e| e.0).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        assert_eq!(axum::body::to_bytes(response.into_body(), 1024).await.unwrap(), contents);
+        let mut headers = HeaderMap::new(); headers.insert(header::RANGE, "bytes=0-3".parse().unwrap());
+        let response = artifact_response(&root, &image, &headers).await.map_err(|e| e.0).unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(axum::body::to_bytes(response.into_body(), 1024).await.unwrap(), "<svg");
+        let outside = temp.join("outside.svg");
+        tokio::fs::write(&outside, contents).await.unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape.svg")).unwrap();
+        for path in [&outside, &root.join("../outside.svg"), &root.join("escape.svg"), &root.join("missing.svg"), &root] {
+            assert_eq!(artifact_response(&root, path, &HeaderMap::new()).await.map_err(|e| e.0).unwrap().status(), StatusCode::NOT_FOUND);
+        }
+        tokio::fs::remove_dir_all(temp).await.unwrap();
     }
 
     #[tokio::test]

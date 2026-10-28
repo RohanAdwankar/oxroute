@@ -1,5 +1,5 @@
 import { createContext, memo, useContext } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
 import { Copyable } from "./Copyable";
@@ -7,6 +7,8 @@ import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
+
+export const ArtifactRoot = createContext("");
 
 export const ReviewLinks = createContext<{ titles: Map<string, string>; open: (id: string) => void } | null>(null);
 export const TaskLinks = createContext<{ titles: Map<string, string>; open: (id: string) => void } | null>(null);
@@ -99,9 +101,22 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
   const reviews = useContext(ReviewLinks);
   const tasks = useContext(TaskLinks);
   const quotes = useContext(QuoteLinks);
+  const root = useContext(ArtifactRoot);
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
+        urlTransform={url => {
+          if (root && url.startsWith("/") && !url.startsWith("//")) {
+            try {
+              const parsed = new URL(url, "http://localhost");
+              const path = decodeURIComponent(parsed.pathname);
+              if (path.startsWith(root.endsWith("/") ? root : root + "/")) {
+                return `/api/artifacts?path=${encodeURIComponent(path)}${parsed.hash}`;
+              }
+            } catch { /* A malformed link must not break the conversation. */ }
+          }
+          return defaultUrlTransform(url);
+        }}
         // Tables, task lists and strikethrough are GFM rather than CommonMark,
         // so without this an agent's table arrives as a wall of pipes.
         // A shell's home-directory tildes are literal; deletion needs ~~.

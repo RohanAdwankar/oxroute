@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+
+const base = process.env.TEST_URL ?? 'http://127.0.0.1:3939';
+const snapshot = await (await fetch(`${base}/api/state`)).json();
+assert.ok(snapshot.artifactRoot, 'The daemon provides the configured artifact root');
+const directory = await mkdtemp(join(snapshot.artifactRoot, 'artifact-links-'));
+const browser = await chromium.launch();
+try {
+  const path = join(directory, 'drawing # λ.svg');
+  const notes = join(directory, 'notes.txt');
+  await writeFile(path, '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><path fill="#211d19" d="M0 0h120v80H0z"/></svg>');
+  await writeFile(notes, 'Generated notes\n');
+  const url = path => path.split('/').map(encodeURIComponent).join('/');
+  const agent = { id: 'artifact-links-fixture', name: 'Artifact links', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
+  const text = `![Generated drawing](${url(path)})\n\n[Download notes](${url(notes)})\n\n![Existing site image](/icon.png)\n\n[Malformed link](/invalid%ZZ)\n\n[Ordinary link](https://example.invalid/document)`;
+  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
+  await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
+  await page.route('**/api/state', route => route.fulfill({ json: { ...snapshot, agents: [agent], archived: [], tasks: [], taskNotes: [], messages: {}, paneLinks: {}, tags: {}, boards: [] } }));
+  await page.route('**/api/agents/*', route => route.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', text, detail: '', at: Date.now()/1000 }], delivery: 'start' } }));
+  await page.goto(`${base}/?agent=${agent.id}`);
+  const image = page.getByRole('img', { name: 'Generated drawing', exact: true });
+  await image.evaluate(img => img.decode());
+  const src = await image.getAttribute('src');
+  assert.equal(new URL(src, base).searchParams.get('path'), path);
+  assert.equal(await image.evaluate(img => img.naturalWidth), 120);
+  const original = page.getByRole('img', { name: 'Existing site image', exact: true });
+  assert.equal(await original.getAttribute('src'), '/icon.png');
+  await original.evaluate(img => img.decode());
+  const file = await page.request.get(new URL(await page.getByRole('link', { name: 'Download notes', exact: true }).getAttribute('href'), base).href);
+  assert.equal(await file.text(), 'Generated notes\n');
+  assert.equal(file.headers()['content-disposition'], 'attachment');
+  assert.equal(await page.getByRole('link', { name: 'Ordinary link', exact: true }).getAttribute('href'), 'https://example.invalid/document');
+  assert.equal(await page.getByRole('link', { name: 'Malformed link', exact: true }).getAttribute('href'), '/invalid%ZZ');
+  await page.reload();
+  await page.getByRole('img', { name: 'Generated drawing', exact: true }).evaluate(img => img.decode());
+  if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
+  console.log('Real artifact images load before and after reload; encoded filenames, downloads, site images, ordinary links and malformed links are preserved.');
+} finally { await browser.close(); await rm(directory, { recursive: true, force: true }); }

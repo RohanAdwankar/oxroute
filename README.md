@@ -86,6 +86,11 @@ including added and deleted images. Click a preview to open it at full size.
 Images load on demand from the reviewed Git revisions; SVG source diffs remain
 available below their previews.
 
+Markdown images and file links beneath the configured artifact directory are
+served through the daemon, including links in previously saved replies. The
+file route preserves streaming and range requests and resolves paths within
+that artifact directory.
+
 Explicit user approval in Slack or chat is equivalent to approval on the review
 card. After presenting the exact committed change, the agent can push it and
 create its PR even if the card remains pending. Record the user's approval in

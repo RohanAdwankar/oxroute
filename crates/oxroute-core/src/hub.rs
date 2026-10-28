@@ -2694,6 +2694,7 @@ impl Hub {
         Ok(Snapshot {
             mode: self.mode().as_str().to_string(),
             default_model: self.config.default_model.clone(),
+            artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
             archived,
             messages: self.store.message_previews()?,
@@ -3474,6 +3475,7 @@ pub struct Snapshot {
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,
+    pub artifact_root: String,
     pub agents: Vec<Agent>,
     pub archived: Vec<Agent>,
     /// Latest human or agent text by agent id. Tool activity stays in

@@ -150,6 +150,7 @@ export interface Snapshot {
   mode: Mode;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
+  artifactRoot: string;
   agents: Agent[];
   archived: Agent[];
   messages: Record<string, string>;
