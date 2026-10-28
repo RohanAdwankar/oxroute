@@ -4,9 +4,6 @@ import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 import { chromium } from 'playwright';
 
-const source = ts.transpileModule(await readFile(new URL('../app/lib/api.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText;
 const worker = await readFile(new URL('../public/events-worker.js', import.meta.url));
 const streams = new Set();
 const workers = new Set();
@@ -15,17 +12,26 @@ const heartbeat = setInterval(() => {
   if (!paused) for (const stream of streams) stream.write('event: heartbeat\ndata: {}\n\n');
 }, 1000);
 let connections = 0;
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   if (request.url === '/api/events') {
     connections++;
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.write('data: {"type":"sync"}\n\n');
     streams.add(response);
     request.on('close', () => streams.delete(response));
-  } else if (request.url.startsWith('/events-worker.js') || request.url === '/client.js') {
+  } else if (request.url.startsWith('/events-worker.js')) {
+    workers.add(request.url);
     response.writeHead(200, { 'content-type': 'text/javascript' });
-    if (request.url !== '/client.js') workers.add(request.url);
-    response.end(request.url === '/client.js' ? source : worker);
+    response.end(worker);
+  } else if (request.url.startsWith('/modules/')) {
+    const root = new URL('../app/lib/', import.meta.url);
+    const file = new URL(`${request.url.slice('/modules/'.length)}.ts`, root);
+    assert.ok(file.href.startsWith(root.href));
+    const source = ts.transpileModule(await readFile(file, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    response.writeHead(200, { 'content-type': 'text/javascript' });
+    response.end(source);
   } else if (request.url === '/older-client') {
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end('<script>window.events=[]; const worker=new SharedWorker("/events-worker.js"); worker.port.onmessage=event=>events.push(JSON.parse(event.data)); onpagehide=()=>worker.port.postMessage("close");</script>');
@@ -35,7 +41,7 @@ const server = createServer((request, response) => {
     setTimeout(() => response.end(Buffer.alloc(65536)), 1500);
   } else {
     response.writeHead(200, { 'content-type': 'text/html' });
-    response.end('<a href="/download" download>Download</a><script type="module">import {follow} from "/client.js"; window.events=[]; window.stopFollowing=follow(event=>events.push(event));</script>');
+    response.end('<a href="/download" download>Download</a><script type="module">import {follow} from "/modules/api"; window.events=[]; window.stopFollowing=follow(event=>events.push(event));</script>');
   }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -77,7 +83,7 @@ try {
   assert.equal(streams.size, 0, 'Last subscriber releases the connection');
   const beforeRenew = await pages[1].evaluate(() => window.events.filter(event => event.type === 'sync').length);
   await pages[1].evaluate(async () => {
-    const { follow } = await import('/client.js');
+    const { follow } = await import('/modules/api');
     window.stopFollowing = follow(event => events.push(event));
   });
   await pages[1].waitForFunction(count => window.events.filter(event => event.type === 'sync').length >= count + 2, beforeRenew);
