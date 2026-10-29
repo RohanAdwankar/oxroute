@@ -115,4 +115,6 @@ Reports exclude submitted message text and file contents.
 
 Pane forks keep their layout beside the parent and open independent Slack threads.
 Existing pane forks without a thread connect on their next message. Slack outages
-do not prevent pane creation; quoted side discussions remain local.
+do not prevent pane creation. Quoted discussions retain their anchors and also
+receive Slack threads. A periodic reconciliation repairs missing Codex thread
+bindings without starting or interrupting model turns.

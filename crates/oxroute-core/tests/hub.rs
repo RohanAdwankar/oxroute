@@ -996,6 +996,49 @@ async fn pane_forks_still_work_when_the_source_is_unavailable() {
 }
 
 #[tokio::test]
+async fn missing_source_threads_are_reconciled_once_without_starting_turns() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("100.0", "100.0", "original")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut children = vec![];
+    for name in ["Research", "Implementation"] {
+        let child = Agent { id: new_id("agent"), name: name.into(), permalink: String::new(), ..parent.clone() };
+        w.hub.store.save_agent(&child).unwrap(); children.push(child);
+    }
+    let before = w.calls.lock().unwrap().started.len();
+    let (a, b) = tokio::join!(w.hub.reconcile_threads(), w.hub.reconcile_threads());
+    a.unwrap(); b.unwrap();
+    assert_eq!(w.posts.lock().unwrap().threads.len(), children.len());
+    for child in children {
+        let binding = w.hub.store.bindings_for(&child.id).unwrap().pop().unwrap();
+        assert_eq!(w.hub.store.bound_agent(&binding.source, &binding.conversation, &binding.thread_key).unwrap(), Some(child.id.clone()));
+        assert!(!w.hub.store.agent(&child.id).unwrap().unwrap().permalink.is_empty());
+    }
+    assert_eq!(w.calls.lock().unwrap().started.len(), before);
+}
+
+#[tokio::test]
+async fn a_turn_linked_after_it_starts_replies_to_its_new_source_thread() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "original")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let child = Agent { id: new_id("agent"), name: "Parallel work".into(), session_id: String::new(), permalink: String::new(), ..parent };
+    w.hub.store.save_agent(&child).unwrap();
+    w.fail_open.store(true, Ordering::Relaxed);
+    w.hub.say_to(&child.id, "Continue the branch").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    w.fail_open.store(false, Ordering::Relaxed);
+    w.hub.reconcile_threads().await.unwrap();
+    let binding = w.hub.store.bindings_for(&child.id).unwrap().pop().unwrap();
+    let session = w.hub.store.agent(&child.id).unwrap().unwrap().session_id;
+    w.harness.send(HarnessEvent::Message { session:session.clone(), text:"The branch is ready".into(), final_answer:true }).unwrap();
+    w.harness.send(HarnessEvent::TurnFinished { session, status:"completed".into() }).unwrap();
+    assert!(settle(|| w.posts.lock().unwrap().replies.iter().any(|(thread,text)| thread==&binding.thread_key && text.contains("The branch is ready"))).await);
+}
+
+#[tokio::test]
 async fn a_busy_parent_accepts_a_merge_without_being_interrupted() {
     let w = world(Mode::Auto, true).await;
     w.hub.accept(signal("100.0", "100.0", "work on the main task")).await.unwrap();
@@ -1049,7 +1092,7 @@ async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lif
     assert_eq!(Store::open(&database).unwrap().quote_threads().unwrap()[0].anchor.text, anchor.text);
     std::fs::remove_file(database).unwrap();
     assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent.id);
-    assert!(w.posts.lock().unwrap().threads.is_empty());
+    assert_eq!(w.posts.lock().unwrap().threads.len(), 1);
     w.hub.archive(&child.id, true).unwrap();
     assert!(!w.hub.timeline(&parent.id, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::Forked && entry.detail == child.id));
     assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
@@ -1062,7 +1105,7 @@ async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lif
     w.hub.merge(&child.id).await.unwrap();
     assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
     assert!(w.calls.lock().unwrap().injected.iter().any(|(session, count)| session == &parent.session_id && *count == 1));
-    assert!(w.posts.lock().unwrap().threads.is_empty());
+    assert_eq!(w.posts.lock().unwrap().threads.len(), 1);
     let bad = QuoteAnchor { entry_id: i64::MAX, ..anchor };
     let count = w.calls.lock().unwrap().forked.len();
     assert!(w.hub.fork_quote(&parent.id, bad).await.is_err());
@@ -1764,10 +1807,9 @@ async fn an_agent_with_an_old_slack_binding_gets_a_current_home_on_its_next_ui_m
         .iter()
         .any(|(_, text)| text.starts_with("Question from Oxroute UI:")));
     let bindings = w.hub.store.bindings_for(&agent.id).unwrap();
-    assert_eq!(bindings.len(), 1);
-    assert_eq!(bindings[0].source, "slack");
-    assert_eq!(bindings[0].conversation, "D2");
-    assert_eq!(bindings[0].thread_key, "thread-1");
+    assert_eq!(bindings.len(), 2, "Existing threads remain able to reach the conversation");
+    assert!(bindings.iter().any(|binding| binding.conversation == "D1"));
+    assert!(bindings.iter().any(|binding| binding.source == "slack" && binding.conversation == "D2" && binding.thread_key == "thread-1"));
 }
 
 #[tokio::test]

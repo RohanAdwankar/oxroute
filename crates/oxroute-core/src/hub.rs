@@ -203,6 +203,7 @@ pub struct Hub {
     /// harness later -- can be dropped in without the hub changing shape.
     harnesses: HashMap<Backend, Arc<dyn Harness>>,
     sources: HashMap<String, Arc<dyn Source>>,
+    mirror_lock: AsyncMutex<()>,
     events: broadcast::Sender<Event>,
     /// Session handle -> agent id. The harnesses speak in their own ids.
     sessions: AsyncMutex<HashMap<String, String>>,
@@ -308,6 +309,7 @@ impl Hub {
             config,
             store: Arc::new(store),
             sources: HashMap::new(),
+            mirror_lock: AsyncMutex::new(()),
             events: broadcast::channel(4096).0,
             sessions: AsyncMutex::new(HashMap::new()),
             live: AsyncMutex::new(HashMap::new()),
@@ -569,6 +571,9 @@ impl Hub {
                         }
                     }
                     Err(error) => tracing::error!(%error, "stall sweep failed"),
+                }
+                if let Err(error) = self.reconcile_threads().await {
+                    tracing::warn!(%error, "source thread reconciliation failed");
                 }
                 self.hand_out_open_work().await;
                 self.refresh_dashboard().await;
@@ -1009,44 +1014,12 @@ impl Hub {
         inputs.extend(self.upload_inputs(&agent, &images).await?);
         let entry = self.store.add_user_entry(&agent.id, now(), &shown, detail, request_id)?;
         self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
-        let spoken_entry = Some(entry);
-        let (target, opened) = match self.home_target(&agent.id).await {
-            Some(target) => (Some(target), false),
-            None if self.store.quote_thread(&agent.id)?.is_some() => (None, false),
-            None => match self.open_current_thread(&shown).await? {
-                Some((target, permalink)) => {
-                    for binding in self.store.bindings_for(&agent.id)? {
-                        if binding.source == target.source
-                            && binding.conversation != target.conversation
-                        {
-                            self.store.unbind(
-                                &binding.source,
-                                &binding.conversation,
-                                &binding.thread_key,
-                            )?;
-                        }
-                    }
-                    self.store.bind(
-                        &target.source,
-                        &target.conversation,
-                        &target.thread_key,
-                        &agent.id,
-                    )?;
-                    if !permalink.is_empty() {
-                        self.store.set_agent_permalink(&agent.id, &permalink)?;
-                        if target.source == crate::source::slack::SOURCE {
-                            if let Some(entry) = spoken_entry {
-                                self.link_entry(entry, &permalink);
-                            }
-                        }
-                    }
-                    (Some(target), true)
-                }
-                // Nowhere to mirror to. The agent still gets the message and
-                // the timeline still records it.
-                None => (None, false),
-            },
-        };
+        let (target, opened) = self.ensure_thread(&agent.id, &shown).await?;
+        if opened && target.as_ref().is_some_and(|target| target.source == crate::source::slack::SOURCE) {
+            if let Some(saved) = self.store.agent(&agent.id)? {
+                if !saved.permalink.is_empty() { self.link_entry(entry, &saved.permalink); }
+            }
+        }
 
         let reply_context = target
             .as_ref()
@@ -1367,7 +1340,7 @@ impl Hub {
         let home = match self.home_binding(agent_id) {
             Some(binding) => Some((binding.source, binding.conversation)),
             None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
-        }.filter(|_| quote.is_none());
+        };
         let home = home.and_then(|(name, conversation)| {
             self.source(&name).map(|source| (name, conversation, source))
         });
@@ -1967,6 +1940,10 @@ impl Hub {
     ) -> Result<()> {
         let reporter = self.clone().report(turn.clone());
         turn.wait_done().await;
+        let target = match &turn.target {
+            Some(target) => Some(target.clone()),
+            None => self.home_target(&agent.id).await,
+        };
         let outcome = if turn.stopped.load(Ordering::SeqCst) {
             Ok(None)
         } else {
@@ -1988,7 +1965,7 @@ impl Hub {
         self.store.clear_active_turn(&agent.id)?;
 
         if !turn.stopped.load(Ordering::SeqCst) {
-            self.hand_back_artifacts(&agent.id, &turn, turn.target.as_ref()).await;
+            self.hand_back_artifacts(&agent.id, &turn, target.as_ref()).await;
         }
         let _ = harness.release(&turn.session).await;
 
@@ -1999,7 +1976,7 @@ impl Hub {
                 self.store.stall_agent(&agent.id, "turn failed", now())?;
                 self.emit(Event::Sync);
                 self.refresh_dashboard().await;
-                if let Some(target) = &turn.target {
+                if let Some(target) = &target {
                     self.say(target, ERROR_REPLY).await;
                 }
                 return Err(error);
@@ -2016,7 +1993,7 @@ impl Hub {
         }
         self.store.set_agent_status(&agent.id, AgentStatus::Complete, now())?;
 
-        if let Some(target) = &turn.target {
+        if let Some(target) = &target {
             let reply = if target.source == crate::source::slack::SOURCE {
                 reply_with_context(&turn.reply_context.lock().unwrap(), &answer)
             } else {
@@ -2042,8 +2019,8 @@ impl Hub {
         });
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
-        self.clone().name_agent(agent.id.clone(), turn.target.clone(), true);
-        self.clone().carry_on_with_tasks(agent.clone(), turn.target.clone()).await;
+        self.clone().name_agent(agent.id.clone(), target.clone(), true);
+        self.clone().carry_on_with_tasks(agent.clone(), target.clone()).await;
         Ok(())
     }
 
@@ -2603,6 +2580,28 @@ impl Hub {
             parts.next()?.to_string(),
             parts.next()?.to_string(),
         ))
+    }
+
+    /// Repair missing source links without starting or interrupting model turns.
+    pub async fn reconcile_threads(&self) -> Result<()> {
+        if self.sources.is_empty() { return Ok(()); }
+        for agent in self.store.unarchived_agents()? {
+            if agent.backend == Backend::Codex && self.home_binding(&agent.id).is_none() {
+                if self.ensure_thread(&agent.id, &agent.name).await?.0.is_none() { break; }
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_thread(&self, agent_id: &str, title: &str) -> Result<(Option<Target>, bool)> {
+        if let Some(target) = self.home_target(agent_id).await { return Ok((Some(target), false)); }
+        let _held = self.mirror_lock.lock().await;
+        if let Some(target) = self.home_target(agent_id).await { return Ok((Some(target), false)); }
+        let Some((target, permalink)) = self.open_current_thread(title).await? else { return Ok((None, false)); };
+        self.store.bind(&target.source, &target.conversation, &target.thread_key, agent_id)?;
+        if !permalink.is_empty() { self.store.set_agent_permalink(agent_id, &permalink)?; }
+        self.emit(Event::Sync);
+        Ok((Some(target), true))
     }
 
     /// Open a thread in whichever source conversation is currently in play.
