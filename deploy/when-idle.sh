@@ -29,7 +29,7 @@ web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
 backup=$(mktemp -d "$state/deploy-backup.XXXXXX")
 export TMPDIR=$backup
-cleanup() { find "$backup" -depth -delete; }
+cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
 trap cleanup EXIT
 uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True).backup(sqlite3.connect(sys.argv[2]))' "$database" "$backup/database.sqlite3"
 cp -a "$binary" "$backup/oxrouted"
@@ -46,6 +46,7 @@ rollback() {
   mv "$request" "$state/failed-deployment.json"
   request=$state/failed-deployment.json
   systemctl --user stop oxroute-web.service oxroute.service
+  rm -f -- "$binary.next" "$agent_binary.next" "$web.next"
   cp -a "$backup/web" "$web.next"
   mv -Tf "$web.next" "$web"
   cp -a "$backup/oxrouted" "$binary.next"
@@ -66,13 +67,16 @@ rollback() {
 if ! idle; then
   exit 0
 fi
+# Prepare every replacement while the live services are still available.
+# A full destination filesystem must fail before either service is stopped.
+ln -s "$release/bin/oxrouted" "$binary.next"
+ln -s "$release/bin/oxroute-agent" "$agent_binary.next"
+ln -s "$release/web" "$web.next"
+if ! idle; then exit 0; fi
 trap rollback ERR
 systemctl --user stop oxroute-web.service oxroute.service
-ln -s "$release/bin/oxrouted" "$binary.next"
 mv -Tf "$binary.next" "$binary"
-ln -s "$release/bin/oxroute-agent" "$agent_binary.next"
 mv -Tf "$agent_binary.next" "$agent_binary"
-ln -s "$release/web" "$web.next"
 mv -Tf "$web.next" "$web"
 systemctl --user start oxroute.service oxroute-web.service
 curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
