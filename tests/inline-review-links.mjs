@@ -17,7 +17,10 @@ try {
   for (const review of reviews) await page.route(`**/reviews/${review.id}`, r => r.fulfill({ json: review }));
   const writes = [];
   page.on('request', request => { if (request.method() !== 'GET') writes.push(request.url()); });
-  await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3941'}/?agent=${agent.id}`);
+  await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3941'}/?agent=${agent.id}&review=${reviews[0].id}`);
+  await page.getByRole('region', { name: 'Change review' }).getByText(reviews[0].title, { exact: true }).waitFor();
+  assert.deepEqual(writes, [], 'A direct review link only opens the requested revision');
+  await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
   const message = page.locator('[data-entry="3"]');
   await message.getByRole('button', { name: `Review ${reviews[0].title}`, exact: true }).waitFor();
   assert.equal(await message.getByRole('button', { name: /^Review / }).count(), 2, 'Plain and inline-code review references render as cards');

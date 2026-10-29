@@ -299,6 +299,17 @@ impl Source for SlackSource {
             .unwrap_or_default())
     }
 
+    async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
+        let response = self.call("chat.postMessage", json!({
+            "channel": target.conversation, "thread_ts": target.thread_key,
+            "text": format!("Review changes: {title}"),
+            "blocks": [{"type": "section", "text": {"type": "plain_text", "text": title},
+                "accessory": {"type": "button", "text": {"type": "plain_text", "text": "Review changes"},
+                    "url": url, "action_id": "review_changes"}}]
+        })).await?;
+        self.permalink(&target.conversation, response["ts"].as_str().context("Slack returned no message timestamp")?).await
+    }
+
     async fn post_status(&self, target: &Target, text: &str) -> Result<Posted> {
         let response = self
             .call(

@@ -51,6 +51,12 @@ pub trait Source: Send + Sync {
     /// such a thing.
     async fn reply(&self, target: &Target, text: &str) -> Result<String>;
 
+    /// Present a structured link without granting approval or publishing work.
+    async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
+        let _ = (target, title, url);
+        anyhow::bail!("{} cannot show link buttons", self.name())
+    }
+
     /// Post a message we intend to rewrite and then delete.
     async fn post_status(&self, target: &Target, text: &str) -> Result<Posted>;
 

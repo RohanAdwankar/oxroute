@@ -1819,7 +1819,9 @@ impl Hub {
              for human review using oxroute-agent --server http://{listen} --agent {id} \
              reviews create --repository ROOT --base BASE --remote REMOTE --title TITLE \
              --description DESCRIPTION. It returns a review ID and \
-             captures the exact diff in this conversation. Do not push to make it reviewable. \
+             captures the exact diff in this conversation. Linked Slack threads receive a \
+             Review changes button; direct the user there instead of asking them to find a raw review ID. \
+             Do not push to make it reviewable. \
              Wait for the user's approval of that exact committed change. Explicit approval \
              from the user in Slack or chat is equivalent to approval on the review card: \
              publish the reviewed commit and create its PR even if the card remains pending. \
@@ -2519,6 +2521,15 @@ impl Hub {
             }
         }
         bindings.into_iter().next()
+    }
+
+    pub async fn share_review(&self, agent_id: &str, review_id: &str, title: &str) -> Result<()> {
+        let Some(target) = self.home_target(agent_id).await.filter(|target| target.source == crate::source::slack::SOURCE) else { return Ok(()) };
+        let Some(source) = self.source(&target.source) else { return Ok(()) };
+        let mut url = reqwest::Url::parse(&self.config.web_url)?;
+        url.query_pairs_mut().append_pair("agent", agent_id).append_pair("review", review_id);
+        source.link_button(&target, title, url.as_str()).await?;
+        Ok(())
     }
 
     /// Say something in a thread, and return the permalink if there is one.

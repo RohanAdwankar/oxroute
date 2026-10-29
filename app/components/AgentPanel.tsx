@@ -247,6 +247,20 @@ export function AgentPanel({
   const [sketchReady, setSketchReady] = useState(false);
   const sketch = useRef<SketchHandle>(null);
   const { agent } = view;
+  useEffect(() => {
+    const reveal = () => {
+      const query = new URLSearchParams(window.location.search);
+      const review = query.get("review");
+      if (query.get("agent") === agent.id && review) {
+        setReviewId(review);
+        setReviewingGit(true);
+        setMode("type");
+      }
+    };
+    reveal();
+    window.addEventListener("popstate", reveal);
+    return () => window.removeEventListener("popstate", reveal);
+  }, [agent.id]);
   const latestReview = view.timeline.findLast(entry => entry.kind === "review");
   useEffect(() => {
     if (latestReview) preloadReview(reviewEndpoint(agent.id, latestReview.detail));

@@ -266,6 +266,7 @@ struct Posts {
     uploads: Vec<Vec<String>>,
     threads: Vec<String>,
     retitled: Vec<String>,
+    buttons: Vec<(String, String, String)>,
 }
 
 struct FakeSource {
@@ -293,6 +294,11 @@ impl Source for FakeSource {
             .replies
             .push((target.thread_key.clone(), text.to_string()));
         Ok(format!("https://example/{}", target.thread_key))
+    }
+
+    async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
+        self.posts.lock().unwrap().buttons.push((target.thread_key.clone(), title.into(), url.into()));
+        Ok("https://example/review-button".into())
     }
 
     async fn post_status(&self, _target: &Target, _text: &str) -> Result<Posted> {
@@ -437,6 +443,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     };
     let config = Config {
         source: None,
+        web_url: "http://localhost:3939".into(),
         workspace: scratch.to_string_lossy().to_string(),
         codex_binary: "codex".into(),
         claude_binary: "claude".into(),
@@ -821,6 +828,24 @@ async fn retried_submissions_deliver_once_but_new_requests_with_identical_text_s
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
     let entries = w.hub.timeline(&agent, 100).unwrap();
     assert_eq!(entries.iter().filter(|entry| entry.kind == EntryKind::You && entry.detail == "annotation").count(), 2);
+}
+
+#[tokio::test]
+async fn review_buttons_link_the_exact_review_without_starting_another_turn() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("review-thread", "initial", "Prepare a change")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    w.hub.share_review(&agent, "review: exact", "Inspect the revision").await.unwrap();
+    let posts = w.posts.lock().unwrap();
+    let (thread, title, url) = posts.buttons.last().unwrap();
+    assert_eq!(thread, "review-thread");
+    assert_eq!(title, "Inspect the revision");
+    let url = reqwest::Url::parse(url).unwrap();
+    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    assert_eq!(query.get("agent").unwrap(), &agent);
+    assert_eq!(query.get("review").unwrap(), "review: exact");
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
 }
 
 #[tokio::test]

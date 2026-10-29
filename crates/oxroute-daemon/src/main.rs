@@ -600,7 +600,14 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None };
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
-    Ok(Json(review_response(review, false).await?))
+    let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
+    let response = review_response(review, false).await?;
+    tokio::spawn(async move {
+        if let Err(error) = hub.share_review(&agent, &id, &title).await {
+            tracing::warn!(review = id, %error, "could not share review link");
+        }
+    });
+    Ok(Json(response))
 }
 
 #[derive(Default, Deserialize)]

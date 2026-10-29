@@ -67,6 +67,7 @@ struct FileConfig {
     workspace: Option<String>,
     default_model: Option<String>,
     listen: Option<String>,
+    web_url: Option<String>,
     #[serde(default)]
     models: BTreeMap<String, FileModel>,
     #[serde(default)]
@@ -178,6 +179,7 @@ pub struct Config {
     /// here on purpose: it runs commands on a machine you own.
     pub owner: String,
     pub listen: String,
+    pub web_url: String,
     /// Where an agent's architecture diagram is, relative to its working
     /// directory unless absolute. Drawing a change to it is a way to message
     /// the agent.
@@ -411,6 +413,7 @@ impl Config {
             listen: pick(&["OXROUTE_LISTEN"], file.listen, || {
                 "127.0.0.1:8787".into()
             }),
+            web_url: pick(&["OXROUTE_WEB_URL"], file.web_url, || "http://localhost:3939".into()),
             diagram_path: pick(&["OXROUTE_DIAGRAM_PATH"], file.diagram.path, || {
                 "docs/architecture.mmd".into()
             }),
