@@ -58,6 +58,6 @@ try {
   await reference.getByText('Approved', { exact: true }).waitFor();
   assert.equal(await reference.getByRole('button', { name: 'Approve', exact: true }).count(), 0);
   assert.equal(await page.locator('[data-task-row]').filter({ hasText: tasks[2].text }).locator('select').first().inputValue(), 'complete');
-  assert.equal(writes.length, 2, 'One failed request and one explicit retry');
+  assert.equal(writes.filter(url => new URL(url).pathname.startsWith('/api/tasks/')).length, 2, 'One failed approval and one explicit retry');
   console.log('Task references support navigation, inline approval, correction, failure recovery and synchronized task status.');
 } finally { await browser.close(); }

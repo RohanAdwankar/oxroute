@@ -25,6 +25,7 @@ try {
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     const json = value => route.fulfill({ json: value });
+    if (path === '/api/client-failures') return route.continue();
     if (path === '/api/version') return json({ version });
     if (path === '/api/state') return json({ mode: 'ask', agents: [parent, ...[...children.values()].filter(child => !child.archived).map(child => child.agent)], archived: [...children.values()].filter(child => child.archived).map(child => child.agent), messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: threads, tags: {}, boards: [], sources: [], models: [], backends: [{ backend: 'codex', fork: true, merge: true }] });
     if (path === '/api/terminals') return json([]);
