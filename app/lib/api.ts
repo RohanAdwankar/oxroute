@@ -23,32 +23,38 @@ import type {
 
 // Everything goes through this origin. Next forwards regular calls while the
 // events route streams explicitly, so the daemon can stay bound to localhost.
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  let status = 0;
-  try {
-    const multipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
-    const response = await fetch(path, {
-      ...init,
-      headers: { ...(multipart ? {} : { "content-type": "application/json" }), ...(init?.headers ?? {}) },
-      cache: "no-store",
-    });
-    status = response.status;
-    const body = await response.text();
-    if (!response.ok) {
-      // The daemon puts a readable reason in the body. Surface that rather
-      // than a status code nobody can act on.
-      let reason = body;
-      try {
-        reason = JSON.parse(body).error ?? body;
-      } catch {
-        /* the body was not JSON; show it as it came */
+async function call<T>(path: string, init?: RequestInit, retries = !init?.method || init.method === "GET" ? 2 : 0): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    let status = 0;
+    try {
+      const multipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
+      const response = await fetch(path, {
+        ...init,
+        headers: { ...(multipart ? {} : { "content-type": "application/json" }), ...(init?.headers ?? {}) },
+        cache: "no-store",
+      });
+      status = response.status;
+      const body = await response.text();
+      if (!response.ok) {
+        // The daemon puts a readable reason in the body. Surface that rather
+        // than a status code nobody can act on.
+        let reason = body;
+        try {
+          reason = JSON.parse(body).error ?? body;
+        } catch {
+          /* the body was not JSON; show it as it came */
+        }
+        throw new Error(reason || `${response.status} ${response.statusText}`);
       }
-      throw new Error(reason || `${response.status} ${response.statusText}`);
+      return body ? (JSON.parse(body) as T) : (undefined as T);
+    } catch (error) {
+      recordClientFailure(path, init, status, error);
+      if (attempt < retries && error instanceof TypeError && (status === 0 || status === 200)) {
+        await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+        continue;
+      }
+      throw error;
     }
-    return body ? (JSON.parse(body) as T) : (undefined as T);
-  } catch (error) {
-    recordClientFailure(path, init, status, error);
-    throw error;
   }
 }
 
@@ -77,8 +83,8 @@ export const api = {
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
   /// `queued` waits for the running turn instead of stopping it.
-  say: (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = [], requestId = "") => {
-    if (images.length === 0) return post<unknown>("/api/say", { agent, text, queued, diffs, requestId });
+  say: (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = [], requestId = crypto.randomUUID()) => {
+    if (images.length === 0) return call<unknown>("/api/say", { method: "POST", body: JSON.stringify({ agent, text, queued, diffs, requestId }) }, 2);
     const form = new FormData();
     form.append("agent", agent);
     form.append("text", text);
@@ -86,7 +92,7 @@ export const api = {
     form.append("diffs", JSON.stringify(diffs));
     form.append("requestId", requestId);
     images.forEach((image) => form.append("files", image));
-    return call<unknown>("/api/say-attachments", { method: "POST", body: form });
+    return call<unknown>("/api/say-attachments", { method: "POST", body: form }, 2);
   },
   interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
   fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),

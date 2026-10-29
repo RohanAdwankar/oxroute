@@ -803,6 +803,27 @@ async fn a_follow_up_sent_while_a_turn_is_opening_joins_that_turn() {
 }
 
 #[tokio::test]
+async fn retried_submissions_deliver_once_but_new_requests_with_identical_text_still_deliver() {
+    let w = build(Mode::Auto, Harnessed { source: false, ..Harnessed::default() }).await;
+    w.hub.accept(signal("delivery", "first", "Initial request")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let request = new_id("request");
+    let (a, b, c) = tokio::join!(
+        w.hub.say_to_annotated(&agent, "Follow up", vec![], true, "annotation", &request),
+        w.hub.say_to_annotated(&agent, "Follow up", vec![], true, "annotation", &request),
+        w.hub.say_to_annotated(&agent, "Follow up", vec![], true, "annotation", &request),
+    );
+    a.unwrap(); b.unwrap(); c.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    assert_eq!(w.hub.timeline(&agent, 100).unwrap().iter().filter(|entry| entry.kind == EntryKind::You).count(), 1);
+    w.hub.say_to_annotated(&agent, "Follow up", vec![], true, "annotation", &new_id("request")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
+    let entries = w.hub.timeline(&agent, 100).unwrap();
+    assert_eq!(entries.iter().filter(|entry| entry.kind == EntryKind::You && entry.detail == "annotation").count(), 2);
+}
+
+#[tokio::test]
 async fn rapid_ui_follow_ups_start_together() {
     let w = world(Mode::Auto, true).await;
     w.hub.accept(signal("100.0", "100.0", "start something long")).await.unwrap();

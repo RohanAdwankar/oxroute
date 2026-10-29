@@ -1012,41 +1012,48 @@ impl Hub {
             inputs.push(TurnInput::text(&spoken));
         }
         inputs.extend(self.upload_inputs(&agent, &images).await?);
-        let entry = self.store.add_user_entry(&agent.id, now(), &shown, detail, request_id)?;
-        self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
         let (target, opened) = self.ensure_thread(&agent.id, &shown).await?;
-        if opened && target.as_ref().is_some_and(|target| target.source == crate::source::slack::SOURCE) {
-            if let Some(saved) = self.store.agent(&agent.id)? {
-                if !saved.permalink.is_empty() { self.link_entry(entry, &saved.permalink); }
-            }
-        }
-
         let reply_context = target
             .as_ref()
             .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
             .map(|_| shown.clone());
-        if let Some(target) = target
-            .as_ref()
-            .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
-        {
-            if let Some(source) = self.source(&target.source) {
-                let _ = source.upload(target, &images).await;
+        let Some(entry) = self.store.accept_user_entry(&agent.id, now(), &shown, detail, request_id)? else {
+            return Ok(());
+        };
+        self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
+        // Once accepted, a disconnected HTTP request must not cancel delivery.
+        let hub = self.clone();
+        tokio::spawn(async move {
+            if opened && target.as_ref().is_some_and(|target| target.source == crate::source::slack::SOURCE) {
+                if let Ok(Some(saved)) = hub.store.agent(&agent.id) {
+                    if !saved.permalink.is_empty() { hub.link_entry(entry, &saved.permalink); }
+                }
             }
-        }
+            if let Some(target) = target
+                .as_ref()
+                .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
+            {
+                if let Some(source) = hub.source(&target.source) {
+                    let _ = source.upload(target, &images).await;
+                }
+            }
 
-        // Only once the turn is actually going: opening a thread can fail,
-        // and a reaction consumed by a message that never left would be
-        // silently lost.
-        if !preface.is_empty() {
-            self.store.mark_reactions_sent(&agent.id)?;
-        }
-        if queued {
-            self.clone()
-                .deliver_to(agent, inputs, None, target, reply_context)
-                .await;
-        } else {
-            self.preempt_to(agent, inputs, target, reply_context).await;
-        }
+            // Only once the turn is actually going: opening a thread can fail,
+            // and a reaction consumed by a message that never left would be
+            // silently lost.
+            if !preface.is_empty() {
+                if let Err(error) = hub.store.mark_reactions_sent(&agent.id) {
+                    tracing::warn!(agent = agent.id, %error, "could not mark delivered reactions");
+                }
+            }
+            if queued {
+                hub.clone()
+                    .deliver_to(agent, inputs, None, target, reply_context)
+                    .await;
+            } else {
+                hub.preempt_to(agent, inputs, target, reply_context).await;
+            }
+        });
         Ok(())
     }
 

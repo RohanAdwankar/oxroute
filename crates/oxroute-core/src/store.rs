@@ -1048,8 +1048,23 @@ impl Store {
         )
     }
 
-    pub fn add_user_entry(&self, agent_id: &str, at: f64, text: &str, detail: &str, request_id: &str) -> Result<Entry> {
-        self.add_entry_full(agent_id, at, EntryKind::You, text, detail, "", request_id, "")
+    /// A transport retry acknowledges the original submission without delivering it twice.
+    pub fn accept_user_entry(&self, agent_id: &str, at: f64, text: &str, detail: &str, request_id: &str) -> Result<Option<Entry>> {
+        self.with(|c| {
+            let transaction = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
+            if !request_id.is_empty() && transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM entries WHERE agent_id=?1 AND item_id=?2 AND kind='you')",
+                params![agent_id, request_id], |row| row.get::<_, bool>(0),
+            )? { return Ok(None); }
+            let entry = transaction.query_row(
+                "INSERT INTO entries (agent_id, at, kind, text, detail, item_id)
+                 VALUES (?1, ?2, 'you', ?3, ?4, ?5)
+                 RETURNING id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id",
+                params![agent_id, at, text, detail, request_id], read_entry,
+            )?;
+            transaction.commit()?;
+            Ok(Some(entry))
+        })
     }
 
     #[allow(clippy::too_many_arguments)]

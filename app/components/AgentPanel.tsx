@@ -212,6 +212,7 @@ export function AgentPanel({
   const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [pending, setPending] = useState<Entry[]>([]);
+  const retrySubmission = useRef<{ signature: string; requestId: string } | null>(null);
   const nextPending = useRef(0);
   const pictures = useUploads(view.agent.id);
   const [draggingImages, setDraggingImages] = useState(false);
@@ -360,17 +361,23 @@ export function AgentPanel({
 
   /// A drawing follows the same interrupt-or-queue choice as text.
   const sayImmediately = (text: string, images: File[], queued: boolean, restoreText = text, restoreDiffs: DiffQuote[] = []) => {
+    const signature = JSON.stringify([agent.id, text, images.map(file => [file.name, file.size, file.type, file.lastModified]), queued, restoreDiffs]);
+    const requestId = retrySubmission.current?.signature === signature ? retrySubmission.current.requestId : crypto.randomUUID();
     const id = --nextPending.current;
     const shown = images.length > 0
       ? [text, `Attached: ${images.map((image) => image.name).join(", ")}`].filter(Boolean).join("\n\n")
       : text;
     const entry: Entry = {
       id, agentId: agent.id, at: Date.now() / 1000, kind: "you", text: shown,
-      detail: restoreDiffs.length ? `diff-attachments:${JSON.stringify(restoreDiffs)}` : "", output: "", origin: "", reaction: "", requestId: crypto.randomUUID(),
+      detail: restoreDiffs.length ? `diff-attachments:${JSON.stringify(restoreDiffs)}` : "", output: "", origin: "", reaction: "", requestId,
     };
     setPending((current) => [...current, entry]);
     void onSay(text, images, queued, restoreDiffs, entry.requestId!).then((accepted) => {
-      if (accepted) return;
+      if (accepted) {
+        if (retrySubmission.current?.requestId === requestId) retrySubmission.current = null;
+        return;
+      }
+      retrySubmission.current = { signature, requestId };
       setPending((current) => current.filter((item) => item.id !== id));
       setDraft((current) => current ? `${restoreText}\n${current}` : restoreText);
       setDiffs(current => [...restoreDiffs, ...current]);
