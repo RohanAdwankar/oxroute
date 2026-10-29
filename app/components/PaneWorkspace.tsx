@@ -178,6 +178,7 @@ export function PaneWorkspace({ workspace, ids, revision, keyboard, onActivate, 
           {destinations.map(target => <button key={target.id} title={`${target.name} · ${target.id}`} className="block w-full cursor-pointer truncate px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onMerge?.(menu.id, target.id, menu.archive ?? false); setMenu(null); }}>{target.name}</button>)}
         </div>
       </div> : <>
+        <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { setFocused(menu.id); setZoomed(value => !value); setMenu(null); }}>{zoomed ? "Restore panes" : "Full screen"}</button>
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onDetach(menu.id); setMenu(null); }}>Move to new window</button>
         {onMerge && !menu.id.startsWith("terminal_") && <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => setMenu({ ...menu, merge: true })}>Merge into…</button>}
