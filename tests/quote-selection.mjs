@@ -45,6 +45,7 @@ try {
     return text.slice(text.indexOf('paragraph.'), text.indexOf('limit') + 'limit'.length);
   })];
   for (const [index, excerpt] of excerpts.entries()) {
+    await composer.focus();
     const position = await select(excerpt);
     // A background update refreshes reference metadata without changing the selected words.
     tasks = [{ id: taskId, text: `Check metadata ${index}`, status: 'incomplete', parentTaskId: '', blockedByTaskId: '', agentId: agent.id, images: [], createdAt: 1, updatedAt: index }];

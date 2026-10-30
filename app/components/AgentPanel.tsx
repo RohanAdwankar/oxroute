@@ -722,6 +722,10 @@ export function AgentPanel({
       <div
         ref={timeline}
         hidden={mode !== "type" || reviewingGit === true}
+        onMouseDown={(event) => {
+          // WebKit clears a document selection when a context click blurs the composer.
+          if ((event.button === 2 || event.ctrlKey) && selectedText(timeline.current)) event.preventDefault();
+        }}
         onContextMenu={(event) => {
           const row = (event.target as HTMLElement).closest("[data-entry]");
           const id = row ? Number(row.getAttribute("data-entry")) : null;
