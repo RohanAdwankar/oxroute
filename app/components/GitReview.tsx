@@ -89,7 +89,11 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     loadReview(url).then(data => {
       show(data);
       return loadReview(url, true).then(show);
-    }).catch(error => { if (live) setError(readable ? "Could not refresh review status. Saved changes remain readable." : String(error)); });
+    }).catch(error => {
+      if (live) setError(readable
+        ? `Could not refresh review status.${error instanceof TypeError ? "" : ` ${String(error)}`} Saved changes remain readable.`
+        : String(error));
+    });
     return () => { live = false; };
   }, [endpoint, active, full]);
 
