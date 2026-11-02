@@ -22,6 +22,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { BoardView } from "./components/BoardView";
 import { captureClientFailures } from "./lib/client-failures";
 import { api, follow } from "./lib/api";
+import { preloadReview, reviewEndpoint } from "./lib/reviews";
 import { inboxRows } from "./lib/inbox";
 import { taskAncestors, taskRows } from "./lib/tasks";
 import { acceptsFileDrop } from "./lib/uploads";
@@ -378,6 +379,7 @@ export default function Home() {
             });
             break;
           case "timeline":
+            if (event.entry.kind === "review") preloadReview(reviewEndpoint(event.entry.agentId, event.entry.detail), true);
             requests.current.get(event.entry.agentId)?.updates.set(event.entry.id, event.entry);
             setSnapshot(current => streamedSnapshot(current, event));
             // Append in place. A full refetch per tool call would make the
@@ -455,6 +457,7 @@ export default function Home() {
       (next) => {
         if (!live) return;
         paneLinks.current = next.paneLinks ?? {};
+        for (const [agent, ids] of Object.entries(next.reviews ?? {})) for (const id of ids) preloadReview(reviewEndpoint(agent, id));
         setSnapshot([...updates.values()].reduce(streamedSnapshot, next));
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
         if (selectedAgent && !customPanes.current) {

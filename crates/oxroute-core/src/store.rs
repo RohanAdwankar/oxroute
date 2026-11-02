@@ -1518,6 +1518,19 @@ impl Store {
         })
     }
 
+    pub fn review_refs(&self) -> Result<HashMap<String, Vec<String>>> {
+        self.read(|c| {
+            let mut statement = c.prepare("SELECT json_extract(value, '$.agentId'), json_extract(value, '$.id') FROM kv
+                WHERE key GLOB 'review:*' AND json_type(value, '$.agentId') = 'text' AND json_type(value, '$.id') = 'text' ORDER BY rowid DESC")?;
+            let mut reviews: HashMap<String, Vec<String>> = HashMap::new();
+            for row in statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))? {
+                let (agent, id) = row?;
+                reviews.entry(agent).or_default().push(id);
+            }
+            Ok(reviews)
+        })
+    }
+
     /// Last accepted revision of this publication target, across conversations.
     pub fn last_approved_review(&self, repository: &str, remote: &str, branch: &str, base: &str) -> Result<Option<String>> {
         self.read(|c| Ok(c.query_row(
@@ -1662,6 +1675,22 @@ mod tests {
         let rescued = holder.join().unwrap();
         for reader in readers { reader.await.unwrap(); }
         assert!(!rescued, "Database contention starved an unrelated async request");
+    }
+
+    #[test]
+    fn review_catalog_includes_all_owners_and_survives_reopen() {
+        let path = std::env::temp_dir().join(format!("oxroute-{}.sqlite3", uuid::Uuid::new_v4()));
+        let store = Store::open(&path).unwrap();
+        for (agent, id) in [("first", "older"), ("first", "newer"), ("unopened", "other")] {
+            store.add_review(agent, id, "Change", &serde_json::json!({"id":id,"agentId":agent}).to_string()).unwrap();
+        }
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        let refs = store.review_refs().unwrap();
+        assert_eq!(refs["first"], vec!["newer", "older"]);
+        assert_eq!(refs["unopened"], vec!["other"]);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

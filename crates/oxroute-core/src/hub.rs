@@ -2723,6 +2723,7 @@ impl Hub {
             agents,
             archived,
             messages: self.store.message_previews()?,
+            reviews: self.store.review_refs()?,
             pane_links,
             quote_threads,
             inbox,
@@ -3506,6 +3507,8 @@ pub struct Snapshot {
     /// Latest human or agent text by agent id. Tool activity stays in
     /// `Agent::activity` for watch surfaces.
     pub messages: HashMap<String, String>,
+    #[serde(default)]
+    pub reviews: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub pane_links: HashMap<String, String>,
     pub quote_threads: Vec<QuoteThread>,

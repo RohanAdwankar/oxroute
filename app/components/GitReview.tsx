@@ -1,7 +1,7 @@
 "use client";
 
 import { diffCode } from "./DiffCode";
-import { cachedReview, loadReview, reviewEndpoint, type Review } from "../lib/reviews";
+import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "./Icon";
@@ -37,14 +37,23 @@ function ReviewImage({ endpoint, path, side, present, full }: { endpoint: string
   const [failed, setFailed] = useState("");
   const label = side === "before" ? "Before" : "After";
   const url = `${endpoint}/image?${new URLSearchParams({ path, side, ...(full ? { full: "true" } : {}) })}`;
+  const [image, setImage] = useState("");
+  useEffect(() => {
+    if (!present) return;
+    let live = true, object = "";
+    setImage("");
+    loadReviewImage(url).then(blob => {
+      if (live) { object = URL.createObjectURL(blob); setImage(object); setFailed(""); }
+    }).catch(() => { if (live) setFailed(url); });
+    return () => { live = false; if (object) URL.revokeObjectURL(object); };
+  }, [url, present]);
   return <figure className="min-w-0 flex-1">
     <figcaption className="mb-2 text-[11px] text-faint">{label}</figcaption>
     {present ? <a href={url} target="_blank" rel="noreferrer" title={`Open ${side} image`}>
       {failed === url ? <span role="alert">Could not load image</span> :
-        // Git blobs retain their exact bytes and load only as their preview enters view.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={`${label} ${path}`} loading="lazy" onError={() => setFailed(url)} className="mx-auto max-h-96 max-w-full object-contain"
-          style={{ backgroundImage: "repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }} />}
+        image ? <img src={image} alt={`${label} ${path}`} onError={() => setFailed(url)} className="mx-auto max-h-96 max-w-full object-contain"
+          style={{ backgroundImage: "repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }} /> : null}
     </a> : <div className="py-6 text-faint">{side === "before" ? "Added image" : "Deleted image"}</div>}
   </figure>;
 }
@@ -69,12 +78,17 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     if (!active) return;
     let live = true;
     cancelLoad.current = () => { live = false; };
-    loadReview(`${endpoint}${full ? "?full=true" : ""}`, true).then(data => {
+    const show = (data: Review) => {
       if (!live) return;
       setReview(data);
       setFile(current => data.snapshot.files.some(item => item.path === current) ? current : data.snapshot.files[0]?.path ?? "");
       setError("");
-    }).catch(error => { if (live) { setReview(null); setError(String(error)); } });
+    };
+    const url = `${endpoint}${full ? "?full=true" : ""}`;
+    loadReview(url).then(data => {
+      show(data);
+      return loadReview(url, true).then(show);
+    }).catch(error => { if (live) setError(String(error)); });
     return () => { live = false; };
   }, [endpoint, active, full]);
 

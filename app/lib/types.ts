@@ -147,6 +147,7 @@ export interface TaskNote {
 }
 
 export interface Snapshot {
+  reviews?: Record<string, string[]>;
   mode: Mode;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
