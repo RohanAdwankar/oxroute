@@ -784,7 +784,7 @@ export default function Home() {
   const tasks = taskRows(taskAncestors(taskItems, taskMatches), tasksDone || !!taskSearch);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
-  const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? null;
+  const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? (boardId ? snapshot.boards[0] : null);
   const knownTags = [...new Set(Object.values(snapshot.tags).flat())].sort();
   const clearRouting = () => {
     setRouting(null);
@@ -1164,14 +1164,13 @@ export default function Home() {
         tasksOpen={tasksOpen}
         onTasks={() => showTasks(!tasksOpen)}
         onSettings={() => setSettings(true)}
-        activeBoard={activeBoard?.id ?? null}
+        activeBoard={boardId}
         onBoard={showBoard}
-        onNewBoard={() =>
-          void run(async () => {
-            const board = await api.createBoard({});
-            showBoard(board.id);
-          })
-        }
+        onNewAgent={() => void run(async () => {
+          const agent = await api.createAgent();
+          clearRouting();
+          showAgent(agent.id);
+        })}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
@@ -1328,8 +1327,19 @@ export default function Home() {
           </PaneWorkspace>
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {activeBoard && !selected ? (
-              <BoardView
+            {boardId && !selected ? (
+              <>
+                <div className="flex items-center gap-3 border-b border-rule px-[var(--pane-x)] py-2">
+                  <select aria-label="Choose board" value={activeBoard?.id ?? ""} onChange={(event) => showBoard(event.target.value)} className="bg-card text-[13px] text-ink">
+                    {!activeBoard && <option value="">Choose board</option>}
+                    {snapshot.boards.map((board) => <option key={board.id} value={board.id}>{board.name}</option>)}
+                  </select>
+                  <button type="button" disabled={busy} className="cursor-pointer text-[13px] text-mid hover:text-ink" onClick={() => void run(async () => {
+                    const board = await api.createBoard({});
+                    showBoard(board.id);
+                  })}>Create board</button>
+                </div>
+                {activeBoard ? <BoardView
                 key={activeBoard.id}
                 board={activeBoard}
                 snapshot={snapshot}
@@ -1337,12 +1347,13 @@ export default function Home() {
                 busy={busy}
                 run={run}
                 say={say}
-                onDeleted={() => showBoard(null)}
+                onDeleted={() => showBoard("boards")}
                 onOpenAgent={(id) => {
                   clearRouting();
                   showAgent(id);
                 }}
-              />
+              /> : <p className="px-[var(--pane-x)] py-6 text-[13px] text-faint">Create a board to arrange sessions by tags.</p>}
+              </>
             ) : (
               <Fleet
                 agents={showArchived ? snapshot.archived : snapshot.agents}

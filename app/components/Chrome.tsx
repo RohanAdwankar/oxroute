@@ -22,7 +22,7 @@ export function Chrome({
   onSettings,
   activeBoard,
   onBoard,
-  onNewBoard,
+  onNewAgent,
   onSearchOpen,
   onSearchContinue,
   panes,
@@ -38,7 +38,7 @@ export function Chrome({
   onSettings: () => void;
   activeBoard: string | null;
   onBoard: (id: string | null) => void;
-  onNewBoard: () => void;
+  onNewAgent: () => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
   panes?: ReactNode;
@@ -92,16 +92,8 @@ export function Chrome({
           label="Show the fleet"
           icon="home"
         />
-        {snapshot.boards.map((board) => (
-          <Cell
-            key={board.id}
-            onClick={() => onBoard(board.id)}
-            pressed={activeBoard === board.id}
-            label={`Show ${board.name}`}
-            icon="board"
-          />
-        ))}
-        <Cell onClick={onNewBoard} label="New board" icon="plus" />
+        <Cell onClick={() => onBoard(activeBoard ?? snapshot.boards[0]?.id ?? "boards")} pressed={activeBoard !== null} label="Show boards" icon="board" />
+        <Cell onClick={onNewAgent} label="New agent" icon="plus" />
       </nav>
 
       <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />

@@ -214,6 +214,7 @@ async fn serve() -> Result<()> {
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
+        .route("/api/agents", post(create_agent))
         .route("/api/agents/{id}/merge-watches", get(merge_watch::list).post(merge_watch::register))
         .route("/api/client-failures", get(client_failures).post(client_failure))
         .route("/api/events", get(events))
@@ -377,6 +378,10 @@ async fn agent(
         "timeline": hub.timeline(&id, TIMELINE_LIMIT)?,
         "delivery": agent.delivery(),
     })))
+}
+
+async fn create_agent(State(hub): Hubs) -> Result<Json<oxroute_core::Agent>, Failed> {
+    Ok(Json(hub.create_agent()?))
 }
 
 #[derive(Deserialize)]

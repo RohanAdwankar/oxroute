@@ -74,6 +74,7 @@ export const api = {
 
   /** Put a thought of your own into the inbox, beside everything else. */
   note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),
+  createAgent: () => post<Agent>("/api/agents", {}),
   agent: (id: string) => call<AgentView>(`/api/agents/${encodeURIComponent(id)}`),
 
   routeExisting: (signal: string, agentIds: string[]) =>

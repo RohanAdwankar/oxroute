@@ -2376,6 +2376,30 @@ impl Hub {
 
     // -- agents ----------------------------------------------------------
 
+    /// An empty local card. Its first message starts the harness session.
+    pub fn create_agent(&self) -> Result<Agent> {
+        let agent = Agent {
+            id: new_id("agent"),
+            name: "New agent".into(),
+            backend: self.config.backend_for(&self.config.default_model),
+            model: self.config.default_model.clone(),
+            session_id: String::new(),
+            cwd: self.config.workspace.clone(),
+            status: AgentStatus::Complete,
+            activity: String::new(),
+            permalink: String::new(),
+            last_activity: now(),
+            updated_at: now(),
+            stall_reason: None,
+            stall_alerted: false,
+            pinned: false,
+        };
+        self.store.save_agent(&agent)?;
+        self.emit(Event::AgentChanged { agent: Box::new(agent.clone()) });
+        Ok(agent)
+    }
+
+
     async fn spawn(
         self: &Arc<Self>,
         signal: &Signal,
