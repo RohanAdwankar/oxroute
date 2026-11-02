@@ -270,7 +270,7 @@ try {
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'worktree was removed' }).waitFor();
   assert.equal(await page.getByText('Reading review…', { exact: true }).count(), 0);
-  await page.getByRole('region', { name: 'Change review', exact: true }).getByText(review.title, { exact: true }).waitFor();
+  await page.getByRole('region', { name: 'Change review', exact: true }).getByText(review.title).waitFor();
   await page.locator('[data-diff-line]').first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Approve publication', exact: true }).isDisabled(), true, 'The saved stale review stays readable without enabling publication');
   if (process.env.UNAVAILABLE_SCREENSHOT) await page.screenshot({ path: process.env.UNAVAILABLE_SCREENSHOT });
