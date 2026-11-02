@@ -71,21 +71,27 @@ try {
     if (index === 0 && process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
     await composer.fill('');
   }
-  // Browsers may adjust a native selection between pointerdown and contextmenu.
-  // Quote actions must keep the range the reader highlighted before that gesture.
+  // Native context gestures can replace or clear selection before DOM events.
   for (const excerpt of ['words form another', await message.locator('p').first().textContent()]) {
     for (const controlClick of [false, true]) {
-      const position = await select(excerpt);
-      await message.dispatchEvent('pointerdown', { button: controlClick ? 0 : 2, ctrlKey: controlClick, pointerId: 1, pointerType: 'mouse' });
-      await page.evaluate(() => {
-        const selection = window.getSelection();
-        selection.collapseToStart(); selection.modify('extend', 'forward', 'word');
-      });
-      assert.notEqual(await page.evaluate(() => window.getSelection().toString()), excerpt);
-      await message.dispatchEvent('contextmenu', { clientX: position.x, clientY: position.y });
-      await page.getByRole('button', { name: 'quote reply', exact: true }).click();
-      assert.equal(await composer.inputValue(), `> ${excerpt}\n\n`, 'Context-click selection changes must not replace the highlighted passage');
-      await composer.fill('');
+      for (const phase of ['before', 'after']) {
+        for (const change of ['word', 'empty']) {
+          const position = await select(excerpt);
+          const adjust = () => page.evaluate(change => {
+            const selection = window.getSelection();
+            if (change === 'empty') selection.removeAllRanges();
+            else { selection.collapseToStart(); selection.modify('extend', 'forward', 'word'); }
+          }, change);
+          if (phase === 'before') await adjust();
+          await message.dispatchEvent('pointerdown', { button: controlClick ? 0 : 2, ctrlKey: controlClick, pointerId: 1, pointerType: 'mouse' });
+          if (phase === 'after') await adjust();
+          assert.notEqual(await page.evaluate(() => window.getSelection().toString()), excerpt);
+          await message.dispatchEvent('contextmenu', { clientX: position.x, clientY: position.y });
+          await page.getByRole('button', { name: 'quote reply', exact: true }).click();
+          assert.equal(await composer.inputValue(), `> ${excerpt}\n\n`, 'Context-click selection changes must not replace the highlighted passage');
+          await composer.fill('');
+        }
+      }
     }
   }
   // Streaming more prose must preserve a selection in an unchanged code block.
@@ -111,6 +117,9 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-quote-thread]'));
   assert.equal(threadRequests[0].quote.text, excerpt);
   await dialog.getByRole('button', { name: 'Close thread', exact: true }).click();
+  // Starting a new interaction must discard the previous completed selection.
+  await select('words form another');
+  await composer.click();
   // With no selection, quoting the entire message remains intentional.
   await page.evaluate(() => window.getSelection().removeAllRanges());
   await message.locator('p').first().click({ button: 'right' });

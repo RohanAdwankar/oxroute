@@ -62,6 +62,7 @@ function splitAttached(text: string): { body: string; names: string[] } {
 }
 /// Quote the selection or the clicked message, and react to that message.
 type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null };
+type SelectedQuote = Pick<LineMenu, "text" | "anchor">;
 
 function quoteAnchor(row: Element | null, entryId: number | null): QuoteAnchor | null {
   const content = row?.querySelector(".message-markdown");
@@ -219,7 +220,7 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
-  const contextSelection = useRef<{ text: string; anchor: QuoteAnchor | null } | null>(null);
+  const selectedQuote = useRef<SelectedQuote | null>(null);
   const [discussion, setDiscussion] = useState<{ thread: QuoteThread; rect: DOMRect; ready?: Promise<QuoteThread> } | null>(null);
   const threadKey = JSON.stringify(quoteThreads);
   const threadData = useMemo(() => JSON.parse(threadKey) as QuoteThread[], [threadKey]);
@@ -273,6 +274,36 @@ export function AgentPanel({
   const [highlightedEntry, setHighlightedEntry] = useState<number | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Native context menus can change Selection before DOM pointer events.
+  // Keep the completed range until the reader starts another interaction.
+  useEffect(() => {
+    selectedQuote.current = null;
+    const remember = () => {
+      if (selectedQuote.current) return;
+      const text = selectedText(timeline.current);
+      if (!text) return;
+      const start = window.getSelection()?.getRangeAt(0).startContainer;
+      const row = (start instanceof Element ? start : start?.parentElement)?.closest("[data-entry]") ?? null;
+      selectedQuote.current = { text, anchor: quoteAnchor(row, row ? Number(row.getAttribute("data-entry")) : null) };
+    };
+    const pointer = (event: PointerEvent) => {
+      if ((event.button === 0 && !event.ctrlKey) || !timeline.current?.contains(event.target as Node)) selectedQuote.current = null;
+    };
+    const finishSelection = () => { selectedQuote.current = null; remember(); };
+    const release = (event: PointerEvent) => {
+      if (event.button === 0 && !event.ctrlKey && timeline.current?.contains(event.target as Node)) finishSelection();
+    };
+    document.addEventListener("selectionchange", remember);
+    document.addEventListener("pointerdown", pointer, true);
+    document.addEventListener("pointerup", release);
+    document.addEventListener("keyup", finishSelection);
+    return () => {
+      document.removeEventListener("selectionchange", remember);
+      document.removeEventListener("pointerdown", pointer, true);
+      document.removeEventListener("pointerup", release);
+      document.removeEventListener("keyup", finishSelection);
+    };
+  }, [agent.id]);
   const renameCancelled = useRef(false);
   const optimistic = useMemo(() => {
     const unmatched = [...pending];
@@ -724,18 +755,12 @@ export function AgentPanel({
         ref={timeline}
         hidden={mode !== "type" || reviewingGit === true}
         onPointerDown={(event) => {
-          contextSelection.current = null;
-          if (event.button !== 2 && !(event.button === 0 && event.ctrlKey)) return;
-          const text = selectedText(timeline.current);
-          if (!text) return;
-          const row = (event.target as HTMLElement).closest("[data-entry]");
-          contextSelection.current = { text, anchor: quoteAnchor(row, row ? Number(row.getAttribute("data-entry")) : null) };
-          event.preventDefault();
+          if ((event.button === 2 || (event.button === 0 && event.ctrlKey)) && selectedQuote.current) event.preventDefault();
         }}
         onContextMenu={(event) => {
-          // Use the range captured before the context-click changed the selection.
-          const selected = contextSelection.current;
-          contextSelection.current = null;
+          // Use the completed selection, before focus or context-click changes it.
+          const selected = selectedQuote.current;
+          selectedQuote.current = null;
           const row = (event.target as HTMLElement).closest("[data-entry]");
           const id = row ? Number(row.getAttribute("data-entry")) : null;
           const entry = id !== null && Number.isFinite(id) ? id : null;
