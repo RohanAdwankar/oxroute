@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 mod git;
+mod merge_watch;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -207,11 +208,13 @@ async fn serve() -> Result<()> {
         hub.with_source(slack);
     }
     hub.start().await?;
+    merge_watch::start(hub.clone());
 
     let (agent_routes, _) = agent_api();
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
+        .route("/api/agents/{id}/merge-watches", get(merge_watch::list).post(merge_watch::register))
         .route("/api/client-failures", get(client_failures).post(client_failure))
         .route("/api/events", get(events))
         .route("/api/search", get(search))
@@ -1614,7 +1617,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct ReviewHarness { inputs: std::sync::Mutex<Vec<Vec<oxroute_core::model::TurnInput>>> }
+    pub(super) struct ReviewHarness { pub(super) inputs: std::sync::Mutex<Vec<Vec<oxroute_core::model::TurnInput>>> }
 
     #[tokio::test]
     async fn idle_event_connections_send_readable_heartbeats() {

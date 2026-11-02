@@ -1625,7 +1625,7 @@ impl Hub {
             let lock = hub.lock_for(&agent.id).await;
             let _held = lock.lock().await;
             if let Err(error) = hub
-                .run_turn(&agent, inputs, signal, target.clone(), reply_context)
+                .run_turn(&agent, inputs, signal, target.clone(), reply_context, None)
                 .await
             {
                 tracing::error!(agent = agent.id, %error, "turn failed");
@@ -1690,6 +1690,7 @@ impl Hub {
                     None,
                     target.clone(),
                     (!reply_context.is_empty()).then_some(reply_context),
+                    None,
                 )
                 .await
             {
@@ -1713,6 +1714,18 @@ impl Hub {
             .clone()
     }
 
+    /// Deliver a durable system event once the harness accepts a new turn.
+    /// The caller retains the event until its receipt is committed, so failed
+    /// starts and daemon restarts can retry without interrupting active work.
+    pub async fn wake_once(self: &Arc<Self>, agent_id: &str, receipt: &str, prompt: &str, notice: &str) -> Result<()> {
+        let lock = self.lock_for(agent_id).await;
+        let _held = lock.lock().await;
+        if self.store.get(receipt)?.is_some() { return Ok(()); }
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        let target = self.home_target(agent_id).await;
+        self.run_turn(&agent, vec![TurnInput::text(prompt)], None, target, None, Some((receipt, notice))).await
+    }
+
     async fn run_turn(
         self: &Arc<Self>,
         agent: &Agent,
@@ -1720,6 +1733,7 @@ impl Hub {
         signal: Option<Signal>,
         mut target: Option<Target>,
         mut reply_context: Option<String>,
+        receipt: Option<(&str, &str)>,
     ) -> Result<()> {
         let harness = self.harness(agent.backend);
         let spec = SessionSpec {
@@ -1840,6 +1854,18 @@ impl Hub {
             )));
         }
 
+        inputs.push(TurnInput::text(format!(
+            "After each successful branch push for a pull request, register its merge listener immediately: \
+             POST http://{}/api/agents/{}/merge-watches with JSON \
+             {{\"repository\":\"ABSOLUTE_WORKTREE\",\"remote\":\"REMOTE\",\"branch\":\"BRANCH\"}}. \
+             This is required even when the PR will be opened later through a compare link. \
+             The listener discovers the PR for the pushed commit, polls without model calls, and \
+             resumes this conversation after merge. Register again after subsequent pushes. \
+             When the PR URL is known, register again with an additional pullRequest field, \
+             especially for a PR targeting another repository. \
+             Registration grants no merge or deployment permission.", self.config.listen, agent.id,
+        )));
+
         // Agents share a working directory by default, and a fork always
         // shares its parent's, so an agent can be one of several hands in
         // one tree without anything having said so. What to do about it is
@@ -1927,6 +1953,10 @@ impl Hub {
 
         match harness.start(&session, inputs).await {
             Ok(turn_id) => {
+                if let Some((key, notice)) = receipt {
+                    self.store.set(key, "delivered")?;
+                    self.record(&agent.id, EntryKind::Notice, notice, "", "");
+                }
                 self.store.clear_context(&context_ids)?;
                 if !turn_id.is_empty() {
                     turn.mark_ready(turn_id.clone());

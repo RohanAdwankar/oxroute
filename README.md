@@ -118,3 +118,21 @@ Existing pane forks without a thread connect on their next message. Slack outage
 do not prevent pane creation. Quoted discussions retain their anchors and also
 receive Slack threads. A periodic reconciliation repairs missing Codex thread
 bindings without starting or interrupting model turns.
+
+After pushing a PR branch, the agent registers `POST /api/agents/<agent-id>/merge-watches`
+with `repository`, `remote` and `branch`. Registration verifies the remote head and
+is idempotent. An optional `pullRequest` HTTPS URL also supports cross-repository
+PRs; register again when that URL becomes available. The agent's turn instructions
+include this step for both reviewed and direct publication.
+
+The daemon persists watches, discovers PRs for the published branch and commit,
+and checks merge status every five minutes without model calls. It uses existing
+`gh`/`glab` authentication; GitHub also supports `GH_TOKEN` or `GITHUB_TOKEN` when
+`gh` is unavailable, and public repositories can use unauthenticated reads. Failed
+checks stay pending with their diagnostic in `GET /api/agents/<agent-id>/merge-watches`.
+A confirmed merge queues a system turn in the owning conversation after active
+work finishes. The delivery receipt is saved when the harness accepts the turn;
+subsequent checks and restarts skip delivered events. A process failure between
+harness acceptance and receipt persistence can redeliver the event. Closed,
+unmerged PRs never trigger a merge notification. Notifications grant no new
+publication or deployment permission.

@@ -1564,6 +1564,14 @@ impl Store {
         self.with(|c| Ok(c.execute("UPDATE kv SET value = ?3 WHERE key = ?1 AND value = ?2", params![key, before, after])? == 1))
     }
 
+    pub fn values_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        self.read(|c| {
+            let mut query = c.prepare("SELECT value FROM kv WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key")?;
+            let values = query.query_map([prefix], |row| row.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(values)
+        })
+    }
+
     pub fn set(&self, key: &str, value: &str) -> Result<()> {
         self.with(|c| {
             c.execute(

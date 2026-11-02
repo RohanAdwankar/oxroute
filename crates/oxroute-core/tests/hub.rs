@@ -3263,3 +3263,27 @@ async fn subtasks_keep_their_lifecycle_and_reject_invalid_hierarchies() {
     w.hub.delete_task(&parent.id).unwrap();
     assert!(w.hub.tasks().unwrap().iter().find(|task| task.id == leaf.id).unwrap().parent_task_id.is_empty());
 }
+
+#[tokio::test]
+async fn durable_wake_waits_for_active_work_and_deduplicates_concurrent_delivery() {
+    let w = queueing_world().await;
+    w.hub.accept(signal("300.0", "300.0", "Current authorized work")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].clone();
+    let first = w.hub.clone();
+    let id = agent.id.clone();
+    let delivery = tokio::spawn(async move { first.wake_once(&id, "receipt:event", "External condition completed", "Condition completed").await.unwrap() });
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1, "An external event must not interrupt active work");
+    let second = w.hub.clone();
+    let id = agent.id.clone();
+    let duplicate = tokio::spawn(async move { second.wake_once(&id, "receipt:event", "External condition completed", "Condition completed").await.unwrap() });
+    delivery.await.unwrap();
+    duplicate.await.unwrap();
+    let calls = w.calls.lock().unwrap();
+    assert_eq!(calls.started.len(), 2);
+    assert_eq!(calls.started[0].0, calls.started[1].0, "Wake the existing session");
+    assert!(calls.interrupted.is_empty());
+    assert_eq!(w.hub.store.get("receipt:event").unwrap().as_deref(), Some("delivered"));
+    assert_eq!(w.hub.store.timeline(&agent.id, 100).unwrap().iter().filter(|entry| entry.text == "Condition completed").count(), 1);
+}
