@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium, webkit } from 'playwright';
 const agent = { id: 'selection-fixture', name: 'Selection fixture', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
 const taskId = 'task_' + 'a'.repeat(32);
-const text = `Opening paragraph.\n\n\`\`\`js\nconst limit = 17;\nconst label = "steady";\n\`\`\`\n\nClosing paragraph. Related work: ${taskId}.`;
+const text = `Opening paragraph. Several words form another sentence.\n\n\`\`\`js\nconst limit = 17;\nconst label = "steady";\n\`\`\`\n\nClosing paragraph. Related work: ${taskId}.`;
 const timeline = [{ id: 1, agentId: agent.id, kind: 'said', text, at: Date.now()/1000, detail: '' }];
 let tasks = [], threads = [], child = null;
 const threadRequests = [];
@@ -25,20 +25,34 @@ try {
   await page.goto(`${base}/?agent=${agent.id}`);
   const message = page.locator('[data-entry="1"] .message-markdown');
   await message.locator('pre').waitFor();
-  const select = async excerpt => message.evaluate((element, excerpt) => {
-    const start = element.textContent.indexOf(excerpt);
-    if (start < 0) throw new Error('Excerpt missing');
-    const nodes = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-    const point = offset => {
-      for (const node of nodes) { if (offset <= node.length) return [node, offset]; offset -= node.length; }
-      throw new Error('Selection endpoint missing');
-    };
-    const range = document.createRange(); range.setStart(...point(start)); range.setEnd(...point(start + excerpt.length));
-    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-    const box = [...range.getClientRects()].find(box => box.width && box.height);
-    return { x: box.x + Math.min(box.width / 2, 10), y: box.y + box.height / 2 };
-  }, excerpt);
+  const select = async excerpt => {
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await message.scrollIntoViewIfNeeded();
+    const points = await message.evaluate((element, excerpt) => {
+      const start = element.textContent.indexOf(excerpt);
+      if (start < 0) throw new Error('Excerpt missing');
+      const nodes = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      const point = (offset, end = false) => {
+        for (const node of nodes) { if (offset < node.length || (end && offset === node.length) || node === nodes.at(-1)) return [node, offset]; offset -= node.length; }
+        throw new Error('Selection endpoint missing');
+      };
+      const range = document.createRange(); range.setStart(...point(start)); range.setEnd(...point(start + excerpt.length, true));
+      const box = [...range.getClientRects()].find(box => box.width && box.height);
+      const endpoint = end => {
+        const caret = range.cloneRange(); caret.collapse(!end);
+        const rect = caret.getBoundingClientRect();
+        return { x: rect.x, y: rect.y + rect.height / 2 };
+      };
+      return { x: box.x + Math.min(box.width / 2, 10), y: box.y + box.height / 2, start: endpoint(false), end: endpoint(true) };
+    }, excerpt);
+    await page.mouse.move(points.start.x, points.start.y);
+    await page.mouse.down();
+    await page.mouse.move(points.end.x, points.end.y, { steps: 15 });
+    await page.mouse.up();
+    assert.equal((await page.evaluate(() => window.getSelection().toString())).trim().replaceAll(/\n+/g, '\n'), excerpt.trim().replaceAll(/\n+/g, '\n'), 'Mouse dragging must select the intended passage');
+    return points;
+  };
   const composer = page.locator('[data-composer]');
   const excerpts = ['limit = 17', '17;\nconst label', await message.evaluate(el => {
     const text = el.textContent;
@@ -56,6 +70,23 @@ try {
     assert.equal(await composer.inputValue(), excerpt.trim().split('\n').map(line => `> ${line}`).join('\n') + '\n\n', 'Quote only the selected text, including selections across code and prose');
     if (index === 0 && process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
     await composer.fill('');
+  }
+  // Browsers may adjust a native selection between pointerdown and contextmenu.
+  // Quote actions must keep the range the reader highlighted before that gesture.
+  for (const excerpt of ['words form another', await message.locator('p').first().textContent()]) {
+    for (const controlClick of [false, true]) {
+      const position = await select(excerpt);
+      await message.dispatchEvent('pointerdown', { button: controlClick ? 0 : 2, ctrlKey: controlClick, pointerId: 1, pointerType: 'mouse' });
+      await page.evaluate(() => {
+        const selection = window.getSelection();
+        selection.collapseToStart(); selection.modify('extend', 'forward', 'word');
+      });
+      assert.notEqual(await page.evaluate(() => window.getSelection().toString()), excerpt);
+      await message.dispatchEvent('contextmenu', { clientX: position.x, clientY: position.y });
+      await page.getByRole('button', { name: 'quote reply', exact: true }).click();
+      assert.equal(await composer.inputValue(), `> ${excerpt}\n\n`, 'Context-click selection changes must not replace the highlighted passage');
+      await composer.fill('');
+    }
   }
   // Streaming more prose must preserve a selection in an unchanged code block.
   const streamedExcerpt = 'const label = "steady";';

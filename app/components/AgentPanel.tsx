@@ -219,6 +219,7 @@ export function AgentPanel({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [quoteMenu, setQuoteMenu] = useState<LineMenu | null>(null);
+  const contextSelection = useRef<{ text: string; anchor: QuoteAnchor | null } | null>(null);
   const [discussion, setDiscussion] = useState<{ thread: QuoteThread; rect: DOMRect; ready?: Promise<QuoteThread> } | null>(null);
   const threadKey = JSON.stringify(quoteThreads);
   const threadData = useMemo(() => JSON.parse(threadKey) as QuoteThread[], [threadKey]);
@@ -722,22 +723,30 @@ export function AgentPanel({
       <div
         ref={timeline}
         hidden={mode !== "type" || reviewingGit === true}
-        onMouseDown={(event) => {
-          // WebKit clears a document selection when a context click blurs the composer.
-          if ((event.button === 2 || event.ctrlKey) && selectedText(timeline.current)) event.preventDefault();
+        onPointerDown={(event) => {
+          contextSelection.current = null;
+          if (event.button !== 2 && !(event.button === 0 && event.ctrlKey)) return;
+          const text = selectedText(timeline.current);
+          if (!text) return;
+          const row = (event.target as HTMLElement).closest("[data-entry]");
+          contextSelection.current = { text, anchor: quoteAnchor(row, row ? Number(row.getAttribute("data-entry")) : null) };
+          event.preventDefault();
         }}
         onContextMenu={(event) => {
+          // Use the range captured before the context-click changed the selection.
+          const selected = contextSelection.current;
+          contextSelection.current = null;
           const row = (event.target as HTMLElement).closest("[data-entry]");
           const id = row ? Number(row.getAttribute("data-entry")) : null;
           const entry = id !== null && Number.isFinite(id) ? id : null;
           const line = view.timeline.find((line) => line.id === entry);
-          const text = selectedText(timeline.current) || line?.text.trim() || "";
+          const text = selected?.text || selectedText(timeline.current) || line?.text.trim() || "";
           // Nothing selected and nothing under the cursor means the browser's
           // own menu is the more useful one.
           if (!text && entry === null) return;
           event.preventDefault();
           setQuoteMenu({
-            anchor: quoteAnchor(row, entry),
+            anchor: selected ? selected.anchor : quoteAnchor(row, entry),
             text,
             entry,
             reaction: line?.reaction ?? "",
