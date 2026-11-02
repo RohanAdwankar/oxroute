@@ -75,7 +75,7 @@ export const api = {
   /** Put a thought of your own into the inbox, beside everything else. */
   note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),
   createAgent: () => post<Agent>("/api/agents", {}),
-  agent: (id: string) => call<AgentView>(`/api/agents/${encodeURIComponent(id)}`),
+  agent: (id: string, before?: number) => call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`),
 
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),

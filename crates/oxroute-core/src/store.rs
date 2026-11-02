@@ -1177,13 +1177,17 @@ impl Store {
 
     /// The most recent line on an agent's timeline.
     pub fn timeline(&self, agent_id: &str, limit: usize) -> Result<Vec<Entry>> {
+        self.timeline_before(agent_id, limit, None)
+    }
+
+    pub fn timeline_before(&self, agent_id: &str, limit: usize, before: Option<i64>) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
                 "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries
-                 WHERE agent_id = ?1 ORDER BY id DESC LIMIT ?2",
+                 WHERE agent_id = ?1 AND id < ?3 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
-            for row in stmt.query_map(params![agent_id, limit as i64], read_entry)? {
+            for row in stmt.query_map(params![agent_id, limit as i64, before.unwrap_or(i64::MAX)], read_entry)? {
                 out.push(row?);
             }
             out.reverse();
@@ -2024,6 +2028,29 @@ mod tests {
         store.approve_task_tree("parent").unwrap();
         assert_eq!(store.task_notes().unwrap().len(), 4, "Retrying does not duplicate sign-off notes");
         assert!(store.approve_task_tree("missing").is_err());
+    }
+
+    #[test]
+    fn history_pages_are_ordered_disjoint_and_scoped_to_the_agent() {
+        let store = Store::in_memory().unwrap();
+        for id in ["one", "two"] { store.save_agent(&agent(id)).unwrap(); }
+        let mut expected = Vec::new();
+        for at in 0..17 {
+            let entry = store.add_entry("one", at as f64, EntryKind::You, "message", "", "").unwrap();
+            expected.push(entry.id);
+            store.add_entry("two", at as f64, EntryKind::Said, "other conversation", "", "").unwrap();
+        }
+        let mut before = None;
+        let mut recovered = Vec::new();
+        loop {
+            let page = store.timeline_before("one", 4, before).unwrap();
+            if page.is_empty() { break; }
+            assert!(page.windows(2).all(|pair| pair[0].id < pair[1].id));
+            assert!(page.iter().all(|entry| entry.agent_id == "one" && before.is_none_or(|id| entry.id < id)));
+            before = Some(page[0].id);
+            recovered.splice(0..0, page.into_iter().map(|entry| entry.id));
+        }
+        assert_eq!(recovered, expected);
     }
 
     #[test]

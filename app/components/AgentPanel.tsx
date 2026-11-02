@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
@@ -127,6 +127,7 @@ function minute(at: number) {
  */
 export function AgentPanel({
   view,
+  onEarlier,
   can,
   onBack,
   onSay,
@@ -161,6 +162,7 @@ export function AgentPanel({
   onThreadsChanged,
 }: {
   view: AgentView;
+  onEarlier: () => Promise<void>;
   /** The card's latest message while the full history arrives. */
   initialPreview?: string;
   paneHandle?: ReactNode;
@@ -270,6 +272,38 @@ export function AgentPanel({
   const timeline = useRef<HTMLDivElement>(null);
   const timelineBody = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const loadingEarlier = useRef(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyAnchor = useRef<{ height: number; top: number; entry?: string; y?: number } | null>(null);
+  const loadEarlier = async () => {
+    const node = timeline.current;
+    if (!node || !view.hasEarlier || loadingEarlier.current) return;
+    loadingEarlier.current = true;
+    setHistoryLoading(true);
+    following.current = false;
+    try {
+      await onEarlier();
+      const entry = [...node.querySelectorAll<HTMLElement>("[data-entry]")].find(entry => entry.getBoundingClientRect().top >= node.getBoundingClientRect().top);
+      historyAnchor.current = { height: node.scrollHeight, top: node.scrollTop, entry: entry?.dataset.entry, y: entry?.getBoundingClientRect().top };
+    } catch (error) {
+      say(error instanceof Error ? error.message : String(error));
+    } finally {
+      loadingEarlier.current = false;
+      setHistoryLoading(false);
+    }
+  };
+  useLayoutEffect(() => {
+    const node = timeline.current;
+    const anchor = historyAnchor.current;
+    if (node && anchor) {
+      const entry = anchor.entry ? node.querySelector<HTMLElement>(`[data-entry="${anchor.entry}"]`) : null;
+      node.scrollTop = entry && anchor.y !== undefined
+        ? node.scrollTop + (entry.getBoundingClientRect().top - anchor.y) / (node.getBoundingClientRect().height / node.offsetHeight)
+        : anchor.top + node.scrollHeight - anchor.height;
+      historyAnchor.current = null;
+    }
+  }, [view.timeline]);
+
   const previousAgent = useRef(agent.id);
   const [highlightedEntry, setHighlightedEntry] = useState<number | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -783,6 +817,7 @@ export function AgentPanel({
         onScroll={(event) => {
           const node = event.currentTarget;
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+          if (node.scrollTop < 80) void loadEarlier();
         }}
         onWheel={() => setQuoteMenu(null)}
         onTouchMove={() => setQuoteMenu(null)}
@@ -790,6 +825,7 @@ export function AgentPanel({
         className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-[var(--pane-x)] py-2"
       >
         <div ref={timelineBody}>
+          {view.hasEarlier && <button type="button" disabled={historyLoading} onClick={() => void loadEarlier()} className="mb-3 cursor-pointer text-[12px] text-faint hover:text-ink">{historyLoading ? "Loading earlier messages…" : "Load earlier messages"}</button>}
           {initialPreview !== undefined && optimistic.length === 0 ? (
             <Markdown>{initialPreview}</Markdown>
           ) : items.length === 0 ? (

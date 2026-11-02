@@ -141,7 +141,13 @@ export default function Home() {
         if (entry) timeline.set(id, { ...entry, reaction });
       }
       const reconciled = { ...view, timeline: [...timeline.values()].sort((a, b) => a.id - b.id) };
-      setDetails((current) => ({ ...current, [id]: reconciled }));
+      setDetails((current) => {
+        const previous = current[id];
+        if (!previous) return { ...current, [id]: reconciled };
+        const entries = new Map(previous.timeline.map(entry => [entry.id, entry]));
+        for (const entry of reconciled.timeline) entries.set(entry.id, entry);
+        return { ...current, [id]: { ...reconciled, hasEarlier: previous.hasEarlier, timeline: [...entries.values()].sort((a, b) => a.id - b.id) } };
+      });
       return reconciled;
     }).finally(() => requests.current.delete(id));
     requests.current.set(id, { promise: request, updates, reactions });
@@ -1255,6 +1261,15 @@ export default function Home() {
                     <AgentPanel
                       paneHandle={paneHandle}
                       view={view}
+                      onEarlier={async () => {
+                        const page = await api.agent(id, view.timeline[0]?.id);
+                        setDetails(current => {
+                          const latest = current[id] ?? view;
+                          const entries = new Map(page.timeline.map(entry => [entry.id, entry]));
+                          for (const entry of latest.timeline) entries.set(entry.id, entry);
+                          return { ...current, [id]: { ...latest, hasEarlier: page.hasEarlier, timeline: [...entries.values()].sort((a, b) => a.id - b.id) } };
+                        });
+                      }}
                       quoteThreads={(snapshot.quoteThreads ?? []).filter(thread => thread.parentId === id)}
                       onThreadsChanged={reload}
                       initialPreview={details[id] ? undefined : snapshot.messages[id] ?? ""}

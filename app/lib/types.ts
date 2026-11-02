@@ -270,6 +270,7 @@ export type DiagramEdit =
   | { op: "removeEdge"; from: string; to: string };
 
 export interface AgentView {
+  hasEarlier?: boolean;
   agent: Agent;
   timeline: Entry[];
   delivery: Delivery;

@@ -363,19 +363,29 @@ async fn state(State(hub): Hubs) -> Result<Json<oxroute_core::Snapshot>, Failed>
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
-#[utoipa::path(get, path = "/api/agents/{id}", operation_id = "agents.show", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
+#[derive(Deserialize)]
+struct TimelineQuery {
+    before: Option<i64>,
+}
+
+#[utoipa::path(get, path = "/api/agents/{id}", operation_id = "agents.show", params(("id" = String, Path), ("before" = Option<i64>, Query)), responses((status = 200, body = serde_json::Value)))]
 async fn agent(
     State(hub): Hubs,
     Path(id): Path<String>,
+    Query(query): Query<TimelineQuery>,
 ) -> Result<Json<serde_json::Value>, Failed> {
     let agent = hub
         .store
         .agent(&id)?
         .context("no such agent")
         .map_err(Failed)?;
+    let mut timeline = hub.store.timeline_before(&id, TIMELINE_LIMIT + 1, query.before)?;
+    let has_earlier = timeline.len() > TIMELINE_LIMIT;
+    if has_earlier { timeline.remove(0); }
     Ok(Json(json!({
         "agent": agent,
-        "timeline": hub.timeline(&id, TIMELINE_LIMIT)?,
+        "timeline": timeline,
+        "hasEarlier": has_earlier,
         "delivery": agent.delivery(),
     })))
 }
