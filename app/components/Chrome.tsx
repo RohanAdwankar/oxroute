@@ -90,7 +90,7 @@ export function Chrome({
           onClick={() => onBoard(null)}
           pressed={activeBoard === null}
           label="Show the fleet"
-          icon="terminal"
+          icon="home"
         />
         {snapshot.boards.map((board) => (
           <Cell
