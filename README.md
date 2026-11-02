@@ -78,7 +78,7 @@ Approval does not authorize merging or deploying.
 Follow-up reviews on the same publication target start with changes since the
 last approved revision. Click **Since approval** to switch to the **Full PR**
 view, or click it again to return. Quotes and image previews use the displayed
-comparison. Approval still binds the complete publication base, head, branch,
+comparison. Approval still binds the reviewed merge base, head, target branch,
 and remote; changing views never grants approval.
 
 PNG, JPEG, GIF, WebP, SVG, AVIF, BMP and ICO files show before-and-after previews,
@@ -100,9 +100,10 @@ Before pushing, read `/api/agents/<agent-id>/reviews/<review-id>` to verify that
 the reviewed change is current. A stale review requires new approval; a pending
 review with explicit chat approval is ready to publish. Publish the recorded
 head commit to the recorded remote and branch, using the stored PR title and
-description. Approval does not authorize merging or deployment. Changed commits,
-base, branch, destination, or tracked edits make the review stale and require
-a new review. Stored diffs survive those changes and restarts.
+description. Approval does not authorize merging or deployment. Changes to the reviewed
+head, merge base, branch, destination, or tracked edits make the review stale and
+require a new review. Unrelated target-branch updates keep approval available when
+the PR comparison is unchanged. Stored diffs survive those changes and restarts.
 
 This is a consent workflow in a single-user app. It does not sandbox an agent's
 shell or intercept arbitrary Git commands. Approval is a user action; agents

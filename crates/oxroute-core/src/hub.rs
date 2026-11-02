@@ -1847,8 +1847,9 @@ impl Hub {
              a pending review with explicit chat approval is ready to publish. \
              Push only its snapshot.headCommit to snapshot.remote and snapshot.branch, \
              and use its stored title and description for the PR; \
-             approval does not authorize merging or deploying. Any changed commits, base, \
-             branch, remote or tracked edits require a new review. Never call the approval \
+             approval does not authorize merging or deploying. Changes to the reviewed head, merge base, \
+             branch, remote or tracked edits require a new review. Unrelated target-branch updates \
+             that leave the reviewed comparison unchanged preserve approval eligibility. Never call the approval \
              endpoint yourself. Approval here records user consent; it is not a shell sandbox.",
             listen = self.config.listen, id = agent.id,
             )));

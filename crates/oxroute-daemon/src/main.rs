@@ -1729,6 +1729,16 @@ mod tests {
         assert_eq!(review["status"], "pending");
         let id = review["id"].as_str().unwrap();
         let endpoint = format!("{url}/{id}");
+        // Updating the target branch alone must not invalidate an unchanged PR diff.
+        command(vec!["checkout", "main"]);
+        tokio::fs::write(root.join("upstream.txt"), "Independent upstream work\n").await.unwrap();
+        command(vec!["add", "upstream.txt"]);
+        command(vec!["commit", "-m", "Advance target independently"]);
+        let advanced_base = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&root).args(["rev-parse", "main"]).output().unwrap().stdout).unwrap().trim().to_owned();
+        command(vec!["checkout", "proposal"]);
+        let refreshed: serde_json::Value = client.get(&endpoint).header("x-oxroute-prefetch", "1").send().await.unwrap().json().await.unwrap();
+        assert_eq!(refreshed["status"], "pending", "An unchanged reviewed comparison remains approvable after upstream advances");
+        assert_eq!(refreshed["snapshot"], review["snapshot"], "Eligibility checks never rewrite the saved review");
         let image_files = review["snapshot"]["files"].as_array().unwrap();
         let diagram = image_files.iter().find(|file| file["path"] == "diagram.svg").unwrap();
         assert_eq!(diagram["image"], json!({"before":true,"after":true}));
@@ -1829,7 +1839,7 @@ mod tests {
         let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(revision["snapshot"]["reviewBaseCommit"], review["snapshot"]["headCommit"]);
-        assert_eq!(revision["snapshot"]["baseCommit"], review["snapshot"]["baseCommit"], "Publication still binds the PR target base");
+        assert_eq!(revision["snapshot"]["baseCommit"], advanced_base, "A new snapshot captures the current target without rewriting its predecessor");
         let changed = revision["snapshot"]["files"].as_array().unwrap();
         assert_eq!(changed.len(), 2, "Unchanged earlier PR files are omitted from the follow-up view");
         let settings = changed.iter().find(|file| file["path"] == "settings.txt").unwrap()["patch"].as_str().unwrap();

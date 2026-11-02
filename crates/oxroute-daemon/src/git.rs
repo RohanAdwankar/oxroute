@@ -162,8 +162,16 @@ pub async fn current(snapshot: &Snapshot) -> Result<bool> {
         git(root, &remote_args),
         git(root, &["status", "--porcelain", "--untracked-files=no"]),
     )?;
-    Ok(head == snapshot.head_commit && base == snapshot.base_commit && branch == snapshot.branch
-        && remote == snapshot.remote_url && status.is_empty())
+    if head != snapshot.head_commit || branch != snapshot.branch || remote != snapshot.remote_url || !status.is_empty() {
+        return Ok(false);
+    }
+    if base == snapshot.base_commit { return Ok(true); }
+    // PR diffs use the common ancestor, not the moving target tip. Unrelated
+    // upstream commits do not change the exact comparison the user reviewed.
+    let saved_args = ["merge-base", "--all", &snapshot.head_commit, &snapshot.base_commit];
+    let current_args = ["merge-base", "--all", &snapshot.head_commit, &base];
+    let (saved, current) = tokio::try_join!(git(root, &saved_args), git(root, &current_args))?;
+    Ok(saved.lines().collect::<std::collections::BTreeSet<_>>() == current.lines().collect())
 }
 
 #[cfg(test)]
