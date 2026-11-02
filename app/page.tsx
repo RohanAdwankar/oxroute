@@ -24,7 +24,7 @@ import { captureClientFailures } from "./lib/client-failures";
 import { api, follow } from "./lib/api";
 import { preloadReview, reviewEndpoint } from "./lib/reviews";
 import { inboxRows } from "./lib/inbox";
-import { taskAncestors, taskRows } from "./lib/tasks";
+import { taskSubtree, taskAncestors, taskRows } from "./lib/tasks";
 import { acceptsFileDrop } from "./lib/uploads";
 import {
   HINTS,
@@ -584,6 +584,24 @@ export default function Home() {
     }
   };
 
+  const approveTaskTree = async (task: TaskItem) => {
+    const branch = taskSubtree(snapshot.tasks, task.id);
+    if (branch.some(item => item.id in savingTasks)) return say("A subtask is still saving. Try again once it finishes.");
+    setSavingTasks(current => ({ ...current, ...Object.fromEntries(branch.map(item => [item.id, { ...item, status: "complete", blockedByTaskId: "" }])) }));
+    try {
+      const saved = new Map((await api.approveTaskTree(task.id)).map(item => [item.id, item]));
+      setSnapshot(current => ({ ...current, tasks: current.tasks.map(item => saved.get(item.id) ?? item) }));
+      reload();
+    } catch (error) { complain(error); }
+    finally {
+      setSavingTasks(current => {
+        const next = { ...current };
+        for (const item of branch) delete next[item.id];
+        return next;
+      });
+    }
+  };
+
   /// Filing a task from a composer. It goes to the bottom of a long list,
   /// so the list has to be open and looking at it, or nothing happened as
   /// far as anyone can see.
@@ -1094,6 +1112,7 @@ export default function Home() {
     <TaskActions.Provider value={{ tasks: taskItems,
       busy: id => busy || id in savingTasks || id in creatingTasks,
       approve: task => void updateTask({ ...task, status: "complete" }, "approved", true),
+      approveAll: task => void approveTaskTree(task),
       correct: correctTask,
     }}>
     <main className="flex h-full flex-col">
@@ -1409,6 +1428,7 @@ export default function Home() {
             busy={(id) => busy || id in savingTasks || id in creatingTasks}
             onCreate={(text, parent) => { setTaskQuery(""); return file(text, [], parent.agentId, parent.id); }}
             onUpdate={(task, note, approved) => void updateTask(task, note, approved)}
+            onApproveAll={task => void approveTaskTree(task)}
             onOpenAgent={(id) => {
               clearRouting();
               showAgent(id);

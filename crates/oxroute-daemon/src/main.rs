@@ -238,6 +238,7 @@ async fn serve() -> Result<()> {
         .route("/api/tasks/{id}/hand-off", post(hand_off_task))
         .route("/api/tasks/{id}/move", post(move_task))
         .route("/api/tasks/{id}/correction", post(correct_task))
+        .route("/api/tasks/{id}/approve-all", post(approve_task_tree))
         .route("/api/task-attachments", post(create_task_with_attachments))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
@@ -1141,6 +1142,11 @@ async fn update_task(
     .await?))
 }
 
+// Human sign-off stays outside the generated agent command interface.
+async fn approve_task_tree(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<oxroute_core::TaskItem>>, Failed> {
+    Ok(Json(hub.approve_task_tree(&id)?))
+}
+
 #[utoipa::path(delete, path = "/api/tasks/{id}", operation_id = "tasks.delete", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
 async fn delete_task(
     State(hub): Hubs,
@@ -1577,6 +1583,7 @@ mod tests {
             assert!(operations.contains(&operation));
         }
         assert_eq!(operations.len(), operations.iter().collect::<std::collections::HashSet<_>>().len());
+        assert!(schema["paths"].get("/api/tasks/{id}/approve-all").is_none());
         assert!(schema["paths"].get("/api/agents/{id}/reviews/{review}/approve").is_none(), "Human approval stays outside the agent command interface; its HTTP workflow is preserved");
         let fields = &schema["components"]["schemas"]["UpdateTaskBody"]["properties"];
         assert!(fields.get("parentTaskId").is_some() && fields.get("agentId").is_some());
@@ -1614,6 +1621,40 @@ mod tests {
         assert_eq!(entry.detail, detail);
         drop(store);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn human_bulk_approval_uses_native_http_and_survives_reopening() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("task-approval-api"));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "owner = 'fixture'\n").unwrap();
+        let config = Config::load_from(&config_path).unwrap();
+        let database = root.join("state.sqlite");
+        let store = Store::open(&database).unwrap();
+        for (id, parent) in [("root", ""), ("child", "root"), ("nested", "child"), ("separate", "")] {
+            store.save_task(&TaskItem { id:id.into(), text:id.into(), status:TaskStatus::Done,
+                parent_task_id:parent.into(), blocked_by_task_id:String::new(), agent_id:String::new(),
+                position:0.0, images:vec![], created_at:1.0, updated_at:1.0 }).unwrap();
+        }
+        let hub = Hub::new(config, store);
+        let router = Router::new().route("/api/tasks/{id}/approve-all", post(approve_task_tree)).with_state(hub.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let endpoint = format!("http://{address}/api/tasks/root/approve-all");
+        let client = reqwest::Client::new();
+        let tasks:Vec<TaskItem> = client.post(&endpoint).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(tasks.len(), 3);
+        assert!(tasks.iter().all(|item|item.status == TaskStatus::Complete));
+        assert_eq!(Store::open(&database).unwrap().task_notes().unwrap().len(), 3);
+        client.post(&endpoint).send().await.unwrap().error_for_status().unwrap();
+        assert_eq!(hub.store.task_notes().unwrap().len(), 3);
+        assert_eq!(hub.store.tasks().unwrap().into_iter().find(|item|item.id == "separate").unwrap().status, TaskStatus::Done);
+        assert_eq!(hub.turns_in_flight().await, 0, "Task sign-off never starts agent work or authorizes publication");
+        server.abort();
+        drop(hub);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[derive(Default)]

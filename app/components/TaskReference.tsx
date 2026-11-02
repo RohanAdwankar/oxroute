@@ -5,7 +5,7 @@ import { TaskApproval } from "./TaskApproval";
 
 export const TaskActions = createContext<{
   tasks: TaskItem[]; busy: (id: string) => boolean;
-  approve: (task: TaskItem) => void; correct: (task: TaskItem) => void;
+  approve: (task: TaskItem) => void; approveAll: (task: TaskItem) => void; correct: (task: TaskItem) => void;
 } | null>(null);
 
 export function TaskReference({ id, open }: { id: string; open: () => void }) {
@@ -18,6 +18,6 @@ export function TaskReference({ id, open }: { id: string; open: () => void }) {
       <Icon name="tasks" size={12} />{task.text}
     </button>
     <span className="text-[11px] text-mid">{task.status === "complete" ? "Approved" : task.status === "done" ? "For review" : task.status.replaceAll("_", " ")}</span>
-    <TaskApproval task={task} busy={actions.busy(id)} approve={() => actions.approve(task)} correct={() => actions.correct(task)} />
+    <TaskApproval task={task} busy={actions.busy(id)} approve={() => actions.approve(task)} approveAll={actions.tasks.some(child => child.parentTaskId === id) ? () => actions.approveAll(task) : undefined} correct={() => actions.correct(task)} />
   </span>;
 }

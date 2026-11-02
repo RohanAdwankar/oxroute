@@ -589,6 +589,31 @@ impl Store {
         })
     }
 
+    /// A human approves one task and its entire subtree in one transaction.
+    pub fn approve_task_tree(&self, id: &str) -> Result<Vec<String>> {
+        self.with(|c| {
+            let transaction = c.unchecked_transaction()?;
+            let ids = {
+                let mut query = transaction.prepare("WITH RECURSIVE tree(id) AS (
+                    SELECT id FROM tasks WHERE id = ?1 UNION
+                    SELECT tasks.id FROM tasks JOIN tree ON tasks.parent_task_id = tree.id
+                ) SELECT id FROM tree")?;
+                let ids = query.query_map([id], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                ids
+            };
+            anyhow::ensure!(!ids.is_empty(), "no such task");
+            let at = crate::model::now();
+            for task in &ids {
+                if transaction.execute("UPDATE tasks SET status = 'complete', blocked_by_task_id = '', updated_at = ?2 WHERE id = ?1 AND status != 'complete'", params![task, at])? > 0 {
+                    transaction.execute("INSERT INTO task_notes (id, task_id, text, agent_id, at) VALUES (?1, ?2, ?3, '', ?4)",
+                        params![crate::model::new_id("note"), task, format!("Approved with task {id} and all its subtasks."), at])?;
+                }
+            }
+            transaction.commit()?;
+            Ok(ids)
+        })
+    }
+
     pub fn task_notes(&self) -> Result<Vec<TaskNote>> {
         self.with(|c| {
             let mut statement = c.prepare(
@@ -1966,6 +1991,39 @@ mod tests {
         store.delete_board("second").unwrap();
         assert!(store.delete_board("second").is_err());
         assert_eq!(store.boards().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn approving_a_subtree_is_atomic_scoped_and_idempotent() {
+        let store = Store::in_memory().unwrap();
+        let task = |id: &str, parent: &str, status| TaskItem {
+            id: id.into(), text: format!("Work {id}"), status, parent_task_id: parent.into(),
+            blocked_by_task_id: if status == TaskStatus::Blocked { "external".into() } else { String::new() },
+            agent_id: format!("owner-{id}"), position: 3.0, images: vec!["evidence.png".into()], created_at: 1.0, updated_at: 1.0,
+        };
+        for item in [task("ancestor", "", TaskStatus::Done), task("parent", "ancestor", TaskStatus::Done),
+            task("child", "parent", TaskStatus::WaitingForHuman), task("nested", "child", TaskStatus::Blocked),
+            task("open", "parent", TaskStatus::Incomplete), task("signed", "parent", TaskStatus::Complete),
+            task("unrelated", "", TaskStatus::Done)] { store.save_task(&item).unwrap(); }
+        let before = store.tasks().unwrap();
+        store.with(|c| { c.execute_batch("CREATE TRIGGER fail_approval BEFORE UPDATE ON tasks WHEN old.id = 'nested' BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;")?; Ok(()) }).unwrap();
+        assert!(store.approve_task_tree("parent").is_err());
+        assert_eq!(serde_json::to_value(store.tasks().unwrap()).unwrap(), serde_json::to_value(&before).unwrap());
+        assert!(store.task_notes().unwrap().is_empty());
+        store.with(|c| { c.execute_batch("DROP TRIGGER fail_approval")?; Ok(()) }).unwrap();
+        let ids = store.approve_task_tree("parent").unwrap();
+        assert_eq!(ids.len(), 5);
+        for item in store.tasks().unwrap() {
+            let original = before.iter().find(|old| old.id == item.id).unwrap();
+            assert_eq!((&item.text, &item.parent_task_id, &item.agent_id, &item.images, item.position, item.created_at),
+                (&original.text, &original.parent_task_id, &original.agent_id, &original.images, original.position, original.created_at));
+            assert_eq!(item.status, if ids.contains(&item.id) { TaskStatus::Complete } else { original.status });
+            if ids.contains(&item.id) { assert!(item.blocked_by_task_id.is_empty()); }
+        }
+        assert_eq!(store.task_notes().unwrap().len(), 4, "Previously signed tasks keep their existing history");
+        store.approve_task_tree("parent").unwrap();
+        assert_eq!(store.task_notes().unwrap().len(), 4, "Retrying does not duplicate sign-off notes");
+        assert!(store.approve_task_tree("missing").is_err());
     }
 
     #[test]

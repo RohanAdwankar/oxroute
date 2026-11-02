@@ -139,6 +139,7 @@ export const api = {
       body: form,
     });
   },
+  approveTaskTree: (id: string) => post<TaskItem[]>(`/api/tasks/${encodeURIComponent(id)}/approve-all`, {}),
   /// A status change carries why it changed, and only a person approves.
   updateTask: (task: TaskItem, note?: string, approved = false) =>
     call<TaskItem>(`/api/tasks/${encodeURIComponent(task.id)}`, {

@@ -2932,6 +2932,14 @@ impl Hub {
         Ok(task)
     }
 
+    /// Explicit human approval of a task and every nested subtask.
+    pub fn approve_task_tree(&self, id: &str) -> Result<Vec<TaskItem>> {
+        let ids: HashSet<_> = self.store.approve_task_tree(id)?.into_iter().collect();
+        let tasks = self.store.tasks()?.into_iter().filter(|task| ids.contains(&task.id)).collect();
+        self.emit(Event::Sync);
+        Ok(tasks)
+    }
+
     /// Put a task after another one, or at the top when `after` is empty.
     ///
     /// The queue is the order the list is read in, so moving a task is

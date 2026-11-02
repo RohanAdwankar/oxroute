@@ -115,6 +115,7 @@ export function TaskPanel({
   named,
   busy,
   onUpdate,
+  onApproveAll,
   onCreate,
   onHandOff,
   onCorrect,
@@ -142,6 +143,7 @@ export function TaskPanel({
   busy: (id: string) => boolean;
   /// A status change carries why it changed, and only a person approves.
   onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
+  onApproveAll: (task: TaskItem) => void;
   onCreate: (text: string, parent: TaskItem) => Promise<boolean>;
   /// Move a task to an agent that does not exist yet.
   onHandOff: (task: TaskItem, fork: boolean) => void;
@@ -255,6 +257,7 @@ export function TaskPanel({
       {task.status === "done" && <div className="mt-2">
         <TaskApproval task={task} busy={busy(task.id)}
           approve={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
+          approveAll={tasks.some(child => child.parentTaskId === task.id) ? () => onApproveAll(task) : undefined}
           correct={() => onCorrect(task)} />
       </div>}
       {task.images.length > 0 && (

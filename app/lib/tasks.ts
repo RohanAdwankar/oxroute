@@ -9,6 +9,24 @@ export type TaskRow =
   | { kind: "task"; task: TaskItem; depth: number }
   | { kind: "band"; count: number };
 
+/** A task and every nested child, including children hidden by search. */
+export function taskSubtree(tasks: TaskItem[], id: string): TaskItem[] {
+  const children = new Map<string, string[]>();
+  for (const task of tasks) {
+    const siblings = children.get(task.parentTaskId) ?? [];
+    siblings.push(task.id);
+    children.set(task.parentTaskId, siblings);
+  }
+  const included = new Set<string>(), pending = [id];
+  while (pending.length) {
+    const next = pending.pop()!;
+    if (included.has(next)) continue;
+    included.add(next);
+    pending.push(...(children.get(next) ?? []));
+  }
+  return tasks.filter(task => included.has(task.id));
+}
+
 /** Descendants cannot become parents, including through several levels. */
 export function canParent(tasks: TaskItem[], id: string, parent: string): boolean {
   const seen = new Set<string>([id]);

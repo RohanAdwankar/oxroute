@@ -32,6 +32,12 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Settings** | Light or dark, minimum pane scale, how much of each tool call you see, whether blocked work is drawn, keyboard hints |
 | **Change review** | Syntax colors and changed-word highlights; quote diff lines and approve the exact revision before publication |
 
+Right-click a task's **Approve** button and choose **Approve all subtasks** to
+approve that task and every nested subtask, including unfinished tasks and tasks
+hidden by search. This is one atomic human sign-off with a note on each changed
+task. Ordinary clicks approve only the selected task. Unrelated tasks and
+publication approvals are unchanged.
+
 ## Agent CLI
 
 `oxroute-agent` discovers named commands and request flags from
