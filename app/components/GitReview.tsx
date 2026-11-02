@@ -76,10 +76,11 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
 
   useEffect(() => {
     if (!active) return;
-    let live = true;
+    let live = true, readable = false;
     cancelLoad.current = () => { live = false; };
     const show = (data: Review) => {
       if (!live) return;
+      readable = true;
       setReview(data);
       setFile(current => data.snapshot.files.some(item => item.path === current) ? current : data.snapshot.files[0]?.path ?? "");
       setError("");
@@ -88,7 +89,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
     loadReview(url).then(data => {
       show(data);
       return loadReview(url, true).then(show);
-    }).catch(error => { if (live) setError(String(error)); });
+    }).catch(error => { if (live) setError(readable ? "Could not refresh review status. Saved changes remain readable." : String(error)); });
     return () => { live = false; };
   }, [endpoint, active, full]);
 
@@ -124,13 +125,13 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
       <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}
         {review?.status === "stale" && <button type="button" aria-label="Snapshot changed"
-          title="This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."
+          title={review.staleNotified ? "The agent has been asked to prepare an updated review. This saved snapshot remains readable." : "This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."}
           className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}
       </span>
       {review && <>
         {snapshot?.reviewBaseCommit && <button className="cursor-pointer text-faint hover:text-ink" title={full ? "Show only changes since the previous approval" : "Show the complete PR diff"}
           onClick={() => { setMenu(null); setReview(null); setFull(!full); }}>{full ? "Full PR" : "Since approval"}</button>}
-        <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? "Revision changed" : "Awaiting approval"}</span>
+        <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? review.staleNotified ? "Update requested" : "Revision changed" : "Awaiting approval"}</span>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}
           disabled={approving || review.status !== "pending"}
           className="cursor-pointer p-2 hover:bg-band disabled:cursor-default disabled:opacity-40"><Icon name="tick" /></button>

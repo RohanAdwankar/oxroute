@@ -9,6 +9,7 @@ try {
   let warming = 0, maxWarming = 0;
   const others = Array.from({ length: 12 }, (_, i) => ({ ...agent, id: "background-" + i, name: "Background " + i }));
   let requests = 0, completed = 0, status = 'pending';
+  let notified = false;
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent, ...others], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/events', r => r.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' }));
   await page.route('**/api/agents/*', async r => {
@@ -24,7 +25,7 @@ try {
   await page.route('**/reviews/loading-review', async r => {
     requests++;
     await new Promise(resolve => setTimeout(resolve, 1000));
-    await r.fulfill({ json: { ...review, status } });
+    await r.fulfill({ json: { ...review, status, staleNotified: notified } });
     completed++;
   });
   await page.goto((process.env.TEST_URL ?? 'http://localhost:3941') + '/?agent=' + agent.id);
@@ -45,6 +46,10 @@ try {
   await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   await page.getByText('Revision changed', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Approve publication', exact: true }).isDisabled(), true, 'Preloading retains live approval eligibility checks');
+  notified = true;
+  await page.getByRole('button', { name: 'Back to conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Open change review', exact: true }).click();
+  await page.getByText('Update requested', { exact: true }).waitFor();
   console.log('Prepared review opened in ' + elapsed + ' ms despite 1000 ms API latency; live staleness checks remain.');
 } finally { await browser.close(); }
 

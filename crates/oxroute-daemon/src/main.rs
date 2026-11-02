@@ -558,6 +558,8 @@ struct ChangeReview {
     description: String,
     snapshot: git::Snapshot,
     approved_at: Option<f64>,
+    #[serde(default)]
+    stale_notified: bool,
 }
 
 fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(ChangeReview, String)> {
@@ -597,7 +599,7 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
         let previous: ChangeReview = serde_json::from_str(&previous)?;
         git::since_approval(&mut snapshot, &previous.snapshot.head_commit).await;
     }
-    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None };
+    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None, stale_notified: false };
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
     let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
@@ -614,10 +616,44 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
 struct ReviewQuery { #[serde(default)] full: bool }
 
 #[utoipa::path(get, path = "/api/agents/{id}/reviews/{review}", operation_id = "reviews.show", params(("id" = String, Path), ("review" = String, Path), ("full" = Option<bool>, Query)), responses((status = 200, body = serde_json::Value)))]
-async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>) -> Result<Response, Failed> {
+async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>, headers: HeaderMap) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
-    let body = review_response(review_record(&hub, &agent_id, &id, true)?.0, query.full).await?;
+    let review = review_record(&hub, &agent_id, &id, true)?.0;
+    let mut body = match review_response(review.clone(), query.full).await {
+        Ok(body) => body,
+        Err(error) => {
+            if !headers.contains_key("x-oxroute-prefetch") && !git::current(&review.snapshot).await.unwrap_or(false) {
+                if let Err(notification) = notify_stale_review(&hub, &agent_id, &id).await {
+                    tracing::warn!(review = id, %notification, "could not request updated review");
+                }
+            }
+            return Err(error.into());
+        }
+    };
+    if body["status"] == "stale" && !headers.contains_key("x-oxroute-prefetch") {
+        match notify_stale_review(&hub, &agent_id, &id).await {
+            Ok(notified) => body["staleNotified"] = json!(notified),
+            Err(error) => tracing::warn!(review = id, %error, "could not request updated review"),
+        }
+    }
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
+}
+
+async fn notify_stale_review(hub: &Arc<Hub>, agent_id: &str, id: &str) -> anyhow::Result<bool> {
+    let (mut review, before) = review_record(hub, agent_id, id, true)?;
+    if review.stale_notified { return Ok(true); }
+    review.stale_notified = true;
+    let key = format!("review:{id}");
+    let after = serde_json::to_string(&review)?;
+    if !hub.store.replace_value(&key, &before, &after)? {
+        return Ok(review_record(hub, agent_id, id, true)?.0.stale_notified);
+    }
+    let request = format!("Review {id} ({}) no longer matches the repository or publication target. The user can read the saved snapshot but cannot approve it. Inspect {} on branch {} and prepare an updated review of the current committed change, preserving unrelated work. If a newer review already exists, direct the user to it. This update request grants no publication, merge, or deployment approval.", review.title, review.snapshot.repository, review.snapshot.branch);
+    if let Err(error) = hub.ask_quietly(&review.agent_id, &request, &format!("Update requested for changed review: {}", review.title)).await {
+        hub.store.replace_value(&key, &after, &before)?;
+        return Err(error);
+    }
+    Ok(true)
 }
 
 #[derive(Deserialize)]
@@ -653,7 +689,8 @@ async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, Stri
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
     let (mut review, before) = review_record(&hub, &agent_id, &id, false)?;
     if !git::current(&review.snapshot).await? {
-        return Err(anyhow::anyhow!("This revision changed. Ask the agent to present a new review before publishing.").into());
+        notify_stale_review(&hub, &agent_id, &id).await?;
+        return Err(anyhow::anyhow!("This revision changed. The agent has been asked to prepare an updated review before publishing.").into());
     }
     if review.approved_at.is_none() {
         review.approved_at = Some(oxroute_core::model::now());
@@ -1576,7 +1613,8 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
-    struct ReviewHarness;
+    #[derive(Default)]
+    struct ReviewHarness { inputs: std::sync::Mutex<Vec<Vec<oxroute_core::model::TurnInput>>> }
 
     #[tokio::test]
     async fn idle_event_connections_send_readable_heartbeats() {
@@ -1611,7 +1649,10 @@ mod tests {
         fn capabilities(&self) -> oxroute_core::agent::Capabilities { oxroute_core::agent::Capabilities { fork: false, inject: false, resume: true } }
         fn events(&self) -> tokio::sync::broadcast::Receiver<oxroute_core::agent::HarnessEvent> { tokio::sync::broadcast::channel(16).1 }
         async fn open(&self, _: &oxroute_core::agent::SessionSpec) -> Result<String> { Ok("fixture-session".into()) }
-        async fn start(&self, _: &str, _: Vec<oxroute_core::model::TurnInput>) -> Result<String> { Ok("fixture-turn".into()) }
+        async fn start(&self, _: &str, inputs: Vec<oxroute_core::model::TurnInput>) -> Result<String> {
+            self.inputs.lock().unwrap().push(inputs);
+            Ok("fixture-turn".into())
+        }
         async fn interrupt(&self, _: &str, _: &str) -> Result<()> { Ok(()) }
     }
 
@@ -1667,7 +1708,8 @@ mod tests {
             stall_reason: None, stall_alerted: false, pinned: false,
         }).unwrap();
         let mut hub = Hub::new(config, store);
-        hub.with_harness(Arc::new(ReviewHarness));
+        let harness = Arc::new(ReviewHarness::default());
+        hub.with_harness(harness.clone());
         let router = Router::new().merge(agent_api().0)
             .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
             .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
@@ -1728,6 +1770,35 @@ mod tests {
         assert_eq!(inherited["agentId"], agent_id);
         assert_eq!(client.get(format!("http://{address}/api/agents/{}/reviews/{id}/image", fork.id)).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
+
+        // Warming old snapshots never wakes an agent. Interactive stale reads
+        // request repair once, to the owner even when read through a fork.
+        tokio::fs::write(root.join("settings.txt"), "unreviewed work\n").await.unwrap();
+        let warmed: serde_json::Value = client.get(&endpoint).header("x-oxroute-prefetch", "1").send().await.unwrap().json().await.unwrap();
+        assert_eq!(warmed["status"], "stale");
+        assert_eq!(warmed["staleNotified"], false);
+        assert!(harness.inputs.lock().unwrap().is_empty());
+        let inherited_url = format!("http://{address}/api/agents/{}/reviews/{id}", fork.id);
+        let (first, second) = tokio::join!(client.get(&endpoint).send(), client.get(&inherited_url).send());
+        for response in [first, second] {
+            let response: serde_json::Value = response.unwrap().json().await.unwrap();
+            assert_eq!(response["status"], "stale");
+            assert_eq!(response["staleNotified"], true);
+            assert_eq!(response["snapshot"], review["snapshot"]);
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while harness.inputs.lock().unwrap().is_empty() { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        let inputs = harness.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1, "Concurrent views queue a single repair request");
+        assert!(inputs[0].iter().filter_map(|input| input.as_text()).any(|text| text.contains(id) && text.contains("prepare an updated review")));
+        drop(inputs);
+        let notices = hub.store.timeline(agent_id, 20).unwrap();
+        assert_eq!(notices.iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::Notice && entry.text.starts_with("Update requested")).count(), 1);
+        let notified: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        assert!(notified.stale_notified, "Notification deduplication survives a database reopen");
+        assert!(!hub.store.timeline(&fork.id, 20).unwrap().iter().any(|entry| entry.text.starts_with("Update requested")));
+        tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
 
         for _ in 0..2 {
             let approved = client.post(format!("{endpoint}/approve")).send().await.unwrap();
