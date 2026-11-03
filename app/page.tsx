@@ -123,6 +123,7 @@ export default function Home() {
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
+  const creatingAgent = useRef(false);
   const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry>; reactions: Map<number, string> }>());
   const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
   const warmed = useRef(new Set<string>());
@@ -1185,11 +1186,20 @@ export default function Home() {
         onSettings={() => setSettings(true)}
         activeBoard={boardId}
         onBoard={showBoard}
-        onNewAgent={() => void run(async () => {
-          const agent = await api.createAgent();
-          clearRouting();
-          showAgent(agent.id);
-        })}
+        onNewAgent={() => {
+          if (creatingAgent.current) return;
+          creatingAgent.current = true;
+          void run(async () => {
+            const id = sessionStorage.getItem("oxroute.blankAgent");
+            const active = id && (await api.snapshot()).agents.some(agent => agent.id === id);
+            const view = active ? await api.agent(id) : null;
+            const agent = view && !view.hasEarlier && !view.timeline.some(entry => MESSAGE_KINDS.has(entry.kind))
+              ? view.agent : await api.createAgent();
+            sessionStorage.setItem("oxroute.blankAgent", agent.id);
+            clearRouting();
+            showAgent(agent.id);
+          }).finally(() => { creatingAgent.current = false; });
+        }}
         onSearchVisibility={searchVisibility}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
