@@ -63,6 +63,16 @@ async function call<T>(path: string, init?: RequestInit, retries = !init?.method
 const post = <T,>(path: string, payload: unknown) =>
   call<T>(path, { method: "POST", body: JSON.stringify(payload) });
 
+const creatingAgents = new Map<string, Promise<Agent>>();
+const unsavedAgents = new Set<string>();
+async function readyAgent(id: string) {
+  if (unsavedAgents.has(id)) await api.createAgent(id);
+}
+async function agentPost<T>(agent: string, path: string, payload: unknown) {
+  await readyAgent(agent);
+  return post<T>(path, payload);
+}
+
 export const api = {
   snapshot: () => call<Snapshot>("/api/state"),
   search: (query: string, signal?: AbortSignal) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`, { signal }),
@@ -78,8 +88,21 @@ export const api = {
   note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),
   searchContext: (id: string, entry: number, signal?: AbortSignal) =>
     call<Entry[]>(`/api/agents/${encodeURIComponent(id)}/context/${entry}`, { signal }),
-  createAgent: () => post<Agent>("/api/agents", {}),
-  agent: (id: string, before?: number) => call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`),
+  createAgent: (id: string): Promise<Agent> => {
+    const pending = creatingAgents.get(id);
+    if (pending) return pending;
+    unsavedAgents.add(id);
+    const request = post<Agent>("/api/agents", { id }).then(agent => {
+      unsavedAgents.delete(id);
+      return agent;
+    }).finally(() => creatingAgents.delete(id));
+    creatingAgents.set(id, request);
+    return request;
+  },
+  agent: async (id: string, before?: number) => {
+    await readyAgent(id);
+    return call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`);
+  },
 
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),
@@ -88,7 +111,8 @@ export const api = {
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
   /// `queued` waits for the running turn instead of stopping it.
-  say: (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = [], requestId = crypto.randomUUID()) => {
+  say: async (agent: string, text: string, images: File[] = [], queued = false, diffs: DiffQuote[] = [], requestId = crypto.randomUUID()) => {
+    await readyAgent(agent);
     if (images.length === 0) return call<unknown>("/api/say", { method: "POST", body: JSON.stringify({ agent, text, queued, diffs, requestId }) }, 2);
     const form = new FormData();
     form.append("agent", agent);
@@ -99,29 +123,30 @@ export const api = {
     images.forEach((image) => form.append("files", image));
     return call<unknown>("/api/say-attachments", { method: "POST", body: form }, 2);
   },
-  interrupt: (agent: string) => post<unknown>("/api/interrupt", { agent }),
-  fork: (agent: string) => post<{ agent: Agent }>("/api/fork", { agent }),
-  forkInChat: (agent: string) => post<{ agent: Agent }>("/api/fork-in-chat", { agent }),
-  quoteThread: (agent: string, quote: import("./types").QuoteAnchor) => post<{ agent: Agent }>("/api/fork-in-chat", { agent, quote }),
-  merge: (agent: string, into?: string, archive = false) => post<{ agent: Agent }>("/api/merge", { agent, into, archive }),
-  rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
+  interrupt: (agent: string) => agentPost<unknown>(agent, "/api/interrupt", { agent }),
+  fork: (agent: string) => agentPost<{ agent: Agent }>(agent, "/api/fork", { agent }),
+  forkInChat: (agent: string) => agentPost<{ agent: Agent }>(agent, "/api/fork-in-chat", { agent }),
+  quoteThread: (agent: string, quote: import("./types").QuoteAnchor) => agentPost<{ agent: Agent }>(agent, "/api/fork-in-chat", { agent, quote }),
+  merge: (agent: string, into?: string, archive = false) => agentPost<{ agent: Agent }>(agent, "/api/merge", { agent, into, archive }),
+  rename: (agent: string, name: string) => agentPost<unknown>(agent, "/api/rename", { agent, name }),
   archive: (agent: string, archived: boolean, completeTasks = false) =>
-    post<Snapshot>("/api/archive", { agent, archived, completeTasks }),
-  pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
+    agentPost<Snapshot>(agent, "/api/archive", { agent, archived, completeTasks }),
+  pin: (agent: string, pinned: boolean) => agentPost<Snapshot>(agent, "/api/pin", { agent, pinned }),
   /// "" takes the reaction back. The daemon streams the reaction
   /// without refetching the snapshot or locking unrelated controls.
   react: (entry: number, reaction: string) => post<void>("/api/react", { entry, reaction }),
   /// Move a running session onto another model its harness can run.
   setModel: (agent: string, model: string) =>
-    post<{ model: string }>(`/api/agents/${encodeURIComponent(agent)}/model`, { model }),
+    agentPost<{ model: string }>(agent, `/api/agents/${encodeURIComponent(agent)}/model`, { model }),
   createTask: (text: string, agentId = "", parentTaskId = "") =>
-    post<TaskItem>("/api/tasks", { text, agentId, parentTaskId }),
+    agentPost<TaskItem>(agentId, "/api/tasks", { text, agentId, parentTaskId }),
   /// Hand a task to an agent that does not exist yet: a new one, or a fork
   /// of whoever has it.
   handOffTask: (id: string, fork: boolean, model?: string) =>
     post<TaskItem>(`/api/tasks/${id}/hand-off`, { fork, model }),
   /// A task made in a composer, with whatever was attached to it.
-  createTaskWithImages: (text: string, agentId: string, images: File[], parentTaskId = "") => {
+  createTaskWithImages: async (text: string, agentId: string, images: File[], parentTaskId = "") => {
+    await readyAgent(agentId);
     if (images.length === 0) return api.createTask(text, agentId, parentTaskId);
     const form = new FormData();
     form.append("text", text);
@@ -165,7 +190,7 @@ export const api = {
 
   // Tags and boards. A board is its settings; moving a card is tagging it.
   tag: (agent: string, change: { add?: string[]; remove?: string[]; set?: string[] }) =>
-    post<string[]>(`/api/agents/${encodeURIComponent(agent)}/tags`, change),
+    agentPost<string[]>(agent, `/api/agents/${encodeURIComponent(agent)}/tags`, change),
   createBoard: (board: Partial<Board> = {}) => post<Board>("/api/boards", board),
   updateBoard: (board: Board) =>
     call<Board>(`/api/boards/${encodeURIComponent(board.id)}`, {
@@ -179,19 +204,22 @@ export const api = {
     post<string[]>(`/api/boards/${encodeURIComponent(board)}/move`, { agent, column, row }),
 
   // Drawing a message instead of typing one.
-  diagram: (agent: string) => call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`),
+  diagram: async (agent: string) => {
+    await readyAgent(agent);
+    return call<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram`);
+  },
   previewDiagram: (agent: string, edits: DiagramEdit[]) =>
-    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
+    agentPost<DiagramPayload>(agent, `/api/agents/${encodeURIComponent(agent)}/diagram/preview`, { edits }),
   /// `queued` waits for the running turn instead of stopping it.
   sendDiagram: (agent: string, edits: DiagramEdit[], note: string, queued = false) =>
-    post<DiagramPayload>(`/api/agents/${encodeURIComponent(agent)}/diagram/send`, {
+    agentPost<DiagramPayload>(agent, `/api/agents/${encodeURIComponent(agent)}/diagram/send`, {
       edits,
       note,
       queued,
     }),
   /// `about` narrows what to draw; empty asks for the whole architecture.
   createDiagram: (agent: string, about = "") =>
-    post<unknown>(`/api/agents/${encodeURIComponent(agent)}/diagram/create`, { about }),
+    agentPost<unknown>(agent, `/api/agents/${encodeURIComponent(agent)}/diagram/create`, { about }),
   renderDiagram: (source: string, added: string[] = []) =>
     post<{ svg: string }>("/api/diagram/render", { source, added }),
 };

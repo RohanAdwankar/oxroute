@@ -391,8 +391,13 @@ async fn agent(
     })))
 }
 
-async fn create_agent(State(hub): Hubs) -> Result<Json<oxroute_core::Agent>, Failed> {
-    Ok(Json(hub.create_agent()?))
+#[derive(Deserialize)]
+struct CreateAgentBody {
+    id: Option<String>,
+}
+
+async fn create_agent(State(hub): Hubs, Json(body): Json<CreateAgentBody>) -> Result<Json<oxroute_core::Agent>, Failed> {
+    Ok(Json(hub.create_agent(body.id.as_deref())?))
 }
 
 #[derive(Deserialize)]

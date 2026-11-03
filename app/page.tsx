@@ -123,7 +123,7 @@ export default function Home() {
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
-  const creatingAgent = useRef(false);
+  const creatingAgents = useRef(new Map<string, Agent>());
   const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry>; reactions: Map<number, string> }>());
   const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
   const warmed = useRef(new Set<string>());
@@ -470,6 +470,10 @@ export default function Home() {
         if (!live) return;
         paneLinks.current = next.paneLinks ?? {};
         for (const [agent, ids] of Object.entries(next.reviews ?? {})) for (const id of ids) preloadReview(reviewEndpoint(agent, id));
+        for (const [id, agent] of creatingAgents.current) {
+          if ([...next.agents, ...next.archived].some(saved => saved.id === id)) creatingAgents.current.delete(id);
+          else next.agents.push(agent);
+        }
         setSnapshot([...updates.values()].reduce(streamedSnapshot, next));
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
         if (selectedAgent && !customPanes.current) {
@@ -650,6 +654,7 @@ export default function Home() {
   };
 
   const sendMessage = async (id: string, text: string, images: File[], queued: boolean, diffs: import("./lib/drafts").DiffQuote[] = [], requestId = "") => {
+    if (sessionStorage.getItem("oxroute.blankAgent") === id) sessionStorage.removeItem("oxroute.blankAgent");
     try {
       await api.say(id, text, images, queued, diffs, requestId);
     } catch (error) {
@@ -1187,18 +1192,28 @@ export default function Home() {
         activeBoard={boardId}
         onBoard={showBoard}
         onNewAgent={() => {
-          if (creatingAgent.current) return;
-          creatingAgent.current = true;
-          void run(async () => {
-            const id = sessionStorage.getItem("oxroute.blankAgent");
-            const active = id && (await api.snapshot()).agents.some(agent => agent.id === id);
-            const view = active ? await api.agent(id) : null;
-            const agent = view && !view.hasEarlier && !view.timeline.some(entry => MESSAGE_KINDS.has(entry.kind))
-              ? view.agent : await api.createAgent();
-            sessionStorage.setItem("oxroute.blankAgent", agent.id);
+          const id = sessionStorage.getItem("oxroute.blankAgent");
+          const existing = id && (creatingAgents.current.get(id) ?? snapshot.agents.find(agent => agent.id === id));
+          if (existing && !existing.sessionId && !snapshot.messages[existing.id] && !details[existing.id]?.timeline.some(entry => MESSAGE_KINDS.has(entry.kind))) {
             clearRouting();
-            showAgent(agent.id);
-          }).finally(() => { creatingAgent.current = false; });
+            showAgent(existing.id);
+            return;
+          }
+          const at = Date.now() / 1000;
+          const model = snapshot.defaultModel;
+          const agent: Agent = {
+            id: `agent_${crypto.randomUUID().replaceAll("-", "")}`, name: "New agent",
+            backend: snapshot.models.find(item => item.id === model)?.backend ?? "codex",
+            model, sessionId: "", cwd: "", status: "complete", activity: "", permalink: "",
+            lastActivity: at, updatedAt: at, stallReason: null, stallAlerted: false, pinned: false,
+          };
+          creatingAgents.current.set(agent.id, agent);
+          sessionStorage.setItem("oxroute.blankAgent", agent.id);
+          setSnapshot(current => ({ ...current, agents: [...current.agents, agent] }));
+          setDetails(current => ({ ...current, [agent.id]: { agent, timeline: [], delivery: "start" } }));
+          clearRouting();
+          showAgent(agent.id);
+          void api.createAgent(agent.id).then(reload).catch(complain);
         }}
         onSearchVisibility={searchVisibility}
         onSearchOpen={showAgent}

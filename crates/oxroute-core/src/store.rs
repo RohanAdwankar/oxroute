@@ -382,6 +382,18 @@ impl Store {
         })
     }
 
+    /// A retried creation must never overwrite a card that has since been used.
+    pub fn create_agent(&self, agent: &Agent) -> Result<Agent> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO agents (id, name, backend, model, cwd, last_activity, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (id) DO NOTHING",
+                params![agent.id, agent.name, agent.backend.as_str(), agent.model, agent.cwd, agent.last_activity, agent.updated_at],
+            )?;
+            Ok(c.query_row("SELECT * FROM agents WHERE id = ?1", params![agent.id], read_agent)?)
+        })
+    }
+
     pub fn agent(&self, id: &str) -> Result<Option<Agent>> {
         self.with(|c| {
             Ok(c.query_row("SELECT * FROM agents WHERE id = ?1", params![id], read_agent)
@@ -1868,6 +1880,20 @@ mod tests {
         let back = store.agent("a1").unwrap().unwrap();
         assert_eq!(back.backend, Backend::Codex);
         assert_eq!(back.status, AgentStatus::Working);
+    }
+
+    #[test]
+    fn retrying_creation_preserves_existing_agent_and_messages() {
+        let store = Store::in_memory().unwrap();
+        let initial = agent("retry");
+        store.create_agent(&initial).unwrap();
+        store.rename_agent(&initial.id, "Used card").unwrap();
+        store.set_agent_session(&initial.id, "running-session").unwrap();
+        store.add_entry(&initial.id, now(), EntryKind::You, "Compare the available options", "", "").unwrap();
+        let retried = store.create_agent(&initial).unwrap();
+        assert_eq!(retried.name, "Used card");
+        assert_eq!(retried.session_id, "running-session");
+        assert_eq!(store.timeline(&initial.id, 10).unwrap().len(), 1);
     }
 
     #[test]
