@@ -1233,12 +1233,12 @@ impl Hub {
         Ok(())
     }
 
-    pub fn archive(&self, agent_id: &str, archived: bool) -> Result<()> {
+    pub fn archive(&self, agent_id: &str, archived: bool, complete_tasks: bool) -> Result<()> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         if archived && agent.status == AgentStatus::Working {
             anyhow::bail!("stop the active turn before archiving this session");
         }
-        self.store.set_agent_archived(agent_id, archived)?;
+        self.store.set_agent_archived(agent_id, archived, complete_tasks)?;
         self.emit(Event::Sync);
         Ok(())
     }
@@ -1428,7 +1428,7 @@ impl Hub {
         match lock.clone().try_lock_owned() {
             Ok(_held) => self.apply_merge(&parent, &child, &exchanges).await?,
             Err(_) => {
-                self.store.set_agent_archived(&child.id, true)?;
+                self.store.set_agent_archived(&child.id, true, false)?;
                 self.record(&parent.id, EntryKind::Notice, "Fork merge queued", &child.id, "");
                 self.emit(Event::Sync);
                 let hub = self.clone();
@@ -1437,7 +1437,7 @@ impl Hub {
                     let _held = lock.lock().await;
                     if let Err(error) = hub.apply_merge(&queued_parent, &child, &exchanges).await {
                         tracing::error!(agent = child.id, %error, "queued merge failed");
-                        let _ = hub.store.set_agent_archived(&child.id, false);
+                        let _ = hub.store.set_agent_archived(&child.id, false, false);
                         hub.record(&child.id, EntryKind::Notice, &format!("Merge failed: {error}"), "", "");
                         hub.emit(Event::Notice { text: format!("Could not merge {}: {error}", child.name) });
                         hub.emit(Event::Sync);
@@ -1482,7 +1482,7 @@ impl Hub {
             &context.join("\n\n"), true)?;
         self.emit(Event::Timeline { entry: Box::new(entry) });
         self.record(agent_id, EntryKind::MergedInto, &format!("Context passed to {}", target.name), target_id, "");
-        if archive { self.store.set_agent_archived(agent_id, true)?; }
+        if archive { self.store.set_agent_archived(agent_id, true, false)?; }
         self.emit(Event::Sync);
         Ok(target)
     }
@@ -1504,7 +1504,7 @@ impl Hub {
             &parent.id,
             "",
         );
-        self.store.set_agent_archived(&child.id, true)?;
+        self.store.set_agent_archived(&child.id, true, false)?;
         self.emit(Event::Sync);
         Ok(())
     }

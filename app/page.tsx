@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
 import { TaskActions } from "./components/TaskReference";
 
+import { ArchiveAgent } from "./components/ArchiveAgent";
 import { AgentPanel } from "./components/AgentPanel";
 import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
 import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
@@ -155,6 +156,7 @@ export default function Home() {
   }, []);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [archiving, setArchiving] = useState<Agent | null>(null);
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
   const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem & { existing: Set<string> }>>({});
   const [showArchived, setShowArchived] = useState(false);
@@ -1123,6 +1125,13 @@ export default function Home() {
     }}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
+      {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} onCancel={() => setArchiving(null)} onArchive={async completeTasks => {
+        await api.archive(archiving.id, true, completeTasks);
+        const index = panes.indexOf(archiving.id);
+        if (index >= 0) closePane(index);
+        setArchiving(null);
+        reload();
+      }} />}
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
@@ -1324,8 +1333,8 @@ export default function Home() {
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
-                        if (archived) closePane(index);
-                        void run(() => api.archive(id, archived));
+                        if (archived) setArchiving(view.agent);
+                        else void run(() => api.archive(id, false));
                       }}
                       focusEntry={panes.length === 1 ? focusEntry : null}
                       onEntryFocused={entryFocused}

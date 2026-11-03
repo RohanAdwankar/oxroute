@@ -1139,10 +1139,10 @@ async fn quoted_forks_keep_their_anchor_and_use_the_normal_archive_and_merge_lif
     std::fs::remove_file(database).unwrap();
     assert_eq!(w.hub.store.pane_links().unwrap()[&child.id], parent.id);
     assert_eq!(w.posts.lock().unwrap().threads.len(), 1);
-    w.hub.archive(&child.id, true).unwrap();
+    w.hub.archive(&child.id, true, false).unwrap();
     assert!(!w.hub.timeline(&parent.id, 50).unwrap().iter().any(|entry| entry.kind == EntryKind::Forked && entry.detail == child.id));
     assert!(w.hub.snapshot(10).unwrap().quote_threads.is_empty());
-    w.hub.archive(&child.id, false).unwrap();
+    w.hub.archive(&child.id, false, false).unwrap();
     assert_eq!(w.hub.snapshot(10).unwrap().quote_threads[0].anchor.text, anchor.text);
     w.hub.say_to(&child.id, "Consider an alternate design").await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
@@ -1618,7 +1618,7 @@ async fn the_web_snapshot_keeps_every_unarchived_session() {
         w.hub.store.save_agent(&agent).unwrap();
     }
     assert_eq!(w.hub.snapshot(10).unwrap().agents.len(), 24);
-    w.hub.archive("visible-0", true).unwrap();
+    w.hub.archive("visible-0", true, false).unwrap();
     let snapshot = w.hub.snapshot(10).unwrap();
     assert_eq!(snapshot.agents.len(), 23);
     assert_eq!(snapshot.archived.len(), 1);

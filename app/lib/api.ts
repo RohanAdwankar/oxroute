@@ -101,8 +101,8 @@ export const api = {
   quoteThread: (agent: string, quote: import("./types").QuoteAnchor) => post<{ agent: Agent }>("/api/fork-in-chat", { agent, quote }),
   merge: (agent: string, into?: string, archive = false) => post<{ agent: Agent }>("/api/merge", { agent, into, archive }),
   rename: (agent: string, name: string) => post<unknown>("/api/rename", { agent, name }),
-  archive: (agent: string, archived: boolean) =>
-    post<Snapshot>("/api/archive", { agent, archived }),
+  archive: (agent: string, archived: boolean, completeTasks = false) =>
+    post<Snapshot>("/api/archive", { agent, archived, completeTasks }),
   pin: (agent: string, pinned: boolean) => post<Snapshot>("/api/pin", { agent, pinned }),
   /// "" takes the reaction back. The daemon streams the reaction
   /// without refetching the snapshot or locking unrelated controls.

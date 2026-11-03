@@ -428,13 +428,28 @@ impl Store {
         })
     }
 
-    pub fn set_agent_archived(&self, id: &str, archived: bool) -> Result<()> {
+    pub fn set_agent_archived(&self, id: &str, archived: bool, complete_tasks: bool) -> Result<()> {
+        anyhow::ensure!(archived || !complete_tasks, "cannot complete tasks when restoring a session");
         self.with(|c| {
-            let changed = c.execute(
+            let transaction = c.unchecked_transaction()?;
+            let changed = transaction.execute(
                 "UPDATE agents SET archived = ?2 WHERE id = ?1",
                 params![id, archived as i64],
             )?;
             anyhow::ensure!(changed == 1, "no such agent");
+            if complete_tasks {
+                let ids = {
+                    let mut query = transaction.prepare("SELECT id FROM tasks WHERE agent_id = ?1 AND status != 'complete'")?;
+                    let ids = query.query_map([id], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                    ids
+                };
+                let at = crate::model::now();
+                for task in ids {
+                    transaction.execute("UPDATE tasks SET status = 'complete', blocked_by_task_id = '', updated_at = ?2 WHERE id = ?1", params![task, at])?;
+                    transaction.execute("INSERT INTO task_notes (id, task_id, text, agent_id, at) VALUES (?1, ?2, 'Marked complete when archiving the assigned agent.', '', ?3)", params![crate::model::new_id("note"), task, at])?;
+                }
+            }
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -1866,6 +1881,47 @@ mod tests {
     }
 
     #[test]
+    fn archiving_can_complete_only_the_assigned_tasks_atomically() {
+        let store = Store::in_memory().unwrap();
+        for id in ["owner", "other"] { store.save_agent(&agent(id)).unwrap(); }
+        let task = |id: &str, owner: &str, status, parent: &str| TaskItem {
+            id: id.into(), text: format!("Task {id}"), status, agent_id: owner.into(),
+            parent_task_id: parent.into(), blocked_by_task_id: if status == TaskStatus::Blocked { "foreign".into() } else { String::new() },
+            position: 2.0, images: vec!["evidence.png".into()], created_at: 1.0, updated_at: 1.0,
+        };
+        for (id, status) in [("open", TaskStatus::Incomplete), ("done", TaskStatus::Done), ("waiting", TaskStatus::WaitingForHuman), ("blocked", TaskStatus::Blocked), ("signed", TaskStatus::Complete)] {
+            store.save_task(&task(id, "owner", status, "")).unwrap();
+        }
+        store.save_task(&task("foreign", "other", TaskStatus::Incomplete, "open")).unwrap();
+        store.save_task(&task("unassigned", "", TaskStatus::Incomplete, "open")).unwrap();
+        let before = serde_json::to_value(store.tasks().unwrap()).unwrap();
+        store.set_agent_archived("owner", true, false).unwrap();
+        assert_eq!(serde_json::to_value(store.tasks().unwrap()).unwrap(), before);
+        store.set_agent_archived("owner", false, false).unwrap();
+        store.with(|c| { c.execute_batch("CREATE TRIGGER fail_archive BEFORE UPDATE ON tasks WHEN old.id = 'waiting' BEGIN SELECT RAISE(ABORT, 'storage failure'); END;")?; Ok(()) }).unwrap();
+        assert!(store.set_agent_archived("owner", true, true).is_err());
+        assert!(store.archived_agents().unwrap().is_empty());
+        assert_eq!(serde_json::to_value(store.tasks().unwrap()).unwrap(), before);
+        assert!(store.task_notes().unwrap().is_empty());
+        store.with(|c| { c.execute_batch("DROP TRIGGER fail_archive")?; Ok(()) }).unwrap();
+        store.set_agent_archived("owner", true, true).unwrap();
+        assert_eq!(store.archived_agents().unwrap()[0].id, "owner");
+        for task in store.tasks().unwrap() {
+            let original = before.as_array().unwrap().iter().find(|old| old["id"] == task.id).unwrap();
+            if task.agent_id == "owner" {
+                assert_eq!(task.status, TaskStatus::Complete);
+                assert!(task.blocked_by_task_id.is_empty());
+                assert_eq!(serde_json::to_value((&task.text, &task.agent_id, &task.parent_task_id, &task.images, task.position, task.created_at)).unwrap(),
+                    serde_json::json!([original["text"], original["agentId"], original["parentTaskId"], original["images"], original["position"], original["createdAt"]]));
+            } else { assert_eq!(&serde_json::to_value(task).unwrap(), original); }
+        }
+        assert_eq!(store.task_notes().unwrap().len(), 4);
+        store.set_agent_archived("owner", true, true).unwrap();
+        assert_eq!(store.task_notes().unwrap().len(), 4);
+        assert!(store.set_agent_archived("owner", false, true).is_err());
+    }
+
+    #[test]
     fn fleet_sessions_remain_visible_until_explicitly_archived() {
         let store = Store::in_memory().unwrap();
         for count in [12, 23] {
@@ -1878,10 +1934,10 @@ mod tests {
             assert_eq!(store.unarchived_agents().unwrap().len(), count);
             assert!(store.archived_agents().unwrap().is_empty());
         }
-        store.set_agent_archived("session-0", true).unwrap();
+        store.set_agent_archived("session-0", true, false).unwrap();
         assert_eq!(store.unarchived_agents().unwrap().len(), 22);
         assert_eq!(store.archived_agents().unwrap().len(), 1);
-        store.set_agent_archived("session-0", false).unwrap();
+        store.set_agent_archived("session-0", false, false).unwrap();
         assert_eq!(store.unarchived_agents().unwrap().len(), 23);
     }
 
@@ -1892,12 +1948,12 @@ mod tests {
         archived.status = AgentStatus::Complete;
         store.save_agent(&archived).unwrap();
 
-        store.set_agent_archived(&archived.id, true).unwrap();
+        store.set_agent_archived(&archived.id, true, false).unwrap();
         assert!(store.agents(20).unwrap().is_empty());
         assert_eq!(store.archived_agents().unwrap()[0].id, archived.id);
         assert!(store.agent(&archived.id).unwrap().is_some());
 
-        store.set_agent_archived(&archived.id, false).unwrap();
+        store.set_agent_archived(&archived.id, false, false).unwrap();
         assert_eq!(store.agents(20).unwrap()[0].id, archived.id);
         assert!(store.archived_agents().unwrap().is_empty());
     }
@@ -1916,7 +1972,7 @@ mod tests {
             store.agents(2).unwrap().iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>(),
             vec!["new", "middle"]
         );
-        store.set_agent_archived("new", true).unwrap();
+        store.set_agent_archived("new", true, false).unwrap();
         assert_eq!(
             store.agents(2).unwrap().iter().map(|agent| agent.id.as_str()).collect::<Vec<_>>(),
             vec!["middle"]
@@ -2263,7 +2319,7 @@ mod tests {
         assert_eq!(store.agents(20).unwrap()[0].id, "a1");
         store.set_agent_pinned("a1", true).unwrap();
         assert!(store.agent("a1").unwrap().unwrap().pinned);
-        store.set_agent_archived("a1", true).unwrap();
+        store.set_agent_archived("a1", true, false).unwrap();
         assert_eq!(store.archived_agents().unwrap()[0].id, "a1");
         drop(store);
         std::fs::remove_file(path).unwrap();

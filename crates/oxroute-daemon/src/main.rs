@@ -876,13 +876,15 @@ async fn rename(
 struct ArchiveBody {
     agent: String,
     archived: bool,
+    #[serde(default, rename = "completeTasks")]
+    complete_tasks: bool,
 }
 
 async fn archive(
     State(hub): Hubs,
     Json(body): Json<ArchiveBody>,
 ) -> Result<Json<oxroute_core::Snapshot>, Failed> {
-    hub.archive(&body.agent, body.archived)?;
+    hub.archive(&body.agent, body.archived, body.complete_tasks)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
