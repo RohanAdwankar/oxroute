@@ -41,6 +41,8 @@ try {
   assert.equal(await composer.inputValue(), 'Compare the available options');
   assert.equal(creates, 1, 'Concurrent and later clicks reuse the unsaved agent');
   assert.equal((await call('/api/state')).agents.some(agent => agent.id === first), false, 'The panel is usable before the daemon receives creation');
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/state' && response.ok()), page.evaluate(() => window.dispatchEvent(new Event('focus')))]);
+  assert.equal(await composer.inputValue(), 'Compare the available options', 'A stale snapshot cannot remove the unsaved panel');
   await composer.press('Enter');
   await page.getByText('Compare the available options', { exact: true }).waitFor();
   assert.equal(sends, 0, 'Submission appears immediately and waits for creation internally');

@@ -81,6 +81,13 @@ function streamedSnapshot(snapshot: Snapshot, event: DaemonEvent): Snapshot {
   return snapshot;
 }
 
+function archivedSnapshot(snapshot: Snapshot, agent: Agent, archived: boolean): Snapshot {
+  return { ...snapshot,
+    agents: [...snapshot.agents.filter(item => item.id !== agent.id), ...(!archived ? [agent] : [])],
+    archived: [...snapshot.archived.filter(item => item.id !== agent.id), ...(archived ? [agent] : [])],
+  };
+}
+
 function linkedPanes(id: string, links: Record<string, string>): string[] {
   let root = id;
   const seen = new Set([root]);
@@ -124,6 +131,15 @@ export default function Home() {
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<string, AgentView>>({});
   const creatingAgents = useRef(new Map<string, Agent>());
+  const archivingAgents = useRef(new Map<string, { agent: Agent; archived: boolean; request: Promise<Snapshot> }>());
+  const pendingSnapshot = useCallback((snapshot: Snapshot) => {
+    let next = { ...snapshot, agents: [...snapshot.agents] };
+    for (const [id, agent] of creatingAgents.current) {
+      if (![...next.agents, ...next.archived].some(saved => saved.id === id)) next.agents.push(agent);
+    }
+    for (const change of archivingAgents.current.values()) next = archivedSnapshot(next, change.agent, change.archived);
+    return next;
+  }, []);
   const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry>; reactions: Map<number, string> }>());
   const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
   const warmed = useRef(new Set<string>());
@@ -161,6 +177,7 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [archiving, setArchiving] = useState<Agent | null>(null);
+  const [archiveError, setArchiveError] = useState("");
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
   const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem & { existing: Set<string> }>>({});
   const [showArchived, setShowArchived] = useState(false);
@@ -470,11 +487,8 @@ export default function Home() {
         if (!live) return;
         paneLinks.current = next.paneLinks ?? {};
         for (const [agent, ids] of Object.entries(next.reviews ?? {})) for (const id of ids) preloadReview(reviewEndpoint(agent, id));
-        for (const [id, agent] of creatingAgents.current) {
-          if ([...next.agents, ...next.archived].some(saved => saved.id === id)) creatingAgents.current.delete(id);
-          else next.agents.push(agent);
-        }
-        setSnapshot([...updates.values()].reduce(streamedSnapshot, next));
+        for (const agent of [...next.agents, ...next.archived]) creatingAgents.current.delete(agent.id);
+        setSnapshot(pendingSnapshot([...updates.values()].reduce(streamedSnapshot, next)));
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
         if (selectedAgent && !customPanes.current) {
           const group = linkedPanes(selectedAgent, next.paneLinks ?? {});
@@ -507,7 +521,7 @@ export default function Home() {
       live = false;
       if (snapshotUpdates.current === updates) snapshotUpdates.current = null;
     };
-  }, [revision, complain, openRouting, setInboxVisible]);
+  }, [revision, complain, openRouting, setInboxVisible, pendingSnapshot]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -678,10 +692,6 @@ export default function Home() {
     window.history.pushState(null, "", url);
   };
 
-  const closePane = (index: number) => {
-    choosePanes(panes.filter((_, at) => at !== index));
-  };
-
   /// Put a session in its own pane beside the one at `index`, sharing that
   /// pane's space with it.
   const placeBeside = useCallback((index: number, agent: string) => {
@@ -740,6 +750,44 @@ export default function Home() {
     customPanes.current = true;
     setPanes(ids);
     if (key !== open) setUrlAgent(key ?? null);
+  };
+
+  const archiveAgent = (agent: Agent, archived: boolean, completeTasks = false) => {
+    const previous = archivingAgents.current.get(agent.id);
+    const request = (previous?.request.catch(() => {}) ?? Promise.resolve()).then(() => api.archive(agent.id, archived, completeTasks));
+    const change = { agent, archived, request };
+    archivingAgents.current.set(agent.id, change);
+    const modal = archiving?.id === agent.id;
+    const layout = open ? readPanes(open) : null;
+    const blank = sessionStorage.getItem("oxroute.blankAgent") === agent.id;
+    if (archived && blank) sessionStorage.removeItem("oxroute.blankAgent");
+    setArchiving(null);
+    setArchiveError("");
+    setSnapshot(current => pendingSnapshot(current));
+    if (archived) {
+      choosePanes(panes.filter(id => id !== agent.id));
+      setTabIds(current => current.filter(id => id !== agent.id));
+    }
+    const after = window.location.href;
+    void request.then(next => {
+      if (archivingAgents.current.get(agent.id) !== change) return;
+      archivingAgents.current.delete(agent.id);
+      setSnapshot(pendingSnapshot(next));
+      reload();
+    }).catch(error => {
+      if (archivingAgents.current.get(agent.id) !== change) return;
+      archivingAgents.current.delete(agent.id);
+      setSnapshot(current => pendingSnapshot(archivedSnapshot(current, agent, !archived)));
+      if (blank && !sessionStorage.getItem("oxroute.blankAgent")) sessionStorage.setItem("oxroute.blankAgent", agent.id);
+      if (archived && window.location.href === after) {
+        if (open) writePanes(open, layout);
+        showAgent(open);
+        setPanes(panes);
+        if (modal) { setArchiveError(error instanceof Error ? error.message : String(error)); setArchiving(agent); }
+      }
+      complain(error);
+      reload();
+    });
   };
 
   const tabLayout = (id: string): PaneLayout => id === open ? syncPanes(readPanes(id), panes) ?? id : readPanes(id) ?? id;
@@ -1135,13 +1183,7 @@ export default function Home() {
     }}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
-      {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} onCancel={() => setArchiving(null)} onArchive={async completeTasks => {
-        await api.archive(archiving.id, true, completeTasks);
-        const index = panes.indexOf(archiving.id);
-        if (index >= 0) closePane(index);
-        setArchiving(null);
-        reload();
-      }} />}
+      {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} error={archiveError} onCancel={() => setArchiving(null)} onArchive={completeTasks => archiveAgent(archiving, true, completeTasks)} />}
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
@@ -1363,11 +1405,10 @@ export default function Home() {
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
-                        if (archived && snapshot.tasks.some((task) => task.agentId === id))
+                        if (archived && snapshot.tasks.some((task) => task.agentId === id)) {
+                          setArchiveError("");
                           setArchiving(view.agent);
-                        else void run(() => api.archive(id, archived), () => {
-                          if (archived) closePane(index);
-                        });
+                        } else archiveAgent(view.agent, archived);
                       }}
                       focusEntry={panes.length === 1 ? focusEntry : null}
                       onEntryFocused={entryFocused}

@@ -1,27 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { Agent, TaskItem } from "../lib/types";
 
-export function ArchiveAgent({ agent, tasks, onCancel, onArchive }: {
+export function ArchiveAgent({ agent, tasks, error, onCancel, onArchive }: {
   agent: Agent;
   tasks: TaskItem[];
   onCancel: () => void;
-  onArchive: (completeTasks: boolean) => Promise<void>;
+  error: string;
+  onArchive: (completeTasks: boolean) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const remaining = tasks.filter(task => task.status !== "complete").length;
   useEffect(() => { dialog.current?.showModal(); }, []);
-  const archive = async (complete: boolean) => {
-    setBusy(true);
-    setError("");
-    try { await onArchive(complete); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false); }
-  };
   return (
-    <dialog ref={dialog} aria-labelledby="archive-title" onKeyDown={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}
+    <dialog ref={dialog} aria-labelledby="archive-title" onKeyDown={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); onCancel(); }}
       className="m-auto w-[min(640px,calc(100%_-_32px))] border border-edge bg-card p-5 text-ink backdrop:bg-ink/20">
       <h2 id="archive-title" className="text-[15px] font-semibold">Archive {agent.name}?</h2>
       <p className="mt-2 text-[13px] text-mid">{tasks.length} associated task{tasks.length === 1 ? "" : "s"}{remaining ? ` · ${remaining} awaiting completion` : ""}</p>
@@ -33,9 +26,9 @@ export function ArchiveAgent({ agent, tasks, onCancel, onArchive }: {
       </ul>}
       {error && <p role="alert" className="my-3 text-[13px] text-merge">{error}</p>}
       <div className="mt-4 flex flex-wrap justify-end gap-3 text-[13px]">
-        <button autoFocus disabled={busy} onClick={onCancel} className="cursor-pointer px-2 py-2 text-mid disabled:opacity-40">Cancel</button>
-        <button disabled={busy} onClick={() => void archive(false)} className="cursor-pointer px-2 py-2 disabled:opacity-40">{tasks.length ? "Archive without changing tasks" : "Archive"}</button>
-        {remaining > 0 && <button disabled={busy} onClick={() => void archive(true)} className="cursor-pointer bg-ink px-3 py-2 text-paper disabled:opacity-40">Mark all complete and archive</button>}
+        <button autoFocus onClick={onCancel} className="cursor-pointer px-2 py-2 text-mid">Cancel</button>
+        <button onClick={() => onArchive(false)} className="cursor-pointer px-2 py-2">{tasks.length ? "Archive without changing tasks" : "Archive"}</button>
+        {remaining > 0 && <button onClick={() => onArchive(true)} className="cursor-pointer bg-ink px-3 py-2 text-paper">Mark all complete and archive</button>}
       </div>
     </dialog>
   );

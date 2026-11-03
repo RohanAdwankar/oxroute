@@ -10,12 +10,14 @@ const call = async (path, body) => {
   return response.json();
 };
 const owner = await call('/api/agents', {}), other = await call('/api/agents', {});
-await call('/api/rename', { agent: owner.id, name: 'Deployment follow-up' });
-const tasks = ['incomplete', 'done', 'waiting_for_human', 'blocked', 'complete'].map((status, index) => ({
-  id: `task_${crypto.randomUUID().replaceAll('-', '')}`, text: ['Check deployment health', 'Review chart changes', 'Confirm maintenance window', 'Run dependent validation', 'Previously approved task'][index],
+const ownerName = `Deployment follow-up ${owner.id.slice(-6)}`;
+await call('/api/rename', { agent: owner.id, name: ownerName });
+// Keep these idle: incomplete tasks are automatically handed to an inference harness.
+const tasks = ['done', 'waiting_for_human', 'blocked', 'complete'].map((status, index) => ({
+  id: `task_${crypto.randomUUID().replaceAll('-', '')}`, text: ['Review chart changes', 'Confirm maintenance window', 'Run dependent validation', 'Previously approved task'][index],
   status, agentId: owner.id,
 }));
-const foreign = { id: `task_${crypto.randomUUID().replaceAll('-', '')}`, text: 'Another agent’s subtask', status: 'incomplete', agentId: other.id };
+const foreign = { id: `task_${crypto.randomUUID().replaceAll('-', '')}`, text: 'Another agent’s subtask', status: 'waiting_for_human', agentId: other.id };
 const seed = spawnSync('uv', ['run', '--no-project', 'python', '-c', `
 import json,sqlite3,sys
 c=sqlite3.connect(sys.argv[1]); rows=json.loads(sys.argv[2])
@@ -27,10 +29,11 @@ assert.equal(seed.status, 0, seed.stderr);
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.addInitScript(() => { window.SharedWorker = class { port = { postMessage() {}, close() {} }; }; });
-let fail = false;
+let fail = false, holdArchive = false, releaseArchive;
 await page.route('**/api/**', async route => {
   const url = new URL(route.request().url());
   if (url.pathname === '/api/version') return route.continue();
+  if (holdArchive && url.pathname === '/api/archive') await new Promise(resolve => { releaseArchive = resolve; });
   if (fail && url.pathname === '/api/archive') return route.fulfill({ status: 503, json: { error: 'Temporary archive failure' } });
   await route.fulfill({ response: await page.request.fetch(api + url.pathname + url.search, {
     method: route.request().method(), data: route.request().postDataBuffer() ?? undefined, headers: { 'content-type': 'application/json' },
@@ -65,25 +68,37 @@ try {
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === owner.id), false);
   assert.deepEqual((await assigned()).map(task => task.status).sort(), tasks.map(task => task.status).sort());
   fail = false;
+  holdArchive = true;
+  const archiveOnly = page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok());
+  void archiveOnly.catch(() => {});
   await modal.getByRole('button', { name: 'Archive without changing tasks', exact: true }).click();
-  await modal.waitFor({ state: 'detached' });
+  await modal.waitFor({ state: 'detached', timeout: 1000 });
+  await page.locator(`[data-agent-pane="${owner.id}"]`).waitFor({ state: 'detached', timeout: 1000 });
+  assert.equal((await call('/api/state')).archived.some(agent => agent.id === owner.id), false, 'The pane closes before the archive reaches the daemon');
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/state' && response.ok()), page.evaluate(() => window.dispatchEvent(new Event('focus')))]);
+  assert.equal(await page.getByRole('button', { name: ownerName, exact: true }).count(), 0, 'A stale snapshot cannot resurrect the pending archived card');
+  if (process.env.ARTIFACT_DIR) await page.screenshot({ path: `${process.env.ARTIFACT_DIR}/instant-archive.png` });
+  holdArchive = false;
+  releaseArchive();
+  await archiveOnly;
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === owner.id), true);
   assert.deepEqual((await assigned()).map(task => task.status).sort(), tasks.map(task => task.status).sort());
   await page.goto(`${web}/?agent=${owner.id}`);
-  await page.getByRole('button', { name: 'restore session', exact: true }).click();
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok()), page.getByRole('button', { name: 'restore session', exact: true }).click()]);
   await page.getByRole('button', { name: 'archive session', exact: true }).waitFor();
   assert.equal(await page.getByRole('dialog').count(), 0);
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
-  await modal.getByRole('button', { name: 'Mark all complete and archive', exact: true }).click();
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok()), modal.getByRole('button', { name: 'Mark all complete and archive', exact: true }).click()]);
   await modal.waitFor({ state: 'detached' });
   assert.ok((await assigned()).every(task => task.status === 'complete'));
-  assert.equal((await call('/api/tasks')).find(task => task.id === foreign.id).status, 'incomplete');
+  assert.equal((await call('/api/tasks')).find(task => task.id === foreign.id).status, foreign.status);
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === owner.id), true);
   await page.goto(`${web}/?agent=${other.id}`);
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
   const empty = await call('/api/agents', {});
   await page.goto(`${web}/?agent=${empty.id}`);
+  await page.locator('[data-composer]').fill('Retain this draft after a failed archive');
   await page.evaluate(() => {
     window.archiveDialogs = 0;
     new MutationObserver(records => {
@@ -96,13 +111,19 @@ try {
   await page.getByText('Temporary archive failure', { exact: true }).waitFor();
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), false);
   assert.equal(await page.getByRole('button', { name: 'archive session', exact: true }).count(), 1);
+  assert.equal(await page.locator('[data-composer]').inputValue(), 'Retain this draft after a failed archive');
   fail = false;
+  holdArchive = true;
   const archived = page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok());
+  void archived.catch(() => {});
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
+  await page.getByRole('button', { name: 'archive session', exact: true }).waitFor({ state: 'detached', timeout: 1000 });
+  assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), false);
+  holdArchive = false;
+  releaseArchive();
   await archived;
-  await page.getByRole('button', { name: 'archive session', exact: true }).waitFor({ state: 'detached' });
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), true);
   assert.equal(await page.evaluate(() => window.archiveDialogs), 0);
   if (process.env.ARTIFACT_DIR) await page.screenshot({ path: `${process.env.ARTIFACT_DIR}/empty-agent-archived.png` });
   console.log('Archive modal: task list, cancellation, Escape, failure recovery, archive-only, restore, bulk completion, ownership scope, and empty sessions passed.');
-} finally { await page.goto('about:blank'); await page.unrouteAll({ behavior: "wait" }); await browser.close(); }
+} finally { releaseArchive?.(); await page.goto('about:blank'); await page.unrouteAll({ behavior: "wait" }); await browser.close(); }
