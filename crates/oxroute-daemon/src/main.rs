@@ -219,6 +219,7 @@ async fn serve() -> Result<()> {
         .route("/api/client-failures", get(client_failures).post(client_failure))
         .route("/api/events", get(events))
         .route("/api/search", get(search))
+        .route("/api/agents/{id}/context/{entry}", get(search_context))
         .route("/api/search/native", get(search_native))
         .route("/api/continue", post(continue_session))
         .route("/api/native-preview", get(native_preview))
@@ -405,6 +406,10 @@ async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<oxroute_core::SearchGroup>>, Failed> {
     Ok(Json(hub.search(&query.q, SEARCH_LIMIT)?))
+}
+
+async fn search_context(State(hub): Hubs, Path((id, entry)): Path<(String, i64)>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
+    Ok(Json(hub.store.timeline_context(&id, entry)?))
 }
 
 /// The harnesses' own sessions, asked for separately so the list you are

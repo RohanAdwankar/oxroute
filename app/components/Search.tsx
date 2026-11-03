@@ -21,9 +21,10 @@ function matched(query: string, ...parts: (string | undefined)[]): string {
   return present.find((part) => part.toLowerCase().includes(wanted)) ?? present[0] ?? "";
 }
 
-export function Search({ onOpen, onContinue }: {
+export function Search({ onOpen, onContinue, onVisibility }: {
   onOpen: (agent: string, entry: number) => void;
   onContinue: (agent: string) => void;
+  onVisibility: (open: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
   const [managed, setManaged] = useState<SearchGroup[]>([]);
@@ -59,50 +60,48 @@ export function Search({ onOpen, onContinue }: {
     })),
   ], [managed, other]);
   const choice = choices[selected];
+  useEffect(() => onVisibility(open), [open, onVisibility]);
 
   useEffect(() => {
     const term = query.trim();
-    if (!term) return;
+    if (!open || !term) return;
+    const controller = new AbortController();
     const current = ++request.current;
     const timer = window.setTimeout(() => {
-      // Two questions with different answers in mind: what oxroute knows is
-      // local and instant, and the harnesses' own transcripts take as long
-      // as they take. Neither waits for the other.
-      api.search(term).then((hits) => {
-        if (request.current !== current) return;
+      // Stored results and native discovery arrive independently.
+      api.search(term, controller.signal).then((hits) => {
+        if (controller.signal.aborted || request.current !== current) return;
         setManaged(hits);
         setSelected(0);
         setLoading(false);
       }, (reason) => {
-        if (request.current !== current) return;
+        if (controller.signal.aborted || request.current !== current) return;
         setError(reason instanceof Error ? reason.message : String(reason));
         setLoading(false);
       });
-      api.searchNative(term).then((sessions) => {
-        if (request.current === current) setOther(sessions);
+      api.searchNative(term, controller.signal).then((sessions) => {
+        if (!controller.signal.aborted && request.current === current) setOther(sessions);
       }, () => {});
     }, 150);
-    return () => window.clearTimeout(timer);
-  }, [query]);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, open]);
 
   useEffect(() => {
-    if (!choice) return;
+    if (!open || !choice) return;
     const current = ++previewRequest.current;
+    const controller = new AbortController();
     const load = choice.type === "managed"
-      ? api.agent(choice.result.destinations[0].agentId).then((view) => {
-          const entry = choice.result.destinations[0].entryId;
-          const at = Math.max(view.timeline.findIndex((item) => item.id === entry), 0);
-          return view.timeline.slice(Math.max(0, at - 5), at + 7).map((item) => ({
-            role: item.kind === "said" ? "agent" : item.kind === "worked" ? "work" : "you",
-            text: matched(query, item.text, item.detail, item.output),
-          }));
-        })
-      : api.nativePreview(choice.session.backend, choice.session.sessionId);
+      ? api.searchContext(choice.result.destinations[0].agentId, choice.result.destinations[0].entryId, controller.signal).then(entries => entries.map(item => ({
+          role: item.kind === "said" ? "agent" : item.kind === "worked" ? "work" : "you",
+          text: matched(query, item.text, item.detail, item.output),
+        })))
+      : api.nativePreview(choice.session.backend, choice.session.sessionId, controller.signal);
     load.then(
-      (lines) => previewRequest.current === current && setPreview({ key: choice.key, lines }),
-      () => previewRequest.current === current && setPreview({ key: choice.key, lines: [] }),
+      (lines) => !controller.signal.aborted && previewRequest.current === current && setPreview({ key: choice.key, lines }),
+      () => !controller.signal.aborted && previewRequest.current === current && setPreview({ key: choice.key, lines: [] }),
     );
-  }, [choice, query]);
+    return () => controller.abort();
+  }, [choice, query, open]);
 
   const activate = async (target: Choice | undefined) => {
     if (!target) return;
@@ -171,7 +170,7 @@ export function Search({ onOpen, onContinue }: {
       {query.trim() && (
         <div className="flex h-[min(72vh,720px)] min-h-0 overflow-hidden border-t border-rule">
           <div className="quiet-scroll w-[42%] overflow-y-auto border-r border-rule">
-            {loading || choices.length === 0 ? (
+            {choices.length === 0 ? (
               <p className="px-4 py-4 text-[12px] text-faint">
                 {loading ? "Searching…" : error || "No session matches."}
               </p>

@@ -23,6 +23,7 @@ export function Chrome({
   activeBoard,
   onBoard,
   onNewAgent,
+  onSearchVisibility,
   onSearchOpen,
   onSearchContinue,
   panes,
@@ -39,6 +40,7 @@ export function Chrome({
   activeBoard: string | null;
   onBoard: (id: string | null) => void;
   onNewAgent: () => void;
+  onSearchVisibility: (open: boolean) => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
   panes?: ReactNode;
@@ -96,7 +98,7 @@ export function Chrome({
         <Cell onClick={onNewAgent} label="New agent" icon="plus" />
       </nav>
 
-      <Search onOpen={onSearchOpen} onContinue={onSearchContinue} />
+      <Search onVisibility={onSearchVisibility} onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
       <div className="flex min-w-0 flex-1 items-stretch">{tabs}</div>
 

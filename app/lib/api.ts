@@ -7,6 +7,7 @@ import type { DiffQuote } from "./drafts";
 import type {
   Agent,
   AgentView,
+  Entry,
   Arranged,
   Backend,
   Board,
@@ -48,6 +49,7 @@ async function call<T>(path: string, init?: RequestInit, retries = !init?.method
       }
       return body ? (JSON.parse(body) as T) : (undefined as T);
     } catch (error) {
+      if (init?.signal?.aborted) throw error;
       recordClientFailure(path, init, status, error);
       if (attempt < retries && error instanceof TypeError && (status === 0 || status === 200)) {
         await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
@@ -63,17 +65,19 @@ const post = <T,>(path: string, payload: unknown) =>
 
 export const api = {
   snapshot: () => call<Snapshot>("/api/state"),
-  search: (query: string) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`),
+  search: (query: string, signal?: AbortSignal) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`, { signal }),
   /// The harnesses' own sessions, which take as long as they take.
-  searchNative: (query: string) =>
-    call<NativeSession[]>(`/api/search/native?q=${encodeURIComponent(query)}`),
+  searchNative: (query: string, signal?: AbortSignal) =>
+    call<NativeSession[]>(`/api/search/native?q=${encodeURIComponent(query)}`, { signal }),
   continueSession: (backend: Backend, sessionId: string) =>
     post<Agent>("/api/continue", { backend, sessionId }),
-  nativePreview: (backend: Backend, sessionId: string) =>
-    call<ConversationLine[]>(`/api/native-preview?backend=${encodeURIComponent(backend)}&sessionId=${encodeURIComponent(sessionId)}`),
+  nativePreview: (backend: Backend, sessionId: string, signal?: AbortSignal) =>
+    call<ConversationLine[]>(`/api/native-preview?backend=${encodeURIComponent(backend)}&sessionId=${encodeURIComponent(sessionId)}`, { signal }),
 
   /** Put a thought of your own into the inbox, beside everything else. */
   note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),
+  searchContext: (id: string, entry: number, signal?: AbortSignal) =>
+    call<Entry[]>(`/api/agents/${encodeURIComponent(id)}/context/${entry}`, { signal }),
   createAgent: () => post<Agent>("/api/agents", {}),
   agent: (id: string, before?: number) => call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`),
 

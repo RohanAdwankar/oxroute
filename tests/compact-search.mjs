@@ -15,6 +15,7 @@ try {
     const selected = route.request().url().endsWith(agent.id) ? agent : continued;
     return route.fulfill({ json: { agent: selected, timeline: [{ id: 1, agentId: selected.id, kind: 'said', text: 'Stored target context.', at: 1, detail: '' }], delivery: 'start' } });
   });
+  await page.route('**/api/agents/*/context/*', route => route.fulfill({ json: [{ id: 1, agentId: agent.id, kind: 'said', text: 'Stored target context.', at: 1, detail: '' }] }));
   await page.route('**/api/search?*', route => route.fulfill({ json: [{ at: 1, kind: 'said', text: 'Stored target context.', detail: '', origin: '', destinations: [{ agentId: agent.id, agentName: agent.name, entryId: 1 }] }] }));
   await page.route('**/api/search/native?*', route => route.fulfill({ json: [{ backend: 'codex', sessionId: 'native-fixture', name: 'Native context', preview: 'Native context preview.', cwd: '/workspace', model: 'fixture', updatedAt: 1 }] }));
   await page.route('**/api/native-preview?*', route => route.fulfill({ json: [{ role: 'user', text: 'Native conversation context.' }] }));

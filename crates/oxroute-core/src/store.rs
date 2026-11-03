@@ -232,6 +232,32 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    conn.execute("CREATE INDEX IF NOT EXISTS entries_messages ON entries (agent_id, id DESC) WHERE kind IN ('received', 'said', 'asked', 'you') AND text != ''", [])?;
+    conn.execute("CREATE INDEX IF NOT EXISTS entries_forks ON entries (agent_id, detail) WHERE kind = 'forked-from'", [])?;
+    if !conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'entries_search')", [], |row| row.get::<_, bool>(0))? {
+        let transaction = conn.unchecked_transaction()?;
+        transaction.execute_batch("CREATE TABLE entry_search_content (
+                id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL,
+                text TEXT NOT NULL, detail TEXT NOT NULL, origin TEXT NOT NULL);
+            INSERT INTO entry_search_content SELECT id, agent_id, at, kind, text, detail, origin FROM entries;
+            CREATE VIRTUAL TABLE entries_search USING fts5(text, detail, origin, content='entry_search_content', content_rowid='id', tokenize='trigram');
+            INSERT INTO entries_search(entries_search) VALUES ('rebuild');
+            CREATE TRIGGER entries_search_insert AFTER INSERT ON entries BEGIN
+                INSERT INTO entry_search_content VALUES (new.id, new.agent_id, new.at, new.kind, new.text, new.detail, new.origin);
+                INSERT INTO entries_search(rowid, text, detail, origin) VALUES (new.id, new.text, new.detail, new.origin);
+            END;
+            CREATE TRIGGER entries_search_delete AFTER DELETE ON entries BEGIN
+                INSERT INTO entries_search(entries_search, rowid, text, detail, origin) VALUES ('delete', old.id, old.text, old.detail, old.origin);
+                DELETE FROM entry_search_content WHERE id = old.id;
+            END;
+            CREATE TRIGGER entries_search_update AFTER UPDATE OF text, detail, origin, agent_id, at, kind ON entries
+            WHEN old.text IS NOT new.text OR old.detail IS NOT new.detail OR old.origin IS NOT new.origin OR old.agent_id IS NOT new.agent_id OR old.at IS NOT new.at OR old.kind IS NOT new.kind BEGIN
+                INSERT INTO entries_search(entries_search, rowid, text, detail, origin) VALUES ('delete', old.id, old.text, old.detail, old.origin);
+                UPDATE entry_search_content SET agent_id = new.agent_id, at = new.at, kind = new.kind, text = new.text, detail = new.detail, origin = new.origin WHERE id = old.id;
+                INSERT INTO entries_search(rowid, text, detail, origin) VALUES (new.id, new.text, new.detail, new.origin);
+            END;")?;
+        transaction.commit()?;
+    }
     conn.execute("DROP INDEX IF EXISTS tasks_agent", [])?;
     conn.execute(
         "CREATE INDEX tasks_agent ON tasks (agent_id, status, updated_at DESC)",
@@ -1195,6 +1221,18 @@ impl Store {
         self.timeline_before(agent_id, limit, None)
     }
 
+    /// Only the neighboring entries needed by a search preview.
+    pub fn timeline_context(&self, agent_id: &str, entry: i64) -> Result<Vec<Entry>> {
+        self.read(|c| {
+            let mut statement = c.prepare("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries
+                WHERE id IN (SELECT id FROM entries WHERE agent_id = ?1 AND id <= ?2 ORDER BY id DESC LIMIT 6)
+                   OR id IN (SELECT id FROM entries WHERE agent_id = ?1 AND id > ?2 ORDER BY id LIMIT 6)
+                ORDER BY id")?;
+            let entries = statement.query_map(params![agent_id, entry], read_entry)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(entries)
+        })
+    }
+
     pub fn timeline_before(&self, agent_id: &str, limit: usize, before: Option<i64>) -> Result<Vec<Entry>> {
         self.with(|c| {
             let mut stmt = c.prepare(
@@ -1284,7 +1322,13 @@ impl Store {
         if query.is_empty() {
             return Ok(vec![]);
         }
-        self.with(|c| {
+        // Trigrams constrain literal substrings of three characters or more.
+        // Shorter queries still search every entry with the same semantics.
+        let phrase = (query.chars().count() >= 3).then(|| format!("\"{}\"", query.replace('"', "\"\"")));
+        let candidates = if phrase.is_some() {
+            "s.id IN (SELECT rowid FROM entries_search WHERE entries_search MATCH ?2) AND"
+        } else { "" };
+        self.read(|c| {
             let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
             let mut links = c.prepare(
                 "SELECT agent_id, detail FROM entries WHERE kind = 'forked-from'",
@@ -1316,16 +1360,16 @@ impl Store {
                 }
             }
 
-            let mut stmt = c.prepare(
-                "SELECT e.id, e.agent_id, a.name, e.at, e.kind, e.text, e.detail, e.origin
-                 FROM entries e JOIN agents a ON a.id = e.agent_id
-                 WHERE instr(lower(e.text), lower(?1)) > 0
-                    OR instr(lower(e.detail), lower(?1)) > 0
-                    OR instr(lower(e.origin), lower(?1)) > 0
-                 ORDER BY e.at DESC, e.id DESC
-                 LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![query, (limit * 20) as i64], |row| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT s.id, s.agent_id, a.name, s.at, s.kind, s.text, s.detail, s.origin
+                 FROM entry_search_content s JOIN agents a ON a.id = s.agent_id
+                 WHERE {candidates} (instr(lower(s.text), lower(?1)) > 0
+                    OR instr(lower(s.detail), lower(?1)) > 0
+                    OR instr(lower(s.origin), lower(?1)) > 0)
+                 ORDER BY s.at DESC, s.id DESC
+                 LIMIT ?3",
+            ))?;
+            let rows = stmt.query_map(params![query, phrase, (limit * 20) as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -1375,11 +1419,8 @@ impl Store {
             // The best match first, not merely the newest: you are looking
             // for the session where something was said, and the words you
             // remember are the evidence for which one that is.
-            groups.sort_by(|a, b| {
-                Self::relevance(query, b)
-                    .cmp(&Self::relevance(query, a))
-                    .then(b.at.total_cmp(&a.at))
-            });
+            // Stable sorting keeps the existing newest-first order for ties.
+            groups.sort_by_cached_key(|group| std::cmp::Reverse(Self::relevance(query, group)));
             groups.truncate(limit);
             Ok(groups)
         })
@@ -2456,6 +2497,73 @@ mod tests {
         let previews = store.message_previews().unwrap();
         assert_eq!(previews.len(), 4);
         for text in previews.values() { assert_eq!(text, "Newest inserted answer"); }
+    }
+
+    #[test]
+    fn indexed_search_preserves_literal_substrings_through_timeline_changes() {
+        let store = Store::in_memory().unwrap();
+        for id in ["first", "second"] { store.save_agent(&agent(id)).unwrap(); }
+        let values = ["alphabet", "100% coverage", "a_b and aXb", "Mixed CASE", "quoted \"value\"", "foo.bar [abc] x:y", "汉字串 and résumé", "OR NEAR *", "needle moved"];
+        for (at, value) in values.iter().enumerate() {
+            store.add_entry("first", at as f64, EntryKind::Said, value, value, value).unwrap();
+        }
+        let verify = || {
+            for query in ["a", "ab", "pha", "100%", "a_b", "mixed", "\"value\"", "foo.", "[abc]", "x:y", "汉字串", "rés", "OR", "NEAR", "needle", "missing"] {
+                let expected = store.with(|c| {
+                    let mut statement = c.prepare("SELECT id FROM entries WHERE instr(lower(text),lower(?1)) > 0 OR instr(lower(detail),lower(?1)) > 0 OR instr(lower(origin),lower(?1)) > 0 ORDER BY id")?;
+                    let ids = statement.query_map([query], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(ids)
+                }).unwrap();
+                let mut actual = store.search(query, 100).unwrap().into_iter().flat_map(|group| group.destinations.into_iter().map(|destination| destination.entry_id)).collect::<Vec<_>>();
+                actual.sort();
+                assert_eq!(actual, expected, "Literal substring: {query}");
+            }
+        };
+        verify();
+        store.with(|c| { c.execute("UPDATE entries SET text = 'changed needle', detail = '', origin = '', at = 1000, kind = 'worked' WHERE text = 'alphabet'", [])?; Ok(()) }).unwrap();
+        assert_eq!(store.search("changed needle", 10).unwrap()[0].kind, EntryKind::Worked);
+        assert_eq!(store.search("changed needle", 10).unwrap()[0].at, 1000.0);
+        store.copy_timeline("first", "second").unwrap();
+        verify();
+        store.with(|c| { c.execute("DELETE FROM entries WHERE agent_id = 'first' AND text LIKE '%needle%'", [])?; Ok(()) }).unwrap();
+        verify();
+    }
+
+    #[test]
+    fn search_context_includes_old_matches_without_unrelated_history() {
+        let store = Store::in_memory().unwrap();
+        for id in ["owner", "other"] { store.save_agent(&agent(id)).unwrap(); }
+        let mut ids = Vec::new();
+        for at in 0..650 {
+            ids.push(store.add_entry("owner", at as f64, EntryKind::You, "entry", "", "").unwrap().id);
+            store.add_entry("other", at as f64, EntryKind::Said, "neighboring session", "", "").unwrap();
+        }
+        let context = store.timeline_context("owner", ids[20]).unwrap();
+        assert!(context.iter().any(|entry| entry.id == ids[20]));
+        assert!(context.iter().all(|entry| entry.agent_id == "owner"));
+        let at = context.iter().position(|entry| entry.id == ids[20]).unwrap();
+        assert!(at > 0 && at + 1 < context.len());
+        assert!(context.windows(2).all(|pair| pair[0].id < pair[1].id));
+        assert!(context.len() < ids.len() / 2);
+        assert!(!store.timeline("owner", 500).unwrap().iter().any(|entry| entry.id == ids[20]));
+    }
+
+    #[test]
+    fn existing_timelines_are_searchable_after_open_and_reopen() {
+        let path = std::env::temp_dir().join(crate::model::new_id("search-migration"));
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection.execute_batch(SCHEMA).unwrap();
+            connection.execute("INSERT INTO agents (id,name,backend,model) VALUES ('existing','Existing','codex','test')", []).unwrap();
+            connection.execute("INSERT INTO entries (agent_id,at,kind,text) VALUES ('existing',1,'said','Retained conversation')", []).unwrap();
+        }
+        for _ in 0..2 {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(store.search("conversation", 10).unwrap()[0].destinations[0].agent_id, "existing");
+            store.add_entry("existing", 2.0, EntryKind::Said, "Fresh conversation", "", "").unwrap();
+            assert!(!store.search("Fresh", 10).unwrap().is_empty());
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

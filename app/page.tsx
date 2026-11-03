@@ -128,6 +128,9 @@ export default function Home() {
   const warmed = useRef(new Set<string>());
   const warmQueue = useRef<string[]>([]);
   const warming = useRef(0);
+  const warmPaused = useRef(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchVisibility = useCallback((open: boolean) => { warmPaused.current = open; setSearchOpen(open); }, []);
   const loadAgent = useCallback((id: string) => {
     const pending = requests.current.get(id);
     if (pending) return pending.promise;
@@ -509,6 +512,7 @@ export default function Home() {
       warmQueue.current.push(agent.id);
     }
     const drain = () => {
+      if (warmPaused.current) return;
       while (warming.current < 2 && warmQueue.current.length) {
         const id = warmQueue.current.shift()!;
         warming.current++;
@@ -519,7 +523,7 @@ export default function Home() {
       }
     };
     drain();
-  }, [snapshot.agents, loadAgent]);
+  }, [snapshot.agents, loadAgent, searchOpen]);
 
   useEffect(() => {
     if (panes.length === 0) return;
@@ -1186,6 +1190,7 @@ export default function Home() {
           clearRouting();
           showAgent(agent.id);
         })}
+        onSearchVisibility={searchVisibility}
         onSearchOpen={showAgent}
         onSearchContinue={(agent) => {
           reload();
