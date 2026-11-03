@@ -1338,8 +1338,11 @@ export default function Home() {
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
-                        if (archived) setArchiving(view.agent);
-                        else void run(() => api.archive(id, false));
+                        if (archived && snapshot.tasks.some((task) => task.agentId === id))
+                          setArchiving(view.agent);
+                        else void run(() => api.archive(id, archived), () => {
+                          if (archived) closePane(index);
+                        });
                       }}
                       focusEntry={panes.length === 1 ? focusEntry : null}
                       onEntryFocused={entryFocused}

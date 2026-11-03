@@ -84,9 +84,25 @@ try {
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
   const empty = await call('/api/agents', {});
   await page.goto(`${web}/?agent=${empty.id}`);
+  await page.evaluate(() => {
+    window.archiveDialogs = 0;
+    new MutationObserver(records => {
+      for (const record of records) for (const node of record.addedNodes)
+        if (node instanceof Element && (node.matches('dialog') || node.querySelector('dialog'))) window.archiveDialogs++;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  fail = true;
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
-  await modal.getByText('0 associated tasks', { exact: true }).waitFor();
-  await modal.getByRole('button', { name: 'Archive', exact: true }).click();
-  await modal.waitFor({ state: 'detached' });
+  await page.getByText('Temporary archive failure', { exact: true }).waitFor();
+  assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), false);
+  assert.equal(await page.getByRole('button', { name: 'archive session', exact: true }).count(), 1);
+  fail = false;
+  const archived = page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok());
+  await page.getByRole('button', { name: 'archive session', exact: true }).click();
+  await archived;
+  await page.getByRole('button', { name: 'archive session', exact: true }).waitFor({ state: 'detached' });
+  assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), true);
+  assert.equal(await page.evaluate(() => window.archiveDialogs), 0);
+  if (process.env.ARTIFACT_DIR) await page.screenshot({ path: `${process.env.ARTIFACT_DIR}/empty-agent-archived.png` });
   console.log('Archive modal: task list, cancellation, Escape, failure recovery, archive-only, restore, bulk completion, ownership scope, and empty sessions passed.');
-} finally { await page.unrouteAll({ behavior: "wait" }); await browser.close(); }
+} finally { await page.goto('about:blank'); await page.unrouteAll({ behavior: "wait" }); await browser.close(); }
