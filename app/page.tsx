@@ -1405,7 +1405,7 @@ export default function Home() {
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
                       onArchive={(archived) => {
-                        if (archived && snapshot.tasks.some((task) => task.agentId === id)) {
+                        if (archived && snapshot.tasks.some((task) => task.agentId === id && task.status !== "complete")) {
                           setArchiveError("");
                           setArchiving(view.agent);
                         } else archiveAgent(view.agent, archived);

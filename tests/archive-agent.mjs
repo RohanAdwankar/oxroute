@@ -28,6 +28,13 @@ c.commit()
 assert.equal(seed.status, 0, seed.stderr);
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+const observeDialogs = () => page.evaluate(() => {
+  window.archiveDialogs = 0;
+  new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes)
+      if (node instanceof Element && (node.matches('dialog') || node.querySelector('dialog'))) window.archiveDialogs++;
+  }).observe(document.body, { childList: true, subtree: true });
+});
 await page.addInitScript(() => { window.SharedWorker = class { port = { postMessage() {}, close() {} }; }; });
 let fail = false, holdArchive = false, releaseArchive;
 await page.route('**/api/**', async route => {
@@ -93,19 +100,27 @@ try {
   assert.ok((await assigned()).every(task => task.status === 'complete'));
   assert.equal((await call('/api/tasks')).find(task => task.id === foreign.id).status, foreign.status);
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === owner.id), true);
+  await page.goto(`${web}/?agent=${owner.id}`);
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok()), page.getByRole('button', { name: 'restore session', exact: true }).click()]);
+  await observeDialogs();
+  holdArchive = true;
+  const completedArchive = page.waitForResponse(response => new URL(response.url()).pathname === '/api/archive' && response.ok());
+  void completedArchive.catch(() => {});
+  await page.getByRole('button', { name: 'archive session', exact: true }).click();
+  await page.locator(`[data-agent-pane="${owner.id}"]`).waitFor({ state: 'detached', timeout: 1000 });
+  assert.equal(await page.evaluate(() => window.archiveDialogs), 0, 'Completed tasks do not require confirmation');
+  if (process.env.ARTIFACT_DIR) await page.screenshot({ path: `${process.env.ARTIFACT_DIR}/completed-tasks-archived.png` });
+  holdArchive = false;
+  releaseArchive();
+  await completedArchive;
+  assert.ok((await assigned()).every(task => task.status === 'complete'));
   await page.goto(`${web}/?agent=${other.id}`);
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
   await modal.getByRole('button', { name: 'Cancel', exact: true }).click();
   const empty = await call('/api/agents', {});
   await page.goto(`${web}/?agent=${empty.id}`);
   await page.locator('[data-composer]').fill('Retain this draft after a failed archive');
-  await page.evaluate(() => {
-    window.archiveDialogs = 0;
-    new MutationObserver(records => {
-      for (const record of records) for (const node of record.addedNodes)
-        if (node instanceof Element && (node.matches('dialog') || node.querySelector('dialog'))) window.archiveDialogs++;
-    }).observe(document.body, { childList: true, subtree: true });
-  });
+  await observeDialogs();
   fail = true;
   await page.getByRole('button', { name: 'archive session', exact: true }).click();
   await page.getByText('Temporary archive failure', { exact: true }).waitFor();
@@ -125,5 +140,5 @@ try {
   assert.equal((await call('/api/state')).archived.some(agent => agent.id === empty.id), true);
   assert.equal(await page.evaluate(() => window.archiveDialogs), 0);
   if (process.env.ARTIFACT_DIR) await page.screenshot({ path: `${process.env.ARTIFACT_DIR}/empty-agent-archived.png` });
-  console.log('Archive modal: task list, cancellation, Escape, failure recovery, archive-only, restore, bulk completion, ownership scope, and empty sessions passed.');
+  console.log('Archive modal: task list, cancellation, Escape, failure recovery, archive-only, restore, bulk completion, completed tasks without confirmation, ownership scope, and empty sessions passed.');
 } finally { releaseArchive?.(); await page.goto('about:blank'); await page.unrouteAll({ behavior: "wait" }); await browser.close(); }
