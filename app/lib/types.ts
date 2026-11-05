@@ -93,6 +93,7 @@ export interface Entry {
   text: string;
   detail: string;
   output: string;
+  outputDeferred?: boolean;
   origin: string;
   slackUrl?: string;
   /// "up", "down", or "" for none.

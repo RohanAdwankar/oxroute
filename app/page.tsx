@@ -148,12 +148,12 @@ export default function Home() {
   const warmPaused = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchVisibility = useCallback((open: boolean) => { warmPaused.current = open; setSearchOpen(open); }, []);
-  const loadAgent = useCallback((id: string) => {
+  const loadAgent = useCallback((id: string, priority: RequestPriority = "high") => {
     const pending = requests.current.get(id);
     if (pending) return pending.promise;
     const updates = new Map<number, Entry>();
     const reactions = new Map<number, string>();
-    const request = api.agent(id).then((view) => {
+    const request = api.agent(id, undefined, priority).then((view) => {
       // An in-flight read must not erase entries already received live.
       const timeline = new Map(view.timeline.map(entry => [entry.id, entry]));
       for (const [id, entry] of updates) timeline.set(id, entry);
@@ -535,7 +535,7 @@ export default function Home() {
       while (warming.current < 2 && warmQueue.current.length) {
         const id = warmQueue.current.shift()!;
         warming.current++;
-        void loadAgent(id).catch(() => warmed.current.delete(id)).finally(() => {
+        void loadAgent(id, "low").catch(() => warmed.current.delete(id)).finally(() => {
           warming.current--;
           drain();
         });
@@ -555,7 +555,7 @@ export default function Home() {
     const fetchPanes = async () => {
       const chats = panes.filter(id => !id.startsWith("terminal_"));
       for (let wait = 500; live; wait = Math.min(wait * 2, 8000)) {
-        const answers = await Promise.allSettled(chats.map(loadAgent));
+        const answers = await Promise.allSettled(chats.map(id => loadAgent(id)));
         if (!live) return;
         const views = answers.flatMap((answer) =>
           answer.status === "fulfilled" ? [answer.value] : [],

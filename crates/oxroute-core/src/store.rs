@@ -1246,17 +1246,33 @@ impl Store {
     }
 
     pub fn timeline_before(&self, agent_id: &str, limit: usize, before: Option<i64>) -> Result<Vec<Entry>> {
-        self.with(|c| {
+        Ok(self.timeline_page(agent_id, limit, before, false)?.into_iter().map(|(entry, _)| entry).collect())
+    }
+
+    /// Keep folded tool output off the initial page without losing timeline entries.
+    pub fn timeline_page(&self, agent_id: &str, limit: usize, before: Option<i64>, compact: bool) -> Result<Vec<(Entry, bool)>> {
+        self.read(|c| {
             let mut stmt = c.prepare(
-                "SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries
+                "SELECT id, agent_id, at, kind, text, detail,
+                        CASE WHEN ?4 AND kind = 'worked' THEN '' ELSE output END,
+                        origin, reaction, slack_url, item_id,
+                        ?4 AND kind = 'worked' AND length(output) > 0 FROM entries
                  WHERE agent_id = ?1 AND id < ?3 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut out = Vec::new();
-            for row in stmt.query_map(params![agent_id, limit as i64, before.unwrap_or(i64::MAX)], read_entry)? {
+            for row in stmt.query_map(params![agent_id, limit as i64, before.unwrap_or(i64::MAX), compact], |row| Ok((read_entry(row)?, row.get(11)?)))? {
                 out.push(row?);
             }
             out.reverse();
             Ok(out)
+        })
+    }
+
+    pub fn tool_outputs(&self, agent_id: &str, first: i64, last: i64) -> Result<HashMap<i64, String>> {
+        self.read(|c| {
+            let mut stmt = c.prepare("SELECT id, output FROM entries WHERE agent_id = ?1 AND id BETWEEN ?2 AND ?3 AND kind = 'worked'")?;
+            let outputs = stmt.query_map(params![agent_id, first, last], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            Ok(outputs)
         })
     }
 
@@ -2174,6 +2190,41 @@ mod tests {
             recovered.splice(0..0, page.into_iter().map(|entry| entry.id));
         }
         assert_eq!(recovered, expected);
+    }
+
+    #[test]
+    fn compact_pages_preserve_history_and_recover_complete_scoped_output() {
+        let store = Store::in_memory().unwrap();
+        for id in ["one", "two"] { store.save_agent(&agent(id)).unwrap(); }
+        let mut expected = HashMap::new();
+        for at in 0..9 {
+            if at % 3 == 0 {
+                store.add_entry("one", at as f64, EntryKind::Said, "message", "message details", "").unwrap();
+            } else {
+                let output = if at % 4 == 0 { String::new() } else { "Δ diagnostic output\n".repeat(1000) };
+                let entry = store.add_work_entry("one", at as f64, "summary", "command details", &output, "").unwrap();
+                expected.insert(entry.id, output);
+            }
+            store.add_work_entry("two", at as f64, "other", "", "private output", "").unwrap();
+        }
+        let full = store.timeline("one", 100).unwrap();
+        let mut before = None;
+        let mut recovered = Vec::new();
+        loop {
+            let page = store.timeline_page("one", 4, before, true).unwrap();
+            if page.is_empty() { break; }
+            before = Some(page[0].0.id);
+            for (entry, deferred) in &page {
+                let original = full.iter().find(|item| item.id == entry.id).unwrap();
+                assert_eq!(entry.text, original.text);
+                assert_eq!(entry.detail, original.detail);
+                assert_eq!(*deferred, entry.kind == EntryKind::Worked && !original.output.is_empty());
+                assert_eq!(entry.output, if entry.kind == EntryKind::Worked { "" } else { &original.output });
+            }
+            recovered.splice(0..0, page.into_iter().map(|(entry, _)| entry.id));
+        }
+        assert_eq!(recovered, full.iter().map(|entry| entry.id).collect::<Vec<_>>());
+        assert_eq!(store.tool_outputs("one", full[0].id, full.last().unwrap().id).unwrap(), expected);
     }
 
     #[test]

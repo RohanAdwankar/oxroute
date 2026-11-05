@@ -833,39 +833,7 @@ export function AgentPanel({
           ) : (
             items.map((item, at) => {
               if ("tools" in item) {
-                const first = item.tools[0];
-                // What it is doing right now is news, and news is read in
-                // full; what it did twenty calls ago is history, and
-                // history stays folded.
-                const latest = verbose && at === items.length - 1 ? item.tools.at(-1) : null;
-                const folded = latest ? item.tools.slice(0, -1) : item.tools;
-                return (
-                  <div key={`tools-${first.id}`} className="border-b border-hair py-2">
-                    {folded.length > 0 && (
-                      <details className="group">
-                        <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
-                          <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">
-                            {minute(folded.at(-1)?.at ?? first.at)}
-                          </span>
-                          <span className="w-2 text-center group-open:rotate-90">›</span>
-                          <span className="shrink-0">
-                            {folded.length} tool {folded.length === 1 ? "call" : "calls"}
-                          </span>
-                        </summary>
-                        <div className="mt-1 flex flex-col">
-                          {folded.map((entry) => (
-                            <ToolCall key={entry.id} entry={entry} />
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {latest && (
-                      <div className="flex flex-col">
-                        <ToolCall entry={latest} />
-                      </div>
-                    )}
-                  </div>
-                );
+                return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1} />;
               }
 
               const { entry } = item;
@@ -1151,7 +1119,49 @@ export function AgentPanel({
 /// The time carries the news. A group that is still being added to looks
 /// the same from one second to the next unless each call says when it
 /// happened, so this column is darker than the summary above it.
-function ToolCall({ entry }: { entry: Entry }) {
+const ToolGroup = memo(function ToolGroup({ entries, showLatest }: { entries: Entry[]; showLatest: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [outputs, setOutputs] = useState<Record<string, string>>({});
+  const loaded = useRef(new Map<number, Entry>());
+  const [error, setError] = useState("");
+  const [attempt, retry] = useState(0);
+  const latest = showLatest ? entries.at(-1) : null;
+  const folded = showLatest ? entries.slice(0, -1) : entries;
+  const visible = useMemo(() => open ? entries : showLatest ? entries.slice(-1) : [], [entries, open, showLatest]);
+  useEffect(() => {
+    const wanted = new Set(visible.filter(entry => entry.outputDeferred).map(entry => entry.id));
+    for (const id of loaded.current.keys()) if (!wanted.has(id)) loaded.current.delete(id);
+    setOutputs(current => Object.fromEntries(Object.entries(current).filter(([id]) => wanted.has(Number(id)))));
+    // A refreshed page replaces entry objects; unrelated live events preserve them.
+    const deferred = visible.filter(entry => entry.outputDeferred && loaded.current.get(entry.id) !== entry);
+    setError("");
+    if (!deferred.length) return;
+    const controller = new AbortController();
+    void api.toolOutputs(deferred[0].agentId, deferred[0].id, deferred.at(-1)!.id, controller.signal).then(saved => {
+      if (controller.signal.aborted) return;
+      if (deferred.some(entry => !(entry.id in saved))) throw new Error("Tool output is no longer available");
+      for (const entry of deferred) loaded.current.set(entry.id, entry);
+      setOutputs(current => ({ ...current, ...saved }));
+    }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
+    return () => controller.abort();
+  }, [visible, attempt]);
+  const tool = (entry: Entry) => <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} />;
+  return <div className="border-b border-hair py-2">
+    {folded.length > 0 && <details className="group" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
+        <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(folded.at(-1)!.at)}</span>
+        <span className="w-2 text-center group-open:rotate-90">›</span>
+        <span className="shrink-0">{folded.length} tool {folded.length === 1 ? "call" : "calls"}</span>
+      </summary>
+      {open && <div className="mt-1 flex flex-col">{folded.map(tool)}</div>}
+    </details>}
+    {latest && <div className="flex flex-col">{tool(latest)}</div>}
+    {error && <p role="alert" className="text-[12px] text-remove">{error} <button className="cursor-pointer underline" onClick={() => retry(value => value + 1)}>Retry</button></p>}
+  </div>;
+});
+
+function ToolCall({ entry, output }: { entry: Entry; output?: string }) {
+  const printed = entry.outputDeferred ? output : entry.output;
   return (
     <div className="flex gap-3 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
       <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
@@ -1160,10 +1170,11 @@ function ToolCall({ entry }: { entry: Entry }) {
         <div className="break-words whitespace-pre-wrap">
           <Code text={entry.detail || entry.text} />
         </div>
-        {entry.output && (
+        {entry.outputDeferred && printed === undefined && <p className="mt-2 text-faint">Loading output…</p>}
+        {printed && (
           <Copyable>
             <pre className="quiet-scroll mt-2 max-h-64 overflow-auto bg-band p-2 font-mono text-[11px] leading-[1.4] text-ink whitespace-pre-wrap">
-              {entry.output}
+              {printed}
             </pre>
           </Copyable>
         )}

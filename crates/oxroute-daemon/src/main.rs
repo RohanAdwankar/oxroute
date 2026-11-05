@@ -220,6 +220,7 @@ async fn serve() -> Result<()> {
         .route("/api/events", get(events))
         .route("/api/search", get(search))
         .route("/api/agents/{id}/context/{entry}", get(search_context))
+        .route("/api/agents/{id}/outputs", get(tool_outputs))
         .route("/api/search/native", get(search_native))
         .route("/api/continue", post(continue_session))
         .route("/api/native-preview", get(native_preview))
@@ -374,21 +375,36 @@ async fn agent(
     State(hub): Hubs,
     Path(id): Path<String>,
     Query(query): Query<TimelineQuery>,
-) -> Result<Json<serde_json::Value>, Failed> {
+    headers: HeaderMap,
+) -> Result<Response, Failed> {
     let agent = hub
         .store
         .agent(&id)?
         .context("no such agent")
         .map_err(Failed)?;
-    let mut timeline = hub.store.timeline_before(&id, TIMELINE_LIMIT + 1, query.before)?;
+    let compact = headers.get("x-oxroute-compact").is_some_and(|value| value == "1");
+    let mut timeline = hub.store.timeline_page(&id, TIMELINE_LIMIT + 1, query.before, compact)?;
     let has_earlier = timeline.len() > TIMELINE_LIMIT;
     if has_earlier { timeline.remove(0); }
-    Ok(Json(json!({
+    let timeline = timeline.into_iter().map(|(entry, deferred)| {
+        let mut value = json!(entry);
+        if deferred { value["outputDeferred"] = json!(true); }
+        value
+    }).collect::<Vec<_>>();
+    Ok(([(header::VARY, "x-oxroute-compact")], Json(json!({
         "agent": agent,
         "timeline": timeline,
         "hasEarlier": has_earlier,
         "delivery": agent.delivery(),
-    })))
+    }))).into_response())
+}
+
+#[derive(Deserialize)]
+struct ToolOutputsQuery { first: i64, last: i64 }
+
+async fn tool_outputs(State(hub): Hubs, Path(id): Path<String>, Query(query): Query<ToolOutputsQuery>) -> Result<Json<HashMap<i64, String>>, Failed> {
+    if query.first <= 0 || query.last < query.first { return Err(anyhow::anyhow!("invalid entry range").into()); }
+    Ok(Json(hub.store.tool_outputs(&id, query.first, query.last)?))
 }
 
 #[derive(Deserialize)]

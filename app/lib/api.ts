@@ -99,10 +99,12 @@ export const api = {
     creatingAgents.set(id, request);
     return request;
   },
-  agent: async (id: string, before?: number) => {
+  agent: async (id: string, before?: number, priority: RequestPriority = "high") => {
     await readyAgent(id);
-    return call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`);
+    return call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`, { headers: { "x-oxroute-compact": "1" }, priority });
   },
+  toolOutputs: (id: string, first: number, last: number, signal: AbortSignal) =>
+    call<Record<string, string>>(`/api/agents/${encodeURIComponent(id)}/outputs?${new URLSearchParams({ first: String(first), last: String(last) })}`, { signal, priority: "high" }),
 
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),
