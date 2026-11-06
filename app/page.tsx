@@ -1209,6 +1209,14 @@ export default function Home() {
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
         tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} onSelect={showAgent}
+          onReorder={(id, target, after) => setTabIds(current => {
+            if (id === target || !current.includes(id)) return current;
+            const next = current.filter(tab => tab !== id);
+            const at = target === null ? next.length : next.indexOf(target);
+            if (at < 0) return current;
+            next.splice(at + (target !== null && after ? 1 : 0), 0, id);
+            return next;
+          })}
           onClose={id => {
             const known = new Set([...snapshot.agents, ...snapshot.archived, ...terminals].map(session => session.id));
             const visible = tabIds.filter(tab => known.has(tab));

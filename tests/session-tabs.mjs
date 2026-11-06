@@ -37,8 +37,22 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('agent'), 'bravo');
   await page.goBack();
   assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Browser back updates the selected tab');
+  const order = () => strip.getByRole('tab').allTextContents();
+  const move = async (id, target, after) => {
+    const box = await tab(target).boundingBox();
+    await tab(id).dragTo(tab(target), { targetPosition: { x: after ? box.width - 3 : 3, y: box.height / 2 } });
+  };
+  await move('charlie', 'alpha', false);
+  assert.deepEqual(await order(), ['charlie session', 'alpha session', 'bravo session']);
+  await move('charlie', 'bravo', true);
+  assert.deepEqual(await order(), ['alpha session', 'bravo session', 'charlie session']);
+  await move('bravo', 'alpha', false);
+  assert.deepEqual(await order(), ['bravo session', 'alpha session', 'charlie session']);
+  assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Reordering preserves the selected conversation');
+  assert.equal(await composer('alpha').inputValue(), 'Keep my draft.', 'Dragging preserves the draft');
   await page.reload();
   await tab('charlie').waitFor();
+  assert.deepEqual(await order(), ['bravo session', 'alpha session', 'charlie session'], 'Reordered tabs survive reload');
   assert.equal(await strip.getByRole('tab').count(), 3, 'The strip survives a page reload');
   await strip.getByRole('button', { name: 'Close tab bravo session', exact: true }).click();
   assert.equal(await tab('bravo').count(), 0);
@@ -60,5 +74,5 @@ try {
   const selected = await tab('charlie').boundingBox();
   assert.ok(selected.x >= 0 && selected.x + selected.width <= 260, 'Keyboard switching reveals the active tab in an overflowing strip');
   assert.deepEqual(writes, [], 'Tabs navigate locally without archiving or mutating sessions');
-  console.log('Session tabs switch conversations, preserve drafts, restore on reload, follow browser history and close without mutating sessions.');
+  console.log('Session tabs reorder in both directions, preserve order and drafts across reload, switch, navigate and close without mutating sessions.');
 } finally { await browser.close(); }

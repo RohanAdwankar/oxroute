@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { carriesPane } from "../lib/pane-transfer";
 
-export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragStart, onDragEnd, onDrop, onDetach }: {
+export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragStart, onDragEnd, onDrop, onDetach, onReorder }: {
   sessions: { id: string; name: string }[];
   ids: string[];
   active: string | null;
@@ -13,7 +13,10 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
   onDragEnd: (event: DragEvent) => void;
   onDrop: (event: DragEvent) => void;
   onDetach: (id: string) => void;
+  onReorder: (id: string, target: string | null, after: boolean) => void;
 }) {
+  const dragging = useRef<string | null>(null);
+  const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
   const selected = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -27,10 +30,28 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
   useEffect(() => { selected.current?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [active, ids]);
   const tabs = ids.flatMap(id => sessions.find(session => session.id === id) ?? []);
   return <nav aria-label="Session tabs" className="flex h-[var(--cell)] min-w-0 flex-1 overflow-x-auto bg-card text-[12px]"
-    onDragOver={event => { if (carriesPane(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={onDrop}>
+    onDragOver={event => { if (carriesPane(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={event => {
+      if (!dragging.current) return onDrop(event);
+      event.preventDefault(); event.stopPropagation();
+      onReorder(dragging.current, null, true); setDrop(null);
+    }}>
     <div role="tablist" aria-label="Sessions" className="flex min-w-0 items-stretch">
-      {tabs.map((session, index) => <div key={session.id} className={`flex shrink-0 items-stretch border-b ${active === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
-        <button type="button" role="tab" draggable onDragStart={event => onDragStart(event, session.id)} onDragEnd={onDragEnd}
+      {tabs.map((session, index) => <div key={session.id}
+        style={drop?.id === session.id ? { boxShadow: `inset ${drop.after ? "-2px" : "2px"} 0 var(--color-ink)` } : undefined}
+        onDragOver={event => {
+          if (!dragging.current) return;
+          event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move";
+          const box = event.currentTarget.getBoundingClientRect();
+          setDrop({ id: session.id, after: event.clientX > box.x + box.width / 2 });
+        }}
+        onDragLeave={() => setDrop(null)}
+        onDrop={event => {
+          if (!dragging.current) return;
+          event.preventDefault(); event.stopPropagation();
+          const box = event.currentTarget.getBoundingClientRect();
+          onReorder(dragging.current, session.id, event.clientX > box.x + box.width / 2); setDrop(null);
+        }} className={`flex shrink-0 items-stretch border-b ${active === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
+        <button type="button" role="tab" draggable onDragStart={event => { dragging.current = session.id; onDragStart(event, session.id); }} onDragEnd={event => { dragging.current = null; setDrop(null); onDragEnd(event); }}
           onContextMenu={event => { event.preventDefault(); setMenu({ id: session.id, x: Math.max(0, Math.min(event.clientX, innerWidth - 200)), y: event.clientY }); }}
           ref={active === session.id ? selected : null} aria-selected={active === session.id} title={session.name}
           tabIndex={active === session.id || (!active && index === 0) ? 0 : -1}
