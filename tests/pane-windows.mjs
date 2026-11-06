@@ -92,7 +92,7 @@ try {
   assert.equal(await draft(page, 'bravo').inputValue(), 'Keep the other pane.');
   assert.equal(await tab(page, 'alpha').count(), 0, 'A moved primary pane leaves the remaining workspace under its own tab');
   await tab(page, 'bravo').waitFor();
-  assert.equal(await popup.getByRole('tab').count(), 1, 'A detached window starts with its transferred tab only');
+  assert.equal(await popup.getByRole('tab').count(), 2, 'A detached window starts with Focus and its transferred conversation tab');
   await popup.goBack();
   await pane(popup, 'alpha').waitFor();
   assert.equal(new URL(popup.url()).searchParams.has('transfer'), false, 'A consumed handoff does not reappear through browser history');

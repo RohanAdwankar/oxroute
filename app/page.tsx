@@ -12,6 +12,7 @@ import { dockPanes, paneIds, readPanes, removePane, syncPanes, writePanes, type 
 import { usePaneTransfer, type PaneOffer } from "./lib/pane-transfer";
 import { Chrome } from "./components/Chrome";
 import { SessionTabs } from "./components/SessionTabs";
+import { Focus } from "./components/Focus";
 import { Fleet } from "./components/Fleet";
 import { FrontendVersion } from "./components/FrontendVersion";
 import { Help } from "./components/Help";
@@ -115,6 +116,7 @@ export default function Home() {
   const [revision, setRevision] = useState(0);
   const [routing, setRouting] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [focusOpen, setFocusOpen] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [tabIds, setTabIds] = useState<string[]>(() => {
     try {
@@ -320,6 +322,7 @@ export default function Home() {
   }, []);
 
   const showAgent = useCallback((id: string | null, entry?: number) => {
+    setFocusOpen(false);
     setOpen(id);
     // Opening an agent is walking into it: the keys act on it from here.
     if (id) setFocus("fleet");
@@ -329,12 +332,23 @@ export default function Home() {
     setPanes(group);
     setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
+    url.searchParams.delete("view");
     if (id) url.searchParams.set("agent", id);
     else url.searchParams.delete("agent");
     if (id && entry !== undefined) url.searchParams.set("entry", String(entry));
     else url.searchParams.delete("entry");
     window.history.pushState(null, "", url);
   }, []);
+
+  const showFocus = () => {
+    showAgent(null);
+    clearRouting();
+    setFocusOpen(true);
+    setFocus("fleet");
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "focus");
+    window.history.replaceState(null, "", url);
+  };
 
   const showBoard = useCallback(
     (id: string | null) => {
@@ -372,12 +386,14 @@ export default function Home() {
     const restore = () => {
       const url = new URL(window.location.href);
       setBoardId(url.searchParams.get("board"));
-      const agent = url.searchParams.get("agent");
+      const isFocus = url.searchParams.get("view") === "focus";
+      setFocusOpen(isFocus);
+      const agent = isFocus ? null : url.searchParams.get("agent");
       if (url.searchParams.has("transfer")) { setOpen(null); setPanes([]); return; }
       setOpen(agent);
       // Arriving at an agent is the same as walking into one: the keys act
       // on the conversation in front of you, not on the column beside it.
-      if (agent) setFocus("fleet");
+      if (agent || isFocus) setFocus("fleet");
       const saved = agent ? readPanes(agent) : null;
       customPanes.current = saved !== null;
       setPanes(saved ? paneIds(saved) : agent ? [agent] : []);
@@ -921,6 +937,8 @@ export default function Home() {
         return;
       }
 
+      if (focusOpen && focus === "fleet" && !["h", "l", "Escape", "i", "/", "m", "v", "?", "f", "n"].includes(event.key)) return;
+
       // With the hints off this is a mouse interface, so a bare letter must
       // not act: n started an agent and m changed how everything routes.
       // Arrows, enter, escape and tab are nobody's typing, and stay.
@@ -1046,7 +1064,7 @@ export default function Home() {
           return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
-          if (open) return showAgent(null);
+          if (open || focusOpen) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
         case "Enter": {
@@ -1208,7 +1226,7 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
-        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} onSelect={showAgent}
+        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} focusOpen={focusOpen} onFocus={showFocus} onSelect={showAgent}
           onReorder={(id, target, after) => setTabIds(current => {
             if (id === target || !current.includes(id)) return current;
             const next = current.filter(tab => tab !== id);
@@ -1327,7 +1345,9 @@ export default function Home() {
           </>
         ) : null}
 
-        {open ? (
+        {focusOpen ? <Focus snapshot={{ ...snapshot, tasks: taskItems }} busy={id => id in savingTasks}
+          onOpenTask={taskLinks.open} onOpenAgent={showAgent} onCorrect={correctTask}
+          onApprove={task => void updateTask({ ...task, status: "complete", blockedByTaskId: "" }, "approved", true)} /> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}

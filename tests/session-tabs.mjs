@@ -37,7 +37,7 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('agent'), 'bravo');
   await page.goBack();
   assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Browser back updates the selected tab');
-  const order = () => strip.getByRole('tab').allTextContents();
+  const order = () => strip.getByRole('tab').filter({hasNotText:'Focus'}).allTextContents();
   const move = async (id, target, after) => {
     const box = await tab(target).boundingBox();
     await tab(id).dragTo(tab(target), { targetPosition: { x: after ? box.width - 3 : 3, y: box.height / 2 } });
@@ -53,7 +53,7 @@ try {
   await page.reload();
   await tab('charlie').waitFor();
   assert.deepEqual(await order(), ['bravo session', 'alpha session', 'charlie session'], 'Reordered tabs survive reload');
-  assert.equal(await strip.getByRole('tab').count(), 3, 'The strip survives a page reload');
+  assert.equal(await strip.getByRole('tab').count(), 4, 'The strip survives a page reload');
   await strip.getByRole('button', { name: 'Close tab bravo session', exact: true }).click();
   assert.equal(await tab('bravo').count(), 0);
   assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Closing a background tab keeps the active conversation');
