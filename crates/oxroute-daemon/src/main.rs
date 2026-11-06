@@ -228,6 +228,7 @@ async fn serve() -> Result<()> {
         .route("/api/route", post(route))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
+        .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
         .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
@@ -707,6 +708,15 @@ enum ImageSide { Before, After }
 
 #[derive(Deserialize)]
 struct ReviewImageQuery { path: String, side: ImageSide, #[serde(default)] full: bool }
+
+#[derive(Deserialize)]
+struct ReviewContextQuery { path: String, side: ImageSide, start: usize, count: usize, #[serde(default)] full: bool }
+
+async fn review_context(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewContextQuery>) -> Result<Json<git::FileContext>, Failed> {
+    let mut review = review_record(&hub, &agent_id, &id, true)?.0;
+    if query.full { review.snapshot.review_base_commit = None; }
+    Ok(Json(git::context(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before), query.start, query.count).await?))
+}
 
 async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {
     let mut review = review_record(&hub, &agent_id, &id, true)?.0;
@@ -1799,6 +1809,7 @@ mod tests {
         hub.with_harness(harness.clone());
         let router = Router::new().merge(agent_api().0)
             .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
+            .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
             .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
             .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1823,6 +1834,10 @@ mod tests {
         let refreshed: serde_json::Value = client.get(&endpoint).header("x-oxroute-prefetch", "1").send().await.unwrap().json().await.unwrap();
         assert_eq!(refreshed["status"], "pending", "An unchanged reviewed comparison remains approvable after upstream advances");
         assert_eq!(refreshed["snapshot"], review["snapshot"], "Eligibility checks never rewrite the saved review");
+        let context = client.get(format!("{endpoint}/context")).query(&[("path","diagram.svg"),("side","after"),("start","1"),("count","20")]).send().await.unwrap();
+        assert!(context.status().is_success());
+        assert!(context.json::<serde_json::Value>().await.unwrap()["lines"][0].as_str().unwrap().contains("svg"));
+        assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}/context")).query(&[("path","diagram.svg"),("side","after"),("start","1"),("count","20")]).send().await.unwrap().status().is_success());
         let image_files = review["snapshot"]["files"].as_array().unwrap();
         let diagram = image_files.iter().find(|file| file["path"] == "diagram.svg").unwrap();
         assert_eq!(diagram["image"], json!({"before":true,"after":true}));

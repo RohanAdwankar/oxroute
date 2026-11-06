@@ -3,12 +3,19 @@
 import { diffCode } from "./DiffCode";
 import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
 
 type Line = { text: string; old: number | null; next: number | null };
+type Expansion = { lines: string[]; more: boolean; busy?: boolean; error?: string };
+type Context = { key: string; old: number; next: number; limit: number; side: "before" | "after" };
+
+function hunkStart(header: string) {
+  const ranges = header.split(" ").slice(1, 3).map(range => range.slice(1).split(",").map(Number));
+  return { old: ranges[0][0] + (ranges[0][1] === 0 ? 1 : 0), next: ranges[1][0] + (ranges[1][1] === 0 ? 1 : 0) };
+}
 
 function lines(patch: string): Line[] {
   let old = 0, next = 0, hunk = false;
@@ -72,7 +79,42 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
   const snapshot = review?.snapshot;
-  const files = useMemo(() => snapshot?.files.map(item => { const rows = lines(item.patch); return { ...item, rows, code: diffCode(rows, item.path) }; }) ?? [], [snapshot]);
+  const [expanded, setExpanded] = useState<Record<string, Expansion>>({});
+  const files = useMemo(() => snapshot?.files.map(item => {
+    const original = lines(item.patch), rows: Line[] = [], controls = new Map<number, Context>();
+    let old = 0, next = 0;
+    const side = item.patch.split("\n").includes("+++ /dev/null") ? "before" : "after";
+    for (const [index, row] of original.entries()) {
+      if (row.text.startsWith("@@ ")) {
+        ({ old, next } = hunkStart(row.text));
+      } else {
+        if (row.old !== null) old = row.old + 1;
+        if (row.next !== null) next = row.next + 1;
+      }
+      rows.push(row);
+      const following = original[index + 1];
+      if ((row.old === null && row.next === null) || (following && !following.text.startsWith("@@ "))) continue;
+      const limit = following ? Math.min(hunkStart(following.text).old - old, hunkStart(following.text).next - next) : Infinity;
+      const key = JSON.stringify([endpoint, review?.full, snapshot.headCommit, item.path, old, next]);
+      const saved = expanded[key];
+      rows.push(...(saved?.lines ?? []).map((text, at) => ({ text: ` ${text}`, old: old + at, next: next + at })));
+      if (limit > (saved?.lines.length ?? 0) && saved?.more !== false) controls.set(rows.length - 1, { key, old, next, limit, side });
+    }
+    return { ...item, rows, controls, code: diffCode(rows, item.path) };
+  }) ?? [], [snapshot, expanded, endpoint, review?.full]);
+
+  const expand = async (path: string, context: Context) => {
+    const saved = expanded[context.key] ?? { lines: [], more: true };
+    if (saved.busy) return;
+    setExpanded(current => ({ ...current, [context.key]: { ...saved, busy: true, error: "" } }));
+    try {
+      const query = new URLSearchParams({ path, side: context.side, start: String((context.side === "before" ? context.old : context.next) + saved.lines.length), count: String(Math.min(20, context.limit - saved.lines.length)), ...(review?.full ? { full: "true" } : {}) });
+      const more = await response<{ lines: string[]; more: boolean }>(fetch(`${endpoint}/context?${query}`));
+      setExpanded(current => ({ ...current, [context.key]: { lines: [...saved.lines, ...more.lines], more: more.more } }));
+    } catch (error) {
+      setExpanded(current => ({ ...current, [context.key]: { ...saved, error: String(error) } }));
+    }
+  };
 
   useEffect(() => {
     if (!active) return;
@@ -193,7 +235,15 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
             const end = Number((selected.at(-1) ?? clicked).dataset.diffLine);
             setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
           }}>
-            {item.rows.map((row, index) => <div key={index} data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>)}
+            {item.rows.map((row, index) => {
+              const context = item.controls.get(index), status = context ? expanded[context.key] : undefined;
+              return <Fragment key={index}><div data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>
+              {context && <div className="sticky left-0 w-fit py-1 font-sans text-[11px] text-mid">
+                <button type="button" disabled={status?.busy} className="cursor-pointer px-2 py-1 hover:bg-band disabled:opacity-40"
+                  onClick={() => void expand(item.path, context)}>{status?.busy ? "Loading context…" : status?.error ? "Retry expansion" : "↓ Expand down"}</button>
+                {status?.error && <span role="alert">{status?.error}</span>}
+              </div>}
+            </Fragment>; })}
           </pre>
           </div>
         </section>)}

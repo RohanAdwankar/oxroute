@@ -153,6 +153,37 @@ pub async fn image(snapshot: &Snapshot, path: &str, before: bool) -> Result<(tok
     Ok((child, mime))
 }
 
+#[derive(Serialize)]
+pub struct FileContext { pub lines: Vec<String>, pub more: bool }
+
+/// Read a small slice from the pinned review blob, never the working tree.
+pub async fn context(snapshot: &Snapshot, path: &str, before: bool, start: usize, count: usize) -> Result<FileContext> {
+    use tokio::io::AsyncBufReadExt;
+    anyhow::ensure!(start > 0 && (1..=100).contains(&count), "Invalid context range");
+    let root = Path::new(&snapshot.repository);
+    anyhow::ensure!(paths(snapshot).await?.iter().any(|file| file == path), "File is not in this review");
+    let revision = if before {
+        git(root, &["merge-base", snapshot.review_base_commit.as_ref().unwrap_or(&snapshot.base_commit), &snapshot.head_commit]).await?
+    } else { snapshot.head_commit.clone() };
+    let Some(oid) = blob(root, &revision, path).await? else { return Ok(FileContext { lines: vec![], more: false }) };
+    let mut child = Command::new("git").arg("-C").arg(root).args(["cat-file", "blob", &oid])
+        .stdout(std::process::Stdio::piped()).kill_on_drop(true).spawn()?;
+    let mut reader = tokio::io::BufReader::new(child.stdout.take().expect("Git stdout is piped")).lines();
+    let mut lines = Vec::new();
+    let mut at = 0;
+    while let Some(line) = reader.next_line().await? {
+        anyhow::ensure!(!line.contains('\0'), "Binary file has no text context");
+        at += 1;
+        if at < start { continue; }
+        lines.push(line);
+        if lines.len() > count { break; }
+    }
+    let more = lines.len() > count;
+    if !more { anyhow::ensure!(child.wait().await?.success(), "Could not read review context"); }
+    lines.truncate(count);
+    Ok(FileContext { lines, more })
+}
+
 pub async fn current(snapshot: &Snapshot) -> Result<bool> {
     let root = Path::new(&snapshot.repository);
     let remote_args = ["remote", "get-url", "--push", "--all", &snapshot.remote];
@@ -177,6 +208,38 @@ pub async fn current(snapshot: &Snapshot) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn context_reads_scoped_pinned_lines_and_preserves_whitespace() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("context-test"));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        git(&root, &["init", "-b", "main"]).await.unwrap();
+        git(&root, &["config", "user.name", "Test"]).await.unwrap();
+        git(&root, &["config", "user.email", "test@example.invalid"]).await.unwrap();
+        git(&root, &["remote", "add", "origin", "https://example.invalid/repo.git"]).await.unwrap();
+        let path = "context λ file.txt";
+        let original: Vec<_> = (0..100).map(|n| format!("  line {n} λ  ")).collect();
+        tokio::fs::write(root.join(path), original.join("\n")).await.unwrap();
+        tokio::fs::write(root.join("unchanged.txt"), "unrelated").await.unwrap();
+        git(&root, &["add", "."]).await.unwrap();
+        git(&root, &["commit", "-m", "Base"]).await.unwrap();
+        git(&root, &["checkout", "-b", "proposal"]).await.unwrap();
+        let mut changed = original.clone(); changed[2] = "Changed".into();
+        tokio::fs::write(root.join(path), changed.join("\n")).await.unwrap();
+        git(&root, &["commit", "-am", "Change"]).await.unwrap();
+        let snapshot = capture(&root, root.to_str().unwrap(), "main", "origin").await.unwrap();
+        tokio::fs::write(root.join(path), "Uncommitted replacement").await.unwrap();
+        let page = context(&snapshot, path, false, 9, 20).await.unwrap();
+        assert_eq!(page.lines, changed[8..28]); assert!(page.more);
+        let tail = context(&snapshot, path, false, 98, 20).await.unwrap();
+        assert_eq!(tail.lines, changed[97..]); assert!(!tail.more);
+        assert_eq!(context(&snapshot, path, true, 1, 4).await.unwrap().lines, original[..4]);
+        assert!(context(&snapshot, path, false, 101, 20).await.unwrap().lines.is_empty());
+        assert!(context(&snapshot, "unchanged.txt", false, 1, 20).await.is_err());
+        assert!(context(&snapshot, "../outside", false, 1, 20).await.is_err());
+        assert!(context(&snapshot, path, false, 0, 20).await.is_err());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 
     #[tokio::test]
     async fn large_review_ranges_preserve_every_changed_file_and_line() {
