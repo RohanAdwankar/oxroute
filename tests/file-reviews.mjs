@@ -43,6 +43,8 @@ try{
  const revised=await api(`/api/agents/${agent.id}/file-reviews/${slides.id}`);
  assert.equal(revised.annotations.length,2);assert.equal(revised.annotations[0].page,1);assert.ok(revised.annotations[0].region[2]>.5);assert.ok(revised.annotations[1].strokes[0].length>3);
  let view=await api(`/api/agents/${agent.id}`);const sent=view.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Move the decision'));
+ const recent=await api(`/api/agents/${agent.id}/messages`);
+ assert.deepEqual(recent.map(entry=>entry.id),view.timeline.filter(entry=>['said','you','received'].includes(entry.kind)).slice(-4).map(entry=>entry.id),'Inline context returns recent messages without tool history');
  assert.ok(sent,'Revision is delivered into the owning conversation');assert.ok(sent.text.includes(slides.sha256));assert.match(sent.text,/Attached:/);
  const attachment=sent.text.split('Attached: ')[1].split(', ')[0];const bytes=await (await fetch(`${native}/api/attachments/${encodeURIComponent(attachment)}`)).arrayBuffer();assert.ok(bytes.byteLength>1000);
  await dialog.getByRole('button',{name:'Close file review'}).click();
