@@ -67,7 +67,7 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
             event.preventDefault(); event.stopPropagation();
             select(tabs[next].id);
             event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next].focus();
-          }}>{session.id === "focus" ? <Icon name="auto" size={14} /> : session.name}</button>
+          }}>{session.id === "focus" ? <Icon name="review" size={14} /> : session.name}</button>
         {session.id !== "focus" && <button type="button" aria-label={`Close tab ${session.name}`} title="Close tab" className="cursor-pointer px-2 text-faint hover:text-ink"
           onClick={() => onClose(session.id)}>×</button>}
       </div>)}

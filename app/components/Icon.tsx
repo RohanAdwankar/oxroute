@@ -26,6 +26,7 @@ export type IconName =
   | "queue"
   | "refresh"
   | "restore"
+  | "review"
   | "send"
   | "scope"
   | "search"
@@ -70,6 +71,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     quote: <path d="M3 4h4v4H5a3 3 0 0 1-3 3M10 4h4v4h-2a3 3 0 0 1-3 3" />,
     refresh: <><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13 1.5v3.5H9.5" /></>,
     queue: <><path d="M5 4h9M5 8h9M5 12h9" /><circle cx="2" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="2" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
+    review: <><path d="M1.5 8s2.5-4.5 6.5-4.5 6.5 4.5 6.5 4.5-2.5 4.5-6.5 4.5S1.5 8 1.5 8Z" /><path d="m5.5 8 1.7 1.7 3.3-3.4" /></>,
     restore: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM8 12V8M6 10l2-2 2 2" /></>,
     scope: <><circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none" /></>,
     search: <><circle cx="6.5" cy="6.5" r="4.5" /><path d="m10 10 4 4" /></>,
