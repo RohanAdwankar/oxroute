@@ -6,6 +6,7 @@ import {createServer} from 'node:net';
 import {resolve,join} from 'node:path';
 const web=process.env.TEST_URL;
 assert.ok(web && process.env.TEST_DAEMON,'Set TEST_URL and TEST_DAEMON');
+await mkdir(resolve('.tmp'),{recursive:true});
 const root=await mkdtemp(resolve('.tmp/workstreams-'));
 const socket=createServer();await new Promise(done=>socket.listen(0,'127.0.0.1',done));const port=socket.address().port;await new Promise(done=>socket.close(done));
 const native=`http://127.0.0.1:${port}`,config=join(root,'config.toml');

@@ -43,9 +43,11 @@ task_status() {
 }
 rollback() {
   trap - ERR
+  # Keep the handoff guard present while any active turn finishes.
+  until idle; do sleep 1; done
+  systemctl --user stop oxroute-web.service oxroute.service
   mv "$request" "$state/failed-deployment.json"
   request=$state/failed-deployment.json
-  systemctl --user stop oxroute-web.service oxroute.service
   rm -f -- "$binary.next" "$agent_binary.next" "$web.next"
   cp -a "$backup/web" "$web.next"
   mv -Tf "$web.next" "$web"

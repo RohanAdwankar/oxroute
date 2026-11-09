@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {resolve,join} from 'node:path';
 import assert from 'node:assert/strict';
+await mkdir(resolve('.tmp'),{recursive:true});
 const root=await mkdtemp(resolve('.tmp/file-workflows-'));
 const server=createServer();await new Promise(done=>server.listen(0,'127.0.0.1',done));const port=server.address().port;await new Promise(done=>server.close(done));
 const native=`http://127.0.0.1:${port}`,config=join(root,'config.toml'),fixtures=join(root,'fixtures');
