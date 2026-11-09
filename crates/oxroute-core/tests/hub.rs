@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use oxroute_core::agent::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
 use oxroute_core::config::{Choice, Config, Mode};
 use oxroute_core::hub::Routing;
@@ -2269,6 +2270,212 @@ async fn an_agent_is_handed_its_own_open_work_when_a_turn_ends() {
 }
 
 #[tokio::test]
+async fn adding_to_an_idle_task_batch_dispatches_workers_instead_of_starting_the_coordinator() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("idle-batch", "idle-batch", "initial context")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let _ = w.harness.send(HarnessEvent::Message { session:parent.session_id.clone(), text:"Ready".into(), final_answer:true });
+    let _ = w.harness.send(HarnessEvent::TurnFinished { session:parent.session_id.clone(), status:"completed".into() });
+    assert!(settle(|| w.hub.store.agent(&parent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    w.hub.store.save_task(&TaskItem { id:"existing-work".into(), text:"Deliver existing work".into(), agent_id:parent.id.clone(),
+        status:TaskStatus::Incomplete, parent_task_id:String::new(), blocked_by_task_id:String::new(),
+        position:0.0, images:vec![], created_at:now(), updated_at:now() }).unwrap();
+    w.hub.create_task("Deliver another change", &parent.id, vec![], "").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
+    assert_eq!(w.hub.store.task_forks().unwrap().len(), 2);
+    assert!(w.hub.store.tasks().unwrap().iter().all(|task| task.agent_id != parent.id));
+    assert!(w.calls.lock().unwrap().started[1..].iter().all(|(session, _)| session != &parent.session_id));
+}
+
+#[tokio::test]
+async fn task_forks_use_real_codex_websocket_transport_and_preserve_human_dependencies() {
+    let template = world(Mode::Auto, false).await;
+    template.hub.accept(signal("wire", "wire", "initial context")).await.unwrap();
+    assert!(settle(|| template.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let mut parent = template.hub.store.agents(10).unwrap()[0].clone();
+    parent.session_id = "coordinator-wire".into();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let wire = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let recorded = wire.clone();
+    let (events, mut outgoing) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let mut forks = 0;
+        loop {
+            tokio::select! {
+                Some(event) = outgoing.recv() => { socket.send(tokio_tungstenite::tungstenite::Message::Text(event.to_string())).await.unwrap(); }
+                frame = socket.next() => {
+                    let Some(Ok(frame)) = frame else { break; };
+                    let Ok(text) = frame.to_text() else { continue; };
+                    let request: Value = serde_json::from_str(text).unwrap();
+                    recorded.lock().unwrap().push(request.clone());
+                    let Some(id) = request.get("id") else { continue; };
+                    let method = request["method"].as_str().unwrap();
+                    let result = match method {
+                        "thread/fork" => { forks += 1; serde_json::json!({"thread":{"id":format!("worker-wire-{forks}")}}) }
+                        "turn/start" => serde_json::json!({"turn":{"id":"wire-turn"}}),
+                        "initialize" | "thread/resume" | "thread/unsubscribe" | "thread/name/set" => serde_json::json!({}),
+                        "config/read" => serde_json::json!({"config":{}}),
+                        "thread/start" => {
+                            socket.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::json!({"id":id,"error":{"message":"Naming is outside this fixture"}}).to_string())).await.unwrap();
+                            continue;
+                        }
+                        _ => panic!("unexpected Codex method {method}"),
+                    };
+                    socket.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::json!({"id":id,"result":result}).to_string())).await.unwrap();
+                }
+            }
+        }
+    });
+    let mut config = template.hub.config.clone();
+    config.codex_url = endpoint;
+    config.codex_binary = "/bin/false".into();
+    config.database = config.artifacts.join("task-forks.sqlite3");
+    let hub = Hub::new(config.clone(), Store::open(&config.database).unwrap());
+    hub.store.save_agent(&parent).unwrap();
+    for id in ["change-one", "change-two"] {
+        hub.store.save_task(&TaskItem { id:id.into(), text:format!("Implement {id}"), agent_id:parent.id.clone(),
+            status:TaskStatus::Incomplete, parent_task_id:String::new(), blocked_by_task_id:String::new(),
+            position:0.0, images:vec![], created_at:now(), updated_at:now() }).unwrap();
+    }
+    hub.start().await.unwrap();
+    hub.hand_out_open_work().await;
+    let starts = || wire.lock().unwrap().iter().filter(|call| call["method"] == "turn/start").count();
+    assert!(settle(|| starts() == 2).await, "both workers must start before either finishes");
+    let forks = hub.store.task_forks().unwrap();
+    assert_eq!(forks.len(), 2);
+    for call in wire.lock().unwrap().iter().filter(|call| call["method"] == "thread/fork") {
+        assert_eq!(call["params"]["threadId"], parent.session_id);
+        assert_eq!(call["params"]["model"], parent.model);
+        assert_eq!(call["params"]["cwd"], parent.cwd);
+        assert!(call["params"].get("excludeTurns").is_none());
+    }
+    // A terminal human dependency is returned without reopening or approving it.
+    let (task, _, child) = &forks[0];
+    let mut item = hub.store.tasks().unwrap().into_iter().find(|item| &item.id == task).unwrap();
+    item.status = TaskStatus::WaitingForHuman;
+    hub.store.save_task(&item).unwrap();
+    let session = hub.store.agent(child).unwrap().unwrap().session_id;
+    events.send(serde_json::json!({"method":"item/completed","params":{"threadId":session,"item":{"id":"worker-answer","type":"agentMessage","text":"A human must select the deployment target"}}})).unwrap();
+    events.send(serde_json::json!({"method":"turn/completed","params":{"threadId":session,"turn":{"status":"completed"}}})).unwrap();
+    assert!(settle(|| starts() == 3).await);
+    let coordinator = wire.lock().unwrap().iter().filter(|call| call["method"] == "turn/start").last().unwrap().clone();
+    assert_eq!(coordinator["params"]["threadId"], parent.session_id);
+    let input = coordinator["params"]["input"].to_string();
+    assert!(input.contains("waiting_for_human") && input.contains("deployment target"));
+    events.send(serde_json::json!({"method":"item/completed","params":{"threadId":parent.session_id,"item":{"id":"coordinator-answer","type":"agentMessage","text":"Waiting on the user's deployment selection"}}})).unwrap();
+    events.send(serde_json::json!({"method":"turn/completed","params":{"threadId":parent.session_id,"turn":{"status":"completed"}}})).unwrap();
+    assert!(settle(|| hub.store.agent(&parent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    for _ in 0..3 { hub.hand_out_open_work().await; }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(starts(), 3);
+    assert_eq!(hub.store.task_forks().unwrap().len(), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn terminal_task_fork_results_survive_restart_without_duplicate_delivery() {
+    let template = world(Mode::Auto, false).await;
+    template.hub.accept(signal("persisted", "persisted", "initial context")).await.unwrap();
+    assert!(settle(|| template.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = template.hub.store.agents(10).unwrap()[0].clone();
+    let child = Agent { id:"persisted-worker".into(), session_id:"persisted-session".into(), ..parent.clone() };
+    let mut config = template.hub.config.clone();
+    config.database = config.artifacts.join("recovered-task-forks.sqlite3");
+    let store = Store::open(&config.database).unwrap();
+    store.save_agent(&parent).unwrap();
+    store.save_agent(&child).unwrap();
+    let mut task = TaskItem { id:"retained-task".into(), text:"Deliver the change".into(), agent_id:parent.id.clone(),
+        status:TaskStatus::Incomplete, parent_task_id:String::new(), blocked_by_task_id:String::new(),
+        position:0.0, images:vec![], created_at:now(), updated_at:now() };
+    store.save_task(&task).unwrap();
+    assert!(store.assign_task_fork(&task.id, &parent.id, &child.id).unwrap());
+    assert!(!store.assign_task_fork(&task.id, &parent.id, "duplicate-worker").unwrap());
+    task.agent_id = child.id.clone();
+    task.status = TaskStatus::Done;
+    store.save_task(&task).unwrap();
+    store.add_entry(&child.id, now(), EntryKind::ForkedFrom, "Inherited context", &parent.id, "").unwrap();
+    store.add_entry(&child.id, now(), EntryKind::Said, "Finished with an exact commit and runtime checks", "", "").unwrap();
+    drop(store);
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    for iteration in 0..2 {
+        let mut hub = Hub::new(config.clone(), Store::open(&config.database).unwrap());
+        hub.with_harness(Arc::new(FakeHarness::new(calls.clone(), false)));
+        hub.start().await.unwrap();
+        hub.hand_out_open_work().await;
+        if iteration == 0 {
+            assert!(settle(|| calls.lock().unwrap().started.len() == 1).await);
+            assert!(settle(|| hub.store.agent(&parent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(calls.lock().unwrap().started.len(), 1, "a delivered result must stay delivered across restarts");
+        assert_eq!(hub.store.tasks().unwrap()[0].status, TaskStatus::Done);
+    }
+    assert_eq!(calls.lock().unwrap().started[0].0, parent.session_id);
+}
+
+#[tokio::test]
+async fn independent_tasks_fork_concurrently_and_return_to_the_coordinator_once() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("parallel", "parallel", "complete the assigned changes")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    for (id, parent_task, owner, status) in [
+        ("root-a", "", parent.id.as_str(), TaskStatus::Incomplete),
+        ("root-b", "", parent.id.as_str(), TaskStatus::Incomplete),
+        ("nested-a", "root-a", parent.id.as_str(), TaskStatus::WaitingForHuman),
+        ("nested-b", "nested-a", parent.id.as_str(), TaskStatus::Done),
+        ("foreign", "root-a", "another-owner", TaskStatus::Incomplete),
+    ] {
+        w.hub.store.save_task(&TaskItem {
+            id: id.into(), text: format!("Deliver {id}"), parent_task_id: parent_task.into(),
+            agent_id: owner.into(), status, blocked_by_task_id: String::new(),
+            position: 0.0, images: vec![], created_at: now(), updated_at: now(),
+        }).unwrap();
+    }
+    let _ = w.harness.send(HarnessEvent::Message { session: parent.session_id.clone(), text: "Work consumed".into(), final_answer: true });
+    let _ = w.harness.send(HarnessEvent::TurnFinished { session: parent.session_id.clone(), status: "completed".into() });
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
+    let forks = w.hub.store.task_forks().unwrap();
+    assert_eq!(forks.len(), 2);
+    assert!(w.posts.lock().unwrap().threads.is_empty(), "automatic workers must not open external threads");
+    let tasks = w.hub.store.tasks().unwrap();
+    let owner = |id: &str| tasks.iter().find(|task| task.id == id).unwrap().agent_id.clone();
+    assert_ne!(owner("root-a"), owner("root-b"));
+    assert_eq!(owner("nested-a"), owner("root-a"));
+    assert_eq!(owner("nested-b"), owner("root-a"));
+    assert_eq!(owner("foreign"), "another-owner");
+    assert_eq!(tasks.iter().find(|task| task.id == "nested-a").unwrap().status, TaskStatus::WaitingForHuman);
+    assert_eq!(tasks.iter().find(|task| task.id == "nested-b").unwrap().status, TaskStatus::Done);
+    assert_eq!(tasks.len(), 5, "delegation does not duplicate task cards");
+    for (_, _, child) in &forks {
+        assert_eq!(w.hub.store.agent(child).unwrap().unwrap().status, AgentStatus::Working);
+        assert!(w.hub.store.last_answer(child).unwrap().is_none(), "inherited answers are not worker results");
+    }
+    let (task, _, child) = &forks[0];
+    let item = tasks.iter().find(|item| &item.id == task).unwrap();
+    w.hub.update_task(task, &item.text, TaskStatus::Done, "", child, Some("Implemented and validated"), false, None).await.unwrap();
+    let worker = w.hub.store.agent(child).unwrap().unwrap();
+    let _ = w.harness.send(HarnessEvent::Message { session: worker.session_id.clone(), text: "Committed the implementation with runtime evidence".into(), final_answer: true });
+    let _ = w.harness.send(HarnessEvent::TurnFinished { session: worker.session_id.clone(), status: "completed".into() });
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 4).await);
+    let calls = w.calls.lock().unwrap();
+    assert_eq!(calls.started[3].0, parent.session_id);
+    let result = calls.started[3].1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
+    assert!(result.contains(task) && result.contains(child) && result.contains("Implemented and validated"));
+    assert!(result.contains("specific revision instructions"));
+    drop(calls);
+    for _ in 0..3 { w.hub.hand_out_open_work().await; }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(w.hub.store.task_forks().unwrap().len(), 2);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 4, "reported results must not restart the coordinator twice");
+    assert_eq!(w.hub.store.tasks().unwrap().iter().find(|item| &item.id == task).unwrap().status, TaskStatus::Done, "the coordinator cannot grant human approval");
+}
+
+#[tokio::test]
 async fn an_agent_with_nothing_open_is_left_alone() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
@@ -2397,7 +2604,7 @@ async fn a_task_handed_over_by_the_hub_says_so_on_the_timeline() {
     // attribute when it turns out to have gone to the wrong agent.
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "first")).await.unwrap();
-    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
     let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
 
     w.hub.create_task("paint the shed", &agent, vec![], "").await.unwrap();

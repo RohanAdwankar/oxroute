@@ -214,6 +214,7 @@ pub struct Hub {
     naming: AsyncMutex<HashSet<String>>,
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
+    task_dispatch: AsyncMutex<()>,
 }
 
 struct FollowUp {
@@ -317,6 +318,7 @@ impl Hub {
             follow_ups: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
+            task_dispatch: AsyncMutex::new(()),
         })
     }
 
@@ -1291,12 +1293,12 @@ impl Hub {
     /// lives, if it lives anywhere; a machine with no source configured
     /// forks just the same, into a pane.
     pub async fn fork(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_with_layout(agent_id, false, None).await
+        self.fork_with_layout(agent_id, false, None, true).await
     }
 
     /// A fork beside its parent, with its own source thread when available.
     pub async fn fork_in_chat(self: &Arc<Self>, agent_id: &str) -> Result<Agent> {
-        self.fork_with_layout(agent_id, true, None).await
+        self.fork_with_layout(agent_id, true, None, true).await
     }
 
     fn with_quote_context(&self, agent_id: &str, text: &str) -> Result<String> {
@@ -1310,10 +1312,10 @@ impl Hub {
         anyhow::ensure!(quote.start < quote.end && quote.end - quote.start == quote.text.encode_utf16().count(), "invalid quote range");
         anyhow::ensure!(!quote.text.trim().is_empty(), "select text for the thread");
         anyhow::ensure!(self.store.timeline(agent_id, usize::MAX)?.iter().any(|entry| entry.id == quote.entry_id), "quote entry does not belong to this session");
-        self.fork_with_layout(agent_id, true, Some(quote)).await
+        self.fork_with_layout(agent_id, true, Some(quote), true).await
     }
 
-    async fn fork_with_layout(self: &Arc<Self>, agent_id: &str, in_chat: bool, quote: Option<QuoteAnchor>) -> Result<Agent> {
+    async fn fork_with_layout(self: &Arc<Self>, agent_id: &str, in_chat: bool, quote: Option<QuoteAnchor>, mirror: bool) -> Result<Agent> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork {
@@ -1344,9 +1346,10 @@ impl Hub {
         };
 
         // Where the fork's own conversation would go, if it has one.
-        let home = match self.home_binding(agent_id) {
+        let home = match self.home_binding(agent_id).filter(|_| mirror) {
             Some(binding) => Some((binding.source, binding.conversation)),
-            None => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
+            None if mirror => self.dashboard_location().map(|(source, conversation, _)| (source, conversation)),
+            None => None,
         };
         let home = home.and_then(|(name, conversation)| {
             self.source(&name).map(|source| (name, conversation, source))
@@ -1635,6 +1638,12 @@ impl Hub {
                 }
                 hub.emit(Event::Sync);
                 hub.refresh_dashboard().await;
+                if let Ok(forks) = hub.store.task_forks() {
+                    if forks.iter().any(|(_, _, child)| child == &agent.id) {
+                        hub.record(&agent.id, EntryKind::Notice, &format!("Worker turn failed: {error}"), "task-worker-error", "");
+                        let _ = hub.notify_task_parent(&agent.id);
+                    }
+                }
             }
         });
     }
@@ -2093,12 +2102,107 @@ impl Hub {
         }
     }
 
+    /// Independent root tasks get their own inherited conversation. Ownership
+    /// moves atomically, so a restart cannot produce a second worker or card.
+    async fn dispatch_task_forks(self: &Arc<Self>, parent: &Agent) -> Result<Vec<Agent>> {
+        let _dispatch = self.task_dispatch.lock().await;
+        let forks = self.store.task_forks()?;
+        if forks.iter().any(|(_, _, child)| child == &parent.id)
+            || !self.harness(parent.backend).capabilities().fork {
+            return Ok(vec![]);
+        }
+        let tasks: Vec<_> = self.store.tasks()?.into_iter().filter(|task|
+            task.agent_id == parent.id && task.status == TaskStatus::Incomplete
+            && task.parent_task_id.is_empty() && task.blocked_by_task_id.is_empty()
+            && !forks.iter().any(|(id, _, _)| id == &task.id)
+        ).collect();
+        if tasks.len() < 2 { return Ok(vec![]); }
+        let mut children = vec![];
+        for task in tasks {
+            // Copying a timeline writes both database pages and WAL pages.
+            // Check each fork, rather than budgeting the whole batch once.
+            let reserve = self.config.min_free_bytes.saturating_add(self.store.timeline_bytes(&parent.id)?.saturating_mul(3));
+            let database_dir = self.config.database.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(&self.config.artifacts);
+            if free_bytes(&self.config.artifacts) < reserve || free_bytes(database_dir) < reserve {
+                self.record(&parent.id, EntryKind::Notice, "Task forks paused: insufficient disk space to preserve conversation history", &task.id, "");
+                break;
+            }
+            let child = match self.fork_with_layout(&parent.id, false, None, false).await {
+                Ok(child) => child,
+                Err(error) => {
+                    self.record(&parent.id, EntryKind::Notice, &format!("Task fork could not start: {error}"), &task.id, "");
+                    break;
+                }
+            };
+            if !self.store.assign_task_fork(&task.id, &parent.id, &child.id)? {
+                self.store.set_agent_archived(&child.id, true, false)?;
+                continue;
+            }
+            let mut child = child;
+            child.name = task.text.chars().take(80).collect();
+            self.store.save_agent(&child)?;
+            self.record(&parent.id, EntryKind::Notice,
+                &format!("Delegated {} to {}", task.id, child.id), &child.id, "");
+            children.push(child);
+        }
+        self.emit(Event::Sync);
+        Ok(children)
+    }
+
+    /// A worker's final answer wakes its coordinator once, after its own task
+    /// continuation has stopped. The answer remains replayable after restart.
+    fn notify_task_parent(self: &Arc<Self>, child: &str) -> Result<()> {
+        let Some((task_id, parent, _)) = self.store.task_forks()?.into_iter().find(|(_, _, id)| id == child) else { return Ok(()); };
+        if self.store.agent_archived(&parent)? || self.store.agent_archived(child)? { return Ok(()); }
+        let Some(answer) = self.store.last_answer(child)? else { return Ok(()); };
+        let tasks = self.store.tasks()?;
+        let Some(task) = tasks.iter().find(|task| task.id == task_id) else { return Ok(()); };
+        let receipt = format!("task-result:{child}:{}", answer.id);
+        if self.store.get(&receipt)?.is_some() { return Ok(()); }
+        let notes = self.store.task_notes()?;
+        let note = notes.iter().rev().find(|note| note.task_id == task_id).map(|note| note.text.as_str()).unwrap_or("");
+        let subtasks = tasks.iter().filter(|task| task.agent_id == child && task.id != task_id).map(|task| {
+            let note = notes.iter().rev().find(|note| note.task_id == task.id).map(|note| note.text.as_str()).unwrap_or("");
+            format!("{}: {} ({}), dependency: {}. {note}", task.id, task.text, task.status.as_str(), task.blocked_by_task_id)
+        }).collect::<Vec<_>>().join("\n");
+        let prompt = format!(
+            "A task worker has stopped. Review its result and integrate the work or send it \
+             specific revision instructions. You are authorized to review this delegated task, \
+             but done still means awaiting human approval; never approve it yourself. \
+             Preserve explicit human and task dependencies. Do not redo work running in other \
+             children or dispatch this task again.\n\nTask: {} ({task_id})\nWorker: {child}\nStatus: {}\nNote: {note}\nOther worker tasks:\n{subtasks}\n\nResult:\n{}\n\n\
+             To request revisions, POST http://{}/api/tasks/{task_id}/correction as multipart \
+             fields text=your specific instructions and queued=false. This reopens the same \
+             task, saves feedback and delivers it to the worker. \
+             Inspect the actual changes and validation before reporting completion.",
+            task.text, task.status.as_str(), answer.text, self.config.listen,
+        );
+        let notice = format!("Task worker returned: {task_id} ({child})");
+        let hub = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = hub.wake_once(&parent, &receipt, &prompt, &notice).await {
+                tracing::warn!(%error, agent = parent, "task result delivery failed; will retry");
+            }
+        });
+        Ok(())
+    }
+
     fn carry_on_with_tasks(
         self: Arc<Self>,
         agent: Agent,
         target: Option<Target>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
+            match self.dispatch_task_forks(&agent).await {
+                Ok(children) if !children.is_empty() => {
+                    for child in children {
+                        self.clone().carry_on_with_tasks(child, None).await;
+                    }
+                    // Any task not eligible for a fork remains with the coordinator.
+                }
+                Err(error) => tracing::warn!(%error, agent = agent.id, "task dispatch failed"),
+                _ => {}
+            }
             let Ok(tasks) = self.store.tasks() else {
                 return;
             };
@@ -2108,6 +2212,9 @@ impl Hub {
                 self.store.get(&chain_key(&agent.id)).ok().flatten(),
             );
             let Some(open) = carry_on(&tasks, &agent.id, &chain) else {
+                if let Err(error) = self.notify_task_parent(&agent.id) {
+                    tracing::warn!(%error, "could not notify task coordinator");
+                }
                 let stuck = tasks
                     .iter()
                     .filter(|task| {
@@ -2146,12 +2253,33 @@ impl Hub {
             .map(|task| format!("- {} ({})", task.text, task.id))
             .collect::<Vec<_>>()
             .join("\n");
-        let inputs = vec![TurnInput::text(format!(
+        let mut inputs = vec![TurnInput::text(format!(
             "Your task list still has open work:\n{list}\n\nCarry on with it. Mark each \
              one complete as you finish it. If something stops you, set that task to \
              blocked -- naming the task it waits on -- or to waiting_for_human, and say \
              what you need.",
         ))];
+        if let Ok(forks) = self.store.task_forks() {
+            if let Some((task, parent, _)) = forks.iter().find(|(_, _, child)| child == &agent.id) {
+                inputs.push(TurnInput::text(format!(
+                    "You are the worker for {task}, delegated by coordinator {parent}. Work \
+                     only on this task and its subtasks. Your inherited conversation supplies \
+                     context, not authorization to take other tasks. Before editing a shared \
+                     repository, inspect its uncommitted work and create an isolated git worktree \
+                     under the workspace location allowed by repository instructions. Commit \
+                     only your changes with an explanation. \
+                     Do not publish, deploy, restart shared services, or contact anyone; return \
+                     the worktree, branch, exact commit, validation evidence and any real dependency \
+                     to the coordinator. Preserve inherited permissions. Mark finished work done, \
+                     never complete. Your coordinator will review and integrate the result."
+                )));
+            }
+        }
+        for task in &open {
+            for image in &task.images {
+                inputs.push(TurnInput::LocalImage { path: self.config.attachments.join(image).to_string_lossy().into_owned() });
+            }
+        }
         // Say on the timeline that this was the hub talking. A turn nobody
         // can see the cause of reads as an agent that wandered off on its
         // own, and when it turns out to have been handed the wrong work
@@ -2870,6 +2998,12 @@ impl Hub {
             .flatten()
             .is_some_and(|agent| agent.status != AgentStatus::Working);
         if idle {
+            if self.store.tasks()?.iter().filter(|task| task.agent_id == agent_id && task.status == TaskStatus::Incomplete).count() > 1 {
+                let agent = self.store.agent(agent_id)?.context("no such agent")?;
+                let target = self.home_target(agent_id).await;
+                self.clone().carry_on_with_tasks(agent, target).await;
+                return Ok(task);
+            }
             self.ask_quietly(
                 agent_id,
                 &format!(

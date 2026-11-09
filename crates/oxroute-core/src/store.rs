@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS pane_links (
     parent_id TEXT NOT NULL
 );
 
+-- A task keeps its identity and approval state when delegated to a fork.
+CREATE TABLE IF NOT EXISTS task_forks (
+    task_id TEXT PRIMARY KEY,
+    child_id TEXT NOT NULL UNIQUE,
+    parent_id TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS quote_threads (
     child_id TEXT PRIMARY KEY,
     thread TEXT NOT NULL
@@ -725,6 +732,52 @@ impl Store {
         })
     }
 
+    /// Claim an existing open task once, without overwriting concurrent edits.
+    pub fn assign_task_fork(&self, task: &str, parent: &str, child: &str) -> Result<bool> {
+        self.with(|c| {
+            let transaction = c.unchecked_transaction()?;
+            let changed = transaction.execute(
+                "UPDATE tasks SET agent_id = ?3, updated_at = ?4 WHERE id = ?1
+                 AND agent_id = ?2 AND status = 'incomplete'
+                 AND NOT EXISTS (SELECT 1 FROM task_forks WHERE task_id = ?1)",
+                params![task, parent, child, crate::model::now()],
+            )?;
+            if changed == 1 {
+                transaction.execute(
+                    "WITH RECURSIVE descendants(id) AS (
+                        SELECT id FROM tasks WHERE parent_task_id = ?1
+                        UNION SELECT t.id FROM tasks t JOIN descendants d ON t.parent_task_id = d.id
+                    ) UPDATE tasks SET agent_id = ?3, updated_at = ?4
+                      WHERE id IN (SELECT id FROM descendants) AND agent_id = ?2",
+                    params![task, parent, child, crate::model::now()],
+                )?;
+                transaction.execute("INSERT INTO task_forks (task_id, parent_id, child_id) VALUES (?1, ?2, ?3)", params![task, parent, child])?;
+            }
+            transaction.commit()?;
+            Ok(changed == 1)
+        })
+    }
+
+    pub fn task_forks(&self) -> Result<Vec<(String, String, String)>> {
+        self.read(|c| {
+            let mut statement = c.prepare("SELECT task_id, parent_id, child_id FROM task_forks")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+    }
+
+    pub fn agent_archived(&self, agent: &str) -> Result<bool> {
+        self.read(|c| Ok(c.query_row("SELECT archived FROM agents WHERE id = ?1", params![agent], |row| row.get(0)).optional()?.unwrap_or(true)))
+    }
+
+    pub fn last_answer(&self, agent: &str) -> Result<Option<Entry>> {
+        self.read(|c| Ok(c.query_row("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries WHERE agent_id = ?1
+            AND (kind = 'said' OR (kind = 'notice' AND detail = 'task-worker-error'))
+            AND id > COALESCE((SELECT MAX(id) FROM entries WHERE agent_id = ?1 AND kind = 'forked-from'), 0)
+            ORDER BY id DESC LIMIT 1",
+            params![agent], read_entry).optional()?))
+    }
+
     pub fn delete_task(&self, id: &str) -> Result<()> {
         self.with(|c| {
             let transaction = c.unchecked_transaction()?;
@@ -1218,6 +1271,14 @@ impl Store {
             )?;
             Ok(())
         })
+    }
+
+    pub fn timeline_bytes(&self, agent: &str) -> Result<u64> {
+        self.read(|c| Ok(c.query_row(
+            "SELECT COALESCE(SUM(length(CAST(text AS BLOB)) + length(CAST(detail AS BLOB))
+                + length(CAST(output AS BLOB)) + 256), 0) FROM entries WHERE agent_id = ?1",
+            params![agent], |row| row.get(0),
+        )?))
     }
 
     /// A fork retains the exact review references copied into its timeline.
