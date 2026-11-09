@@ -208,7 +208,20 @@ export interface BoardRow {
   cells: string[][];
 }
 
+export interface Workstream {
+  outcome: string;
+  owner: string;
+  blocker: string;
+  nextAction: string;
+  target: string;
+  estimateDays: number | null;
+  stageStartedAt: number | null;
+  followUpAt: number | null;
+  sources: string[];
+}
+
 export interface Arranged {
+  workstreams?: Record<string, Workstream>;
   board: Board;
   /** Column values; null is the column of sessions without the key. */
   columns: (string | null)[];

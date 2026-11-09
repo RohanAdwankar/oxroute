@@ -20,6 +20,7 @@ import type {
   NativeSession,
   Snapshot,
   TaskItem,
+  Workstream,
 } from "./types";
 
 // Everything goes through this origin. Next forwards regular calls while the
@@ -194,6 +195,8 @@ export const api = {
   // Tags and boards. A board is its settings; moving a card is tagging it.
   tag: (agent: string, change: { add?: string[]; remove?: string[]; set?: string[] }) =>
     agentPost<string[]>(agent, `/api/agents/${encodeURIComponent(agent)}/tags`, change),
+  updateWorkstream: (agent: string, brief: Workstream) =>
+    call<Workstream>(`/api/agents/${encodeURIComponent(agent)}/workstream`, { method: "PUT", body: JSON.stringify(brief) }),
   createBoard: (board: Partial<Board> = {}) => post<Board>("/api/boards", board),
   updateBoard: (board: Board) =>
     call<Board>(`/api/boards/${encodeURIComponent(board.id)}`, {

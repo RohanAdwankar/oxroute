@@ -7,6 +7,7 @@ import { since } from "../lib/format";
 import type { Agent, Arranged, Board, Snapshot } from "../lib/types";
 import { Icon } from "./Icon";
 import { TagChip } from "./Tags";
+import { WorkstreamContext, WorkstreamEditor } from "./Workstream";
 
 const DOT: Record<string, string> = {
   working: "bg-ok",
@@ -52,6 +53,12 @@ export function BoardView({
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now() / 1000), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const [name, setName] = useState<string | null>(null);
 
   useEffect(() => {
@@ -139,6 +146,9 @@ export function BoardView({
       <SessionCard
         key={id}
         agent={agent}
+        brief={arranged.workstreams?.[id]}
+        now={now}
+        onEdit={() => setEditing(id)}
         tags={(snapshot.tags[id] ?? []).filter((tag) => !hidden.has(tag.split(":")[0]))}
         dragging={dragging === id}
         onDragStart={() => setDragging(id)}
@@ -169,6 +179,11 @@ export function BoardView({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {editing && <WorkstreamEditor agent={arranged.sessions[editing]} brief={arranged.workstreams?.[editing]} onClose={() => setEditing(null)} onSave={async brief => {
+        const saved = await api.updateWorkstream(editing, brief);
+        setArranged(current => current && ({ ...current, workstreams: { ...current.workstreams, [editing]: saved } }));
+        setEditing(null);
+      }} />}
       <div className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-[var(--pane-x)] py-1">
         {name !== null ? (
           <input
@@ -515,6 +530,9 @@ function AddLane({ label, onAdd }: { label: string; onAdd: (value: string) => vo
 
 function SessionCard({
   agent,
+  brief,
+  now,
+  onEdit,
   tags,
   dragging,
   onDragStart,
@@ -522,6 +540,9 @@ function SessionCard({
   onOpen,
 }: {
   agent: Agent;
+  brief?: import("../lib/types").Workstream;
+  now: number;
+  onEdit: () => void;
   tags: string[];
   dragging: boolean;
   onDragStart: () => void;
@@ -538,6 +559,14 @@ function SessionCard({
       }}
       onDragEnd={onDragEnd}
       onClick={onOpen}
+      title="Right-click to edit workstream"
+      tabIndex={0}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter") onOpen();
+        if (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey) { event.preventDefault(); onEdit(); }
+      }}
+      onContextMenu={event => { event.preventDefault(); onEdit(); }}
       className={[
         "cursor-pointer rounded-[3px] border border-rule bg-card px-3 py-[9px] transition-opacity hover:border-edge",
         dragging ? "opacity-40" : "",
@@ -553,6 +582,7 @@ function SessionCard({
       {agent.status === "working" && agent.activity && (
         <p className="mt-[5px] truncate font-mono text-[10.5px] text-mid">{agent.activity}</p>
       )}
+      {brief && <WorkstreamContext brief={brief} now={now} />}
       {tags.length > 0 && (
         <div className="mt-[6px] flex flex-wrap gap-[4px]">
           {tags.map((tag) => (

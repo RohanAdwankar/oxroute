@@ -3345,10 +3345,19 @@ impl Hub {
                 tags::MAX_TAG
             );
         }
-        let now = tags::change(&self.store.tags(agent_id)?, add, remove, set);
-        self.store.set_tags(agent_id, &now)?;
+        let current = self.store.tags(agent_id)?;
+        let next = tags::change(&current, add, remove, set);
+        self.store.set_tags(agent_id, &next)?;
+        if current.iter().filter(|v| v.starts_with("workflow:")).ne(next.iter().filter(|v| v.starts_with("workflow:"))) {
+            if let Some(mut brief) = self.workstream(agent_id)? {
+                if brief.estimate_days.is_some() {
+                    brief.stage_started_at = Some(now());
+                    self.store.set(&format!("workstream:{agent_id}"), &serde_json::to_string(&brief)?)?;
+                }
+            }
+        }
         self.emit(Event::Sync);
-        Ok(now)
+        Ok(next)
     }
 
     pub fn boards(&self) -> Result<Vec<Board>> {
@@ -3401,7 +3410,30 @@ impl Hub {
     pub fn arrange(&self, id: &str) -> Result<Arranged> {
         let board = self.store.board(id)?.context("no such board")?;
         let agents = self.store.unarchived_agents()?;
-        Ok(tags::arrange(&board, &agents, &self.store.all_tags()?))
+        let mut arranged = tags::arrange(&board, &agents, &self.store.all_tags()?);
+        for id in arranged.sessions.keys() {
+            if let Some(brief) = self.workstream(id)? {
+                arranged.workstreams.insert(id.clone(), brief);
+            }
+        }
+        Ok(arranged)
+    }
+
+    pub fn workstream(&self, agent_id: &str) -> Result<Option<tags::Workstream>> {
+        self.store.agent(agent_id)?.context("no such agent")?;
+        self.store.get(&format!("workstream:{agent_id}"))?
+            .map(|value| Ok(serde_json::from_str(&value)?)).transpose()
+    }
+
+    pub fn set_workstream(&self, agent_id: &str, brief: tags::Workstream) -> Result<tags::Workstream> {
+        self.store.agent(agent_id)?.context("no such agent")?;
+        anyhow::ensure!(brief.estimate_days.is_none_or(|v| v.is_finite() && v > 0.0), "estimateDays must be positive");
+        anyhow::ensure!(brief.stage_started_at.is_none_or(|v| v.is_finite() && v > 0.0), "stageStartedAt must be positive Unix seconds");
+        anyhow::ensure!(brief.follow_up_at.is_none_or(|v| v.is_finite() && v > 0.0), "followUpAt must be positive Unix seconds");
+        anyhow::ensure!(brief.sources.iter().all(|v| reqwest::Url::parse(v).is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())), "sources must be HTTP links");
+        self.store.set(&format!("workstream:{agent_id}"), &serde_json::to_string(&brief)?)?;
+        self.emit(Event::Sync);
+        Ok(brief)
     }
 
     /// Drag a card to a cell: set the board's column tag and row tag to the

@@ -309,7 +309,7 @@ fn agent_api() -> (Router<Arc<Hub>>, serde_json::Value) {
         .routes(routes!(state)).routes(routes!(agent))
         .routes(routes!(tasks, create_task)).routes(routes!(update_task, delete_task))
         .routes(routes!(task_notes)).routes(routes!(add_task_note))
-        .routes(routes!(tags, change_tags)).routes(routes!(boards, create_board))
+        .routes(routes!(tags, change_tags)).routes(routes!(workstream, set_workstream)).routes(routes!(boards, create_board))
         .routes(routes!(arrange, update_board, delete_board)).routes(routes!(create_review)).routes(routes!(get_review))
         .split_for_parts();
     let schema = serde_json::to_value(schema).expect("OpenAPI is serializable");
@@ -1271,6 +1271,35 @@ async fn change_tags(
     Json(body): Json<TagsBody>,
 ) -> Result<Json<Vec<String>>, Failed> {
     Ok(Json(hub.tag(&id, &body.add, &body.remove, &body.set)?))
+}
+
+#[utoipa::path(get, path = "/api/agents/{id}/workstream", operation_id = "workstream.show", params(("id" = String, Path)), responses((status = 200, body = serde_json::Value)))]
+async fn workstream(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Option<oxroute_core::tags::Workstream>>, Failed> {
+    Ok(Json(hub.workstream(&id)?))
+}
+
+#[derive(Default, Deserialize, utoipa::ToSchema)]
+#[serde(default, rename_all = "camelCase")]
+struct WorkstreamBody {
+    outcome: String,
+    owner: String,
+    blocker: String,
+    next_action: String,
+    target: String,
+    estimate_days: Option<f64>,
+    stage_started_at: Option<f64>,
+    follow_up_at: Option<f64>,
+    sources: Vec<String>,
+}
+
+/// Replace the session's workstream brief without changing its tags or tasks.
+#[utoipa::path(put, path = "/api/agents/{id}/workstream", operation_id = "workstream.update", params(("id" = String, Path)), request_body = WorkstreamBody, responses((status = 200, body = serde_json::Value)))]
+async fn set_workstream(State(hub): Hubs, Path(id): Path<String>, Json(body): Json<WorkstreamBody>) -> Result<Json<oxroute_core::tags::Workstream>, Failed> {
+    Ok(Json(hub.set_workstream(&id, oxroute_core::tags::Workstream {
+        outcome: body.outcome, owner: body.owner, blocker: body.blocker,
+        next_action: body.next_action, target: body.target, estimate_days: body.estimate_days,
+        stage_started_at: body.stage_started_at, follow_up_at: body.follow_up_at, sources: body.sources,
+    })?))
 }
 
 #[derive(Deserialize)]

@@ -157,10 +157,29 @@ pub struct Row {
     pub cells: Vec<Vec<String>>,
 }
 
+/// Durable context for a workstream, independent of its current board lane.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Workstream {
+    pub outcome: String,
+    pub owner: String,
+    pub blocker: String,
+    pub next_action: String,
+    /// May be an estimated milestone rather than a confirmed calendar date.
+    pub target: String,
+    pub estimate_days: Option<f64>,
+    pub stage_started_at: Option<f64>,
+    /// Unix seconds. An elapsed checkpoint is a flag, never an outbound message.
+    pub follow_up_at: Option<f64>,
+    pub sources: Vec<String>,
+}
+
 /// A board worked out against the sessions as they are now.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Arranged {
+    #[serde(default)]
+    pub workstreams: HashMap<String, Workstream>,
     pub board: Board,
     /// Column values, left to right. `None` is the column of sessions
     /// without the column key, and the only column when there is no key.
@@ -296,6 +315,7 @@ pub fn arrange(board: &Board, agents: &[Agent], tags: &HashMap<String, Vec<Strin
         .collect();
 
     Arranged {
+        workstreams: HashMap::new(),
         board: board.clone(),
         sessions: shown.iter().map(|a| (a.id.clone(), (*a).clone())).collect(),
         columns,
