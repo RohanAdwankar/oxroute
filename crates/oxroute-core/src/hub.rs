@@ -2830,9 +2830,10 @@ impl Hub {
     /// Repair missing source links without starting or interrupting model turns.
     pub async fn reconcile_threads(&self) -> Result<()> {
         if self.sources.is_empty() { return Ok(()); }
+        let workers: HashSet<_> = self.store.task_forks()?.into_iter().map(|(_, _, child)| child).collect();
         for agent in self.store.unarchived_agents()? {
             let binding = self.home_binding(&agent.id);
-            if agent.backend == Backend::Codex && binding.is_none() {
+            if agent.backend == Backend::Codex && binding.is_none() && !workers.contains(&agent.id) {
                 if self.ensure_thread(&agent.id, &agent.name).await?.0.is_none() { break; }
             } else if let Some(binding) = binding {
                 let target = Target::new(binding.source, binding.conversation, binding.thread_key);

@@ -2515,7 +2515,12 @@ async fn independent_tasks_fork_concurrently_and_return_to_the_coordinator_once(
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
     let forks = w.hub.store.task_forks().unwrap();
     assert_eq!(forks.len(), 2);
+    w.hub.store.set("dashboard", "slack\u{1f}D1\u{1f}status").unwrap();
+    w.hub.reconcile_threads().await.unwrap();
     assert!(w.posts.lock().unwrap().threads.is_empty(), "automatic workers must not open external threads");
+    for (_, _, child) in &forks {
+        assert!(w.hub.store.bindings_for(child).unwrap().is_empty(), "reconciliation must retain local-only workers");
+    }
     let tasks = w.hub.store.tasks().unwrap();
     let owner = |id: &str| tasks.iter().find(|task| task.id == id).unwrap().agent_id.clone();
     assert_ne!(owner("root-a"), owner("root-b"));
