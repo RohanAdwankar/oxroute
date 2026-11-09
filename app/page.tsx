@@ -1409,10 +1409,16 @@ export default function Home() {
                       onTask={(text, images) => file(text, images, id)}
                       correcting={correcting?.agentId === id ? correcting : null}
                       onStopCorrecting={() => setCorrecting(null)}
-                      onCorrect={(text, images, queued) => {
-                        const task = correcting;
+                      onCorrect={async (text, images, queued, taskId = correcting?.id) => {
                         setCorrecting(null);
-                        if (task) void run(() => api.correctTask(task.id, text, images, queued));
+                        if (!taskId) return false;
+                        setBusy(true);
+                        try {
+                          await api.correctTask(taskId, text, images, queued);
+                          reload();
+                          return true;
+                        } catch (error) { complain(error); return false; }
+                        finally { setBusy(false); }
                       }}
                       onSendDiagram={(edits, note, queued) =>
                         void run(async () => {

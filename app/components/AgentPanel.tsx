@@ -16,6 +16,7 @@ import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { DRAFT_CHANGED, draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
+import { usePinnedMessages, type PinnedMessage } from "../lib/pinned-messages";
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -177,7 +178,7 @@ export function AgentPanel({
   onTask: (text: string, images: File[]) => Promise<boolean>;
   /// Work you said "not yet" to: what you type next is the correction.
   correcting: TaskItem | null;
-  onCorrect: (text: string, images: File[], queued: boolean) => void;
+  onCorrect: (text: string, images: File[], queued: boolean, taskId?: string) => Promise<boolean>;
   onStopCorrecting: () => void;
   /** Draw instead of describe: the edits become the message. */
   onSendDiagram: (edits: DiagramEdit[], note: string, queued: boolean) => void;
@@ -219,6 +220,9 @@ export function AgentPanel({
   const retrySubmission = useRef<{ signature: string; requestId: string } | null>(null);
   const nextPending = useRef(0);
   const pictures = useUploads(view.agent.id);
+  const pinned = usePinnedMessages(view.agent.id, say);
+  const sendingPin = useRef<string | null>(null);
+  const [pinPending, setPinPending] = useState<string | null>(null);
   const [draggingImages, setDraggingImages] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
@@ -440,7 +444,7 @@ export function AgentPanel({
     pin();
   }, [draft, diffs, pictures.uploads, pictures.error, pin]);
 
-  /// A drawing follows the same interrupt-or-queue choice as text.
+  /// Deliveries already explicitly requested, including idle sends and queued work.
   const sayImmediately = (text: string, images: File[], queued: boolean, restoreText = text, restoreDiffs: DiffQuote[] = []) => {
     const signature = JSON.stringify([agent.id, text, images.map(file => [file.name, file.size, file.type, file.lastModified]), queued, restoreDiffs]);
     const requestId = retrySubmission.current?.signature === signature ? retrySubmission.current.requestId : crypto.randomUUID();
@@ -466,17 +470,36 @@ export function AgentPanel({
     });
   };
 
+  const pinMessage = (text: string, files: File[], quoted: DiffQuote[], drawn?: DiagramEdit[]) => {
+    pinned.add({ id: crypto.randomUUID(), text, files, diffs: quoted, edits: drawn, correction: correcting?.id });
+    if (correcting) onStopCorrecting();
+  };
+  const sendPinned = async (message = pinned.messages[0], queued = false) => {
+    if (!message || busy || sendingPin.current) return;
+    sendingPin.current = message.id; setPinPending(message.id);
+    try {
+      await pinned.flush();
+      if (message.edits) await api.sendDiagram(agent.id, message.edits, message.text, queued);
+      else if (message.correction) { if (!await onCorrect(message.text, message.files, queued, message.correction)) return; }
+      else if (!await onSay(message.text, message.files, queued, message.diffs, message.id)) return;
+      await pinned.remove(message.id);
+    } catch (error) { say(error instanceof Error ? error.message : String(error)); }
+    finally { sendingPin.current = null; setPinPending(null); }
+  };
+
   const sendDrawn = async (queued: boolean) => {
     if (busy) return;
     const text = composed;
     if (mode === "diagram") {
       if (edits.length === 0) return;
-      onSendDiagram(edits, text, queued);
+      if (agent.status === "working" && !queued) pinMessage(text, [], diffs, edits);
+      else onSendDiagram(edits, text, queued);
       setEdits([]);
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      sayImmediately(text, [picture, ...pictures.files], queued, draft, diffs);
+      if (agent.status === "working" && !queued) pinMessage(text, [picture, ...pictures.files], diffs);
+      else sayImmediately(text, [picture, ...pictures.files], queued, draft, diffs);
       pictures.clear();
       sketch.current?.clear();
     }
@@ -490,7 +513,7 @@ export function AgentPanel({
 
   const canSend =
     mode === "type"
-      ? !!correcting || draft.trim().length > 0 || diffs.length > 0 || pictures.uploads.length > 0
+      ? !!correcting || draft.trim().length > 0 || diffs.length > 0 || pictures.uploads.length > 0 || pinned.messages.length > 0
       : mode === "diagram"
         ? edits.length > 0
         : sketchReady;
@@ -501,6 +524,10 @@ export function AgentPanel({
       return;
     }
     const text = composed;
+    if (!correcting && !text && pictures.uploads.length === 0 && pinned.messages.length > 0) {
+      void sendPinned(undefined, queued);
+      return;
+    }
     if ((!correcting && !text && pictures.uploads.length === 0) || busy) return;
     // What you just said is what you want to see, wherever you had scrolled
     // to before saying it.
@@ -508,7 +535,8 @@ export function AgentPanel({
     setDraft("");
     setDiffs([]);
     const sent = pictures.files;
-    if (correcting) onCorrect(text, sent, queued);
+    if (working && !queued) pinMessage(text, sent, diffs);
+    else if (correcting) onCorrect(text, sent, queued);
     else sayImmediately(text, sent, queued, draft, diffs);
     pictures.clear();
   };
@@ -959,6 +987,14 @@ export function AgentPanel({
           draggingImages ? "border-drop bg-wash" : "border-rule bg-card"
         }`}
       >
+        {pinned.messages.length > 0 && <ol aria-label="Pinned messages" className="quiet-scroll max-h-48 overflow-auto px-[var(--pane-x)] py-2">
+          {pinned.messages.map(message => <li key={message.id} data-pinned-message={message.id} className="flex items-center gap-2 py-1 text-[12px] text-mid">
+            {pinned.saving ? <span aria-label="Saving pinned messages" className="animate-spin"><Icon name="refresh" size={12} /></span> : <Icon name="pin" size={12} />}
+            <div className="min-w-0 flex-1"><p className="line-clamp-3 whitespace-pre-wrap">{message.text || (message.edits ? "Drawn change" : "Attached files")}</p>{message.files.length > 0 && <p className="truncate text-[11px] text-faint">{message.files.map(file => file.name).join(", ")}</p>}</div>
+            <button type="button" aria-label="Send pinned message now" title="Send now" disabled={busy || pinPending !== null} onClick={() => void sendPinned(message)} className="cursor-pointer p-1 text-mid hover:text-ink disabled:opacity-30"><svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 14V2M3 7l5-5 5 5" /></svg></button>
+            <button type="button" aria-label="Discard pinned message" title="Discard" disabled={pinPending !== null} onClick={() => pinned.remove(message.id)} className="cursor-pointer p-1 text-faint hover:text-ink disabled:opacity-30"><Icon name="discard" size={14} /></button>
+          </li>)}
+        </ol>}
         {mode !== "type" && (
           <div className="flex items-center gap-2 px-[var(--pane-x)] pt-[6px] text-[11.5px] text-faint">
             <Icon name={MODES.find((option) => option.mode === mode)?.icon ?? "pen"} size={13} />
@@ -1032,8 +1068,7 @@ export function AgentPanel({
               }
             }}
             onKeyDown={(event) => {
-              // Enter sends; a newline needs a modifier. This is a chat box,
-              // and the common case is one line.
+              // Working turns pin the first Enter; an empty Enter sends the oldest pin.
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 send();
@@ -1051,12 +1086,11 @@ export function AgentPanel({
             className="min-h-[var(--cell)] min-w-0 flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
           />
           {mode === "type" ? (
-            // One button, one arrow, whether the agent is busy or not. What
-            // changes is whether it stops the current turn.
+            // Working turns hold messages above the composer until explicitly sent.
             <SplitAction
               label="Send message"
               hint={
-                working ? "Stops this turn and starts with your message" : "Send message"
+                working ? "Pin message; press Enter again to send now" : "Send message"
               }
               icon="send"
               onClick={() => send()}
@@ -1076,7 +1110,7 @@ export function AgentPanel({
               label={mode === "diagram" ? "Send the change" : "Send the picture"}
               hint={
                 working
-                  ? "Stops this turn and starts with your message"
+                  ? "Pin message; send its up arrow to interrupt"
                   : mode === "diagram"
                     ? "Send the change"
                     : "Send the picture"
