@@ -873,7 +873,7 @@ export default function Home() {
     return saved ? paneIds(saved) : linkedPanes(id, snapshot.paneLinks);
   }), ...panes].flatMap(id => id.startsWith("terminal_") ? terminals.flatMap(terminal => terminal.id === id && terminal.agentId ? [terminal.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
   const taskScopeKey = JSON.stringify(taskScope);
-  useEffect(() => { setTaskAt(0); }, [taskScopeKey]);
+  useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
   const scopedTasks = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
   const taskMatches = scopedTasks.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
   const tasks = taskRows(taskAncestors(scopedTasks, taskMatches), tasksDone || !!taskSearch);

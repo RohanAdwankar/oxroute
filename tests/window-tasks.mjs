@@ -54,6 +54,10 @@ try{
  await page.getByRole('tab',{name:'Focus',exact:true}).click();
  await page.locator('[data-focus-task="delta-access"]').getByRole('button',{name:'Grant delta access',exact:true}).click();
  assert.equal(await filter.getAttribute('aria-pressed'),'false','An explicit task link reveals its task outside the current window scope');
+ await panel.locator('[data-task-row][aria-current="true"]').getByRole('button',{name:'Grant delta access',exact:true}).waitFor();
+ await page.keyboard.press('Enter');
+ await page.locator('[data-agent-pane="delta"]').waitFor();
+ await page.getByRole('button',{name:'Close tab delta session',exact:true}).click();
  await filter.click();
  await page.getByRole('button',{name:'Close tab charlie session',exact:true}).click();
  await panel.getByText('No conversations open in this window.',{exact:true}).waitFor();
