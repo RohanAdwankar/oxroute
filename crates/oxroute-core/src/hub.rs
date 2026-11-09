@@ -215,6 +215,7 @@ pub struct Hub {
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
     task_dispatch: AsyncMutex<()>,
+    conversation_links: AsyncMutex<()>,
 }
 
 struct FollowUp {
@@ -243,6 +244,10 @@ const CHAIN_LIMIT: u32 = 12;
 /// Where an agent's last handed-out list is kept between runs.
 fn chain_key(agent_id: &str) -> String {
     format!("chain:{agent_id}")
+}
+
+fn conversation_link_key(agent: &str, target: &Target) -> String {
+    format!("conversation-link:{agent}:{}:{}", target.conversation, target.thread_key)
 }
 
 /// What to judge this sweep against.
@@ -319,6 +324,7 @@ impl Hub {
             naming: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
             task_dispatch: AsyncMutex::new(()),
+            conversation_links: AsyncMutex::new(()),
         })
     }
 
@@ -1361,6 +1367,7 @@ impl Hub {
                     forked.permalink = permalink;
                     self.store.save_agent(&forked)?;
                     self.store.bind(&source_name, &conversation, &thread_key, &forked.id)?;
+                    self.share_conversation(&Target::new(source_name, conversation, thread_key), &forked.id).await;
                 }
                 Err(error) if in_chat => {
                     tracing::warn!(agent = forked.id, %error, "pane fork created without source mirror");
@@ -2615,6 +2622,9 @@ impl Hub {
                 &target.thread_key,
                 &agent.id,
             )?;
+            self.share_conversation(&target, &agent.id).await;
+        } else if signal.source == crate::source::slack::SOURCE {
+            self.share_conversation(&signal.target(), &agent.id).await;
         }
         self.emit(Event::AgentChanged {
             agent: Box::new(agent.clone()),
@@ -2730,6 +2740,25 @@ impl Hub {
         Ok(())
     }
 
+    async fn share_conversation(&self, target: &Target, agent_id: &str) {
+        if target.source != crate::source::slack::SOURCE { return; }
+        let _held = self.conversation_links.lock().await;
+        let result: Result<()> = async {
+            let receipt = conversation_link_key(agent_id, target);
+            if self.store.get(&receipt)?.as_deref() == Some("sent") { return Ok(()); }
+            self.store.set(&receipt, "pending")?;
+            let mut url = reqwest::Url::parse(&self.config.web_url)?;
+            url.query_pairs_mut().append_pair("agent", agent_id);
+            let source = self.source(&target.source).context("no such source")?;
+            source.reply(target, &format!("[Open conversation]({url})")).await?;
+            self.store.set(&receipt, "sent")?;
+            Ok(())
+        }.await;
+        if let Err(error) = result {
+            tracing::warn!(agent = agent_id, %error, "could not share conversation link");
+        }
+    }
+
     /// Say something in a thread, and return the permalink if there is one.
     pub async fn say(&self, target: &Target, text: &str) -> String {
         let Some(source) = self.source(&target.source) else {
@@ -2802,8 +2831,14 @@ impl Hub {
     pub async fn reconcile_threads(&self) -> Result<()> {
         if self.sources.is_empty() { return Ok(()); }
         for agent in self.store.unarchived_agents()? {
-            if agent.backend == Backend::Codex && self.home_binding(&agent.id).is_none() {
+            let binding = self.home_binding(&agent.id);
+            if agent.backend == Backend::Codex && binding.is_none() {
                 if self.ensure_thread(&agent.id, &agent.name).await?.0.is_none() { break; }
+            } else if let Some(binding) = binding {
+                let target = Target::new(binding.source, binding.conversation, binding.thread_key);
+                if self.store.get(&conversation_link_key(&agent.id, &target))?.as_deref() == Some("pending") {
+                    self.share_conversation(&target, &agent.id).await;
+                }
             }
         }
         Ok(())
@@ -2816,6 +2851,7 @@ impl Hub {
         let Some((target, permalink)) = self.open_current_thread(title).await? else { return Ok((None, false)); };
         self.store.bind(&target.source, &target.conversation, &target.thread_key, agent_id)?;
         if !permalink.is_empty() { self.store.set_agent_permalink(agent_id, &permalink)?; }
+        self.share_conversation(&target, agent_id).await;
         self.emit(Event::Sync);
         Ok((Some(target), true))
     }

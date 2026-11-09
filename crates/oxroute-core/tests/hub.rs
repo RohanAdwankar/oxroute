@@ -274,6 +274,7 @@ struct FakeSource {
     posts: Arc<Mutex<Posts>>,
     next_thread: Mutex<usize>,
     fail_open: Arc<AtomicBool>,
+    reply_endpoint: Option<String>,
 }
 
 #[async_trait]
@@ -289,6 +290,11 @@ impl Source for FakeSource {
     }
 
     async fn reply(&self, target: &Target, text: &str) -> Result<String> {
+        if let Some(endpoint) = &self.reply_endpoint {
+            reqwest::Client::new().post(endpoint).json(&serde_json::json!({
+                "channel": target.conversation, "thread_ts": target.thread_key, "markdown_text": text,
+            })).send().await?.error_for_status()?;
+        }
         self.posts
             .lock()
             .unwrap()
@@ -503,6 +509,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
             posts: posts.clone(),
             next_thread: Mutex::new(0),
             fail_open: fail_open.clone(),
+            reply_endpoint: None,
         }));
     }
     hub.start().await.unwrap();
@@ -558,7 +565,7 @@ async fn a_new_thread_starts_an_agent_and_answers_in_place() {
     w.hub.accept(signal("100.0", "100.0", "drain the pool")).await.unwrap();
 
     assert!(
-        settle(|| !w.posts.lock().unwrap().replies.is_empty()).await,
+        settle(|| w.posts.lock().unwrap().replies.iter().any(|(_, text)| text == "done")).await,
         "the thread never got an answer"
     );
 
@@ -569,7 +576,8 @@ async fn a_new_thread_starts_an_agent_and_answers_in_place() {
     assert_eq!(agents[0].name, "drain the pool");
     assert_eq!(
         w.posts.lock().unwrap().replies.clone(),
-        vec![("100.0".to_string(), "done".to_string())]
+        vec![("100.0".to_string(), format!("[Open conversation](http://localhost:3939/?agent={})", agents[0].id)),
+            ("100.0".to_string(), "done".to_string())]
     );
 
     // The turn carried the prompt plus the artifact instruction, and nothing
@@ -1675,6 +1683,7 @@ async fn a_codex_turn_is_reattached_after_the_daemon_restarts() {
         posts: posts.clone(),
         next_thread: Mutex::new(0),
         fail_open: Arc::new(AtomicBool::new(false)),
+        reply_endpoint: None,
     }));
     hub.start().await.unwrap();
 
@@ -1806,6 +1815,9 @@ async fn an_agent_started_in_the_ui_also_lives_in_slack() {
     let agent = w.hub.store.agents(10).unwrap().remove(0);
     assert_eq!(agent.permalink, "https://example/thread-1");
     assert_eq!(w.posts.lock().unwrap().threads, vec!["publish the release"]);
+    assert!(w.posts.lock().unwrap().replies.iter().any(|(thread, text)|
+        thread == "thread-1" && text == &format!("[Open conversation](http://localhost:3939/?agent={})", agent.id)
+    ));
     assert!(w
         .posts
         .lock()
@@ -1820,6 +1832,68 @@ async fn an_agent_started_in_the_ui_also_lives_in_slack() {
         .unwrap()
         .iter()
         .any(|binding| binding.source == "slack" && binding.thread_key == "thread-1"));
+}
+
+#[tokio::test]
+async fn mirrored_cards_link_to_the_configured_ui_over_local_http_once() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let template = world(Mode::Auto, false).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut bodies = vec![];
+        for status in ["503 Service Unavailable", "200 OK"] {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = vec![];
+        loop {
+            let mut chunk = [0; 2048];
+            let read = socket.read(&mut chunk).await.unwrap();
+            assert!(read > 0);
+            bytes.extend_from_slice(&chunk[..read]);
+            let Some(boundary) = bytes.windows(4).position(|part| part == b"\r\n\r\n") else { continue; };
+            let headers = String::from_utf8_lossy(&bytes[..boundary]);
+            let length: usize = headers.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().unwrap())
+            }).unwrap();
+            if bytes.len() < boundary + 4 + length { continue; }
+            let body: Value = serde_json::from_slice(&bytes[boundary + 4..boundary + 4 + length]).unwrap();
+            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}").as_bytes()).await.unwrap();
+            bodies.push(body);
+            break;
+        }
+        }
+        bodies
+    });
+    let mut config = template.hub.config.clone();
+    config.web_url = "https://ui.example/oxroute?workspace=one%20two".into();
+    let posts = Arc::new(Mutex::new(Posts::default()));
+    let mut hub = Hub::new(config, Store::in_memory().unwrap());
+    hub.with_source(Arc::new(FakeSource { posts:posts.clone(), next_thread:Mutex::new(0),
+        fail_open:Arc::new(AtomicBool::new(false)), reply_endpoint:Some(endpoint) }));
+    hub.store.set("dashboard", "slack\u{1f}D1\u{1f}status").unwrap();
+    let agent = hub.create_agent(None).unwrap();
+    hub.reconcile_threads().await.unwrap();
+    assert_eq!(hub.store.bindings_for(&agent.id).unwrap().len(), 1, "a failed link must not discard its thread");
+    assert!(posts.lock().unwrap().replies.is_empty());
+    hub.reconcile_threads().await.unwrap();
+    hub.reconcile_threads().await.unwrap();
+    let bodies = tokio::time::timeout(Duration::from_secs(2), server).await.unwrap().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0], bodies[1]);
+    let body = &bodies[1];
+    assert_eq!(body["channel"], "D1");
+    assert_eq!(body["thread_ts"], "thread-1");
+    let rendered = body["markdown_text"].as_str().unwrap();
+    let url = reqwest::Url::parse(rendered.strip_prefix("[Open conversation](").unwrap().strip_suffix(')').unwrap()).unwrap();
+    assert_eq!(url.scheme(), "https");
+    assert_eq!(url.host_str(), Some("ui.example"));
+    assert_eq!(url.path(), "/oxroute");
+    assert_eq!(url.query_pairs().find(|(key, _)| key == "workspace").unwrap().1, "one two");
+    assert_eq!(url.query_pairs().find(|(key, _)| key == "agent").unwrap().1, agent.id);
+    assert_eq!(posts.lock().unwrap().threads, vec!["New agent"]);
+    assert_eq!(posts.lock().unwrap().replies, vec![("thread-1".into(), rendered.into())]);
+    assert_eq!(hub.store.agent(&agent.id).unwrap().unwrap().session_id, "", "linking a card must not start an agent turn");
 }
 
 #[tokio::test]
