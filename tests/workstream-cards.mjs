@@ -3,6 +3,7 @@ import {chromium} from 'playwright';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
+import {createServer as httpServer,request} from 'node:http';
 import {resolve,join} from 'node:path';
 const web=process.env.TEST_URL;
 assert.ok(web && process.env.TEST_DAEMON,'Set TEST_URL and TEST_DAEMON');
@@ -33,6 +34,16 @@ for(const patch of [{estimateDays:0},{stageStartedAt:-1},{followUpAt:-1},{source
  assert.ok(!(await fetch(`${native}/api/agents/${agent.id}/workstream`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...brief,...patch})})).ok);
 }
 const invalid=await fetch(`${native}/api/agents/${agent.id}/workstream`,{method:'PUT',headers:{'content-type':'application/json'},body:'{"estimateDays":1e999}'});assert.ok(!invalid.ok);
+// Use real HTTP forwarding so reload/close can cancel requests normally.
+// A delayed interception callback must never outlive its browser route.
+const proxy=httpServer((incoming,outgoing)=>{
+ const path=new URL(incoming.url,'http://fixture');
+ const target=new URL(path.pathname+path.search,path.pathname.startsWith('/api/')&&path.pathname!='/api/version'?native:web);
+ const upstream=request(target,{method:incoming.method,headers:{...incoming.headers,host:target.host}},reply=>{outgoing.writeHead(reply.statusCode,reply.headers);reply.pipe(outgoing);});
+ upstream.on('error',()=>{if(!outgoing.destroyed){if(outgoing.headersSent)outgoing.destroy();else{outgoing.writeHead(502);outgoing.end();}}});
+ outgoing.on('close',()=>upstream.destroy());incoming.pipe(upstream);
+});
+await new Promise(done=>proxy.listen(0,'127.0.0.1',done));
 const browser=await chromium.launch();
 let page;
 try{
@@ -40,8 +51,7 @@ try{
  const errors=[];
  page.on('pageerror',error=>errors.push(String(error)));
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
- await page.route('**/api/**',async route=>{const url=new URL(route.request().url());if(url.pathname==='/api/version')return route.continue();await route.fulfill({response:await page.request.fetch(`${native}${url.pathname}${url.search}`,{method:route.request().method(),data:route.request().postDataBuffer()??undefined,headers:{'content-type':'application/json'}})});});
- await page.goto(web);
+ await page.goto(`http://127.0.0.1:${proxy.address().port}`);
  await page.getByRole('button',{name:'Show boards',exact:true}).click();
  await page.getByRole('combobox',{name:'Choose board',exact:true}).selectOption(board.id);
  const card=page.locator('article').filter({hasText:'Partner launch'});
@@ -77,6 +87,6 @@ try{
  const snapshot=await api('/api/state');assert.ok(snapshot.tags[agent.id].includes('workflow:review'));
  assert.deepEqual(errors,[]);
  console.log('Workstream cards persist context, edit in place, retain source links and flag elapsed estimates/checkpoints without changing tags or task states.');
-}finally{if(page)await page.unrouteAll({behavior:'wait'});await browser.close();}
+}finally{await browser.close();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));}
 
 }finally{await stop();await rm(root,{recursive:true,force:true});}
