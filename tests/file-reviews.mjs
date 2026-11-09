@@ -29,8 +29,20 @@ try{
  await page.goto(`${web}/?agent=${agent.id}`);
  await page.getByRole('button',{name:'Review',exact:true}).nth(1).click();
  const dialog=page.getByRole('dialog',{name:'File review'});
+ const revision=dialog.getByRole('button',{name:'Request revision',exact:true}), approve=dialog.getByRole('button',{name:'Approve this version',exact:true});
+ assert.equal((await revision.innerText()).trim(),'');assert.equal((await approve.innerText()).trim(),'');
+ assert.equal(await revision.getAttribute('title'),'Request revision');assert.equal(await approve.getAttribute('title'),'Approve');
+ assert.ok(await revision.isDisabled(),'Revision requires feedback');assert.ok(await approve.isEnabled());
+ async function decide(button,status){
+  let release, requested;const waiting=new Promise(done=>{release=done;}), arrival=new Promise(done=>{requested=done;});
+  const pattern='**/file-reviews/*/decision', hold=async route=>{requested();await waiting;await route.fallback();};
+  await page.route(pattern,hold);await button.click();await arrival;
+  try{assert.ok(await revision.isDisabled());assert.ok(await approve.isDisabled());assert.equal(await revision.getAttribute('aria-busy'),'true');assert.equal(await approve.getAttribute('aria-busy'),'true');}finally{release();}
+  await dialog.getByText(status,{exact:true}).waitFor();await page.unroute(pattern,hold);
+  assert.equal(await approve.getAttribute('aria-busy'),'false');assert.ok(await approve.isEnabled());
+ }
  const picture=dialog.getByRole('img',{name:'Document page 1'});await picture.evaluate(image=>image.decode());
- const svg=dialog.locator('svg'), bounds=await svg.boundingBox();
+ const svg=dialog.getByLabel('Document annotations',{exact:true}), bounds=await svg.boundingBox();
  await page.mouse.move(bounds.x+bounds.width*.1,bounds.y+bounds.height*.1);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.7,bounds.y+bounds.height*.35,{steps:5});await page.mouse.up();
  await page.mouse.click(bounds.x+bounds.width*.4,bounds.y+bounds.height*.2,{button:'right'});
  await page.getByRole('menuitem',{name:'Quote selected area'}).click();
@@ -38,8 +50,7 @@ try{
  await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*.5);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.6,bounds.y+bounds.height*.55,{steps:7});await page.mouse.up();
  await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Move the decision above the rollout details.');
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
- await dialog.getByRole('button',{name:'Request revision',exact:true}).click();
- await dialog.getByText('changes requested',{exact:true}).waitFor();
+ await decide(revision,'changes requested');
  const revised=await api(`/api/agents/${agent.id}/file-reviews/${slides.id}`);
  assert.equal(revised.annotations.length,2);assert.equal(revised.annotations[0].page,1);assert.ok(revised.annotations[0].region[2]>.5);assert.ok(revised.annotations[1].strokes[0].length>3);
  let view=await api(`/api/agents/${agent.id}`);const sent=view.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Move the decision'));
@@ -49,7 +60,7 @@ try{
  const attachment=sent.text.split('Attached: ')[1].split(', ')[0];const bytes=await (await fetch(`${native}/api/attachments/${encodeURIComponent(attachment)}`)).arrayBuffer();assert.ok(bytes.byteLength>1000);
  await dialog.getByRole('button',{name:'Close file review'}).click();
  await page.getByRole('button',{name:'Review',exact:true}).first().click();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
- await dialog.getByRole('button',{name:'Approve this version'}).click();await dialog.getByText('approved',{exact:true}).waitFor();
+ await decide(approve,'approved');
  assert.equal((await api(`/api/agents/${agent.id}/file-reviews/${pdf.id}`)).status,'approved');
  assert.equal((await create(paths.pdf)).id,pdf.id);
  await writeFile(paths.pdf, await readFile(join(fixtures,'proposal.pdf')).then(bytes=>Buffer.concat([bytes,Buffer.from('\n% revised source\n')])));
@@ -58,7 +69,7 @@ try{
  await dialog.getByRole('button',{name:'Close file review'}).click();await page.getByRole('button',{name:'Review',exact:true}).nth(2).click();
  const pre=dialog.locator('pre');await pre.waitFor();await pre.evaluate(element=>{const range=document.createRange();range.selectNodeContents(element);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);});await pre.click({button:'right'});
  await page.getByRole('menuitem',{name:'Quote selected text'}).click();await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Clarify the two remaining checks.');
- await dialog.getByRole('button',{name:'Request revision',exact:true}).click();await dialog.getByText('changes requested',{exact:true}).waitFor();
+ await decide(revision,'changes requested');
  assert.match((await api(`/api/agents/${agent.id}/file-reviews/${text.id}`)).annotations[0].quote,/Release plan/);
  console.log('Real PDF/PPTX/text reviews: rendering, area quotes, drawing feedback with image delivery, text quotes, approval isolation, immutable originals and path/owner confinement passed.');
 }finally{await browser.close();}
