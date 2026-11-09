@@ -63,7 +63,8 @@ rollback() {
   uv run --no-project python -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("ATTACH DATABASE ? AS previous",(sys.argv[2],)); c.execute("INSERT OR REPLACE INTO kv SELECT * FROM previous.kv WHERE key GLOB '\''review:*'\''"); c.commit()' "$database" "$backup/database.sqlite3"
   systemctl --user start oxroute.service oxroute-web.service
   curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
-  task_status waiting_for_human "Deployment failed; previous release and review records restored. Inspect the idle-deploy journal."
+  # A deployment failure must not replace human decisions or task dependencies.
+  printf '%s\n' 'Deployment failed; previous release and review records restored. Task states preserved.' >&2
   cleanup
 }
 if ! idle; then
