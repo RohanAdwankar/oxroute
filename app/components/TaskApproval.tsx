@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Icon } from "./Icon";
 import type { TaskItem } from "../lib/types";
 
 export function TaskApproval({ task, busy, approve, approveAll, correct }: {
@@ -32,10 +33,10 @@ export function TaskApproval({ task, busy, approve, approveAll, correct }: {
         setMenu({ x: Math.max(0, Math.min(event.clientX, window.innerWidth - 200)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 48)) });
       }}
       aria-haspopup={approveAll ? "menu" : undefined} aria-expanded={approveAll ? !!menu : undefined}
-      title={approveAll ? "Approve this task; right-click to approve it and all subtasks" : undefined}
-      className="cursor-pointer bg-ink px-2 py-1 text-[11.5px] text-paper disabled:opacity-40">Approve</button>
-    <button type="button" disabled={busy} onClick={correct}
-      className="cursor-pointer px-1 py-1 text-[11.5px] text-mid hover:text-ink disabled:opacity-40">Not yet</button>
+      aria-label="Approve" title={approveAll ? "Approve · right-click for subtasks" : "Approve"}
+      className="cursor-pointer bg-ink px-2 py-1 text-[11.5px] text-paper disabled:opacity-40"><Icon name="tick" size={14} /></button>
+    <button type="button" disabled={busy} onClick={correct} aria-label="Not yet" title="Request revision"
+      className="cursor-pointer px-1 py-1 text-[11.5px] text-mid hover:text-ink disabled:opacity-40"><Icon name="pen" size={14} /></button>
     {menu && approveAll && createPortal(<div ref={menuRef} role="menu" aria-label="Task approval" className="fixed z-50 min-w-48 bg-paper p-1 text-ink shadow-lg ring-1 ring-rule" style={{ left: menu.x, top: menu.y }}>
       <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); approveAll(); }}
         className="block w-full cursor-pointer px-3 py-2 text-left text-[12px] hover:bg-band focus:bg-band focus:outline-none disabled:opacity-40">Approve all subtasks</button>

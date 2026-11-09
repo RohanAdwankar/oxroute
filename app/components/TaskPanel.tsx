@@ -398,8 +398,8 @@ export function TaskPanel({
       <div data-task-rail title="Drag the left edge to expand tasks" className="hidden h-[var(--bar)] shrink-0 items-center justify-center border-b border-rule text-faint"><Icon name="tasks" /></div>
       <div className="flex h-[var(--bar)] shrink-0 items-stretch border-b border-rule">
       <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="min-w-0 flex-1 bg-transparent px-5 text-[12px] outline-none" />
-      <button type="button" aria-label="Only open conversations" aria-pressed={scope !== undefined} title={scope ? "Show all tasks" : "Show only tasks for conversations open in this window"} onClick={onScope}
-        className={`shrink-0 cursor-pointer px-3 text-[11px] ${scope ? "bg-band text-ink" : "text-faint hover:text-ink"}`}>This window</button>
+      <button type="button" aria-label="Only open conversations" aria-pressed={scope !== undefined} title={scope ? "All tasks" : "Open conversations"} onClick={onScope}
+        className={`shrink-0 cursor-pointer px-3 text-[11px] ${scope ? "bg-band text-ink" : "text-faint hover:text-ink"}`}><Icon name="scope" size={14} /></button>
       </div>
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
