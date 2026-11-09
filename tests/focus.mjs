@@ -20,7 +20,7 @@ try {
  const tab=page.getByRole('tab',{name:'Focus',exact:true}), rows=page.locator('[data-focus-task]');
  await page.locator('[data-composer]').fill('Preserve this draft.');
  await tab.click();
- await page.getByRole('heading',{name:'Focus',exact:true}).waitFor();
+ await page.getByRole('region',{name:'Focus',exact:true}).waitFor();
  assert.equal(new URL(page.url()).searchParams.get('view'),'focus');
  assert.equal(await rows.count(),10);
  assert.equal(await rows.nth(0).getAttribute('data-focus-task'),'urgent-decision','Explicit priority outranks age');
