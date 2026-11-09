@@ -8,6 +8,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem, QuoteAnchor, QuoteThread } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
+import { FileReviewProvider, ReviewFileButton } from "./FileReview";
 import { GitReview } from "./GitReview";
 import { preloadReview, reviewEndpoint } from "../lib/reviews";
 import { Code } from "./Code";
@@ -582,7 +583,7 @@ export function AgentPanel({
   };
 
   return (
-    <ReviewLinks.Provider value={reviewLinks}>
+    <FileReviewProvider agent={agent.id}><ReviewLinks.Provider value={reviewLinks}>
     <section
       data-agent-panel
       className="flex min-h-0 min-w-0 flex-1 flex-col"
@@ -1106,7 +1107,7 @@ export function AgentPanel({
       </footer>
     </section>
     {discussion && <QuoteDiscussion key={discussion.thread.agentId} thread={discussion.thread} ready={discussion.ready} onRetry={() => startDiscussion(discussion.thread, discussion.rect)} rect={discussion.rect} onClose={closeDiscussion} onChanged={onThreadsChanged} onOpen={id => { onOpenAgent(id); closeDiscussion(); }} siblings={threadData.filter(thread => thread.entryId === discussion.thread.entryId && thread.start < discussion.thread.end && thread.end > discussion.thread.start)} onSwitch={thread => setDiscussion({ thread, rect: discussion.rect })} canMerge={can.merge} />}
-    </ReviewLinks.Provider>
+    </ReviewLinks.Provider></FileReviewProvider>
   );
 }
 
@@ -1317,10 +1318,10 @@ function Attached({ name }: { name: string }) {
   if (!/\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
     const label = name.startsWith("art_") ? name.slice(name.indexOf("-") + 1) : name;
     return (
-      <a href={url} download={label} title="Download file" className="flex items-center gap-2 text-[13px] text-ink underline underline-offset-2">
+      <span className="inline-flex items-center"><a href={url} download={label} title="Download file" className="flex items-center gap-2 text-[13px] text-ink underline underline-offset-2">
         <Icon name="attach" />
         {label}
-      </a>
+      </a><ReviewFileButton url={url} /></span>
     );
   }
   return (

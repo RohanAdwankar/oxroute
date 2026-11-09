@@ -2,6 +2,7 @@ import { createContext, memo, useContext } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
+import { FileReviews, ReviewFileButton, savedReview } from "./FileReview";
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
@@ -79,8 +80,10 @@ const markdownComponents: Components = {
     </Copyable>
   ),
   a: function ReferenceLink({ children, href, ...props }) {
+    const openFile = useContext(FileReviews);
     const reviews = useContext(ReviewLinks);
     const tasks = useContext(TaskLinks);
+    if (href && savedReview(href) && openFile) return <button type="button" className="cursor-pointer underline" onClick={() => openFile(href)}>{children}</button>;
     const task = href?.startsWith("#task/");
     const links = task ? tasks : reviews;
     const id = task ? href!.slice(6) : href?.startsWith("#review/") ? href.slice(8) : "";
@@ -89,7 +92,7 @@ const markdownComponents: Components = {
       onClick={() => links.open(id)} className="inline-flex cursor-pointer items-center gap-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em] text-ink hover:text-mid">
       <Icon name={task ? "tasks" : "diff"} size={12} />{children}
     </button>;
-    return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
+    return <><a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>{href && <ReviewFileButton url={href} />}</>;
   },
 };
 

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 mod git;
+mod documents;
 mod merge_watch;
 use std::sync::Arc;
 use std::time::Duration;
@@ -214,6 +215,11 @@ async fn serve() -> Result<()> {
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
+        .route("/api/agents/{id}/file-reviews", post(documents::create))
+        .route("/api/agents/{id}/file-reviews/{review}", get(documents::show))
+        .route("/api/agents/{id}/file-reviews/{review}/pages/{page}", get(documents::page))
+        .route("/api/agents/{id}/file-reviews/{review}/original", get(documents::original))
+        .route("/api/agents/{id}/file-reviews/{review}/decision", post(documents::decide))
         .route("/api/agents", post(create_agent))
         .route("/api/agents/{id}/merge-watches", get(merge_watch::list).post(merge_watch::register))
         .route("/api/client-failures", get(client_failures).post(client_failure))
