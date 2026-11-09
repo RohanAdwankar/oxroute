@@ -3494,3 +3494,33 @@ async fn durable_wake_waits_for_active_work_and_deduplicates_concurrent_delivery
     assert_eq!(w.hub.store.get("receipt:event").unwrap().as_deref(), Some("delivered"));
     assert_eq!(w.hub.store.timeline(&agent.id, 100).unwrap().iter().filter(|entry| entry.text == "Condition completed").count(), 1);
 }
+
+#[tokio::test]
+async fn prepared_deployment_holds_automatic_work_until_handoff_finishes() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.accept(signal("handoff", "handoff", "initial context")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let parent = w.hub.store.agents(10).unwrap()[0].clone();
+    let mut config = w.hub.config.clone();
+    config.database = config.artifacts.join("handoff.sqlite3");
+    std::fs::create_dir_all(&config.artifacts).unwrap();
+    let store = Store::open(&config.database).unwrap();
+    store.save_agent(&parent).unwrap();
+    for index in 0..2 {
+        store.save_task(&TaskItem { id:format!("handoff-{index}"), text:format!("Deliver change {index}"), agent_id:parent.id.clone(),
+            status:TaskStatus::Incomplete, parent_task_id:String::new(), blocked_by_task_id:String::new(),
+            position:index as f64, images:vec![], created_at:now(), updated_at:now() }).unwrap();
+    }
+    let pending = config.database.parent().unwrap().join("pending-deployment.json");
+    std::fs::write(&pending, serde_json::to_vec(&serde_json::json!({"agentId": parent.id})).unwrap()).unwrap();
+    let calls = Arc::new(Mutex::new(Calls::default()));
+    let mut hub = Hub::new(config, store);
+    hub.with_harness(Arc::new(FakeHarness::new(calls.clone(), true)));
+    hub.hand_out_open_work().await;
+    assert!(calls.lock().unwrap().started.is_empty());
+    assert!(hub.store.task_forks().unwrap().is_empty());
+    std::fs::remove_file(pending).unwrap();
+    hub.hand_out_open_work().await;
+    assert!(settle(|| calls.lock().unwrap().started.len() == 2).await);
+    assert_eq!(hub.store.task_forks().unwrap().len(), 2);
+}

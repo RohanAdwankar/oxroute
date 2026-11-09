@@ -2193,6 +2193,14 @@ impl Hub {
         target: Option<Target>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
+            // The tracked idle deployment runner owns this handoff. Resuming
+            // its coordinator would prevent idle or duplicate shipped work
+            // while live smoke checks are still deciding task completion.
+            let pending = self.config.database.parent().unwrap_or_else(|| std::path::Path::new(".")).join("pending-deployment.json");
+            if std::fs::read(pending).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .is_some_and(|request| request["agentId"].as_str() == Some(agent.id.as_str())) {
+                return;
+            }
             match self.dispatch_task_forks(&agent).await {
                 Ok(children) if !children.is_empty() => {
                     for child in children {
