@@ -112,11 +112,14 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/scale-panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/toolbar-scale.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pane-density.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/composer.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pinned-messages.mjs"
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pin-popups.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/message-reconciliation.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/live-answers.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/downloads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/artifact-links.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 node tests/file-workflows.mjs)
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/workstream-cards.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/client-failures.mjs"
 node "$repository/tests/shared-events.mjs"
 node "$repository/tests/large-uploads.mjs"
@@ -131,6 +134,10 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-font.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-scroll.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-input-flow.mjs"
 curl -fsS "$api/api/terminals" | jq -e 'type == "array"' >/dev/null
+jq -c '.workstreams[]?' "$request" | while IFS= read -r item; do
+  curl -fsS --max-time 10 -X PUT "$api/api/agents/$(jq -er .agentId <<< "$item")/workstream" \
+    -H 'Content-Type: application/json' -d "$(jq -c .brief <<< "$item")" >/dev/null
+done
 trap - ERR
 task_status done "Deployed after all active turns finished. Live daemon, frontend build ID, Tab correction, wrapping and review browser checks passed."
 mv "$request" "$state/deployed.json"
