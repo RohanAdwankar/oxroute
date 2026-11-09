@@ -37,7 +37,7 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('agent'), 'bravo');
   await page.goBack();
   assert.equal(await tab('alpha').getAttribute('aria-selected'), 'true', 'Browser back updates the selected tab');
-  const order = () => strip.getByRole('tab').filter({hasNotText:'Focus'}).allTextContents();
+  const order = () => strip.getByRole('tab').filter({hasNot: page.locator('svg')}).allTextContents();
   const move = async (id, target, after) => {
     const box = await tab(target).boundingBox();
     await tab(id).dragTo(tab(target), { targetPosition: { x: after ? box.width - 3 : 3, y: box.height / 2 } });
