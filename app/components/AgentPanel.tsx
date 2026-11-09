@@ -793,7 +793,7 @@ export function AgentPanel({
         </span>
       </div>
 
-      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={quote => {
+      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} onRevised={setReviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={quote => {
         setDiffs(current => [...current, quote]);
         setMode("type");
         setReviewingGit(false);

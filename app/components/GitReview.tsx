@@ -1,5 +1,6 @@
 "use client";
 
+import { ReviewEditor } from "./ReviewEditor";
 import { diffCode } from "./DiffCode";
 import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
@@ -65,14 +66,15 @@ function ReviewImage({ endpoint, path, side, present, full }: { endpoint: string
   </figure>;
 }
 
-export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
-  agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void;
+export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevised }: {
+  agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void; onRevised: (id: string) => void;
 }) {
   const endpoint = reviewEndpoint(agentId, reviewId);
   const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
   const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const cancelLoad = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number; wholeFile?: boolean } | null>(null);
@@ -210,7 +212,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
           if (element) sections.current.set(item.path, element);
           else sections.current.delete(item.path);
         }}>
-          <h3 onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 bg-band px-3 py-1 text-[10px] text-mid">{item.path}</h3>
+          <h3 aria-label={item.path} onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 flex items-center gap-2 bg-band px-3 py-1 text-[10px] text-mid"><span className="min-w-0 flex-1 truncate">{item.path}</span><button type="button" aria-label={`Edit ${item.path}`} title="Edit file" onClick={() => setEditing(item.path)} className="cursor-pointer p-1"><Icon name="pen" size={14} /></button></h3>
           {item.image && <div aria-label={`Image comparison ${item.path}`} className="flex gap-4 bg-band/30 p-4">
             <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} full={!!review?.full} />
             <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} full={!!review?.full} />
@@ -249,6 +251,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose }: {
         </section>)}
       </div>
     </div>
+    {editing && snapshot && <ReviewEditor key={editing} endpoint={endpoint} path={editing} head={snapshot.headCommit} onClose={() => setEditing(null)} onSaved={revised => onRevised(revised.id)} />}
     {menu && <div role="group" aria-label="Diff actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-2 shadow-md">
       <button title={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} aria-label={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} onClick={quote} className="cursor-pointer"><Icon name="quote" /></button>
     </div>}

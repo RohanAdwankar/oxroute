@@ -239,6 +239,7 @@ async fn serve() -> Result<()> {
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
+        .route("/api/agents/{id}/reviews/{review}/edit", get(review_edit_text).post(edit_review))
         .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
@@ -731,6 +732,30 @@ async fn review_context(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
     let mut review = review_record(&hub, &agent_id, &id, true)?.0;
     if query.full { review.snapshot.review_base_commit = None; }
     Ok(Json(git::context(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before), query.start, query.count).await?))
+}
+
+#[derive(Deserialize)]
+struct ReviewEditQuery { path: String }
+
+async fn review_edit_text(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, Query(query): Query<ReviewEditQuery>) -> Result<Json<serde_json::Value>, Failed> {
+    let review = review_record(&hub, &agent, &id, false)?.0;
+    Ok(Json(json!({"text": git::editable(&review.snapshot, &query.path).await?})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewEditBody { path: String, text: String, head_commit: String }
+
+async fn edit_review(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, Json(body): Json<ReviewEditBody>) -> Result<Json<serde_json::Value>, Failed> {
+    let mut review = review_record(&hub, &agent, &id, false)?.0;
+    if body.head_commit != review.snapshot.head_commit { return Err(anyhow::anyhow!("Review revision changed").into()); }
+    review.snapshot = git::edit(&review.snapshot, std::path::Path::new(&hub.config.workspace), &body.path, &body.text).await?;
+    review.id = oxroute_core::model::new_id("review");
+    review.approved_at = None;
+    review.stale_notified = false;
+    let entry = hub.store.add_review(&agent, &review.id, &review.title, &serde_json::to_string(&review)?)?;
+    hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
+    Ok(Json(review_response(review, false).await?))
 }
 
 async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {

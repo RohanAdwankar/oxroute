@@ -153,6 +153,52 @@ pub async fn image(snapshot: &Snapshot, path: &str, before: bool) -> Result<(tok
     Ok((child, mime))
 }
 
+/// Read the complete proposed text without trimming whitespace or final newlines.
+pub async fn editable(snapshot: &Snapshot, path: &str) -> Result<String> {
+    let mut full = snapshot.clone();
+    full.review_base_commit = None;
+    anyhow::ensure!(paths(&full).await?.iter().any(|name| name == path), "File is not in this review");
+    let root = Path::new(&snapshot.repository);
+    let oid = blob(root, &snapshot.head_commit, path).await?.context("Deleted files cannot be edited; restore them in the repository first")?;
+    let entry = git(root, &["ls-tree", "-z", &snapshot.head_commit, "--", path]).await?;
+    anyhow::ensure!(entry.starts_with("100644 ") || entry.starts_with("100755 "), "Only regular text files can be edited");
+    let size: usize = git(root, &["cat-file", "-s", &oid]).await?.parse()?;
+    anyhow::ensure!(size <= 2 * 1024 * 1024, "Editor supports text files up to 2 MiB");
+    let output = Command::new("git").arg("-C").arg(root).args(["cat-file", "blob", &oid]).kill_on_drop(true).output().await?;
+    anyhow::ensure!(output.status.success(), "Could not read reviewed file");
+    let text = String::from_utf8(output.stdout).context("File is not UTF-8 text")?;
+    anyhow::ensure!(!text.contains('\0'), "Binary files cannot be edited as text");
+    Ok(text)
+}
+
+/// Each edit gets an isolated branch. Never stage or overwrite the agent's worktree.
+pub async fn edit(snapshot: &Snapshot, workspace: &Path, path: &str, text: &str) -> Result<Snapshot> {
+    let original = editable(snapshot, path).await?;
+    anyhow::ensure!(text != original, "No changes to save");
+    anyhow::ensure!(text.len() <= 2 * 1024 * 1024 && !text.contains('\0'), "Provide UTF-8 text up to 2 MiB");
+    let id = oxroute_core::model::new_id("edit");
+    let branch = format!("review/{id}");
+    let destination = tokio::fs::canonicalize(workspace).await?.join(format!("review-{id}"));
+    let source = Path::new(&snapshot.repository);
+    git(source, &["worktree", "add", "-b", &branch, destination.to_str().context("Invalid workspace path")?, &snapshot.head_commit]).await?;
+    // The path came from ls-tree, which also excludes symlinks and submodules.
+    let result = async {
+        tokio::fs::write(destination.join(path), text).await?;
+        git(&destination, &["add", "--", path]).await?;
+        git(&destination, &["commit", "-m", &format!("Edit {path} during review"), "-m", "Apply the reviewer’s direct text edits in an isolated revision; preserve the original review and worktree."]).await?;
+        let mut revised = snapshot.clone();
+        revised.repository = destination.to_string_lossy().into();
+        revised.branch = branch.clone();
+        revised.head_commit = commit(&destination, "HEAD").await?;
+        Ok(revised)
+    }.await;
+    if result.is_err() {
+        let _ = git(source, &["worktree", "remove", "--force", destination.to_str().unwrap()]).await;
+        let _ = git(source, &["branch", "-D", &branch]).await;
+    }
+    result
+}
+
 #[derive(Serialize)]
 pub struct FileContext { pub lines: Vec<String>, pub more: bool }
 
