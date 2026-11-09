@@ -103,6 +103,7 @@ export const api = {
     await readyAgent(id);
     return call<AgentView>(`/api/agents/${encodeURIComponent(id)}${before === undefined ? "" : `?before=${before}`}`, { headers: { "x-oxroute-compact": "1" }, priority });
   },
+  recentMessages: (id: string, signal: AbortSignal) => call<Entry[]>(`/api/agents/${encodeURIComponent(id)}/messages`, { signal }),
   toolOutputs: (id: string, first: number, last: number, signal: AbortSignal) =>
     call<Record<string, string>>(`/api/agents/${encodeURIComponent(id)}/outputs?${new URLSearchParams({ first: String(first), last: String(last) })}`, { signal, priority: "high" }),
 

@@ -229,6 +229,7 @@ async fn serve() -> Result<()> {
         .route("/api/agents/{id}/files/search", get(file_search::search))
         .route("/api/agents/{id}/files/context", get(file_search::context))
         .route("/api/agents/{id}/context/{entry}", get(search_context))
+        .route("/api/agents/{id}/messages", get(recent_messages))
         .route("/api/agents/{id}/outputs", get(tool_outputs))
         .route("/api/search/native", get(search_native))
         .route("/api/continue", post(continue_session))
@@ -437,6 +438,11 @@ async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Vec<oxroute_core::SearchGroup>>, Failed> {
     Ok(Json(hub.search(&query.q, SEARCH_LIMIT)?))
+}
+
+async fn recent_messages(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
+    hub.store.agent(&id)?.context("No such agent")?;
+    Ok(Json(hub.store.recent_messages(&id, 4)?))
 }
 
 async fn search_context(State(hub): Hubs, Path((id, entry)): Path<(String, i64)>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {

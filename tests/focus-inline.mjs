@@ -13,6 +13,7 @@ try {
  await page.route('**/api/state',r=>r.fulfill({json:state}));
  await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
  await page.route('**/api/agents/*',r=>contextFail?r.fulfill({status:503,json:{error:'Context temporarily unavailable'}}):r.fulfill({json:{agent,timeline,delivery:'start'}}));
+ await page.route('**/api/agents/*/messages',r=>contextFail?r.fulfill({status:503,json:{error:'Context temporarily unavailable'}}):r.fulfill({json:timeline.filter(entry=>['said','you','received'].includes(entry.kind)).slice(-4)}));
  await page.route('**/api/say',r=>{const body=r.request().postDataJSON();writes.push(body);if(fail)return r.fulfill({status:503,json:{error:'Reply temporarily unavailable'}});timeline.push({id:timeline.length+1,agentId:agent.id,kind:'you',text:body.text,at:2,detail:''});return r.fulfill({json:{}});});
  const url=`${process.env.TEST_URL??'http://127.0.0.1:13981'}/?view=focus`;
  await page.goto(url);

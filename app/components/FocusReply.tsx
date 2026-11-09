@@ -21,13 +21,14 @@ export function FocusReply({ task, agent, onSent }: { task: TaskItem; agent: Age
   const request = useRef<{ text: string; id: string }>(null);
   useEffect(() => {
     if (!expanded) return;
+    const controller = new AbortController();
     let current = true;
     setLoading(true);
-    api.agent(agent.id).then(view => {
-      if (current) { setEntries(view.timeline.filter(entry => ["said", "you", "received"].includes(entry.kind)).slice(-4)); setContextError(""); }
+    api.recentMessages(agent.id, controller.signal).then(messages => {
+      if (current) { setEntries(messages); setContextError(""); }
     }).catch(error => { if (current) setContextError(String(error instanceof Error ? error.message : error)); })
       .finally(() => { if (current) setLoading(false); });
-    return () => { current = false; };
+    return () => { current = false; controller.abort(); };
   }, [agent.id, agent.updatedAt, expanded, revision]);
   const change = (text: string) => {
     setDraft(text);

@@ -1233,6 +1233,16 @@ impl Store {
         self.timeline_before(agent_id, limit, None)
     }
 
+    /// Recent conversational context without materializing unrelated tool output.
+    pub fn recent_messages(&self, agent: &str, limit: usize) -> Result<Vec<Entry>> {
+        self.read(|c| {
+            let mut query = c.prepare("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM
+                (SELECT * FROM entries WHERE agent_id = ?1 AND kind IN ('said', 'you', 'received') ORDER BY id DESC LIMIT ?2) ORDER BY id")?;
+            let entries = query.query_map(params![agent, limit.min(20)], read_entry)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(entries)
+        })
+    }
+
     /// Only the neighboring entries needed by a search preview.
     pub fn timeline_context(&self, agent_id: &str, entry: i64) -> Result<Vec<Entry>> {
         self.read(|c| {
@@ -2705,4 +2715,17 @@ mod tests {
                 && result.destinations[0].agent_id == "unrelated"
         }));
     }
+    #[test]
+    fn recent_context_keeps_messages_separate_from_work_and_other_agents() {
+        let store = Store::in_memory().unwrap();
+        for i in 0..12 {
+            store.add_entry("selected", i as f64, EntryKind::Said, &format!("message {i}"), "", "").unwrap();
+            store.add_entry("selected", i as f64, EntryKind::Worked, "work", "", "").unwrap();
+            store.add_entry("other", i as f64, EntryKind::You, "unrelated", "", "").unwrap();
+        }
+        let messages = store.recent_messages("selected", 4).unwrap();
+        assert_eq!(messages.iter().map(|e| e.text.clone()).collect::<Vec<_>>(), (8..12).map(|i| format!("message {i}")).collect::<Vec<_>>());
+        assert_eq!(store.timeline("selected", 100).unwrap().len(), 24);
+    }
+
 }
