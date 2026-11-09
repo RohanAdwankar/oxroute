@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { clock } from "../lib/format";
 import type { ConversationLine, NativeSession, SearchGroup } from "../lib/types";
 import { Icon } from "./Icon";
+import { FileSearch } from "./FileSearch";
 import { Markdown } from "./Markdown";
 
 type Choice =
@@ -21,11 +22,13 @@ function matched(query: string, ...parts: (string | undefined)[]): string {
   return present.find((part) => part.toLowerCase().includes(wanted)) ?? present[0] ?? "";
 }
 
-export function Search({ onOpen, onContinue, onVisibility }: {
+export function Search({ agent, onOpen, onContinue, onVisibility }: {
+  agent: string;
   onOpen: (agent: string, entry: number) => void;
   onContinue: (agent: string) => void;
   onVisibility: (open: boolean) => void;
 }) {
+  const [mode, setMode] = useState<"sessions" | "names" | "contents">("sessions");
   const [query, setQuery] = useState("");
   const [managed, setManaged] = useState<SearchGroup[]>([]);
   const [other, setOther] = useState<NativeSession[]>([]);
@@ -64,7 +67,7 @@ export function Search({ onOpen, onContinue, onVisibility }: {
 
   useEffect(() => {
     const term = query.trim();
-    if (!open || !term) return;
+    if (!open || !term || mode !== "sessions") return;
     const controller = new AbortController();
     const current = ++request.current;
     const timer = window.setTimeout(() => {
@@ -84,10 +87,10 @@ export function Search({ onOpen, onContinue, onVisibility }: {
       }, () => {});
     }, 150);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query, open]);
+  }, [query, open, mode]);
 
   useEffect(() => {
-    if (!open || !choice) return;
+    if (!open || !choice || mode !== "sessions") return;
     const current = ++previewRequest.current;
     const controller = new AbortController();
     const load = choice.type === "managed"
@@ -101,7 +104,7 @@ export function Search({ onOpen, onContinue, onVisibility }: {
       () => !controller.signal.aborted && previewRequest.current === current && setPreview({ key: choice.key, lines: [] }),
     );
     return () => controller.abort();
-  }, [choice, query, open]);
+  }, [choice, query, open, mode]);
 
   const activate = async (target: Choice | undefined) => {
     if (!target) return;
@@ -130,14 +133,18 @@ export function Search({ onOpen, onContinue, onVisibility }: {
         event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();
       }
     }}>
-      <button ref={trigger} type="button" aria-label="Search sessions" title="Search sessions" aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
+      <button ref={trigger} type="button" aria-label="Search sessions" title="Search sessions · right-click for filenames" aria-expanded={open}
+        onClick={() => {setMode("sessions"); setOpen(current => !current);}}
+        onContextMenu={event => {event.preventDefault(); setMode("names"); setOpen(true);}}
         className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink">
         <Icon name="search" size={14} />
       </button>
       {open && <div role="dialog" aria-label="Session search" className="fixed top-[calc(var(--bar)+8px)] right-[5vw] left-[5vw] z-50 flex flex-col overflow-hidden border border-edge bg-card shadow-md">
       <div className="flex h-[var(--cell)] shrink-0">
-      <input autoFocus
+      <div role="group" aria-label="Search mode" className="flex shrink-0 items-stretch text-[11px]">
+        {([ ["sessions", "Conversations"], ["contents", "File contents"], ["names", "File names"] ] as const).map(([value,label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`cursor-pointer px-3 ${mode === value ? "bg-band text-ink" : "text-faint"}`}>{label}</button>)}
+      </div>
+      <input key={mode} autoFocus
         type="search"
         value={query}
         onChange={(event) => {
@@ -150,6 +157,10 @@ export function Search({ onOpen, onContinue, onVisibility }: {
           if (!value.trim()) request.current += 1;
         }}
         onKeyDown={(event) => {
+          if (mode !== "sessions") {
+            if (event.key === "ArrowDown") {event.preventDefault(); container.current?.querySelector<HTMLElement>('[aria-label="File search results"] [role="option"]')?.focus();}
+            return;
+          }
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setSelected((current) => Math.min(current + 1, Math.max(choices.length - 1, 0)));
@@ -161,13 +172,14 @@ export function Search({ onOpen, onContinue, onVisibility }: {
             void activate(choice);
           }
         }}
-        placeholder="Search sessions"
-        aria-label="search all sessions"
+        placeholder={mode === "sessions" ? "Search sessions" : mode === "names" ? "Find file names" : "Search file contents"}
+        aria-label={mode === "sessions" ? "search all sessions" : mode === "names" ? "search file names" : "search file contents"}
         className="tnum w-full bg-card px-4 text-[12px] outline-none placeholder:text-faint focus:bg-paper"
       />
       <button type="button" aria-label="Close search" title="Close search" className="cursor-pointer px-3 text-faint hover:text-ink" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button>
       </div>
-      {query.trim() && (
+      {mode !== "sessions" && <FileSearch agent={agent} query={query} mode={mode} />}
+      {mode === "sessions" && query.trim() && (
         <div className="flex h-[min(72vh,720px)] min-h-0 overflow-hidden border-t border-rule">
           <div className="quiet-scroll w-[42%] overflow-y-auto border-r border-rule">
             {choices.length === 0 ? (

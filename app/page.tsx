@@ -1239,6 +1239,7 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
+        searchAgent={[open, ...panes].find(id => snapshot.agents.some(agent => agent.id === id) || snapshot.archived.some(agent => agent.id === id)) ?? ""}
         tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} focusOpen={focusOpen} onFocus={showFocus} onSelect={showAgent}
           onReorder={(id, target, after) => setTabIds(current => {
             if (id === target || !current.includes(id)) return current;

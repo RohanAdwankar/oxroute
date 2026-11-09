@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 mod git;
 mod documents;
+mod file_search;
 mod merge_watch;
 use std::sync::Arc;
 use std::time::Duration;
@@ -225,6 +226,8 @@ async fn serve() -> Result<()> {
         .route("/api/client-failures", get(client_failures).post(client_failure))
         .route("/api/events", get(events))
         .route("/api/search", get(search))
+        .route("/api/agents/{id}/files/search", get(file_search::search))
+        .route("/api/agents/{id}/files/context", get(file_search::context))
         .route("/api/agents/{id}/context/{entry}", get(search_context))
         .route("/api/agents/{id}/outputs", get(tool_outputs))
         .route("/api/search/native", get(search_native))
