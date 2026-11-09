@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type DragEvent } from "react";
+import { Icon } from "./Icon";
 import { carriesPane } from "../lib/pane-transfer";
 
 export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragStart, onDragEnd, onDrop, onDetach, onReorder, focusOpen, onFocus }: {
@@ -57,7 +58,7 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
         }} className={`flex shrink-0 items-stretch border-b ${selectedId === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
         <button type="button" role="tab" draggable={session.id !== "focus"} onDragStart={event => { dragging.current = session.id; onDragStart(event, session.id); }} onDragEnd={event => { dragging.current = null; setDrop(null); onDragEnd(event); }}
           onContextMenu={event => { if (session.id === "focus") return; event.preventDefault(); setMenu({ id: session.id, x: Math.max(0, Math.min(event.clientX, innerWidth - 200)), y: event.clientY }); }}
-          ref={selectedId === session.id ? selected : null} aria-selected={selectedId === session.id} title={session.name}
+          ref={selectedId === session.id ? selected : null} aria-selected={selectedId === session.id} aria-label={session.id === "focus" ? "Focus" : undefined} title={session.name}
           tabIndex={selectedId === session.id || (!selectedId && index === 0) ? 0 : -1}
           className="max-w-48 cursor-pointer truncate pl-3 pr-2 text-left" onClick={() => select(session.id)}
           onKeyDown={event => {
@@ -66,7 +67,7 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
             event.preventDefault(); event.stopPropagation();
             select(tabs[next].id);
             event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next].focus();
-          }}>{session.name}</button>
+          }}>{session.id === "focus" ? <Icon name="auto" size={14} /> : session.name}</button>
         {session.id !== "focus" && <button type="button" aria-label={`Close tab ${session.name}`} title="Close tab" className="cursor-pointer px-2 text-faint hover:text-ink"
           onClick={() => onClose(session.id)}>×</button>}
       </div>)}
