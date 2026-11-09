@@ -21,6 +21,7 @@ assert.ok(!(await fetch(`${native}/api/agents/other/file-reviews/${pdf.id}`)).ok
 const browser=await chromium.launch();
 try{
  const page=await browser.newPage({viewport:{width:1440,height:950}});
+ await page.route('**/api/**',async route=>{const url=new URL(route.request().url());const result=await route.fetch({url:`${native}${url.pathname}${url.search}`});await route.fulfill({response:result});});
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
  const textMessage=['pdf','pptx','txt'].map(ext=>`[Review ${ext}](/api/artifacts?path=${encodeURIComponent(paths[ext])})`).join('\n\n');
  await page.route('**/api/state',route=>route.fulfill({json:{...snapshot,agents:[agent],archived:[],tasks:[],taskNotes:[],messages:{},paneLinks:{},tags:{},boards:[]}}));
