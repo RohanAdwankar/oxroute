@@ -27,7 +27,7 @@ binary=$HOME/.local/bin/oxrouted
 agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
-backup=$(mktemp -d "$state/deploy-backup.XXXXXX")
+backup=$(mktemp -d /tmp/oxroute-deploy.XXXXXX)
 export TMPDIR=$backup
 cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
 trap cleanup EXIT
