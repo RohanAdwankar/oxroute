@@ -104,6 +104,8 @@ export function TaskPanel({
   tasks,
   rows,
   query,
+  scope,
+  onScope,
   onSearch,
   notes,
   onShowDone,
@@ -126,6 +128,8 @@ export function TaskPanel({
   /// The rows on screen, in order; the keyboard counts these.
   rows: TaskRow[];
   query: string;
+  scope?: string[];
+  onScope: () => void;
   onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
   notes: TaskNote[];
@@ -175,13 +179,14 @@ export function TaskPanel({
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
-  const graphVersion = tasks.map((task) => task.updatedAt).join("-");
+  const graphTasks = scope ? tasks.filter(task => scope.includes(task.agentId)) : tasks;
+  const graphQuery = new URLSearchParams({ v: graphTasks.map(task => task.updatedAt).join("-"), ...(scope ? { agents: JSON.stringify(scope) } : {}) });
   // A flowchart of things that do not depend on each other is a list with
   // extra steps, so it is drawn only when asked for and only once something
   // is waiting on something.
-  const linked = graph && tasks.some(
+  const linked = graph && graphTasks.some(
     (task) =>
-      task.blockedByTaskId && tasks.some((other) => other.id === task.blockedByTaskId),
+      task.blockedByTaskId && graphTasks.some((other) => other.id === task.blockedByTaskId),
   );
 
   const row = (task: TaskItem, at: number, depth: number) => {
@@ -391,17 +396,21 @@ export function TaskPanel({
         </>}
       </div>}
       <div data-task-rail title="Drag the left edge to expand tasks" className="hidden h-[var(--bar)] shrink-0 items-center justify-center border-b border-rule text-faint"><Icon name="tasks" /></div>
-      <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="h-[var(--bar)] w-full shrink-0 border-b border-rule bg-transparent px-5 text-[12px] outline-none" />
+      <div className="flex h-[var(--bar)] shrink-0 items-stretch border-b border-rule">
+      <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="min-w-0 flex-1 bg-transparent px-5 text-[12px] outline-none" />
+      <button type="button" aria-label="Only open conversations" aria-pressed={scope !== undefined} title={scope ? "Show all tasks" : "Show only tasks for conversations open in this window"} onClick={onScope}
+        className={`shrink-0 cursor-pointer px-3 text-[11px] ${scope ? "bg-band text-ink" : "text-faint hover:text-ink"}`}>This window</button>
+      </div>
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
-            {query.trim() ? "No matching tasks." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
+            {query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/api/task-diagram.svg?v=${encodeURIComponent(graphVersion)}`}
+              src={`/api/task-diagram.svg?${graphQuery}`}
               alt="Task dependency flowchart"
               className="max-h-[270px] w-full object-contain"
             />

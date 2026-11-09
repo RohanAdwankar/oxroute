@@ -201,6 +201,10 @@ export default function Home() {
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
+  const [windowTasks, setWindowTasks] = useState(() => {
+    try { return sessionStorage.getItem("oxroute.windowTasks") === "true"; } catch { return false; }
+  });
+  useEffect(() => { sessionStorage.setItem("oxroute.windowTasks", String(windowTasks)); }, [windowTasks]);
   const [shownTask, setShownTask] = useState<string | null>(null);
   /// Finished work you have said "not yet" to, answered in its composer.
   const [correcting, setCorrecting] = useState<TaskItem | null>(null);
@@ -250,6 +254,7 @@ export default function Home() {
     titles: new Map((snapshot?.tasks ?? []).map(task => [task.id, task.text])),
     open: (id: string) => {
       showTasks(true);
+      setWindowTasks(false);
       setTaskQuery("");
       setTasksDone(true);
       setShownTask(id);
@@ -862,8 +867,16 @@ export default function Home() {
   const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...pendingTasks];
   const taskSearch = taskQuery.trim().toLowerCase();
   const taskNames = new Map([...snapshot.agents, ...snapshot.archived].map(agent => [agent.id, agent.name]));
-  const taskMatches = taskItems.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
-  const tasks = taskRows(taskAncestors(taskItems, taskMatches), tasksDone || !!taskSearch);
+  const taskScope = windowTasks ? [...new Set([...tabIds.flatMap(id => {
+    if (id === open) return panes;
+    const saved = readPanes(id);
+    return saved ? paneIds(saved) : linkedPanes(id, snapshot.paneLinks);
+  }), ...panes].flatMap(id => id.startsWith("terminal_") ? terminals.flatMap(terminal => terminal.id === id && terminal.agentId ? [terminal.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
+  const taskScopeKey = JSON.stringify(taskScope);
+  useEffect(() => { setTaskAt(0); }, [taskScopeKey]);
+  const scopedTasks = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
+  const taskMatches = scopedTasks.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
+  const tasks = taskRows(taskAncestors(scopedTasks, taskMatches), tasksDone || !!taskSearch);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? (boardId ? snapshot.boards[0] : null);
@@ -1551,6 +1564,8 @@ export default function Home() {
             tasks={taskItems}
             rows={tasks}
             query={taskQuery}
+            scope={taskScope}
+            onScope={() => { setWindowTasks(current => !current); setTaskAt(0); }}
             onSearch={query => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }}
             notes={snapshot.taskNotes}
             onShowDone={() => setTasksDone((shown) => !shown)}

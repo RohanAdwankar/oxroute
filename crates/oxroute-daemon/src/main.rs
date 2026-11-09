@@ -955,8 +955,16 @@ async fn tasks(State(hub): Hubs) -> Result<Json<Vec<oxroute_core::TaskItem>>, Fa
     Ok(Json(hub.tasks()?))
 }
 
-async fn task_diagram(State(hub): Hubs) -> Result<Response, Failed> {
-    let svg = render_task_diagram(&hub.tasks()?)?;
+#[derive(Default, Deserialize)]
+struct TaskDiagramQuery { agents: Option<String> }
+
+async fn task_diagram(State(hub): Hubs, Query(query): Query<TaskDiagramQuery>) -> Result<Response, Failed> {
+    let mut tasks = hub.tasks()?;
+    if let Some(agents) = query.agents {
+        let agents: Vec<String> = serde_json::from_str(&agents)?;
+        tasks.retain(|task| agents.contains(&task.agent_id));
+    }
+    let svg = render_task_diagram(&tasks)?;
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, "image/svg+xml")
         .header(header::CACHE_CONTROL, "no-store")
@@ -2144,6 +2152,31 @@ mod tests {
         assert_eq!(wanted("bytes=0-999", 500), Some((0, 499)));
         assert_eq!(wanted("bytes=500-600", 500), None);
         assert_eq!(wanted("pages=1-2", 500), None);
+    }
+
+    #[tokio::test]
+    async fn task_diagram_http_scope_preserves_the_all_tasks_view() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("diagram-scope"));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "owner = 'fixture'\n").unwrap();
+        let store = Store::open(root.join("state.sqlite")).unwrap();
+        for (id, owner) in [("Inside window", "owner,one"), ("Another window", "owner-two")] {
+            let mut item = task(id, id, TaskStatus::Incomplete, ""); item.agent_id = owner.into();
+            store.save_task(&item).unwrap();
+        }
+        let hub = Hub::new(Config::load_from(&config_path).unwrap(), store);
+        let router = Router::new().route("/api/task-diagram.svg", get(task_diagram)).with_state(hub);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new(); let url = format!("http://{address}/api/task-diagram.svg");
+        let all = client.get(&url).send().await.unwrap().text().await.unwrap();
+        assert!(all.contains("Inside window") && all.contains("Another window"));
+        let scoped = client.get(&url).query(&[("agents", serde_json::to_string(&vec!["owner,one"]).unwrap())]).send().await.unwrap().text().await.unwrap();
+        assert!(scoped.contains("Inside window") && !scoped.contains("Another window"));
+        assert!(!client.get(&url).query(&[("agents", "invalid")]).send().await.unwrap().status().is_success());
+        server.abort(); std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
