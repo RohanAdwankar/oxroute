@@ -478,11 +478,10 @@ export function AgentPanel({
     if (!message || busy || sendingPin.current) return;
     sendingPin.current = message.id; setPinPending(message.id);
     try {
-      await pinned.flush();
       if (message.edits) await api.sendDiagram(agent.id, message.edits, message.text, queued);
       else if (message.correction) { if (!await onCorrect(message.text, message.files, queued, message.correction)) return; }
       else if (!await onSay(message.text, message.files, queued, message.diffs, message.id)) return;
-      await pinned.remove(message.id);
+      void pinned.remove(message.id);
     } catch (error) { say(error instanceof Error ? error.message : String(error)); }
     finally { sendingPin.current = null; setPinPending(null); }
   };
@@ -989,7 +988,7 @@ export function AgentPanel({
       >
         {pinned.messages.length > 0 && <ol aria-label="Pinned messages" className="quiet-scroll max-h-48 overflow-auto px-[var(--pane-x)] py-2">
           {pinned.messages.map(message => <li key={message.id} data-pinned-message={message.id} className="flex items-center gap-2 py-1 text-[12px] text-mid">
-            {pinned.saving ? <span aria-label="Saving pinned messages" className="animate-spin"><Icon name="refresh" size={12} /></span> : <Icon name="pin" size={12} />}
+            {pinned.saving && <span aria-label="Saving pinned messages" className="sr-only">Saving</span>}
             <div className="min-w-0 flex-1"><p className="line-clamp-3 whitespace-pre-wrap">{message.text || (message.edits ? "Drawn change" : "Attached files")}</p>{message.files.length > 0 && <p className="truncate text-[11px] text-faint">{message.files.map(file => file.name).join(", ")}</p>}</div>
             <button type="button" aria-label="Send pinned message now" title="Send now" disabled={busy || pinPending !== null} onClick={() => void sendPinned(message)} className="cursor-pointer p-1 text-mid hover:text-ink disabled:opacity-30"><svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 14V2M3 7l5-5 5 5" /></svg></button>
             <button type="button" aria-label="Discard pinned message" title="Discard" disabled={pinPending !== null} onClick={() => pinned.remove(message.id)} className="cursor-pointer p-1 text-faint hover:text-ink disabled:opacity-30"><Icon name="discard" size={14} /></button>

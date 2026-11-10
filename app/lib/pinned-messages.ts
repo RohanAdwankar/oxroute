@@ -61,16 +61,14 @@ export function usePinnedMessages(agent: string, report: (message: string) => vo
     }).catch(() => { if (active) report("Could not load pinned messages. Reload before sending a saved message."); });
     return () => { active = false; };
   }, [agent, report]);
-  const change = (next: PinnedMessage[], wait = false) => {
-    const previous = cached.get(agent) ?? messages;
-    cached.set(agent, next); if (!wait) setMessages(next);
+  const change = (next: PinnedMessage[]) => {
+    cached.set(agent, next); setMessages(next);
     setSaving(count => count + 1);
     const saved = writes.catch(() => {}).then(() => load(agent)).then(() => stored(agent, cached.get(agent)!));
     writes = saved.then(() => {}, () => {});
-    return saved.then(() => { if (wait) setMessages(cached.get(agent)!); }).catch(() => {
-      if (wait) { cached.set(agent, previous); setMessages(previous); }
+    return saved.catch(() => {
       report("Pinned messages could not be saved. Keep this window open to preserve them.");
     }).finally(() => setSaving(count => count - 1));
   };
-  return { messages, saving: saving > 0, flush: () => writes, add: (message: PinnedMessage) => change([...(cached.get(agent) ?? messages), message]), remove: (id: string) => change((cached.get(agent) ?? messages).filter(message => message.id !== id), true) };
+  return { messages, saving: saving > 0, add: (message: PinnedMessage) => change([...(cached.get(agent) ?? messages), message]), remove: (id: string) => change((cached.get(agent) ?? messages).filter(message => message.id !== id)) };
 }
