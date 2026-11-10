@@ -24,6 +24,7 @@ import { TaskPanel } from "./components/TaskPanel";
 import { BoardView } from "./components/BoardView";
 import { captureClientFailures } from "./lib/client-failures";
 import { api, follow } from "./lib/api";
+import { useAgentViews } from "./lib/agent-views";
 import { preloadReview, reviewEndpoint } from "./lib/reviews";
 import { inboxRows } from "./lib/inbox";
 import { taskSubtree, taskAncestors, taskRows } from "./lib/tasks";
@@ -131,7 +132,7 @@ export default function Home() {
   const [paneRevision, setPaneRevision] = useState(0);
   const customPanes = useRef(false);
   const [focusEntry, setFocusEntry] = useState<number | null>(null);
-  const [details, setDetails] = useState<Record<string, AgentView>>({});
+  const [details, setDetails] = useAgentViews(panes);
   const creatingAgents = useRef(new Map<string, Agent>());
   const archivingAgents = useRef(new Map<string, { agent: Agent; archived: boolean; request: Promise<Snapshot> }>());
   const pendingSnapshot = useCallback((snapshot: Snapshot) => {
@@ -175,7 +176,7 @@ export default function Home() {
     }).finally(() => requests.current.delete(id));
     requests.current.set(id, { promise: request, updates, reactions });
     return request;
-  }, []);
+  }, [setDetails]);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [archiving, setArchiving] = useState<Agent | null>(null);
@@ -466,7 +467,7 @@ export default function Home() {
             reload();
         }
       }),
-    [reload, say],
+    [reload, say, setDetails],
   );
 
   useEffect(() => {
