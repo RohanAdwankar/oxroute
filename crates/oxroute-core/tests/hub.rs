@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use oxroute_core::agent::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
@@ -33,6 +33,7 @@ struct Calls {
     interrupted: Vec<String>,
     forked: Vec<(String, bool)>,
     injected: Vec<(String, usize)>,
+    predictions: Vec<String>,
 }
 
 struct FakeHarness {
@@ -57,6 +58,8 @@ struct FakeHarness {
     /// one and find the real thing.
     backend: Backend,
     inject: bool,
+    prediction_results: Mutex<std::collections::VecDeque<String>>,
+    prediction_delay: Duration,
     recovery: Mutex<Option<RecoveredTurn>>,
     native: Arc<Mutex<Vec<NativeSession>>>,
 }
@@ -74,6 +77,8 @@ impl FakeHarness {
             open_delay: Duration::ZERO,
             backend: Backend::Codex,
             inject: true,
+            prediction_results: Mutex::new(Default::default()),
+            prediction_delay: Duration::ZERO,
             recovery: Mutex::new(None),
             native: Arc::new(Mutex::new(vec![])),
         }
@@ -239,7 +244,13 @@ impl Harness for FakeHarness {
             .cloned())
     }
 
-    async fn oneshot(&self, _prompt: &str, _schema: Value, _cwd: &str) -> Result<String> {
+    async fn oneshot(&self, prompt: &str, schema: Value, _cwd: &str) -> Result<String> {
+        if schema.pointer("/properties/actions").is_some() {
+            self.calls.lock().unwrap().predictions.push(prompt.into());
+            let result = self.prediction_results.lock().unwrap().pop_front();
+            tokio::time::sleep(self.prediction_delay).await;
+            return result.context("no prediction queued");
+        }
         // Naming is a nicety. A harness that cannot name leaves the
         // provisional title standing, which the tests assert on.
         anyhow::bail!("no naming in the fake harness")
@@ -372,6 +383,8 @@ struct Harnessed {
     /// Whether a source is registered at all. A machine that only uses the
     /// web UI has none, and that is not a broken machine.
     source: bool,
+    predictions: Vec<String>,
+    prediction_delay: Duration,
     hang: bool,
     leave_artifacts: bool,
     narrates: bool,
@@ -385,6 +398,8 @@ impl Default for Harnessed {
     fn default() -> Self {
         Harnessed {
             source: true,
+            predictions: vec![],
+            prediction_delay: Duration::ZERO,
             hang: false,
             leave_artifacts: false,
             narrates: false,
@@ -490,6 +505,8 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     };
 
     let harness = FakeHarness {
+        prediction_results: Mutex::new(options.predictions.into()),
+        prediction_delay: options.prediction_delay,
         leave_artifacts: options.leave_artifacts,
         narrates: options.narrates,
         delay: options.delay,
@@ -3602,4 +3619,60 @@ async fn prepared_deployment_holds_automatic_work_until_handoff_finishes() {
     hub.hand_out_open_work().await;
     assert!(settle(|| calls.lock().unwrap().started.len() == 2).await);
     assert_eq!(hub.store.task_forks().unwrap().len(), 2);
+}
+
+
+fn next_reply(automatic: Option<usize>) -> String {
+    serde_json::json!({"actions":[
+        {"label":"Apply changes","message":"Apply the proposed changes"},
+        {"label":"Explain findings","message":"Explain how you verified the findings"},
+        {"label":"Check alternatives","message":"Compare the available alternatives"}
+    ],"automatic":automatic}).to_string()
+}
+
+#[tokio::test]
+async fn completed_work_produces_three_private_persisted_replies() {
+    let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(None)], delay: Duration::from_millis(80), ..Default::default() }).await;
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Inspect the current settings").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    for _ in 0..50 {
+        w.hub.store.add_entry(&agent.id, now(), EntryKind::Worked, "Tool progress", "", "").unwrap();
+    }
+    assert!(settle(|| w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+    let next = w.hub.next_actions(&agent.id).unwrap().unwrap();
+    assert_eq!(next.actions.len(), 3);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert_eq!(w.calls.lock().unwrap().predictions.len(), 1);
+    assert!(w.calls.lock().unwrap().predictions[0].contains("Inspect the current settings"));
+    assert!(w.hub.store.get(&format!("next-actions:{}",agent.id)).unwrap().is_some());
+    assert!(!w.hub.store.timeline(&agent.id, 100).unwrap().iter().any(|entry| entry.text.contains("zero-based index")));
+    w.hub.store.set_agent_status(&agent.id, AgentStatus::Working, now()).unwrap();
+    assert!(w.hub.next_actions(&agent.id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn auto_route_continues_authorized_work_and_accepts_no_further_action() {
+    let w = build(Mode::Auto, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Inspect and apply the needed changes").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2 && w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let calls = w.calls.lock().unwrap();
+    assert_eq!(calls.started.len(), 2);
+    assert_eq!(calls.predictions.len(), 2);
+    let prompt = calls.started[1].1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join(" ");
+    assert!(prompt.contains("not a new user request or approval"));
+}
+
+#[tokio::test]
+async fn an_intervening_user_message_discards_delayed_predictions() {
+    let w = build(Mode::Auto, Harnessed { predictions: vec![next_reply(Some(0))], prediction_delay: Duration::from_millis(150), ..Default::default() }).await;
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Inspect the plan").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().predictions.is_empty()).await);
+    w.hub.say_to(&agent.id, "Use the revised requirements").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(w.hub.next_actions(&agent.id).unwrap().is_none());
+    assert_eq!(w.calls.lock().unwrap().started.len(),2);
 }

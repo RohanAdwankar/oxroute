@@ -181,6 +181,23 @@ impl Harness for ClaudeHarness {
         }
     }
 
+    async fn oneshot(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new(&self.binary)
+            .args(["-p", "--output-format", "json", "--json-schema", &schema.to_string(),
+                "--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+                "--no-session-persistence", "--disable-slash-commands", "--settings", "{\"disableAllHooks\":true}"])
+            .current_dir(if cwd.is_empty() { &self.default_cwd } else { cwd })
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null()).kill_on_drop(true).spawn()?;
+        child.stdin.take().context("no prediction input")?.write_all(prompt.as_bytes()).await?;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(90), child.wait_with_output()).await??;
+        anyhow::ensure!(output.status.success(), "structured prediction failed");
+        let result: Value = serde_json::from_slice(&output.stdout)?;
+        let value = result.get("structured_output").context("prediction omitted structured output")?;
+        Ok(serde_json::to_string(value)?)
+    }
+
     async fn open(&self, spec: &SessionSpec) -> Result<String> {
         match spec.resume.as_deref().filter(|s| !s.is_empty()) {
             Some(existing) => self.begin(existing.to_string(), spec, Opening::Resume).await,
@@ -546,6 +563,30 @@ fn tool_result_text(block: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn structured_predictions_use_a_private_tool_free_cli_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("oxroute-structured-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let binary = root.join("predict");
+        std::fs::write(&binary, r#"#!/bin/sh
+printf '%s\n' "$@" > args
+cat > prompt
+printf '%s' '{"structured_output":{"decision":"finished"}}'
+"#).unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let harness = ClaudeHarness::bare(binary.to_str().unwrap(), root.to_str().unwrap(), "bypassPermissions");
+        let output = harness.oneshot("Assess the current work", json!({"type":"object"}), "").await.unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), json!({"decision":"finished"}));
+        assert_eq!(std::fs::read_to_string(root.join("prompt")).unwrap(), "Assess the current work");
+        let args = std::fs::read_to_string(root.join("args")).unwrap();
+        assert!(args.contains("--tools\n\n"));
+        assert!(args.contains("--no-session-persistence"));
+        assert!(args.contains("--strict-mcp-config"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn spec(model: &str, resume: Option<&str>) -> SessionSpec {
         SessionSpec {

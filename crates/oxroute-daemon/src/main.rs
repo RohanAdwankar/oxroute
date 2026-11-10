@@ -407,6 +407,7 @@ async fn agent(
         "agent": agent,
         "timeline": timeline,
         "hasEarlier": has_earlier,
+        "nextActions": hub.next_actions(&id)?,
         "delivery": agent.delivery(),
     }))).into_response())
 }

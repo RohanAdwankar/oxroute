@@ -895,6 +895,13 @@ export function AgentPanel({
               );
             })
           )}
+          {agent.status === "complete" && optimistic.length === 0 && view.nextActions && (
+            <div role="group" aria-label="Suggested next steps" className="flex flex-wrap gap-x-4 gap-y-2 py-3 text-[12px] text-faint">
+              {view.nextActions.actions.map(action => <button key={action.message} type="button" title={action.message}
+                disabled={busy} onClick={() => sayImmediately(action.message, [], false)}
+                className="cursor-pointer text-left hover:text-ink disabled:opacity-40">{action.label}</button>)}
+            </div>
+          )}
         </div>
       </div>
 

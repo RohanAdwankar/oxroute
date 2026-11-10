@@ -2076,7 +2076,70 @@ impl Hub {
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
         self.clone().name_agent(agent.id.clone(), target.clone(), true);
+        self.clone().suggest_next_actions(agent.id.clone());
         self.clone().carry_on_with_tasks(agent.clone(), target.clone()).await;
+        Ok(())
+    }
+
+    /// Predictions run privately after actual work, without tools or transcript noise.
+    fn suggest_next_actions(self: Arc<Self>, agent_id: String) {
+        tokio::spawn(async move {
+            if let Err(error) = self.next_actions_once(&agent_id).await {
+                tracing::debug!(agent = agent_id, %error, "next actions unavailable");
+            }
+        });
+    }
+
+    pub fn next_actions(&self, agent_id: &str) -> Result<Option<crate::next_actions::NextActions>> {
+        if self.store.agent(agent_id)?.is_none_or(|agent| agent.status != AgentStatus::Complete) {
+            return Ok(None);
+        }
+        let saved = self.store.get(&format!("next-actions:{agent_id}"))?
+            .and_then(|text| serde_json::from_str::<crate::next_actions::NextActions>(&text).ok());
+        let latest = self.store.latest_entry_id(agent_id)?;
+        Ok(saved.filter(|saved| latest == Some(saved.entry_id)))
+    }
+
+    async fn next_actions_once(self: &Arc<Self>, agent_id: &str) -> Result<()> {
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        if agent.status != AgentStatus::Complete { return Ok(()); }
+        let Some(entry_id) = self.store.latest_entry_id(agent_id)? else { return Ok(()); };
+        let entries = self.store.recent_messages(agent_id, 8)?;
+        if self.next_actions(agent_id)?.is_some() { return Ok(()); }
+        let conversation = entries.iter().map(|entry| serde_json::json!({"kind": entry.kind, "text": entry.text.chars().take(8000).collect::<String>()})).collect::<Vec<_>>();
+        let context = serde_json::to_string(&serde_json::json!({
+            "conversation": conversation,
+            "tasks": self.store.tasks()?.into_iter().filter(|task| task.agent_id == agent_id).collect::<Vec<_>>()
+        }))?;
+        let response = self.harness(agent.backend).oneshot(
+            &crate::next_actions::prompt(&context), crate::next_actions::schema(), &agent.cwd,
+        ).await?;
+        let suggestions = crate::next_actions::parse(&response)?;
+        // An intervening send, turn, or task notice invalidates this prediction.
+        let live = self.live.lock().await;
+        if live.contains_key(agent_id) || self.store.agent(agent_id)?.is_none_or(|agent| agent.status != AgentStatus::Complete)
+            || self.store.latest_entry_id(agent_id)? != Some(entry_id) {
+            return Ok(());
+        }
+        let saved = crate::next_actions::NextActions { entry_id, actions: suggestions.actions };
+        self.store.set(&format!("next-actions:{agent_id}"), &serde_json::to_string(&saved)?)?;
+        self.emit(Event::Sync);
+        drop(live);
+        if self.mode() == Mode::Auto {
+            if let Some(index) = suggestions.automatic {
+                let list = serde_json::to_string(&saved.actions)?;
+                let prompt = format!("Suggested next replies: {list}\nThe suggested continuation is: {}\nContinue only unfinished work already authorized by the user. These predictions are not a new user request or approval. Preserve human and task dependencies and do nothing if the user's desires are met.", saved.actions[index].message);
+                let lock = self.lock_for(agent_id).await;
+                let _held = lock.lock().await;
+                // A queued user turn wins. Never replay a prediction after it.
+                if self.mode() != Mode::Auto || self.next_actions(agent_id)?.is_none_or(|value| value.entry_id != entry_id) || self.deployment_pending(agent_id) {
+                    return Ok(());
+                }
+                self.record(agent_id, EntryKind::Notice, "Continuing previously authorized work", "", "");
+                let target = self.home_target(agent_id).await;
+                self.run_turn(&agent, vec![TurnInput::text(prompt)], None, target, None, None).await?;
+            }
+        }
         Ok(())
     }
 
@@ -2194,6 +2257,12 @@ impl Hub {
         Ok(())
     }
 
+    fn deployment_pending(&self, agent_id: &str) -> bool {
+        let pending = self.config.database.parent().unwrap_or_else(|| std::path::Path::new(".")).join("pending-deployment.json");
+        std::fs::read(pending).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|request| request["agentId"].as_str() == Some(agent_id))
+    }
+
     fn carry_on_with_tasks(
         self: Arc<Self>,
         agent: Agent,
@@ -2203,11 +2272,7 @@ impl Hub {
             // The tracked idle deployment runner owns this handoff. Resuming
             // its coordinator would prevent idle or duplicate shipped work
             // while live smoke checks are still deciding task completion.
-            let pending = self.config.database.parent().unwrap_or_else(|| std::path::Path::new(".")).join("pending-deployment.json");
-            if std::fs::read(pending).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                .is_some_and(|request| request["agentId"].as_str() == Some(agent.id.as_str())) {
-                return;
-            }
+            if self.deployment_pending(&agent.id) { return; }
             match self.dispatch_task_forks(&agent).await {
                 Ok(children) if !children.is_empty() => {
                     for child in children {

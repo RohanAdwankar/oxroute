@@ -1294,6 +1294,10 @@ impl Store {
         self.timeline_before(agent_id, limit, None)
     }
 
+    pub fn latest_entry_id(&self, agent: &str) -> Result<Option<i64>> {
+        self.read(|c| Ok(c.query_row("SELECT MAX(id) FROM entries WHERE agent_id = ?1", [agent], |row| row.get(0))?))
+    }
+
     /// Recent conversational context without materializing unrelated tool output.
     pub fn recent_messages(&self, agent: &str, limit: usize) -> Result<Vec<Entry>> {
         self.read(|c| {

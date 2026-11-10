@@ -284,6 +284,7 @@ export type DiagramEdit =
   | { op: "removeEdge"; from: string; to: string };
 
 export interface AgentView {
+  nextActions?: { entryId: number; actions: { label: string; message: string }[] } | null;
   hasEarlier?: boolean;
   agent: Agent;
   timeline: Entry[];
