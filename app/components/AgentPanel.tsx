@@ -16,7 +16,7 @@ import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { DRAFT_CHANGED, draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
-import { usePinnedMessages, type PinnedMessage } from "../lib/pinned-messages";
+import { usePinnedMessages } from "../lib/pinned-messages";
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
@@ -470,10 +470,6 @@ export function AgentPanel({
     });
   };
 
-  const pinMessage = (text: string, files: File[], quoted: DiffQuote[], drawn?: DiagramEdit[]) => {
-    pinned.add({ id: crypto.randomUUID(), text, files, diffs: quoted, edits: drawn, correction: correcting?.id });
-    if (correcting) onStopCorrecting();
-  };
   const sendPinned = async (message = pinned.messages[0], queued = false) => {
     if (!message || busy || sendingPin.current) return;
     sendingPin.current = message.id; setPinPending(message.id);
@@ -491,14 +487,12 @@ export function AgentPanel({
     const text = composed;
     if (mode === "diagram") {
       if (edits.length === 0) return;
-      if (agent.status === "working" && !queued) pinMessage(text, [], diffs, edits);
-      else onSendDiagram(edits, text, queued);
+      onSendDiagram(edits, text, queued);
       setEdits([]);
     } else {
       const picture = await sketch.current?.export();
       if (!picture) return;
-      if (agent.status === "working" && !queued) pinMessage(text, [picture, ...pictures.files], diffs);
-      else sayImmediately(text, [picture, ...pictures.files], queued, draft, diffs);
+      sayImmediately(text, [picture, ...pictures.files], queued, draft, diffs);
       pictures.clear();
       sketch.current?.clear();
     }
@@ -534,8 +528,7 @@ export function AgentPanel({
     setDraft("");
     setDiffs([]);
     const sent = pictures.files;
-    if (working && !queued) pinMessage(text, sent, diffs);
-    else if (correcting) onCorrect(text, sent, queued);
+    if (correcting) onCorrect(text, sent, queued);
     else sayImmediately(text, sent, queued, draft, diffs);
     pictures.clear();
   };
@@ -1074,7 +1067,7 @@ export function AgentPanel({
               }
             }}
             onKeyDown={(event) => {
-              // Working turns pin the first Enter; an empty Enter sends the oldest pin.
+              // Enter sends immediately; Shift+Enter keeps a newline.
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 send();
@@ -1092,12 +1085,9 @@ export function AgentPanel({
             className="min-h-[var(--cell)] min-w-0 flex-1 resize-none overflow-y-hidden border-x border-rule bg-paper px-3 py-[8px] text-[var(--said)] leading-[1.35] outline-none placeholder:text-faint"
           />
           {mode === "type" ? (
-            // Working turns hold messages above the composer until explicitly sent.
             <SplitAction
               label="Send message"
-              hint={
-                working ? "Pin message; press Enter again to send now" : "Send message"
-              }
+              hint="Send message"
               icon="send"
               onClick={() => send()}
               disabled={busy || !canSend}
@@ -1114,13 +1104,7 @@ export function AgentPanel({
             // nothing yet to put on the task list.
             <SplitAction
               label={mode === "diagram" ? "Send the change" : "Send the picture"}
-              hint={
-                working
-                  ? "Pin message; send its up arrow to interrupt"
-                  : mode === "diagram"
-                    ? "Send the change"
-                    : "Send the picture"
-              }
+              hint={mode === "diagram" ? "Send the change" : "Send the picture"}
               icon="send"
               onClick={() => send()}
               disabled={busy || !canSend}

@@ -37,10 +37,6 @@ try {
     const previousMessages = timeline.length;
     const request = page.waitForRequest('**/api/tasks/finished-task/correction');
     await composer.press(key);
-    if (key === 'Enter') {
-      await page.locator('[data-pinned-message]').waitFor();
-      await composer.press('Enter');
-    }
     const body = (await request).postData();
     assert.ok(body.includes(`name="queued"\r\n\r\n${queued}`));
     assert.ok(body.includes(`name="text"\r\n\r\n${feedback.trim()}\r\n`));
@@ -56,5 +52,5 @@ try {
   await composer.press('Enter');
   assert.equal(await page.getByRole('button', { name: 'Send message', exact: true }).isEnabled(), false);
   assert.equal(requests.length, 4, 'Empty correction is allowed; an ordinary empty message is still ignored');
-  console.log('Passed: Enter twice and Tab reopen tasks with optional feedback; Tab stays off chat.');
+  console.log('Passed: Enter and Tab reopen tasks with optional feedback; Tab stays off chat.');
 } finally { await browser.close(); }

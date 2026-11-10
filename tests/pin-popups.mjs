@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { savedPins } from './pin-fixtures.mjs';
 
 const agent={id:'popup-session',name:'Popup session',backend:'codex',model:'fixture',status:'working',updatedAt:Date.now()/1000};
 const state={mode:'ask',agents:[agent],archived:[],tasks:[],taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],messages:{},sources:[],models:[],backends:[]};
@@ -15,7 +16,7 @@ try {
  const page=await context.newPage(),url=`${process.env.TEST_URL??'http://127.0.0.1:14019'}/?agent=${agent.id}`;
  const pins=page=>page.locator('[data-pinned-message]');
  const draft=page=>page.locator('[data-composer]');
- const pin=async(page,text)=>{await draft(page).fill(text);await draft(page).press('Enter');await pins(page).getByText(text,{exact:true}).waitFor();await page.getByLabel('Saving pinned messages',{exact:true}).waitFor({state:'detached'});};
+ const pin=async(page,text)=>{await savedPins(page,agent.id,[{text}]);await pins(page).getByText(text,{exact:true}).waitFor();};
  const scope=page=>page.evaluate(()=>sessionStorage.getItem('oxroute.pinWindow'));
  await page.goto(url);await pin(page,'Parent window follow-up');const parentScope=await scope(page);
  await page.getByRole('tab',{name:agent.name,exact:true}).click({button:'right'});
@@ -28,7 +29,7 @@ try {
  await page.goto(url);await pins(page).getByText('Parent window follow-up',{exact:true}).waitFor();assert.equal(await pins(page).count(),1);
  await child.reload();await pins(child).getByText('Child window follow-up',{exact:true}).waitFor();assert.equal(await pins(child).count(),1);assert.equal(await scope(child),childScope,'A child reload retains its own persisted pins');
  await page.reload();await pins(page).getByText('Parent window follow-up',{exact:true}).waitFor();assert.equal(await scope(page),parentScope);assert.equal(await pins(page).count(),1);
- assert.deepEqual(writes,[],'Popout, pinning and reload never send an agent message');assert.deepEqual(errors,[]);
+ assert.deepEqual(writes,[],'Popout, loading saved messages and reload never send an agent message');assert.deepEqual(errors,[]);
  await child.close();
  console.log('Actual Move to new window popouts isolate copied pin storage while parent and child retain their own pins through reload.');
 } finally {await browser.close();}

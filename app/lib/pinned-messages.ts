@@ -70,5 +70,5 @@ export function usePinnedMessages(agent: string, report: (message: string) => vo
       report("Pinned messages could not be saved. Keep this window open to preserve them.");
     }).finally(() => setSaving(count => count - 1));
   };
-  return { messages, saving: saving > 0, add: (message: PinnedMessage) => change([...(cached.get(agent) ?? messages), message]), remove: (id: string) => change((cached.get(agent) ?? messages).filter(message => message.id !== id)) };
+  return { messages, saving: saving > 0, remove: (id: string) => change((cached.get(agent) ?? messages).filter(message => message.id !== id)) };
 }
