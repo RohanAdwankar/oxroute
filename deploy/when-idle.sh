@@ -27,7 +27,8 @@ binary=$HOME/.local/bin/oxrouted
 agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
-backup=$(mktemp -d /tmp/oxroute-deploy.XXXXXX)
+backup_root=$(uv run --no-project python -c 'import shutil,sys; print(max(sys.argv[1:], key=lambda path: shutil.disk_usage(path).free))' /tmp "$state")
+backup=$(mktemp -d "$backup_root/oxroute-deploy.XXXXXX")
 export TMPDIR=$backup
 cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
 trap cleanup EXIT
