@@ -23,7 +23,6 @@ export function Chrome({
   activeBoard,
   onBoard,
   onNewAgent,
-  searchAgent,
   onSearchVisibility,
   onSearchOpen,
   onSearchContinue,
@@ -41,7 +40,6 @@ export function Chrome({
   activeBoard: string | null;
   onBoard: (id: string | null) => void;
   onNewAgent: () => void;
-  searchAgent: string;
   onSearchVisibility: (open: boolean) => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
@@ -100,7 +98,7 @@ export function Chrome({
         <Cell onClick={onNewAgent} label="New agent" icon="plus" />
       </nav>
 
-      <Search agent={searchAgent} onVisibility={onSearchVisibility} onOpen={onSearchOpen} onContinue={onSearchContinue} />
+      <Search cards={[...snapshot.agents, ...snapshot.archived]} onVisibility={onSearchVisibility} onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
       <div className="flex min-w-0 flex-1 items-stretch">{tabs}</div>
 

@@ -4,12 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { clock } from "../lib/format";
-import type { ConversationLine, NativeSession, SearchGroup } from "../lib/types";
+import type { Agent, ConversationLine, NativeSession, SearchGroup } from "../lib/types";
 import { Icon } from "./Icon";
-import { FileSearch } from "./FileSearch";
 import { Markdown } from "./Markdown";
 
 type Choice =
+  | { key: string; type: "card"; card: Agent }
   | { key: string; type: "managed"; result: SearchGroup }
   | { key: string; type: "native"; session: NativeSession };
 
@@ -22,13 +22,13 @@ function matched(query: string, ...parts: (string | undefined)[]): string {
   return present.find((part) => part.toLowerCase().includes(wanted)) ?? present[0] ?? "";
 }
 
-export function Search({ agent, onOpen, onContinue, onVisibility }: {
-  agent: string;
+export function Search({ cards, onOpen, onContinue, onVisibility }: {
+  cards: Agent[];
   onOpen: (agent: string, entry: number) => void;
   onContinue: (agent: string) => void;
   onVisibility: (open: boolean) => void;
 }) {
-  const [mode, setMode] = useState<"sessions" | "names" | "contents">("sessions");
+  const [mode, setMode] = useState<"context" | "cards">("context");
   const [query, setQuery] = useState("");
   const [managed, setManaged] = useState<SearchGroup[]>([]);
   const [other, setOther] = useState<NativeSession[]>([]);
@@ -50,7 +50,9 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [open]);
-  const choices = useMemo<Choice[]>(() => [
+  const choices = useMemo<Choice[]>(() => mode === "cards"
+    ? cards.filter(card => query.trim() && card.name.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => b.updatedAt - a.updatedAt).map(card => ({key: `card:${card.id}`, type: "card", card}))
+    : [
     ...managed.map((result) => ({
       key: `managed:${result.destinations[0]?.agentId}:${result.destinations[0]?.entryId}`,
       type: "managed" as const,
@@ -61,13 +63,13 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
       type: "native" as const,
       session,
     })),
-  ], [managed, other]);
+  ], [mode, cards, query, managed, other]);
   const choice = choices[selected];
   useEffect(() => onVisibility(open), [open, onVisibility]);
 
   useEffect(() => {
     const term = query.trim();
-    if (!open || !term || mode !== "sessions") return;
+    if (!open || !term || mode !== "context") return;
     const controller = new AbortController();
     const current = ++request.current;
     const timer = window.setTimeout(() => {
@@ -90,15 +92,16 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
   }, [query, open, mode]);
 
   useEffect(() => {
-    if (!open || !choice || mode !== "sessions") return;
+    if (!open || !choice) return;
     const current = ++previewRequest.current;
     const controller = new AbortController();
-    const load = choice.type === "managed"
-      ? api.searchContext(choice.result.destinations[0].agentId, choice.result.destinations[0].entryId, controller.signal).then(entries => entries.map(item => ({
+    const load = choice.type === "native"
+      ? api.nativePreview(choice.session.backend, choice.session.sessionId, controller.signal)
+      : (choice.type === "card" ? api.recentMessages(choice.card.id, controller.signal)
+        : api.searchContext(choice.result.destinations[0].agentId, choice.result.destinations[0].entryId, controller.signal)).then(entries => entries.map(item => ({
           role: item.kind === "said" ? "agent" : item.kind === "worked" ? "work" : "you",
           text: matched(query, item.text, item.detail, item.output),
-        })))
-      : api.nativePreview(choice.session.backend, choice.session.sessionId, controller.signal);
+        })));
     load.then(
       (lines) => !controller.signal.aborted && previewRequest.current === current && setPreview({ key: choice.key, lines }),
       () => !controller.signal.aborted && previewRequest.current === current && setPreview({ key: choice.key, lines: [] }),
@@ -108,6 +111,7 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
 
   const activate = async (target: Choice | undefined) => {
     if (!target) return;
+    if (target.type === "card") { setOpen(false); onOpen(target.card.id, 0); return; }
     if (target.type === "managed") {
       const destination = target.result.destinations[0];
       setOpen(false);
@@ -126,6 +130,11 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
       setContinuing(null);
     }
   };
+  const changeMode = (value: typeof mode) => {
+    request.current++;
+    setMode(value); setSelected(0); setManaged([]); setOther([]); setError("");
+    setLoading(value === "context" && Boolean(query.trim()));
+  };
 
   return (
     <div ref={container} className="flex shrink-0 items-stretch" onKeyDown={event => {
@@ -133,16 +142,16 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
         event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();
       }
     }}>
-      <button ref={trigger} type="button" aria-label="Search sessions" title="Search sessions · right-click for filenames" aria-expanded={open}
-        onClick={() => {setMode("sessions"); setOpen(current => !current);}}
-        onContextMenu={event => {event.preventDefault(); setMode("names"); setOpen(true);}}
+      <button ref={trigger} type="button" aria-label="Search sessions" title="Search context · right-click for card titles" aria-expanded={open}
+        onClick={() => {changeMode("context"); setOpen(current => !current);}}
+        onContextMenu={event => {event.preventDefault(); changeMode("cards"); setOpen(true);}}
         className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center border-r border-rule text-faint hover:text-ink">
         <Icon name="search" size={14} />
       </button>
       {open && <div role="dialog" aria-label="Session search" className="fixed top-[calc(var(--bar)+8px)] right-[5vw] left-[5vw] z-50 flex flex-col overflow-hidden border border-edge bg-card shadow-md">
       <div className="flex h-[var(--cell)] shrink-0">
       <div role="group" aria-label="Search mode" className="flex shrink-0 items-stretch text-[11px]">
-        {([ ["sessions", "Conversations"], ["contents", "File contents"], ["names", "File names"] ] as const).map(([value,label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`cursor-pointer px-3 ${mode === value ? "bg-band text-ink" : "text-faint"}`}>{label}</button>)}
+        {([ ["context", "Conversation content", "text"], ["cards", "Card titles", "board"] ] as const).map(([value,label,icon]) => <button key={value} type="button" aria-label={label} title={label} aria-pressed={mode === value} onClick={() => changeMode(value)} className={`cursor-pointer px-3 ${mode === value ? "bg-band text-ink" : "text-faint"}`}><Icon name={icon} size={14} /></button>)}
       </div>
       <input key={mode} autoFocus
         type="search"
@@ -152,15 +161,12 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
           setQuery(value);
           setManaged([]);
           setOther([]);
-          setLoading(Boolean(value.trim()));
+          setSelected(0);
+          setLoading(mode === "context" && Boolean(value.trim()));
           setError("");
           if (!value.trim()) request.current += 1;
         }}
         onKeyDown={(event) => {
-          if (mode !== "sessions") {
-            if (event.key === "ArrowDown") {event.preventDefault(); container.current?.querySelector<HTMLElement>('[aria-label="File search results"] [role="option"]')?.focus();}
-            return;
-          }
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setSelected((current) => Math.min(current + 1, Math.max(choices.length - 1, 0)));
@@ -172,22 +178,22 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
             void activate(choice);
           }
         }}
-        placeholder={mode === "sessions" ? "Search sessions" : mode === "names" ? "Find file names" : "Search file contents"}
-        aria-label={mode === "sessions" ? "search all sessions" : mode === "names" ? "search file names" : "search file contents"}
+        placeholder={mode === "cards" ? "Search card titles" : "Search conversation content"}
+        aria-label={mode === "cards" ? "search card titles" : "search all sessions"}
         className="tnum w-full bg-card px-4 text-[12px] outline-none placeholder:text-faint focus:bg-paper"
       />
       <button type="button" aria-label="Close search" title="Close search" className="cursor-pointer px-3 text-faint hover:text-ink" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button>
       </div>
-      {mode !== "sessions" && <FileSearch agent={agent} query={query} mode={mode} />}
-      {mode === "sessions" && query.trim() && (
+      {query.trim() && (
         <div className="flex h-[min(72vh,720px)] min-h-0 overflow-hidden border-t border-rule">
           <div className="quiet-scroll w-[42%] overflow-y-auto border-r border-rule">
             {choices.length === 0 ? (
               <p className="px-4 py-4 text-[12px] text-faint">
-                {loading ? "Searching…" : error || "No session matches."}
+                {loading ? "Searching…" : error || (mode === "cards" ? "No card titles match." : "No conversation matches.")}
               </p>
             ) : (
               <>
+                {mode === "cards" && choices.map((item, index) => item.type === "card" && <ResultRow key={item.key} selected={selected === index} time={item.card.updatedAt} title={item.card.name} detail="" action="Open" onSelect={() => setSelected(index)} onActivate={() => void activate(item)} />)}
                 {managed.length > 0 && <Band>Oxroute sessions</Band>}
                 {managed.map((result, index) => (
                   <ResultRow
@@ -224,7 +230,7 @@ export function Search({ agent, onOpen, onContinue, onVisibility }: {
             <div className="sticky top-0 border-b border-rule bg-card px-5 py-3">
               <span className="text-[12px] font-semibold">Conversation preview</span>
               {choice && <span className="ml-3 text-[11px] text-faint">
-                {choice.type === "managed"
+                {choice.type === "card" ? choice.card.name : choice.type === "managed"
                   ? choice.result.destinations[0].agentName
                   : choice.session.name || choice.session.backend}
               </span>}
