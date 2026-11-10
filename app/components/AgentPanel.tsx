@@ -397,7 +397,7 @@ export function AgentPanel({
 
   const pin = useCallback(() => {
     const node = timeline.current;
-    if (node && following.current && !menu.current && !selectedText(node)) {
+    if (node && following.current && !menu.current && !selectedText(node) && node.scrollHeight - node.clientHeight - node.scrollTop > 1) {
       node.scrollTo({ top: node.scrollHeight });
     }
   }, []);
