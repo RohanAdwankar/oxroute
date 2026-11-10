@@ -7,6 +7,7 @@ use tokio::{process::Command, sync::Mutex};
 macro_rules! ensure {
     ($condition:expr, $($message:tt)*) => { if !$condition { return Err(anyhow::anyhow!($($message)*).into()); } };
 }
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 static RENDER: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Clone, serde::Serialize, Deserialize)]
@@ -52,7 +53,7 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
     ensure!(source.starts_with(&root) && source.is_file(), "File is outside submitted artifacts");
     let name = source.file_name().context("Missing filename")?.to_string_lossy().into_owned();
     let extension = source.extension().unwrap_or_default().to_string_lossy().to_lowercase();
-    ensure!(["pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"].contains(&extension.as_str()), "This file format cannot be reviewed");
+    ensure!(IMAGE_EXTENSIONS.contains(&extension.as_str()) || ["pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"].contains(&extension.as_str()), "This file format cannot be reviewed");
     // Copy and hash in one pass, so changing a source during capture cannot approve different bytes.
     let staging = hub.config.database.parent().unwrap().join("document-reviews");
     tokio::fs::create_dir_all(&staging).await?;
@@ -93,6 +94,8 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
         command.arg(folder.join("source.pdf"));
         let info = run(command).await?;
         review.pages = info.lines().find_map(|line| line.strip_prefix("Pages:").and_then(|value| value.trim().parse().ok())).context("No pages in document")?;
+    } else if IMAGE_EXTENSIONS.contains(&review.extension.as_str()) {
+        review.pages = 1;
     } else {
         review.text = Some(tokio::fs::read_to_string(saved).await.context("Text review requires UTF-8")?);
     }
@@ -110,6 +113,9 @@ pub async fn page(State(hub): Hubs, Path((agent, id, page)): Path<(String, Strin
     let review = record(&hub, &agent, &id)?;
     ensure!(page > 0 && page <= review.pages, "No such page");
     let folder = directory(&hub, &review);
+    if IMAGE_EXTENSIONS.contains(&review.extension.as_str()) {
+        return attachment_response(&folder.join(format!("source.{}", review.extension)), oxroute_core::model::attachment_mime(&review.name), &headers).await;
+    }
     let target = folder.join(format!("page-{page}.png"));
     {
         let _guard = RENDER.lock().await;
@@ -142,7 +148,7 @@ pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>,
         else if field.name() == Some("files") { images.push(keep_file(&hub.config.attachments, field).await?); }
     }
     let body = decision.context("Missing decision")?;
-    ensure!(["approved", "changes_requested"].contains(&body.status.as_str()), "Unknown decision");
+    ensure!(["approved", "changes_requested"].contains(&body.status.as_str()) || (body.status == "replied" && IMAGE_EXTENSIONS.contains(&review.extension.as_str())), "Unknown decision");
     ensure!(!body.request_id.is_empty() && body.request_id.len() <= 100 && body.text.len() <= 32000 && body.annotations.len() <= 100, "Invalid review feedback");
     ensure!(body.status != "changes_requested" || !body.text.trim().is_empty(), "Describe the requested revision");
     for note in &body.annotations {

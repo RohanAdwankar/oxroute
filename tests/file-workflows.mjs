@@ -14,6 +14,7 @@ async function run(command,args,env={}){return new Promise((done,fail)=>{const c
 let daemon;
 try{
  await run('uv',['run','--no-project','--with','python-pptx','--with','reportlab','python','-c',`from pathlib import Path
+from PIL import Image, ImageDraw
 from pptx import Presentation
 from reportlab.pdfgen import canvas
 p=Path(${JSON.stringify(fixtures)})
@@ -22,6 +23,9 @@ for title,body in [('Release plan','Decision needed: approve the rollout window.
  s=r.slides.add_slide(r.slide_layouts[1]);s.shapes.title.text=title;s.placeholders[1].text=body
 r.save(p/'proposal.pptx')
 c=canvas.Canvas(str(p/'proposal.pdf'));c.drawString(70,750,'Release plan: approve the rollout window.');c.showPage();c.drawString(70,750,'Validation: two smoke checks remain.');c.save()
+im=Image.new('RGB',(960,540),'#faf8f4');d=ImageDraw.Draw(im);d.rectangle((90,100,390,270),outline='#333333',width=4);d.rectangle((570,150,870,320),outline='#333333',width=4);d.line((390,185,570,235),fill='#333333',width=4);d.text((150,170),'Source',fill='#333333');d.text((630,220),'Destination',fill='#333333');im.save(p/'diagram.png')
+for ext in ['jpg','webp','gif']: im.save(p/f'diagram.{ext}')
+(p/'diagram.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect x="90" y="100" width="300" height="170" fill="none" stroke="black"/></svg>')
 (p/'proposal.txt').write_text('Release plan\\nApprove the rollout window.\\n')`]);
  daemon=spawn(process.env.TEST_DAEMON??join(process.env.HOME,'.local/bin/oxrouted'),[],{stdio:['ignore','ignore','inherit'],env:{...process.env,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});
  let ready=false;
@@ -30,4 +34,6 @@ c=canvas.Canvas(str(p/'proposal.pdf'));c.drawString(70,750,'Release plan: approv
  const env={TEST_NATIVE_URL:native,TEST_FIXTURES:fixtures,TEST_URL:process.env.TEST_URL??'http://127.0.0.1:3939'};
  await run(process.execPath,['tests/file-search.mjs'],env);
  await run(process.execPath,['tests/file-reviews.mjs'],env);
+ await run(process.execPath,['tests/image-preview.mjs'],env);
+ await run(process.execPath,['tests/artifact-links.mjs'],env);
 }finally{if(daemon){daemon.kill('SIGTERM');await new Promise(done=>{if(daemon.exitCode!==null)done();else daemon.once('exit',done);});}await rm(root,{recursive:true,force:true});}

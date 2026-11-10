@@ -8,7 +8,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem, QuoteAnchor, QuoteThread } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
-import { FileReviewProvider, ReviewFileButton } from "./FileReview";
+import { FileReviewProvider, ReviewFileButton, ReviewImage } from "./FileReview";
 import { GitReview } from "./GitReview";
 import { preloadReview, reviewEndpoint } from "../lib/reviews";
 import { Code } from "./Code";
@@ -1358,10 +1358,7 @@ function Attached({ name }: { name: string }) {
     );
   }
   return (
-    <a href={url} target="_blank" rel="noreferrer" title={name}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt={name} onError={() => setMissing(true)} className={shape} />
-    </a>
+    <ReviewImage src={url} alt={name} onError={() => setMissing(true)} className={shape} />
   );
 }
 

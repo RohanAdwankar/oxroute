@@ -1,11 +1,12 @@
 "use client";
 
-import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from "react";
+import {createContext, useContext, useEffect, useRef, useState, type ReactNode, type ImgHTMLAttributes} from "react";
 import {createPortal} from "react-dom";
 import {Icon} from "./Icon";
 
 export const FileReviews = createContext<((url: string) => void) | null>(null);
-const extensions = new Set(["pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"]);
+const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+const extensions = new Set([...imageExtensions, "pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"]);
 export function savedReview(url: string) {return url.startsWith("/api/agents/") && url.split("/").length === 6 && url.split("/")[4] === "file-reviews";}
 export function reviewable(url: string) {
   const parsed = new URL(url, "http://localhost");
@@ -18,9 +19,20 @@ export function ReviewFileButton({url}: {url: string}) {
   return open && reviewable(url) ? <button type="button" onClick={event => {event.stopPropagation(); open(url);}} className="cursor-pointer px-2 text-xs text-mid hover:text-ink" title="Review submitted file">Review</button> : null;
 }
 
+export function ReviewImage({src, alt, ...props}: ImgHTMLAttributes<HTMLImageElement>) {
+  const open = useContext(FileReviews);
+  const interactive = open && typeof src === "string" && reviewable(src);
+  // Keep the image itself focusable so linked Markdown images do not nest buttons.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img {...props} src={src} alt={alt} role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined}
+    title={interactive ? "Enlarge and annotate" : props.title} style={interactive ? {...props.style, cursor: "zoom-in"} : props.style}
+    onClick={interactive ? event => {event.preventDefault(); event.stopPropagation(); open(src);} : props.onClick}
+    onKeyDown={interactive ? event => {if (event.key === "Enter" || event.key === " ") {event.preventDefault(); event.stopPropagation(); open(src);}} : props.onKeyDown} />;
+}
+
 type Point = [number, number];
 type Annotation = {page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]};
-type Review = {agentId: string; id: string; name: string; sha256: string; pages: number; text: string | null; status: string; feedback: string; annotations: Annotation[]};
+type Review = {agentId: string; id: string; name: string; extension: string; sha256: string; pages: number; text: string | null; status: string; feedback: string; annotations: Annotation[]};
 async function response<T>(request: Promise<Response>): Promise<T> {
   const result = await request;
   if (!result.ok) throw new Error(await result.text());
@@ -37,8 +49,14 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
   const [notes, setNotes] = useState<Annotation[]>([]), [text, setText] = useState("");
   const [gesture, setGesture] = useState<Point[]>([]), [region, setRegion] = useState<Annotation["region"]>(null);
   const [menu, setMenu] = useState<{x: number; y: number; quote: string} | null>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null), field = useRef<HTMLTextAreaElement>(null);
   const requestId = useRef(crypto.randomUUID());
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.focus();
+    return () => previous?.focus();
+  }, []);
   const base = review ? `/api/agents/${encodeURIComponent(review.agentId)}/file-reviews/${review.id}` : "";
   useEffect(() => {
     const controller = new AbortController();
@@ -52,6 +70,16 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     return () => controller.abort();
   }, [agent, url]);
   useEffect(() => {if (review) sessionStorage.setItem(`oxroute.fileReview.${review.id}`, JSON.stringify({notes, text}));}, [review, notes, text]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation();
+      if (menu) setMenu(null); else close();
+    };
+    document.addEventListener("keydown", escape, true);
+    return () => document.removeEventListener("keydown", escape, true);
+  }, [menu, close]);
+  const isImage = !!review && imageExtensions.includes(review.extension);
   const pageNotes = notes.filter(note => note.page === page);
   function point(event: React.PointerEvent<SVGSVGElement>): Point {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -62,13 +90,13 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     setNotes(current => [...current, {page: review?.pages ? page : 0, quote: menu.quote, region, strokes: []}]);
     setRegion(null); setMenu(null); field.current?.focus();
   }
-  async function decide(status: "approved" | "changes_requested") {
+  async function decide(status: "approved" | "changes_requested" | "replied") {
     if (!review) return;
     setBusy(true); setError("");
     try {
       const form = new FormData();
       form.append("decision", JSON.stringify({status, text, annotations: notes, requestId: requestId.current}));
-      for (const number of new Set(notes.map(note => note.page).filter(Boolean))) {
+      for (const number of new Set(isImage ? [1] : notes.map(note => note.page).filter(Boolean))) {
         const picture = new Image(); picture.src = `${base}/pages/${number}`; await picture.decode();
         const canvas = document.createElement("canvas"); canvas.width = picture.naturalWidth; canvas.height = picture.naturalHeight;
         const context = canvas.getContext("2d")!; context.drawImage(picture, 0, 0); context.strokeStyle = "#d74343"; context.lineWidth = 3;
@@ -83,14 +111,15 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       setReview(value); requestId.current = crypto.randomUUID(); sessionStorage.removeItem(`oxroute.fileReview.${review.id}`);
     } catch (reason) {setError(String(reason));} finally {setBusy(false);}
   }
-  return <div role="dialog" aria-modal="true" aria-label="File review" className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => {event.stopPropagation(); if (event.key === "Escape") {if (menu) setMenu(null); else close();}}} onContextMenu={event => event.stopPropagation()}>
-    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? "Preparing file review…"}</strong>{review && <><span aria-live="polite">{review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name}>Download</a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
+  return <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={isImage ? "Image preview" : "File review"} className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
+    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? "Preparing file review…"}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
     {error && <p role="alert" className="px-5 py-2 text-hold">{error}</p>}
     {review && <><div className="flex min-h-0 flex-1 flex-col md:flex-row"><main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs"><button disabled={page === 1} onClick={() => {setPage(page - 1); setRegion(null);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1); setRegion(null);}}>Next</button><button aria-pressed={!draw} onClick={() => setDraw(false)}>Select area</button><button aria-pressed={draw} onClick={() => setDraw(true)}>Draw</button><span className="text-faint">{draw ? "Draw directly on the page" : "Drag an area, then right-click to quote"}</span></div>}
+      {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1); setRegion(null);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1); setRegion(null);}}>Next</button></>}<button title="Select area" aria-label="Select area" aria-pressed={!draw} onClick={() => setDraw(false)}><Icon name="scope" /></button><button title="Draw" aria-label="Draw" aria-pressed={draw} onClick={() => setDraw(true)}><Icon name="pen" /></button><span className="text-faint">{draw ? "Draw directly on the page" : "Drag an area, then right-click to quote"}</span></div>}
       <div className="min-h-0 flex-1 overflow-auto p-5" onClick={() => setMenu(null)}>
         {review.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setRegion(null); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
-          {/* eslint-disable-next-line @next/next/no-img-element */}<img ref={image} key={page} src={`${base}/pages/${page}`} alt={`Document page ${page}`} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img ref={image} key={page} src={`${base}/pages/${page}`} alt={`Document page ${page}`} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
           <svg aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: draw ? "crosshair" : "default"}}
             onPointerDown={event => {if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); setGesture([point(event)]); setMenu(null);}}
             onPointerMove={event => {if (event.currentTarget.hasPointerCapture(event.pointerId)) {const next = point(event); setGesture(current => draw ? [...current, next] : [current[0], next]);}}}
@@ -102,9 +131,9 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
           </svg>
         </div>}
       </div>
-    </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><p className="text-sm">Review feedback</p><div className="max-h-52 overflow-auto text-xs">{notes.map((note, i) => <div key={i} className="mb-3 flex gap-2"><button className="min-w-0 flex-1 text-left" onClick={() => {if (note.page) setPage(note.page);}}>{note.page ? `Page ${note.page}: ` : ""}{note.quote}</button><button aria-label={`Remove annotation ${i+1}`} onClick={() => setNotes(current => current.filter((_, n) => n !== i))}>×</button></div>)}</div><textarea ref={field} aria-label="File review feedback" placeholder="What should change?" value={text} onChange={event => setText(event.target.value)} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
-      <button type="button" aria-label="Request revision" title={busy ? "Sending" : "Request revision"} aria-busy={busy} disabled={busy || !text.trim()} onClick={() => void decide("changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : "pen"} /></span></button>
-      <button type="button" aria-label="Approve this version" title="Approve" aria-busy={busy} disabled={busy} onClick={() => void decide("approved")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-ink text-paper disabled:opacity-40"><Icon name="tick" /></button>
+    </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><p className="text-sm">{isImage ? "Reply" : "Review feedback"}</p><div className="max-h-52 overflow-auto text-xs">{notes.map((note, i) => <div key={i} className="mb-3 flex gap-2"><button className="min-w-0 flex-1 text-left" onClick={() => {if (note.page) setPage(note.page);}}>{note.page ? `Page ${note.page}: ` : ""}{note.quote}</button><button aria-label={`Remove annotation ${i+1}`} onClick={() => setNotes(current => current.filter((_, n) => n !== i))}>×</button></div>)}</div><textarea ref={field} aria-label="File review feedback" placeholder={isImage ? "Add a reply…" : "What should change?"} value={text} onChange={event => setText(event.target.value)} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
+      <button type="button" aria-label={isImage ? "Send image reply" : "Request revision"} title={busy ? "Sending" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim())} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : isImage ? "send" : "pen"} /></span></button>
+      {!isImage && <button type="button" aria-label="Approve this version" title="Approve" aria-busy={busy} disabled={busy} onClick={() => void decide("approved")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-ink text-paper disabled:opacity-40"><Icon name="tick" /></button>}
     </div><p className="break-all text-[10px] text-faint" title={review.sha256}>Revision {review.sha256.slice(0, 12)}</p></aside></div></>}
     {menu && <button type="button" role="menuitem" className="fixed z-[110] cursor-pointer bg-ink px-4 py-2 text-sm text-paper" style={{left: Math.min(menu.x, window.innerWidth-210), top: Math.min(menu.y, window.innerHeight-50)}} onClick={quote}>{review?.pages ? "Quote selected area" : "Quote selected text"}</button>}
   </div>;

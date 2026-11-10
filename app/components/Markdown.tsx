@@ -2,7 +2,7 @@ import { createContext, memo, useContext } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
-import { FileReviews, ReviewFileButton, savedReview } from "./FileReview";
+import { FileReviews, ReviewFileButton, ReviewImage, savedReview } from "./FileReview";
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
@@ -62,6 +62,7 @@ function referenceLinks(titles: Map<string, string>) {
 
 // Stable renderer identities preserve native selections when Markdown updates.
 const markdownComponents: Components = {
+  img: ({src, alt, title}) => <ReviewImage src={src} alt={alt} title={title} />,
   span: function QuoteSpan({ node, children, ...props }) {
     const quotes = useContext(QuoteLinks);
     const id = node?.properties?.["data-quote-thread"];
