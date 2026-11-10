@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { canParent } from "../lib/tasks";
 import type { TaskRow } from "../lib/tasks";
@@ -100,6 +100,39 @@ function Notes({ notes }: { notes: TaskNote[] }) {
   );
 }
 
+/** Keep drafts local so a keystroke never redraws the task list. */
+function TaskEditor({ text, save }: { text: string; save: (text: string) => void }) {
+  const resize = useCallback((node: HTMLTextAreaElement | null) => {
+    if (!node) return;
+    node.style.height = "0px";
+    node.style.height = `${node.scrollHeight}px`;
+  }, []);
+  return <textarea autoFocus rows={1} defaultValue={text} ref={resize}
+    onChange={event => resize(event.currentTarget)}
+    onBlur={event => save(event.currentTarget.value.trim())}
+    onKeyDown={event => {
+      if (event.key === "Escape") event.currentTarget.value = text;
+      else if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      event.currentTarget.blur();
+    }}
+    className="w-full resize-none border-b border-edge bg-transparent text-[13px] leading-[1.45] outline-none" />;
+}
+
+function SubtaskEditor({ create }: { create: (text: string) => Promise<boolean> }) {
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  return <form onSubmit={async event => {
+    event.preventDefault(); if (!draft.trim() || creating) return;
+    setCreating(true);
+    try { await create(draft.trim()); }
+    finally { setCreating(false); }
+  }} className="flex flex-col gap-2">
+    <textarea autoFocus aria-label="Subtask" placeholder="What needs doing?" value={draft} onChange={event => setDraft(event.target.value)} className="min-h-16 w-full resize-y bg-transparent text-[12px] outline-none" />
+    <button type="submit" disabled={creating || !draft.trim()} className="self-start cursor-pointer bg-ink px-2 py-1 text-[11px] text-paper disabled:opacity-40">Add subtask</button>
+  </form>;
+}
+
 export function TaskPanel({
   tasks,
   rows,
@@ -159,8 +192,6 @@ export function TaskPanel({
 }) {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [creating, setCreating] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -172,10 +203,8 @@ export function TaskPanel({
   }, [menu]);
   const menuTask = tasks.find(task => task.id === menu?.id);
   const [editing, setEditing] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
   /// A status waiting on its account of itself.
   const [pending, setPending] = useState<{ task: TaskItem; status: TaskStatus } | null>(null);
-  const [why, setWhy] = useState("");
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
@@ -194,47 +223,15 @@ export function TaskPanel({
     const mine = notes.filter((note) => note.taskId === task.id);
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} depth={depth} onContextMenu={event => {
-      event.preventDefault(); setAdding(false); setDraft("");
+      event.preventDefault(); setAdding(false);
       setMenu({ id: task.id, x: Math.min(event.clientX, window.innerWidth - 300), y: Math.min(event.clientY, window.innerHeight - 180) });
     }} focused={active && at === cursor} shown={task.id === shown}>
     <div className="min-w-0 flex-1">
       {editing === task.id ? (
-        // A task reads over several lines, so it is edited over several:
-        // a box that shows one line of what you are changing is a box you
-        // have to scroll to read what you just typed.
-        <textarea
-          autoFocus
-          rows={1}
-          ref={(node) => {
-            if (!node) return;
-            node.style.height = "0px";
-            node.style.height = `${node.scrollHeight}px`;
-          }}
-          value={editDraft}
-          onChange={(event) => {
-            setEditDraft(event.target.value);
-            event.currentTarget.style.height = "0px";
-            event.currentTarget.style.height = `${event.currentTarget.scrollHeight}px`;
-          }}
-          onBlur={() => {
-            const text = editDraft.trim();
-            setEditing(null);
-            if (text && text !== task.text) onUpdate({ ...task, text });
-          }}
-          onKeyDown={(event) => {
-            // Enter saves, because a task is a sentence; a line break needs
-            // a modifier, the way the composer works.
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.blur();
-            }
-            if (event.key === "Escape") {
-              setEditDraft(task.text);
-              event.currentTarget.blur();
-            }
-          }}
-          className="w-full resize-none border-b border-edge bg-transparent text-[13px] leading-[1.45] outline-none"
-        />
+        <TaskEditor text={task.text} save={text => {
+          setEditing(null);
+          if (text && text !== task.text) onUpdate({ ...task, text });
+        }} />
       ) : (
         <button
           type="button"
@@ -245,12 +242,10 @@ export function TaskPanel({
             if (task.agentId) onOpenAgent(task.agentId);
             else {
               setEditing(task.id);
-              setEditDraft(task.text);
             }
           }}
           onDoubleClick={() => {
             setEditing(task.id);
-            setEditDraft(task.text);
           }}
           data-task-open
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
@@ -279,16 +274,14 @@ export function TaskPanel({
       )}
       {mine.length > 0 && <Notes notes={mine} />}
       {asking && (
-        <input
+        <input key={asking.status}
           autoFocus
-          value={why}
           placeholder={`Why ${STATES.find((s) => s.value === asking.status)?.label.toLowerCase()}? A sentence or a commit`}
-          onChange={(event) => setWhy(event.target.value)}
           onBlur={() => setPending(null)}
           onKeyDown={(event) => {
             if (event.key === "Escape") return setPending(null);
             if (event.key !== "Enter") return;
-            const note = why.trim();
+            const note = event.currentTarget.value.trim();
             if (!note) return;
             const status = asking.status;
             setPending(null);
@@ -320,7 +313,6 @@ export function TaskPanel({
               onUpdate({ ...task, status, blockedByTaskId: "" }, "approved", true);
               return;
             }
-            setWhy("");
             setPending({ task, status });
           }}
           className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
@@ -375,15 +367,11 @@ export function TaskPanel({
   return (
     <aside data-task-panel aria-label="Tasks" className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-rule bg-card">
       {menu && menuTask && <div ref={menuRef} role="dialog" aria-label="Task options" className="fixed z-50 w-72 bg-paper p-3 shadow-lg ring-1 ring-rule" style={{ left: menu.x, top: menu.y }}>
-        {adding ? <form onSubmit={async event => {
-          event.preventDefault(); if (!draft.trim() || creating) return;
-          setCreating(true);
-          try { if (await onCreate(draft.trim(), menuTask)) setMenu(null); }
-          finally { setCreating(false); }
-        }} className="flex flex-col gap-2">
-          <textarea autoFocus aria-label="Subtask" placeholder="What needs doing?" value={draft} onChange={event => setDraft(event.target.value)} className="min-h-16 w-full resize-y bg-transparent text-[12px] outline-none" />
-          <button type="submit" disabled={creating || !draft.trim()} className="self-start cursor-pointer bg-ink px-2 py-1 text-[11px] text-paper disabled:opacity-40">Add subtask</button>
-        </form> : <>
+        {adding ? <SubtaskEditor create={async text => {
+          const saved = await onCreate(text, menuTask);
+          if (saved) setMenu(null);
+          return saved;
+        }} /> : <>
           <button type="button" onClick={() => setAdding(true)} className="mb-3 block cursor-pointer text-[12px]">Add subtask</button>
           <label className="block text-[11px] text-mid">Parent task
             <select aria-label="Parent task" value={menuTask.parentTaskId ?? ""} disabled={busy(menuTask.id)} className="mt-1 w-full bg-paper text-[12px] text-ink" onChange={event => {
