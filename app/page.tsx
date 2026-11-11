@@ -47,6 +47,14 @@ import {
 } from "./lib/keys";
 import type { Agent, AgentView, DaemonEvent, Entry, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
 
+/** Preserve task roster identity while activity/status fields stream past. */
+function useTaskAgents(agents: Agent[]) {
+  const roster = new Map<string, Pick<Agent, "id" | "name">>();
+  for (const { id, name } of agents) if (!roster.has(id)) roster.set(id, { id, name });
+  const names = JSON.stringify([...roster.values()]);
+  return useMemo(() => JSON.parse(names) as Pick<Agent, "id" | "name">[], [names]);
+}
+
 /** The screen, left to right. h and l step along it. */
 const COLUMNS = ["inbox", "fleet", "tasks"] as const;
 type Column = (typeof COLUMNS)[number];
@@ -609,15 +617,15 @@ export default function Home() {
     [reload, complain],
   );
 
-  const correctTask = (task: TaskItem) => {
+  const correctTask = useCallback((task: TaskItem) => {
     if (!task.agentId) return say("Nobody has this task to correct");
     setCorrecting(task);
     if (!panes.includes(task.agentId)) showAgent(task.agentId);
-  };
+  }, [panes, say, showAgent]);
 
   // Task edits are independent. Show each edit immediately and lock only
   // that row until it is saved; snapshots cannot erase an in-flight edit.
-  const updateTask = async (task: TaskItem, note?: string, approved?: boolean) => {
+  const updateTask = useCallback(async (task: TaskItem, note?: string, approved?: boolean) => {
     setSavingTasks((current) => ({ ...current, [task.id]: task }));
     try {
       const saved = await api.updateTask(task, note, approved);
@@ -635,9 +643,9 @@ export default function Home() {
         return next;
       });
     }
-  };
+  }, [complain, reload]);
 
-  const approveTaskTree = async (task: TaskItem) => {
+  const approveTaskTree = useCallback(async (task: TaskItem) => {
     const branch = taskSubtree(snapshot.tasks, task.id);
     if (branch.some(item => item.id in savingTasks)) return say("A subtask is still saving. Try again once it finishes.");
     setSavingTasks(current => ({ ...current, ...Object.fromEntries(branch.map(item => [item.id, { ...item, status: "complete", blockedByTaskId: "" }])) }));
@@ -653,12 +661,12 @@ export default function Home() {
         return next;
       });
     }
-  };
+  }, [snapshot.tasks, savingTasks, say, complain, reload]);
 
   /// Filing a task from a composer. It goes to the bottom of a long list,
   /// so the list has to be open and looking at it, or nothing happened as
   /// far as anyone can see.
-  const file = async (text: string, images: File[], agentId = "", parentTaskId = "") => {
+  const file = useCallback(async (text: string, images: File[], agentId = "", parentTaskId = "") => {
     const id = crypto.randomUUID();
     const at = Date.now() / 1000;
     const pending = {
@@ -687,7 +695,7 @@ export default function Home() {
         return next;
       });
     }
-  };
+  }, [snapshot.tasks, showTasks, complain, reload]);
 
   const sendMessage = async (id: string, text: string, images: File[], queued: boolean, diffs: import("./lib/drafts").DiffQuote[] = [], requestId = "") => {
     if (sessionStorage.getItem("oxroute.blankAgent") === id) sessionStorage.removeItem("oxroute.blankAgent");
@@ -859,25 +867,51 @@ export default function Home() {
   // screen rather than the data behind them.
   const rows = inboxRows(snapshot.inbox, inboxDone);
 
-  const pendingTasks = Object.values(creatingTasks);
-  for (const task of snapshot.tasks) {
-    const at = pendingTasks.findIndex((pending) => !pending.existing.has(task.id) &&
-      pending.text === task.text && pending.agentId === task.agentId && pending.parentTaskId === task.parentTaskId);
-    if (at >= 0) pendingTasks.splice(at, 1);
-  }
-  const taskItems = [...snapshot.tasks.map((task) => savingTasks[task.id] ?? task), ...pendingTasks];
+  const taskItems = useMemo(() => {
+    const pending = Object.values(creatingTasks);
+    for (const task of snapshot.tasks) {
+      const at = pending.findIndex(item => !item.existing.has(task.id) &&
+        item.text === task.text && item.agentId === task.agentId && item.parentTaskId === task.parentTaskId);
+      if (at >= 0) pending.splice(at, 1);
+    }
+    return [...snapshot.tasks.map(task => savingTasks[task.id] ?? task), ...pending];
+  }, [snapshot.tasks, savingTasks, creatingTasks]);
+  // Task controls use identity and names, never high-frequency progress fields.
+  const taskAgents = useTaskAgents(snapshot.agents);
+  const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
+  const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
   const taskSearch = taskQuery.trim().toLowerCase();
-  const taskNames = new Map([...snapshot.agents, ...snapshot.archived].map(agent => [agent.id, agent.name]));
-  const taskScope = windowTasks ? [...new Set([...tabIds.flatMap(id => {
+  const scopeIds = windowTasks ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
     const saved = readPanes(id);
     return saved ? paneIds(saved) : linkedPanes(id, snapshot.paneLinks);
   }), ...panes].flatMap(id => id.startsWith("terminal_") ? terminals.flatMap(terminal => terminal.id === id && terminal.agentId ? [terminal.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
-  const taskScopeKey = JSON.stringify(taskScope);
+  const taskScopeKey = JSON.stringify(scopeIds ?? null);
+  const taskScope = useMemo(() => JSON.parse(taskScopeKey) as string[] | null, [taskScopeKey]) ?? undefined;
   useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
-  const scopedTasks = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
-  const taskMatches = scopedTasks.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
-  const tasks = taskRows(taskAncestors(scopedTasks, taskMatches), tasksDone || !!taskSearch);
+  const tasks = useMemo(() => {
+    const scoped = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
+    const matches = scoped.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
+    return taskRows(taskAncestors(scoped, matches), tasksDone || !!taskSearch);
+  }, [taskItems, taskScope, taskSearch, taskNames, tasksDone]);
+  const scopeTasks = useCallback(() => { setWindowTasks(current => !current); setTaskAt(0); }, []);
+  const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
+  const showDoneTasks = useCallback(() => setTasksDone(shown => !shown), []);
+  const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
+  const taskActions = useMemo(() => ({
+    tasks: taskItems, busy: taskBusy,
+    approve: (task: TaskItem) => void updateTask({ ...task, status: "complete" }, "approved", true),
+    approveAll: approveTaskTree, correct: correctTask,
+  }), [taskItems, taskBusy, updateTask, approveTaskTree, correctTask]);
+  const createSubtask = useCallback((text: string, parent: TaskItem) => {
+    setTaskQuery(""); return file(text, [], parent.agentId, parent.id);
+  }, [file]);
+  const openTaskAgent = useCallback((id: string) => {
+    setRouting(null); setTicked(new Set()); showAgent(id);
+  }, [showAgent]);
+  const handOffTask = useCallback((task: TaskItem, fork: boolean) =>
+    void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel)), [run, snapshot.defaultModel]);
+  const deleteTask = useCallback((id: string) => void run(() => api.deleteTask(id)), [run]);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? (boardId ? snapshot.boards[0] : null);
@@ -947,7 +981,7 @@ export default function Home() {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (isTyping(event.target)) {
         // Escape gets you out of the compose box and back to the keys.
-        if (event.key === "Escape") (event.target as HTMLElement).blur();
+        if (event.key === "Escape" && !(event.target instanceof HTMLSelectElement)) (event.target as HTMLElement).blur();
         return;
       }
 
@@ -1207,12 +1241,7 @@ export default function Home() {
   return (
     <ArtifactRoot.Provider value={snapshot.artifactRoot}>
     <TaskLinks.Provider value={taskLinks}>
-    <TaskActions.Provider value={{ tasks: taskItems,
-      busy: id => busy || id in savingTasks || id in creatingTasks,
-      approve: task => void updateTask({ ...task, status: "complete" }, "approved", true),
-      approveAll: task => void approveTaskTree(task),
-      correct: correctTask,
-    }}>
+    <TaskActions.Provider value={taskActions}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} error={archiveError} onCancel={() => setArchiving(null)} onArchive={completeTasks => archiveAgent(archiving, true, completeTasks)} />}
@@ -1572,31 +1601,24 @@ export default function Home() {
             rows={tasks}
             query={taskQuery}
             scope={taskScope}
-            onScope={() => { setWindowTasks(current => !current); setTaskAt(0); }}
-            onSearch={query => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }}
+            onScope={scopeTasks}
+            onSearch={searchTasks}
             notes={snapshot.taskNotes}
-            onShowDone={() => setTasksDone((shown) => !shown)}
+            onShowDone={showDoneTasks}
             cursor={taskAt}
             active={focus === "tasks"}
             shown={shownTask}
             graph={drawn === "on"}
-            agents={snapshot.agents}
-            named={[...snapshot.agents, ...snapshot.archived].filter(
-              (agent, index, all) => all.findIndex((item) => item.id === agent.id) === index,
-            )}
-            busy={(id) => busy || id in savingTasks || id in creatingTasks}
-            onCreate={(text, parent) => { setTaskQuery(""); return file(text, [], parent.agentId, parent.id); }}
-            onUpdate={(task, note, approved) => void updateTask(task, note, approved)}
-            onApproveAll={task => void approveTaskTree(task)}
-            onOpenAgent={(id) => {
-              clearRouting();
-              showAgent(id);
-            }}
+            agents={taskAgents}
+            named={namedTasks}
+            busy={taskBusy}
+            onCreate={createSubtask}
+            onUpdate={updateTask}
+            onApproveAll={approveTaskTree}
+            onOpenAgent={openTaskAgent}
             onCorrect={correctTask}
-            onHandOff={(task, fork) =>
-              void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel))
-            }
-            onDelete={(id) => void run(() => api.deleteTask(id))}
+            onHandOff={handOffTask}
+            onDelete={deleteTask}
           />
             </div>
           </>

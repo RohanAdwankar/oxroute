@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import { canParent } from "../lib/tasks";
 import type { TaskRow } from "../lib/tasks";
@@ -28,6 +29,15 @@ const STATE_COLOR: Record<TaskStatus, string> = {
   waiting_for_human: "text-hold",
   blocked: "text-[#a6493d]",
 };
+
+/** Native selection, with the full option tree present before its popup opens. */
+function TaskSelect({ label, children, ...props }: Omit<ComponentProps<"select">, "children"> & { label: string; children: () => ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <select {...props} onFocus={() => setOpen(true)}
+    onPointerDown={() => flushSync(() => setOpen(true))} onBlur={() => setOpen(false)}>
+    {open ? children() : <option value={props.value}>{label}</option>}
+  </select>;
+}
 
 /** One task, and whether the keyboard is on it. */
 function Row({
@@ -133,7 +143,7 @@ function SubtaskEditor({ create }: { create: (text: string) => Promise<boolean> 
   </form>;
 }
 
-export function TaskPanel({
+export const TaskPanel = memo(function TaskPanel({
   tasks,
   rows,
   query,
@@ -174,9 +184,9 @@ export function TaskPanel({
   /// Draw what is waiting on what, above the list.
   graph: boolean;
   /// The agents a task can be given to.
-  agents: Agent[];
+  agents: Pick<Agent, "id" | "name">[];
   /// Every agent, live or archived, for reading a name back.
-  named: Agent[];
+  named: Pick<Agent, "id" | "name">[];
   busy: (id: string) => boolean;
   /// A status change carries why it changed, and only a person approves.
   onUpdate: (task: TaskItem, note?: string, approved?: boolean) => void;
@@ -219,7 +229,6 @@ export function TaskPanel({
   );
 
   const row = (task: TaskItem, at: number, depth: number) => {
-    const blockers = tasks.filter((candidate) => candidate.id !== task.id);
     const mine = notes.filter((note) => note.taskId === task.id);
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} depth={depth} onContextMenu={event => {
@@ -290,7 +299,7 @@ export function TaskPanel({
                 ...task,
                 status,
                 blockedByTaskId:
-                  status === "blocked" ? task.blockedByTaskId || blockers[0]?.id || "" : "",
+                  status === "blocked" ? task.blockedByTaskId || tasks.find(candidate => candidate.id !== task.id)?.id || "" : "",
               },
               note,
               // Picking complete here is a person saying so, which is the
@@ -318,23 +327,25 @@ export function TaskPanel({
           className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
         >
           {STATES.map((state) => (
-            <option key={state.value} value={state.value} disabled={state.value === "blocked" && blockers.length === 0}>
+            <option key={state.value} value={state.value} disabled={state.value === "blocked" && tasks.length < 2}>
               {state.label}
             </option>
           ))}
         </select>
         {task.status === "blocked" && (
-          <select
+          <TaskSelect
+            label={`blocked by ${tasks.find(candidate => candidate.id === task.blockedByTaskId)?.text ?? ""}`}
             value={task.blockedByTaskId}
             disabled={busy(task.id)}
             aria-label={`blocking task for ${task.text}`}
             onChange={(event) => onUpdate({ ...task, blockedByTaskId: event.target.value })}
             className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-[#a6493d] outline-none"
           >
-            {blockers.map((blocker) => <option key={blocker.id} value={blocker.id}>blocked by {blocker.text}</option>)}
-          </select>
+            {() => tasks.filter(candidate => candidate.id !== task.id).map(blocker => <option key={blocker.id} value={blocker.id}>blocked by {blocker.text}</option>)}
+          </TaskSelect>
         )}
-        <select
+        <TaskSelect
+          label={task.agentId ? `${names.get(task.agentId) ?? "a past session"}${agents.some(agent => agent.id === task.agentId) ? "" : " (archived)"}` : "Unassigned"}
           value={task.agentId}
           disabled={busy(task.id)}
           aria-label={`assign ${task.text}`}
@@ -345,6 +356,7 @@ export function TaskPanel({
           }}
           className="max-w-full cursor-pointer bg-transparent text-[10.5px] text-faint outline-none"
         >
+          {() => <>
           <option value="">Unassigned</option>
           {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           {/* A task outlives the session that had it, and a value with no
@@ -355,7 +367,8 @@ export function TaskPanel({
           {/* An agent that does not exist yet, made by choosing it. */}
           <option value={NEW_AGENT}>Start a new agent on this</option>
           {task.agentId && <option value={FORK_AGENT}>Fork {names.get(task.agentId) ?? "it"}</option>}
-        </select>
+          </>}
+        </TaskSelect>
       </div>
     </div>
     <button type="button" onClick={() => onDelete(task.id)} disabled={busy(task.id)} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
@@ -423,4 +436,4 @@ export function TaskPanel({
       </div>
     </aside>
   );
-}
+});
