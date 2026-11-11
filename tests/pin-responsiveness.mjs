@@ -32,11 +32,13 @@ try {
   await page.waitForFunction(() => window.storageCompletions.length > 0);
   await pins.getByRole('button', { name: 'Discard pinned message' }).click();
   await pins.waitFor({ state: 'detached', timeout: 1500 });
+  await page.getByLabel('Saving pinned messages', { exact: true }).waitFor({ state: 'attached', timeout: 1500 });
   await composer.fill('New direction');
   const sent = page.waitForResponse('**/api/say'); await composer.press('Enter'); await sent;
   assert.equal(deliveries.at(-1).text, 'New direction', 'New messages must send without waiting for saved-message storage');
   await page.evaluate(() => { window.releaseStorage = setInterval(() => window.storageCompletions.splice(0).forEach(done => done()), 10); });
   await page.waitForFunction(() => window.completedWrites === 2);
+  await page.getByLabel('Saving pinned messages', { exact: true }).waitFor({ state: 'detached' });
   await page.reload(); await composer.waitFor();
   assert.equal(await pins.count(), 0, 'Sent and discarded saved messages stay removed after storage catches up');
   console.log('Saved-message actions and immediate new sends remain responsive during delayed storage; removals survive reload.');
