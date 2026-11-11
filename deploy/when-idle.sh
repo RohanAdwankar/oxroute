@@ -23,6 +23,11 @@ test -x "$release/bin/oxroute-agent"
 test "$(cat "$release/web/.next/BUILD_ID")" = "$version"
 test "$(sha256sum "$release/bin/oxrouted" | cut -d ' ' -f1)" = "$(jq -er '.binarySha256' "$request")"
 test "$(sha256sum "$release/bin/oxroute-agent" | cut -d ' ' -f1)" = "$(jq -er '.agentBinarySha256' "$request")"
+# Validate from the release snapshot; checkout caches may be reclaimed while idle.
+validation=$release/validation
+test "$(cat "$validation/REVISION")" = "$commit"
+(cd "$validation" && node --input-type=module -e "await import('playwright'); await import('typescript')")
+repository=$validation
 binary=$HOME/.local/bin/oxrouted
 agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
