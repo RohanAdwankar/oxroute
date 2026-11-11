@@ -2899,6 +2899,9 @@ impl Hub {
         for agent in self.store.unarchived_agents()? {
             let binding = self.home_binding(&agent.id);
             if agent.backend == Backend::Codex && binding.is_none() && !workers.contains(&agent.id) {
+                // An unused UI card is local until its first message. Retain
+                // repair for accepted messages whose harness never opened.
+                if agent.session_id.is_empty() && self.store.recent_messages(&agent.id, 1)?.is_empty() { continue; }
                 if self.ensure_thread(&agent.id, &agent.name).await?.0.is_none() { break; }
             } else if let Some(binding) = binding {
                 let target = Target::new(binding.source, binding.conversation, binding.thread_key);

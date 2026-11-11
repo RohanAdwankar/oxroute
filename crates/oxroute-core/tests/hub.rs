@@ -1068,6 +1068,33 @@ async fn pane_forks_still_work_when_the_source_is_unavailable() {
 }
 
 #[tokio::test]
+async fn unused_ui_cards_wait_for_the_first_message_before_mirroring() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.store.set("dashboard", "slack\u{1f}D1\u{1f}status").unwrap();
+    let empty = w.hub.create_agent(None).unwrap();
+    let renamed = w.hub.create_agent(None).unwrap();
+    w.hub.rename(&renamed.id, "Plan the release").await.unwrap();
+    for _ in 0..3 { w.hub.reconcile_threads().await.unwrap(); }
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+    assert!(w.calls.lock().unwrap().started.is_empty());
+    for agent in [&empty, &renamed] {
+        assert!(w.hub.store.bindings_for(&agent.id).unwrap().is_empty());
+        assert!(w.hub.store.agent(&agent.id).unwrap().unwrap().permalink.is_empty());
+    }
+    w.hub.say_to(&renamed.id, "Review the deployment plan").await.unwrap();
+    assert!(settle(|| w.hub.store.agent(&renamed.id).unwrap().unwrap().status == AgentStatus::Complete
+        && !w.calls.lock().unwrap().started.is_empty()).await);
+    w.hub.reconcile_threads().await.unwrap();
+    assert_eq!(w.posts.lock().unwrap().threads, vec!["Review the deployment plan"]);
+    let posts = w.posts.lock().unwrap();
+    assert_eq!(posts.replies.iter().filter(|(_, text)| text.starts_with("[Open conversation](")).count(), 1);
+    assert!(posts.replies.iter().any(|(_, text)| text == "done"));
+    assert!(w.hub.store.bindings_for(&empty.id).unwrap().is_empty());
+    assert_eq!(w.hub.store.bindings_for(&renamed.id).unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn missing_source_threads_are_reconciled_once_without_starting_turns() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "original")).await.unwrap();
@@ -1890,6 +1917,11 @@ async fn mirrored_cards_link_to_the_configured_ui_over_local_http_once() {
         fail_open:Arc::new(AtomicBool::new(false)), reply_endpoint:Some(endpoint) }));
     hub.store.set("dashboard", "slack\u{1f}D1\u{1f}status").unwrap();
     let agent = hub.create_agent(None).unwrap();
+    hub.reconcile_threads().await.unwrap();
+    assert!(posts.lock().unwrap().threads.is_empty(), "an unused card must not contact the source");
+    assert!(hub.store.bindings_for(&agent.id).unwrap().is_empty());
+    hub.store.add_entry(&agent.id, now(), EntryKind::You, "A previously accepted message", "", "").unwrap();
+    hub.store.add_entry(&agent.id, now(), EntryKind::Notice, "Harness unavailable", "", "").unwrap();
     hub.reconcile_threads().await.unwrap();
     assert_eq!(hub.store.bindings_for(&agent.id).unwrap().len(), 1, "a failed link must not discard its thread");
     assert!(posts.lock().unwrap().replies.is_empty());
