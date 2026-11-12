@@ -1281,6 +1281,11 @@ const Message = memo(function Message({
 }) {
   const tag = TAG[entry.kind];
   const mine = MINE.includes(entry.kind);
+  // The daemon stores the delegated worker in both its notice and detail.
+  // Keep that ID for navigation instead of repeating it as visible text.
+  const workerSuffix = ` to ${entry.detail}`;
+  const delegated = entry.kind === "notice" && entry.detail.startsWith("agent_")
+    && entry.text.startsWith("Delegated ") && entry.text.endsWith(workerSuffix);
   return (
         <div
           key={entry.id}
@@ -1303,7 +1308,12 @@ const Message = memo(function Message({
                   {tag.label}
                 </span>
               )}
-              <Said text={entry.text} detail={entry.detail} />
+              <Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} />
+              {delegated && <button type="button" onClick={() => onOpenAgent(entry.detail)}
+                aria-label="Open delegated conversation" title="Open delegated conversation"
+                className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-faint hover:text-ink">
+                <Icon name="open" size={13} />
+              </button>}
             </div>
             {entry.reaction && (
               <span className="flex items-center text-mid">
@@ -1321,7 +1331,7 @@ const Message = memo(function Message({
               >
                 <Icon name="open" size={13} />
               </button>
-            ) : entry.detail && !entry.detail.startsWith("diff-attachments:") ? (
+            ) : entry.detail && !delegated && !entry.detail.startsWith("diff-attachments:") ? (
               <span className="text-[11px] text-faint">{entry.detail}</span>
             ) : null}
           </div>
