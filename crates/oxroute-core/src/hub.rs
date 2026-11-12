@@ -2105,7 +2105,7 @@ impl Hub {
     fn suggest_next_actions(self: Arc<Self>, agent_id: String) {
         tokio::spawn(async move {
             if let Err(error) = self.next_actions_once(&agent_id).await {
-                tracing::debug!(agent = agent_id, %error, "next actions unavailable");
+                tracing::warn!(agent = agent_id, %error, "next actions unavailable");
             }
         });
     }

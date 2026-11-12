@@ -471,7 +471,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         claude_binary: "claude".into(),
         codex_url: "ws://127.0.0.1:8788".into(),
         codex_effort: "medium".into(),
-        title_model: "title".into(),
+        title_model: Some("title".into()),
         claude_permission_mode: "bypassPermissions".into(),
         database: PathBuf::from(":memory:"),
         attachments: scratch.join("attachments"),

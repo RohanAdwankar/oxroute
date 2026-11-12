@@ -69,7 +69,7 @@ pub struct CodexHarness {
     url: String,
     default_cwd: String,
     reasoning_effort: String,
-    title_model: String,
+    title_model: Option<String>,
     search_binary: PathBuf,
     session_index: PathBuf,
     inner: AsyncMutex<Option<Arc<Connection>>>,
@@ -86,7 +86,7 @@ struct Connection {
     failure: Mutex<Option<String>>,
     /// Sessions opened purely to name something. Their traffic is noise to
     /// the hub, so it never leaves this module.
-    private: Mutex<HashMap<String, oneshot::Sender<String>>>,
+    private: Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>,
     private_text: Mutex<HashMap<String, String>>,
 }
 
@@ -104,7 +104,7 @@ impl Connection {
         }
         let private: Vec<_> = self.private.lock().unwrap().drain().map(|(_, tx)| tx).collect();
         for tx in private {
-            let _ = tx.send(String::new());
+            let _ = tx.send(Err(reason.to_string()));
         }
         true
     }
@@ -307,8 +307,15 @@ impl Connection {
     }
 }
 
-/// Turn one line from the app-server into either a resolved request, a
-/// private naming result, or a `HarnessEvent`.
+fn structured_result(params: &Value, text: String) -> Result<String, String> {
+    match params.pointer("/turn/error/message").and_then(Value::as_str) {
+        Some(error) => Err(error.to_string()),
+        None if text.trim().is_empty() => Err("Codex completed a structured turn without an answer".into()),
+        None => Ok(text),
+    }
+}
+
+/// Turn one line from the app-server into a request result or harness event.
 fn dispatch(connection: &Arc<Connection>, events: &broadcast::Sender<HarnessEvent>, message: Value) {
     let id = message.get("id");
     let method = message.get("method").and_then(Value::as_str);
@@ -362,7 +369,7 @@ fn dispatch(connection: &Arc<Connection>, events: &broadcast::Sender<HarnessEven
                     .remove(&session)
                     .unwrap_or_default();
                 if let Some(tx) = connection.private.lock().unwrap().remove(&session) {
-                    let _ = tx.send(text);
+                    let _ = tx.send(structured_result(&params, text));
                 }
             }
             _ => {}
@@ -741,8 +748,9 @@ impl Harness for CodexHarness {
                 .await?;
             tokio::time::timeout(SHORT_TIMEOUT, rx)
                 .await
-                .map_err(|_| anyhow!("the naming turn did not finish"))?
-                .map_err(|_| anyhow!("the naming turn was dropped"))
+                .map_err(|_| anyhow!("the structured turn did not finish"))?
+                .map_err(|_| anyhow!("the structured turn was dropped"))?
+                .map_err(anyhow::Error::msg)
         }
         .await;
 
@@ -956,6 +964,15 @@ fn content_text(content: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn structured_turn_failures_reach_the_caller() {
+        for error in ["model unavailable", "quota exhausted"] {
+            assert_eq!(super::structured_result(&serde_json::json!({"turn":{"error":{"message":error}}}), "partial".into()), Err(error.into()));
+        }
+        assert!(super::structured_result(&serde_json::json!({"turn":{"status":"completed"}}), String::new()).is_err());
+        assert_eq!(super::structured_result(&serde_json::json!({"turn":{"status":"completed"}}), "{\"result\":true}".into()).unwrap(), "{\"result\":true}");
+    }
+
     use super::*;
 
     fn scratch() -> PathBuf {

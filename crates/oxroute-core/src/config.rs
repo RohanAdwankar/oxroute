@@ -156,8 +156,8 @@ pub struct Config {
     /// The durable app-server owned outside oxrouted.
     pub codex_url: String,
     pub codex_effort: String,
-    /// The small, cheap model that writes agent titles.
-    pub title_model: String,
+    /// Optional model for private structured calls; otherwise use the service default.
+    pub title_model: Option<String>,
     /// Claude Code's equivalent of `approvalPolicy: never`. There is nobody
     /// here to answer a prompt, so asking would simply stop the turn.
     pub claude_permission_mode: String,
@@ -365,9 +365,7 @@ impl Config {
                 file.codex.reasoning_effort,
                 || "medium".into(),
             ),
-            title_model: pick(&["OXROUTE_TITLE_MODEL"], file.codex.title_model, || {
-                "gpt-5.6-luna".into()
-            }),
+            title_model: std::env::var("OXROUTE_TITLE_MODEL").ok().or(file.codex.title_model),
             claude_permission_mode: pick(
                 &["OXROUTE_CLAUDE_PERMISSION_MODE"],
                 file.claude.permission_mode,
@@ -580,6 +578,7 @@ mod tests {
             "CODEX_SLACK_WORKSPACE",
             "OXROUTE_LISTEN",
             "OXROUTE_CODEX_URL",
+            "OXROUTE_TITLE_MODEL",
             "OXROUTE_CLAUDE_PERMISSION_MODE",
             "OXROUTE_SLACK_APP_TOKEN",
             "SLACK_APP_TOKEN",
@@ -606,6 +605,9 @@ mod tests {
         assert_eq!(config.default_model, DEFAULT_MODEL);
         assert_eq!(config.default_backend, Backend::Codex);
         assert_eq!(config.codex_url, "ws://127.0.0.1:8788");
+        assert!(config.title_model.is_none());
+        std::env::set_var("OXROUTE_TITLE_MODEL", "configured-helper");
+        assert_eq!(Config::load_from(Path::new("/nonexistent/oxroute.toml")).unwrap().title_model.as_deref(), Some("configured-helper"));
         // Both harnesses are reachable without configuring anything.
         assert_eq!(config.backend_for("sol"), Backend::Codex);
         assert_eq!(config.backend_for("opus"), Backend::ClaudeCode);
