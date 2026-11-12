@@ -29,7 +29,7 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Quoted threads** | Select text to open a linked discussion; click its underline to return, then merge or archive it |
 | **Harnesses** | Claude Code and Codex, behind one interface |
 | **Surfaces** | A web UI, a terminal UI and Slack, all on the same sessions |
-| **Settings** | Light or dark, minimum pane scale, how much of each tool call you see, whether blocked work is drawn, keyboard hints |
+| **Settings** | Automatic card titles and tags, subtle or stacked next-action suggestions, light or dark, pane scale, tool-call detail and keyboard hints |
 | **Change review** | Syntax colors and changed-word highlights; quote diff lines and approve the exact revision before publication |
 
 Right-click a task's **Approve** button and choose **Approve all subtasks** to
@@ -37,6 +37,17 @@ approve that task and every nested subtask, including unfinished tasks and tasks
 hidden by search. This is one atomic human sign-off with a note on each changed
 task. Ordinary clicks approve only the selected task. Unrelated tasks and
 publication approvals are unchanged.
+
+## Card automation
+
+Open the gear icon for two independent server-wide settings:
+
+- **Automatic card titles** starts on. Luna names new cards until you explicitly rename them. Existing titles are preserved because older records do not distinguish chosen titles from generated ones.
+- **Automatic card tags** starts off. When enabled, Luna adds topic tags after turns, preserves existing tags and remembers tags you remove. It cannot replace keyed tags such as workflow stages or publication policy.
+
+Metadata uses `gpt-6-luna` by default. An explicit `OXROUTE_TITLE_MODEL` or `[codex].title_model` overrides the helper model. Conversation and routing models keep their existing configuration.
+
+**Next-action layout** is a browser preference in the same settings menu. Suggestions default to subtle inline choices; select **Stacked** for larger choices with descriptions. The Play dropdown independently controls whether next actions are suggested, and its main control governs automatic continuation.
 
 ## Agent CLI
 
