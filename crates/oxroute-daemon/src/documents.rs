@@ -145,7 +145,13 @@ pub async fn original(State(hub): Hubs, Path((agent, id)): Path<(String, String)
 #[serde(rename_all = "camelCase")]
 struct Decision { status: String, #[serde(default)] text: String, #[serde(default)] annotations: Vec<Annotation>, request_id: String }
 #[derive(serde::Serialize, Deserialize)]
-struct Annotation { page: usize, quote: String, region: Option<[f64; 4]>, strokes: Vec<Vec<[f64; 2]>> }
+struct Annotation {
+    page: usize, quote: String, region: Option<[f64; 4]>, strokes: Vec<Vec<[f64; 2]>>,
+    #[serde(default)] comment: String,
+    #[serde(default)] labels: Vec<TextMark>,
+}
+#[derive(serde::Serialize, Deserialize)]
+struct TextMark { at: [f64; 2], text: String }
 
 pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, mut multipart: Multipart) -> Result<Json<Review>, Failed> {
     let mut review = record(&hub, &agent, &id)?;
@@ -158,15 +164,23 @@ pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>,
     let body = decision.context("Missing decision")?;
     ensure!(["approved", "changes_requested"].contains(&body.status.as_str()) || (body.status == "replied" && IMAGE_EXTENSIONS.contains(&review.extension.as_str())), "Unknown decision");
     ensure!(!body.request_id.is_empty() && body.request_id.len() <= 100 && body.text.len() <= 32000 && body.annotations.len() <= 100, "Invalid review feedback");
-    ensure!(body.status != "changes_requested" || !body.text.trim().is_empty(), "Describe the requested revision");
+    ensure!(body.status != "changes_requested" || !body.text.trim().is_empty() || body.annotations.iter().any(|note| !note.comment.trim().is_empty()), "Describe the requested revision");
     for note in &body.annotations {
-        ensure!(note.page <= review.pages && (review.pages == 0 || note.page > 0) && note.quote.len() <= 32000 && note.strokes.len() <= 100, "Invalid annotation");
-        let coordinates = note.strokes.iter().flatten().flatten().copied().chain(note.region.iter().flatten().copied());
+        ensure!(note.page <= review.pages && (review.pages == 0 || note.page > 0) && note.quote.len() <= 32000 && note.strokes.len() <= 100 && note.comment.len() <= 32000 && note.labels.len() <= 100 && note.labels.iter().all(|label| label.text.len() <= 2000), "Invalid annotation");
+        let coordinates = note.strokes.iter().flatten().flatten().copied().chain(note.region.iter().flatten().copied()).chain(note.labels.iter().flat_map(|label| label.at));
         ensure!(coordinates.into_iter().all(|p| p.is_finite() && (0.0..=1.0).contains(&p)) && note.strokes.iter().map(Vec::len).sum::<usize>() <= 20000, "Invalid annotation coordinates");
     }
     if review.request_id == body.request_id { return Ok(Json(review)); }
-    let serialized = serde_json::to_string(&body.annotations)?;
-    let message = format!("File review {}: {}\nFile: {}\nSHA-256: {}\nSaved original: {}\n\n{}\n\nPage/slide annotations (normalized coordinates): {}\nThis decision applies only to this submitted file revision and grants no Git publication permission.", review.id, body.status, review.name, review.sha256, directory(&hub, &review).join(format!("source.{}", review.extension)).display(), body.text, serialized);
+    let comments = body.annotations.iter().enumerate().filter(|(_, note)| note.quote != "Drawing" || (note.region.is_none() && note.strokes.is_empty() && note.labels.is_empty())).map(|(index, note)| {
+        let context = if note.region.is_some() { format!("Selection {}", index+1) } else { note.quote.clone() };
+        format!("{}{}{}", if note.page > 0 { format!("Page {}: ", note.page) } else { String::new() }, context, if note.comment.is_empty() { String::new() } else { format!("\n{}", note.comment) })
+    }).collect::<Vec<_>>().join("\n\n");
+    let status = match body.status.as_str() { "approved" => "Approved", "changes_requested" => "Revision requested", _ => "Image reply" };
+    let mut message = if body.status == "replied" { format!("{status}: {}", review.name) }
+        else { format!("[{status}: {}](/api/agents/{}/file-reviews/{})", review.name.replace('[', "").replace(']', ""), review.agent_id, review.id) };
+    for text in [&body.text, &comments] { if !text.trim().is_empty() { message.push_str("\n\n"); message.push_str(text); } }
+    if body.status != "replied" { message.push_str("\n\nThis decision applies only to this submitted file revision and grants no Git publication permission."); }
+
     // Existing request IDs give feedback the same durable, retry-safe delivery as a chat message.
     hub.say_to_annotated(&agent, &message, images, true, "", &format!("document:{}:{}", review.id, body.request_id)).await?;
     review.request_id = body.request_id;

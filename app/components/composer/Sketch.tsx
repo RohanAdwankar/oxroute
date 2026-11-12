@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 
+import {MarkupTools, MarkupInput, MARKUP_INK} from "../MarkupTools";
+
 type Point = { x: number; y: number };
 type Shape =
   | { tool: "pen"; points: Point[] }
@@ -12,15 +14,8 @@ type Shape =
 type Tool = Shape["tool"];
 
 /** Marks are one red: on a screenshot, the thing that is not the page. */
-const INK = "#d23c2e";
+const INK = MARKUP_INK;
 const BLANK = { width: 1600, height: 1000 };
-
-const TOOLS: { tool: Tool; label: string }[] = [
-  { tool: "pen", label: "Pen" },
-  { tool: "box", label: "Box" },
-  { tool: "arrow", label: "Arrow" },
-  { tool: "text", label: "Text" },
-];
 
 export interface SketchHandle {
   /** The marked-up picture as a PNG, at the size of what was marked up. */
@@ -242,25 +237,10 @@ export function Sketch({
           }}
         />
         <span className="mx-1 h-5 w-px bg-rule" />
-        {TOOLS.map((option) => (
-          <ToolButton key={option.tool} active={tool === option.tool} onClick={() => setTool(option.tool)}>
-            {option.label}
-          </ToolButton>
-        ))}
-        <span className="flex-1" />
-        <ToolButton onClick={() => setShapes((current) => current.slice(0, -1))} disabled={shapes.length === 0}>
-          Undo
-        </ToolButton>
-        <ToolButton
-          onClick={() => {
-            setShapes([]);
-            setImage(null);
-            setSize(BLANK);
-          }}
-          disabled={!image && shapes.length === 0}
-        >
-          Clear
-        </ToolButton>
+        <MarkupTools tool={tool} onTool={next => {if (next !== "select") setTool(next);}}
+          onUndo={() => setShapes(current => current.slice(0, -1))}
+          onClear={() => {setShapes([]); setImage(null); setSize(BLANK);}}
+          empty={!image && shapes.length === 0} undoDisabled={shapes.length === 0} />
       </div>
       <div
         ref={area}
@@ -317,25 +297,7 @@ export function Sketch({
               if (big) setShapes((current) => [...current, done]);
             }}
           />
-          {typing && (
-            <input
-              autoFocus
-              value={typing.value}
-              onChange={(event) => setTyping({ ...typing, value: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  commitText();
-                }
-                if (event.key === "Escape") setTyping(null);
-              }}
-              onBlur={commitText}
-              aria-label="note on the picture"
-              placeholder="Note"
-              className="absolute border-b-2 border-[#d23c2e] bg-card/90 px-1 text-[14px] font-semibold text-[#d23c2e] outline-none"
-              style={{ left: typing.at.x * scale, top: typing.at.y * scale - 22, minWidth: 140 }}
-            />
-          )}
+          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: typing.at.x * scale, top: typing.at.y * scale}} />}
           {!image && shapes.length === 0 && !drawing && (
             <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-8 text-center text-[13px] text-faint">
               Paste or drop a screenshot, take one, or draw on the blank page.

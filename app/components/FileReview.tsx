@@ -1,8 +1,9 @@
 "use client";
 
-import {createContext, useContext, useEffect, useRef, useState, type ReactNode, type ImgHTMLAttributes} from "react";
+import {createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type ImgHTMLAttributes} from "react";
 import {createPortal} from "react-dom";
 import {Icon} from "./Icon";
+import {MarkupTools, MarkupInput, MARKUP_INK, type MarkupTool} from "./MarkupTools";
 
 export const FileReviews = createContext<((url: string) => void) | null>(null);
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
@@ -31,7 +32,8 @@ export function ReviewImage({src, alt, ...props}: ImgHTMLAttributes<HTMLImageEle
 }
 
 type Point = [number, number];
-type Annotation = {page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]};
+type Annotation = {page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]; comment?: string; labels?: {at: Point; text: string}[]};
+const isMark = (note: Annotation) => note.quote === "Drawing" && (note.region !== null || note.strokes.length > 0 || !!note.labels?.length);
 type Review = {agentId: string; id: string; name: string; extension: string; sha256: string; pages: number; text: string | null; status: string; feedback: string; annotations: Annotation[]};
 async function response<T>(request: Promise<Response>): Promise<T> {
   const result = await request;
@@ -45,12 +47,21 @@ export function FileReviewProvider({agent, children}: {agent: string; children: 
 
 function FileReview({agent, url, close}: {agent: string; url: string; close: () => void}) {
   const [review, setReview] = useState<Review | null>(null), [error, setError] = useState("");
-  const [page, setPage] = useState(1), [draw, setDraw] = useState(false), [busy, setBusy] = useState(false);
-  const [notes, setNotes] = useState<Annotation[]>([]), [text, setText] = useState("");
-  const [gesture, setGesture] = useState<Point[]>([]), [region, setRegion] = useState<Annotation["region"]>(null);
+  const [page, setPage] = useState(1), [tool, setTool] = useState<MarkupTool | "select">("select"), [busy, setBusy] = useState(false);
+  const [size, setSize] = useState({width: 1100, height: 700});
+  const [typing, setTyping] = useState<{at: Point; value: string} | null>(null);
+  const [annotationState, setAnnotationState] = useState<{notes: Annotation[]; history: Annotation[][]; active: number | null}>({notes: [], history: [], active: null});
+  const {notes, active} = annotationState;
+  const setActive = useCallback((active: number | null) => setAnnotationState(current => ({...current, active})), []);
+  const setNotes = useCallback((update: Annotation[] | ((notes: Annotation[]) => Annotation[])) => setAnnotationState(current => ({...current, notes: typeof update === "function" ? update(current.notes) : update})), []);
+  const draw = tool !== "select";
+  const [text, setText] = useState("");
+  const [gesture, setGesture] = useState<Point[]>([]);
+  const gesturePoints = useRef<Point[]>([]), drawingPointer = useRef<number | null>(null);
+  const surface = useRef<SVGSVGElement>(null);
   const [menu, setMenu] = useState<{x: number; y: number; quote: string} | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
-  const image = useRef<HTMLImageElement>(null), field = useRef<HTMLTextAreaElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
   const requestId = useRef(crypto.randomUUID());
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -68,28 +79,67 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       setReview(value); setNotes(draft?.notes ?? value.annotations); setText(draft?.text ?? value.feedback);
     }).catch(reason => {if (!controller.signal.aborted) setError(String(reason));});
     return () => controller.abort();
-  }, [agent, url]);
+  }, [agent, url, setNotes]);
   useEffect(() => {if (review) sessionStorage.setItem(`oxroute.fileReview.${review.id}`, JSON.stringify({notes, text}));}, [review, notes, text]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault(); event.stopPropagation();
-      if (menu) setMenu(null); else close();
+      if (typing) setTyping(null); else if (menu) setMenu(null); else close();
     };
     document.addEventListener("keydown", escape, true);
     return () => document.removeEventListener("keydown", escape, true);
-  }, [menu, close]);
+  }, [menu, typing, close]);
   const isImage = !!review && imageExtensions.includes(review.extension);
   const pageNotes = notes.filter(note => note.page === page);
-  function point(event: React.PointerEvent<SVGSVGElement>): Point {
-    const bounds = event.currentTarget.getBoundingClientRect();
+  const point = useCallback((event: {clientX: number; clientY: number}): Point => {
+    const bounds = surface.current!.getBoundingClientRect();
     return [Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))];
-  }
+  }, []);
+  const changeNotes = useCallback((update: Annotation[] | ((notes: Annotation[]) => Annotation[])) => setAnnotationState(current => ({...current, history: [...current.history, current.notes], notes: typeof update === "function" ? update(current.notes) : update})), []);
+  const addComment = useCallback((note: Annotation) => {
+    setAnnotationState(current => ({notes: [...current.notes, note], history: [...current.history, current.notes], active: current.notes.length})); setMenu(null);
+    field.current?.focus();
+  }, []);
+  const mark = useCallback((strokes: Point[][] = [], labels: NonNullable<Annotation["labels"]> = []) => {
+    changeNotes(current => {
+      const index = current.findIndex(note => note.page === page && note.quote === "Drawing" && !note.region);
+      return index < 0 ? [...current, {page, quote: "Drawing", region: null, strokes, labels}] : current.map((note, i) => i === index ? {...note, strokes: [...note.strokes, ...strokes], labels: [...(note.labels ?? []), ...labels]} : note);
+    });
+  }, [page, changeNotes]);
+  function commitText() {if (typing?.value.trim()) mark([], [{at: typing.at, text: typing.value.trim()}]); setTyping(null);}
   function quote() {
-    if (!menu) return;
-    setNotes(current => [...current, {page: review?.pages ? page : 0, quote: menu.quote, region, strokes: []}]);
-    setRegion(null); setMenu(null); field.current?.focus();
+    if (menu) addComment({page: review?.pages ? page : 0, quote: menu.quote, region: null, strokes: []});
   }
+  const finish = useCallback((event: PointerEvent) => {
+    if (drawingPointer.current !== event.pointerId) return;
+    drawingPointer.current = null;
+    const points = gesturePoints.current, end = point(event), start = points[0]; gesturePoints.current = []; setGesture([]);
+    if (!start) return;
+    const area: Annotation["region"] = [Math.min(start[0], end[0]), Math.min(start[1], end[1]), Math.abs(start[0]-end[0]), Math.abs(start[1]-end[1])];
+    if (tool === "select") {if (area[2] > .003 && area[3] > .003) addComment({page, quote: "Selected area", region: area, strokes: []});}
+    else if (tool === "box") changeNotes(current => [...current, {page, quote: "Drawing", region: area, strokes: []}]);
+    else if (tool === "arrow") {
+      const {width, height} = size;
+      const angle = Math.atan2((end[1]-start[1])*height, (end[0]-start[0])*width), head = Math.max(15, width*.02);
+      const tip = (angle: number): Point => [Math.max(0, Math.min(1, end[0]-head*Math.cos(angle)/width)), Math.max(0, Math.min(1, end[1]-head*Math.sin(angle)/height))];
+      mark([[start, end], [tip(angle-.45), end, tip(angle+.45)]]);
+    } else mark([[...points, end]]);
+  }, [point, tool, page, size, addComment, changeNotes, mark]);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (drawingPointer.current !== event.pointerId || event.buttons === 0) return;
+      const next = point(event);
+      gesturePoints.current = tool === "pen" ? [...gesturePoints.current, next] : [gesturePoints.current[0], next];
+      setGesture(gesturePoints.current);
+    };
+    const cancel = () => {drawingPointer.current = null; gesturePoints.current = []; setGesture([]);};
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+    return () => {window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", cancel); window.removeEventListener("blur", cancel);};
+  }, [tool, point, finish]);
   async function decide(status: "approved" | "changes_requested" | "replied") {
     if (!review) return;
     setBusy(true); setError("");
@@ -99,10 +149,12 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       for (const number of new Set(isImage ? [1] : notes.map(note => note.page).filter(Boolean))) {
         const picture = new Image(); picture.src = `${base}/pages/${number}`; await picture.decode();
         const canvas = document.createElement("canvas"); canvas.width = picture.naturalWidth; canvas.height = picture.naturalHeight;
-        const context = canvas.getContext("2d")!; context.drawImage(picture, 0, 0); context.strokeStyle = "#d74343"; context.lineWidth = 3;
-        for (const note of notes.filter(note => note.page === number)) {
-          if (note.region) {const [x, y, w, h] = note.region; context.strokeRect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height);}
+        const context = canvas.getContext("2d")!; context.drawImage(picture, 0, 0); context.strokeStyle = MARKUP_INK; context.lineWidth = 3;
+        for (const [index, note] of notes.entries()) {
+          if (note.page !== number) continue;
+          if (note.region) {const [x, y, w, h] = note.region; context.strokeRect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height); if (note.quote !== "Drawing") {context.font = "600 20px system-ui"; context.fillStyle = MARKUP_INK; context.fillText(String(index+1), x*canvas.width+4, y*canvas.height+24);}}
           for (const stroke of note.strokes) {context.beginPath(); stroke.forEach(([x,y], i) => i ? context.lineTo(x * canvas.width, y * canvas.height) : context.moveTo(x * canvas.width, y * canvas.height)); context.stroke();}
+          for (const label of note.labels ?? []) {const font = Math.max(16, Math.round(canvas.width/55)); context.font = `600 ${font}px system-ui, sans-serif`; context.fillStyle = MARKUP_INK; context.fillText(label.text, label.at[0]*canvas.width, label.at[1]*canvas.height);}
         }
         const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Could not capture annotation")), "image/png"));
         form.append("files", blob, `review-${review.id.slice(0, 12)}-page-${number}.png`);
@@ -115,26 +167,34 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? "Preparing file review…"}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
     {error && <p role="alert" className="px-5 py-2 text-hold">{error}</p>}
     {review && <><div className="flex min-h-0 flex-1 flex-col md:flex-row"><main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1); setRegion(null);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1); setRegion(null);}}>Next</button></>}<button title="Select area" aria-label="Select area" aria-pressed={!draw} onClick={() => setDraw(false)}><Icon name="scope" /></button><button title="Draw" aria-label="Draw" aria-pressed={draw} onClick={() => setDraw(true)}><Icon name="pen" /></button><span className="text-faint">{draw ? "Draw directly on the page" : "Drag an area, then right-click to quote"}</span></div>}
+      {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
+        onUndo={() => setAnnotationState(current => {
+          const previous = current.history.at(-1), index = current.notes.findLastIndex(note => note.page === page);
+          return {active: null, history: current.history.slice(0,-1), notes: previous ?? current.notes.flatMap((note,i) => i !== index ? [note] : note.labels?.length ? [{...note,labels:note.labels.slice(0,-1)}] : note.strokes.length ? [{...note,strokes:note.strokes.slice(0,-1)}] : [])};
+        })}
+        onClear={() => {changeNotes(current => current.filter(note => note.page !== page)); setActive(null);}} />
+        <span className="text-faint">{tool === "select" ? "Select an area to comment" : tool === "text" ? "Click to add text" : "Draw directly on the page"}</span></div>}
       <div className="min-h-0 flex-1 overflow-auto p-5" onClick={() => setMenu(null)}>
-        {review.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setRegion(null); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
+        {review.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img ref={image} key={page} src={`${base}/pages/${page}`} alt={`Document page ${page}`} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
-          <svg aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: draw ? "crosshair" : "default"}}
-            onPointerDown={event => {if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); setGesture([point(event)]); setMenu(null);}}
-            onPointerMove={event => {if (event.currentTarget.hasPointerCapture(event.pointerId)) {const next = point(event); setGesture(current => draw ? [...current, next] : [current[0], next]);}}}
-            onPointerUp={event => {if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; event.currentTarget.releasePointerCapture(event.pointerId); const end = point(event), start = gesture[0]; if (start) {if (draw) setNotes(current => [...current, {page, quote: "Drawing", region: null, strokes: [[...gesture, end]]}]); else if (Math.abs(start[0]-end[0]) > .003 && Math.abs(start[1]-end[1]) > .003) setRegion([Math.min(start[0], end[0]), Math.min(start[1], end[1]), Math.abs(start[0]-end[0]), Math.abs(start[1]-end[1])]);} setGesture([]);}}
-            onPointerCancel={() => setGesture([])} onContextMenu={event => {if (region) {event.preventDefault(); setMenu({x: event.clientX, y: event.clientY, quote: `Selected area on page ${page}`});}}}>
-            {pageNotes.map((note, i) => <g key={i}>{note.region && <rect x={note.region[0]} y={note.region[1]} width={note.region[2]} height={note.region[3]} fill="transparent" stroke="#d74343" strokeWidth=".002" />}{note.strokes.map((stroke, j) => <polyline key={j} points={stroke.map(p => p.join(",")).join(" ")} fill="none" stroke="#d74343" strokeWidth=".002" />)}</g>)}
-            {region && <rect x={region[0]} y={region[1]} width={region[2]} height={region[3]} fill="#4b80b522" stroke="#4b80b5" strokeWidth=".002" />}
-            {gesture.length > 1 && (draw ? <polyline points={gesture.map(p => p.join(",")).join(" ")} fill="none" stroke="#d74343" strokeWidth=".002" /> : <rect x={Math.min(gesture[0][0], gesture.at(-1)![0])} y={Math.min(gesture[0][1], gesture.at(-1)![1])} width={Math.abs(gesture[0][0]-gesture.at(-1)![0])} height={Math.abs(gesture[0][1]-gesture.at(-1)![1])} fill="#4b80b522" stroke="#4b80b5" strokeWidth=".002" />)}
+          <img key={page} src={`${base}/pages/${page}`} alt={`Document page ${page}`} onLoad={event => setSize({width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight})} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
+          <svg ref={surface} aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: tool === "text" ? "text" : draw ? "crosshair" : "default"}}
+            onPointerDown={event => {if (event.button !== 0) return; if (tool === "text") {event.preventDefault(); commitText(); setTyping({at: point(event), value: ""}); return;} event.preventDefault(); drawingPointer.current = event.pointerId; gesturePoints.current = [point(event)]; setGesture(gesturePoints.current); setMenu(null);}}
+            >
+
+            {pageNotes.map((note, i) => <g key={i}>{note.region && <rect x={note.region[0]} y={note.region[1]} width={note.region[2]} height={note.region[3]} fill="transparent" stroke={MARKUP_INK} strokeWidth=".002" />}{note.strokes.map((stroke, j) => <polyline key={j} points={stroke.map(p => p.join(",")).join(" ")} fill="none" stroke={MARKUP_INK} strokeWidth=".002" />)}{[...(note.labels ?? []), ...(note.region && note.quote !== "Drawing" ? [{at: [note.region[0]+.004, Math.min(1,note.region[1]+.03)] as Point, text: String(notes.indexOf(note)+1)}] : [])].map((label,j) => <text key={`text-${j}`} transform={`translate(${label.at[0]} ${label.at[1]}) scale(${1/size.width} ${1/size.height})`} fill={MARKUP_INK} fontSize={Math.max(16, Math.round(size.width/55))} fontWeight="600">{label.text}</text>)}</g>)}
+
+            {gesture.length > 1 && (tool === "pen" || tool === "arrow" ? <polyline points={gesture.map(p => p.join(",")).join(" ")} fill="none" stroke={MARKUP_INK} strokeWidth=".002" /> : <rect x={Math.min(gesture[0][0], gesture.at(-1)![0])} y={Math.min(gesture[0][1], gesture.at(-1)![1])} width={Math.abs(gesture[0][0]-gesture.at(-1)![0])} height={Math.abs(gesture[0][1]-gesture.at(-1)![1])} fill="#4b80b522" stroke="#4b80b5" strokeWidth=".002" />)}
           </svg>
+          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: `${typing.at[0]*100}%`, top: `${typing.at[1]*100}%`}} />}
         </div>}
       </div>
-    </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><p className="text-sm">{isImage ? "Reply" : "Review feedback"}</p><div className="max-h-52 overflow-auto text-xs">{notes.map((note, i) => <div key={i} className="mb-3 flex gap-2"><button className="min-w-0 flex-1 text-left" onClick={() => {if (note.page) setPage(note.page);}}>{note.page ? `Page ${note.page}: ` : ""}{note.quote}</button><button aria-label={`Remove annotation ${i+1}`} onClick={() => setNotes(current => current.filter((_, n) => n !== i))}>×</button></div>)}</div><textarea ref={field} aria-label="File review feedback" placeholder={isImage ? "Add a reply…" : "What should change?"} value={text} onChange={event => setText(event.target.value)} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
-      <button type="button" aria-label={isImage ? "Send image reply" : "Request revision"} title={busy ? "Sending" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim())} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : isImage ? "send" : "pen"} /></span></button>
+    </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><button type="button" aria-label="General feedback" className="text-left text-sm" onClick={() => setActive(null)}>{active === null ? isImage ? "Reply" : "Review feedback" : "Comment on selection"}</button>
+      <div className="max-h-52 overflow-auto text-xs">{notes.map((note, i) => !isMark(note) && <div key={i} className="mb-3 flex gap-2"><button className={`min-w-0 flex-1 text-left ${active === i ? "text-ink" : "text-mid"}`} onClick={() => {setActive(i); if (note.page) setPage(note.page); field.current?.focus();}}>{note.page ? `Page ${note.page}: ` : ""}{note.region ? `Selection ${i+1}` : note.quote}{note.comment && <span className="mt-1 block">{note.comment}</span>}</button><button aria-label={`Remove annotation ${i+1}`} onClick={() => {changeNotes(current => current.filter((_, n) => n !== i)); setActive(null);}}>×</button></div>)}</div>
+      <textarea ref={field} aria-label={active === null ? "File review feedback" : "Selection comment"} placeholder={active !== null ? "Comment on this selection…" : isImage ? "Add a reply…" : "What should change?"} value={active === null ? text : notes[active]?.comment ?? ""} onChange={event => {const value=event.target.value; if (active === null) setText(value); else setNotes(current => current.map((note,i) => i === active ? {...note,comment:value} : note));}} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
+      <button type="button" aria-label={isImage ? "Send image reply" : "Request revision"} title={busy ? "Sending" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim() && !notes.some(note => note.comment?.trim()))} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : isImage ? "send" : "pen"} /></span></button>
       {!isImage && <button type="button" aria-label="Approve this version" title="Approve" aria-busy={busy} disabled={busy} onClick={() => void decide("approved")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-ink text-paper disabled:opacity-40"><Icon name="tick" /></button>}
     </div><p className="break-all text-[10px] text-faint" title={review.sha256}>Revision {review.sha256.slice(0, 12)}</p></aside></div></>}
-    {menu && <button type="button" role="menuitem" className="fixed z-[110] cursor-pointer bg-ink px-4 py-2 text-sm text-paper" style={{left: Math.min(menu.x, window.innerWidth-210), top: Math.min(menu.y, window.innerHeight-50)}} onClick={quote}>{review?.pages ? "Quote selected area" : "Quote selected text"}</button>}
+    {menu && <button type="button" role="menuitem" className="fixed z-[110] cursor-pointer bg-ink px-4 py-2 text-sm text-paper" style={{left: Math.min(menu.x, window.innerWidth-210), top: Math.min(menu.y, window.innerHeight-50)}} onClick={quote}>Quote selected text</button>}
   </div>;
 }

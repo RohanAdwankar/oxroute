@@ -44,9 +44,9 @@ try{
  const picture=dialog.getByRole('img',{name:'Document page 1'});await picture.evaluate(image=>image.decode());
  const svg=dialog.getByLabel('Document annotations',{exact:true}), bounds=await svg.boundingBox();
  await page.mouse.move(bounds.x+bounds.width*.1,bounds.y+bounds.height*.1);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.7,bounds.y+bounds.height*.35,{steps:5});await page.mouse.up();
- await page.mouse.click(bounds.x+bounds.width*.4,bounds.y+bounds.height*.2,{button:'right'});
- await page.getByRole('menuitem',{name:'Quote selected area'}).click();
- await dialog.getByRole('button',{name:'Draw',exact:true}).click();
+ await dialog.getByRole('textbox',{name:'Selection comment'}).fill('Move this decision.');
+ await dialog.getByRole('button',{name:'General feedback'}).click();
+ await dialog.getByRole('button',{name:'Pen',exact:true}).click();
  await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*.5);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.6,bounds.y+bounds.height*.55,{steps:7});await page.mouse.up();
  await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Move the decision above the rollout details.');
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
@@ -56,7 +56,7 @@ try{
  let view=await api(`/api/agents/${agent.id}`);const sent=view.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Move the decision'));
  const recent=await api(`/api/agents/${agent.id}/messages`);
  assert.deepEqual(recent.map(entry=>entry.id),view.timeline.filter(entry=>['said','you','received'].includes(entry.kind)).slice(-4).map(entry=>entry.id),'Inline context returns recent messages without tool history');
- assert.ok(sent,'Revision is delivered into the owning conversation');assert.ok(sent.text.includes(slides.sha256));assert.match(sent.text,/Attached:/);
+ assert.ok(sent,'Revision is delivered into the owning conversation');assert.ok(sent.text.includes('Move this decision.'));assert.ok(!sent.text.includes('strokes'));assert.ok(!sent.text.includes('SHA-256'));assert.match(sent.text,/Attached:/);
  const attachment=sent.text.split('Attached: ')[1].split(', ')[0];const bytes=await (await fetch(`${native}/api/attachments/${encodeURIComponent(attachment)}`)).arrayBuffer();assert.ok(bytes.byteLength>1000);
  await dialog.getByRole('button',{name:'Close file review'}).click();
  await page.getByRole('button',{name:'Review',exact:true}).first().click();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
@@ -68,7 +68,7 @@ try{
  const original=await (await fetch(`${native}/api/agents/${agent.id}/file-reviews/${pdf.id}/original`)).arrayBuffer();assert.deepEqual(Buffer.from(original),await readFile(join(fixtures,'proposal.pdf')),'Approved original survives source edits');
  await dialog.getByRole('button',{name:'Close file review'}).click();await page.getByRole('button',{name:'Review',exact:true}).nth(2).click();
  const pre=dialog.locator('pre');await pre.waitFor();await pre.evaluate(element=>{const range=document.createRange();range.selectNodeContents(element);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);});await pre.click({button:'right'});
- await page.getByRole('menuitem',{name:'Quote selected text'}).click();await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Clarify the two remaining checks.');
+ await page.getByRole('menuitem',{name:'Quote selected text'}).click();await dialog.getByRole('textbox',{name:'Selection comment'}).fill('Clarify the two remaining checks.');
  await decide(revision,'changes requested');
  assert.match((await api(`/api/agents/${agent.id}/file-reviews/${text.id}`)).annotations[0].quote,/Release plan/);
  console.log('Real PDF/PPTX/text reviews: rendering, area quotes, drawing feedback with image delivery, text quotes, approval isolation, immutable originals and path/owner confinement passed.');
