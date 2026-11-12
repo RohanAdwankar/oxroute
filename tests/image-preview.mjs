@@ -42,7 +42,18 @@ try {
  await page.route(`**/api/agents/${agent.id}`,route=>route.fulfill({json:{agent,timeline:[entry,attached],delivery:'start'}}));
  await page.goto(`${ui}/?agent=${agent.id}`);
  const thumbnail=page.getByRole('button',{name:'Architecture',exact:true});await thumbnail.evaluate(image=>image.decode());
+ let releasePreparation;
+ const preparation=new Promise(done=>{releasePreparation=done;});
+ const holdPreparation=async route=>{await preparation;await route.continue();};
+ await page.route(`**/api/agents/${agent.id}/file-reviews`,holdPreparation);
  await thumbnail.click();
+ const pendingDialog=page.getByRole('dialog');await pendingDialog.waitFor();
+ try {
+  const preview=pendingDialog.getByRole('img',{name:'Image preview',exact:true});
+  await preview.waitFor({timeout:1500});await preview.evaluate(image=>image.decode());
+  assert.ok((await preview.boundingBox()).width>600,'Image enlarges before review preparation returns');
+  if(process.env.PREPARING_SCREENSHOT)await page.screenshot({path:process.env.PREPARING_SCREENSHOT});
+ } finally {releasePreparation();await page.unroute(`**/api/agents/${agent.id}/file-reviews`,holdPreparation);}
  const dialog=page.getByRole('dialog',{name:'Image preview'});await dialog.waitFor();
  await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
  assert.equal(page.context().pages().length,1,'Click enlarges inside the existing window');

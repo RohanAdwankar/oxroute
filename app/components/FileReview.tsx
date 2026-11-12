@@ -90,7 +90,10 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     document.addEventListener("keydown", escape, true);
     return () => document.removeEventListener("keydown", escape, true);
   }, [menu, typing, close]);
-  const isImage = !!review && imageExtensions.includes(review.extension);
+  const original = new URL(url, "http://localhost");
+  const originalName = (original.searchParams.get("path") ?? decodeURIComponent(original.pathname)).split("/").at(-1) ?? "";
+  const previewImage = reviewable(url) && imageExtensions.includes(originalName.split(".").at(-1)?.toLowerCase() ?? "");
+  const isImage = review ? imageExtensions.includes(review.extension) : previewImage;
   const pageNotes = notes.filter(note => note.page === page);
   const point = useCallback((event: {clientX: number; clientY: number}): Point => {
     const bounds = surface.current!.getBoundingClientRect();
@@ -164,8 +167,12 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     } catch (reason) {setError(String(reason));} finally {setBusy(false);}
   }
   return <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={isImage ? "Image preview" : "File review"} className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
-    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? "Preparing file review…"}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
+    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? (previewImage ? originalName : "Preparing file review…")}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
     {error && <p role="alert" className="px-5 py-2 text-hold">{error}</p>}
+    {!review && previewImage && <div className="min-h-0 flex-1 overflow-auto p-5">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="Image preview" className="mx-auto block h-auto w-full max-w-[1100px]" />
+    </div>}
     {review && <><div className="flex min-h-0 flex-1 flex-col md:flex-row"><main className="flex min-h-0 min-w-0 flex-1 flex-col">
       {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
         onUndo={() => setAnnotationState(current => {
