@@ -395,6 +395,9 @@ export default function Home() {
     (error: unknown) => say(error instanceof Error ? error.message : String(error)),
     [say],
   );
+  const setting = useCallback((work: () => Promise<unknown>) => {
+    void work().then(reload).catch(complain);
+  }, [reload, complain]);
   useEffect(() => { void terminalApi<TerminalInfo[]>("").then(setTerminals).catch(complain); }, [revision, complain]);
 
   const revealedTerminals = useRef(new Set<string>());
@@ -1281,13 +1284,13 @@ export default function Home() {
       {settings && (
         <Settings
           recommendationLearning={snapshot.recommendationLearning}
-          onRecommendationLearning={enabled => void run(() => api.setRecommendationLearning(enabled))}
+          onRecommendationLearning={enabled => setting(() => api.setRecommendationLearning(enabled))}
           nextActionLayout={nextLayout}
           onNextActionLayout={nextActionLayout.set}
           automaticTags={snapshot.automaticTags}
-          onAutomaticTags={enabled => void run(() => api.setAutomaticTags(enabled))}
+          onAutomaticTags={enabled => setting(() => api.setAutomaticTags(enabled))}
           automaticTitles={snapshot.automaticTitles}
-          onAutomaticTitles={enabled => void run(() => api.setAutomaticTitles(enabled))}
+          onAutomaticTitles={enabled => setting(() => api.setAutomaticTitles(enabled))}
           theme={tone}
           onTheme={theme.set}
           verbose={loud}
@@ -1334,9 +1337,9 @@ export default function Home() {
         }} />}
         snapshot={snapshot}
         notice={notice}
-        onMode={(mode: Mode) => void run(() => api.setMode(mode))}
-        onNextActionMode={(mode: Mode) => void run(() => api.setNextActionMode(mode))}
-        onNextActionSuggestions={(enabled: boolean) => void run(() => api.setNextActionSuggestions(enabled))}
+        onMode={(mode: Mode) => {if (mode !== snapshot.mode) setting(() => api.setMode(mode));}}
+        onNextActionMode={(mode: Mode) => setting(() => api.setNextActionMode(mode))}
+        onNextActionSuggestions={(enabled: boolean) => setting(() => api.setNextActionSuggestions(enabled))}
         inboxOpen={inboxOpen}
         onInbox={() => setInboxVisible(!inboxOpen)}
         tasksOpen={tasksOpen}
