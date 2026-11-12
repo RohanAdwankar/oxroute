@@ -31,7 +31,7 @@ for ext in ['jpg','webp','gif']: im.save(p/f'diagram.{ext}')
  let ready=false;
  for(let attempt=0;attempt<100;attempt++){try{if((await fetch(`${native}/api/health`)).ok){ready=true;break;}}catch{}await new Promise(done=>setTimeout(done,100));}
  assert.ok(ready,'Disposable daemon started');
- const env={TEST_NATIVE_URL:native,TEST_FIXTURES:fixtures,TEST_URL:process.env.TEST_URL??'http://127.0.0.1:3939'};
+ const env={TEST_DAEMON:process.env.TEST_DAEMON??join(process.env.HOME,'.local/bin/oxrouted'),TEST_NATIVE_URL:native,TEST_FIXTURES:fixtures,TEST_URL:process.env.TEST_URL??'http://127.0.0.1:3939'};
  await run(process.execPath,['tests/file-review-preparation.mjs'],env);
  await run(process.execPath,['tests/card-search.mjs'],env);
  await run(process.execPath,['tests/file-reviews.mjs'],env);
