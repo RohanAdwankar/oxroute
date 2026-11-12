@@ -67,6 +67,8 @@ export function TaskComposer({
         error={pictures.error}
         dragging={dragging}
         onDrop={pictures.drop}
+        onReplace={pictures.replace}
+        onNote={text => setDraft(current => [current, text].filter(Boolean).join("\n\n"))}
       />
       <div className="flex items-stretch">
         <input

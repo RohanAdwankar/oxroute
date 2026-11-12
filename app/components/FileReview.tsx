@@ -45,8 +45,13 @@ export function FileReviewProvider({agent, children}: {agent: string; children: 
   return <FileReviews.Provider value={setUrl}>{children}{url && createPortal(<FileReview key={url} agent={agent} url={url} close={() => setUrl("")} />, document.body)}</FileReviews.Provider>;
 }
 
-function FileReview({agent, url, close}: {agent: string; url: string; close: () => void}) {
-  const [review, setReview] = useState<Review | null>(null), [error, setError] = useState("");
+type LocalImage = {file: File; apply: (file: File, text: string) => void};
+export function DraftImageReview({file, url, close, apply}: LocalImage & {url: string; close: () => void}) {
+  return createPortal(<FileReview agent="" url={url} close={close} local={{file, apply}} />, document.body);
+}
+
+function FileReview({agent, url, close, local}: {agent: string; url: string; close: () => void; local?: LocalImage}) {
+  const [review, setReview] = useState<Review | null>(() => local ? {agentId:"",id:crypto.randomUUID(),name:local.file.name,extension:"png",sha256:"",pages:1,text:null,status:"pending",feedback:"",annotations:[]} : null), [error, setError] = useState("");
   const [page, setPage] = useState(1), [tool, setTool] = useState<MarkupTool | "select">("select"), [busy, setBusy] = useState(false);
   const [size, setSize] = useState({width: 1100, height: 700});
   const [typing, setTyping] = useState<{at: Point; value: string} | null>(null);
@@ -70,6 +75,7 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
   }, []);
   const base = review ? `/api/agents/${encodeURIComponent(review.agentId)}/file-reviews/${review.id}` : "";
   useEffect(() => {
+    if (local) return;
     const controller = new AbortController();
     const parsed = new URL(url, location.origin), attachment = parsed.pathname.startsWith("/api/attachments/");
     const path = attachment ? decodeURIComponent(parsed.pathname.slice("/api/attachments/".length)) : parsed.searchParams.get("path");
@@ -79,8 +85,8 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       setReview(value); setNotes(draft?.notes ?? value.annotations); setText(draft?.text ?? value.feedback);
     }).catch(reason => {if (!controller.signal.aborted) setError(String(reason));});
     return () => controller.abort();
-  }, [agent, url, setNotes]);
-  useEffect(() => {if (review) sessionStorage.setItem(`oxroute.fileReview.${review.id}`, JSON.stringify({notes, text}));}, [review, notes, text]);
+  }, [agent, url, setNotes, local]);
+  useEffect(() => {if (review && !local) sessionStorage.setItem(`oxroute.fileReview.${review.id}`, JSON.stringify({notes, text}));}, [review, notes, text, local]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -150,7 +156,7 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       const form = new FormData();
       form.append("decision", JSON.stringify({status, text, annotations: notes, requestId: requestId.current}));
       for (const number of new Set(isImage ? [1] : notes.map(note => note.page).filter(Boolean))) {
-        const picture = new Image(); picture.src = `${base}/pages/${number}`; await picture.decode();
+        const picture = new Image(); picture.src = local ? url : `${base}/pages/${number}`; await picture.decode();
         const canvas = document.createElement("canvas"); canvas.width = picture.naturalWidth; canvas.height = picture.naturalHeight;
         const context = canvas.getContext("2d")!; context.drawImage(picture, 0, 0); context.strokeStyle = MARKUP_INK; context.lineWidth = 3;
         for (const [index, note] of notes.entries()) {
@@ -160,6 +166,12 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
           for (const label of note.labels ?? []) {const font = Math.max(16, Math.round(canvas.width/55)); context.font = `600 ${font}px system-ui, sans-serif`; context.fillStyle = MARKUP_INK; context.fillText(label.text, label.at[0]*canvas.width, label.at[1]*canvas.height);}
         }
         const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Could not capture annotation")), "image/png"));
+        if (local) {
+          const name = local.file.name, dot = name.lastIndexOf(".");
+          const feedback = [text, ...notes.flatMap((note,index) => note.comment?.trim() ? [`Selection ${index+1}: ${note.comment}`] : [])].filter(part => part.trim()).join("\n\n");
+          local.apply(new File([blob], `${dot > 0 ? name.slice(0,dot) : name}-annotated.png`, {type:"image/png"}), feedback);
+          close(); return;
+        }
         form.append("files", blob, `review-${review.id.slice(0, 12)}-page-${number}.png`);
       }
       const value = await response<Review>(fetch(`${base}/decision`, {method: "POST", body: form}));
@@ -167,7 +179,7 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     } catch (reason) {setError(String(reason));} finally {setBusy(false);}
   }
   return <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={isImage ? "Image preview" : "File review"} className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
-    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? (previewImage ? originalName : "Preparing file review…")}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={`${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
+    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? (previewImage ? originalName : "Preparing file review…")}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={local ? url : `${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
     {error && <p role="alert" className="px-5 py-2 text-hold">{error}</p>}
     {!review && previewImage && <div className="min-h-0 flex-1 overflow-auto p-5">
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -184,7 +196,7 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
       <div className="min-h-0 flex-1 overflow-auto p-5" onClick={() => setMenu(null)}>
         {review.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img key={page} src={`${base}/pages/${page}`} alt={`Document page ${page}`} onLoad={event => setSize({width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight})} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
+          <img key={page} src={local ? url : `${base}/pages/${page}`} alt={`Document page ${page}`} onLoad={event => setSize({width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight})} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
           <svg ref={surface} aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: tool === "text" ? "text" : draw ? "crosshair" : "default"}}
             onPointerDown={event => {if (event.button !== 0) return; if (tool === "text") {event.preventDefault(); commitText(); setTyping({at: point(event), value: ""}); return;} event.preventDefault(); drawingPointer.current = event.pointerId; gesturePoints.current = [point(event)]; setGesture(gesturePoints.current); setMenu(null);}}
             >
@@ -199,9 +211,9 @@ function FileReview({agent, url, close}: {agent: string; url: string; close: () 
     </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><button type="button" aria-label="General feedback" className="text-left text-sm" onClick={() => setActive(null)}>{active === null ? isImage ? "Reply" : "Review feedback" : "Comment on selection"}</button>
       <div className="max-h-52 overflow-auto text-xs">{notes.map((note, i) => !isMark(note) && <div key={i} className="mb-3 flex gap-2"><button className={`min-w-0 flex-1 text-left ${active === i ? "text-ink" : "text-mid"}`} onClick={() => {setActive(i); if (note.page) setPage(note.page); field.current?.focus();}}>{note.page ? `Page ${note.page}: ` : ""}{note.region ? `Selection ${i+1}` : note.quote}{note.comment && <span className="mt-1 block">{note.comment}</span>}</button><button aria-label={`Remove annotation ${i+1}`} onClick={() => {changeNotes(current => current.filter((_, n) => n !== i)); setActive(null);}}>×</button></div>)}</div>
       <textarea ref={field} aria-label={active === null ? "File review feedback" : "Selection comment"} placeholder={active !== null ? "Comment on this selection…" : isImage ? "Add a reply…" : "What should change?"} value={active === null ? text : notes[active]?.comment ?? ""} onChange={event => {const value=event.target.value; if (active === null) setText(value); else setNotes(current => current.map((note,i) => i === active ? {...note,comment:value} : note));}} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
-      <button type="button" aria-label={isImage ? "Send image reply" : "Request revision"} title={busy ? "Sending" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim() && !notes.some(note => note.comment?.trim()))} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : isImage ? "send" : "pen"} /></span></button>
+      <button type="button" aria-label={local ? "Apply image annotations" : isImage ? "Send image reply" : "Request revision"} title={busy ? "Saving" : local ? "Apply annotations" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim() && !notes.some(note => note.comment?.trim()))} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : local ? "tick" : isImage ? "send" : "pen"} /></span></button>
       {!isImage && <button type="button" aria-label="Approve this version" title="Approve" aria-busy={busy} disabled={busy} onClick={() => void decide("approved")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-ink text-paper disabled:opacity-40"><Icon name="tick" /></button>}
-    </div><p className="break-all text-[10px] text-faint" title={review.sha256}>Revision {review.sha256.slice(0, 12)}</p></aside></div></>}
+    </div>{!local && <p className="break-all text-[10px] text-faint" title={review.sha256}>Revision {review.sha256.slice(0, 12)}</p>}</aside></div></>}
     {menu && <button type="button" role="menuitem" className="fixed z-[110] cursor-pointer bg-ink px-4 py-2 text-sm text-paper" style={{left: Math.min(menu.x, window.innerWidth-210), top: Math.min(menu.y, window.innerHeight-50)}} onClick={quote}>Quote selected text</button>}
   </div>;
 }

@@ -1055,6 +1055,8 @@ export function AgentPanel({
           error={pictures.error}
           dragging={draggingImages}
           onDrop={pictures.drop}
+          onReplace={pictures.replace}
+          onNote={text => setDraft(current => [current, text].filter(Boolean).join("\n\n"))}
         />
         <div className="px-3">{diffs.map((quote, index) => <DiffAttachment key={index} quote={quote} onRemove={() => setDiffs(current => current.filter((_, at) => at !== index))} />)}</div>
         <div className="flex items-stretch">

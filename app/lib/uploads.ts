@@ -83,5 +83,12 @@ export function useUploads(who?: string) {
     setError("");
   }, []);
 
-  return { uploads, error, add, addFromDrop, drop, clear, files: uploads.map((upload) => upload.file) };
+  const replace = useCallback((upload: Upload, file: File) => {
+    if (!held.current.some(item => item.file === upload.file)) throw new Error("This attachment is no longer in the composer");
+    const next = {file, preview: URL.createObjectURL(file)};
+    setUploads(current => current.map(item => item.file === upload.file ? next : item));
+    URL.revokeObjectURL(upload.preview);
+  }, []);
+
+  return { uploads, error, add, addFromDrop, drop, replace, clear, files: uploads.map((upload) => upload.file) };
 }
