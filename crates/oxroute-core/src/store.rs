@@ -162,6 +162,7 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('next-action-suggestions', 'true')", [])?;
     // Split the old shared switch once, preserving its existing behavior.
     conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('next-action-mode', COALESCE((SELECT value FROM kv WHERE key = 'mode'), 'ask'))", [])?;
     // Reviews retain publication identity; Git owns the diff content.
@@ -1884,9 +1885,12 @@ mod tests {
             migrate(&conn).unwrap();
             let next = || conn.query_row("SELECT value FROM kv WHERE key = 'next-action-mode'", [], |row| row.get::<_, String>(0)).unwrap();
             assert_eq!(next(), mode);
+            assert_eq!(conn.query_row("SELECT value FROM kv WHERE key = 'next-action-suggestions'", [], |row| row.get::<_, String>(0)).unwrap(), "true");
+            conn.execute("UPDATE kv SET value = 'false' WHERE key = 'next-action-suggestions'", []).unwrap();
             conn.execute("UPDATE kv SET value = ?1 WHERE key = 'mode'", [if mode == "auto" { "ask" } else { "auto" }]).unwrap();
             migrate(&conn).unwrap();
             assert_eq!(next(), mode);
+            assert_eq!(conn.query_row("SELECT value FROM kv WHERE key = 'next-action-suggestions'", [], |row| row.get::<_, String>(0)).unwrap(), "false");
         }
     }
 

@@ -3728,3 +3728,36 @@ async fn next_action_continuation_is_independent_of_input_routing() {
         }
     }
 }
+
+#[tokio::test]
+async fn suggestions_default_on_and_can_be_disabled_without_disabling_continuation() {
+    let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+    assert_eq!(w.hub.next_action_mode(), Mode::Ask);
+    assert!(w.hub.next_action_suggestions());
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Inspect the agreed changes").await.unwrap();
+    assert!(settle(|| w.hub.store.agent(&agent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(w.calls.lock().unwrap().predictions.is_empty());
+    let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    w.hub.set_next_action_mode(Mode::Auto).unwrap();
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Finish the changes already authorized").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2 && w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+    assert!(!w.hub.next_action_suggestions());
+}
+
+#[tokio::test]
+async fn suggestions_wait_until_assigned_work_has_no_actionable_tasks() {
+    let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(None)], ..Default::default() }).await;
+    let agent = w.hub.create_agent(None).unwrap();
+    let mut task = w.hub.create_task("Finish the agreed work", "", vec![], "").await.unwrap();
+    task.agent_id = agent.id.clone(); w.hub.store.save_task(&task).unwrap();
+    w.hub.say_to(&agent.id, "Continue the assigned work").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(w.calls.lock().unwrap().predictions.is_empty());
+    assert!(w.hub.next_actions(&agent.id).unwrap().is_none());
+}

@@ -64,6 +64,15 @@ try{
  await page.goto(`${ui}/?agent=${agent.id}`);
  const suggestions=page.getByRole('group',{name:'Suggested next steps'});
  await suggestions.waitFor();assert.equal(await suggestions.getByRole('button').count(),3);
+ const settings = await api('/api/state'); assert.equal(settings.mode,'ask'); assert.equal(settings.nextActionMode,'ask'); assert.equal(settings.nextActionSuggestions,true);
+ const options=page.getByRole('button',{name:'Continue next actions automatically options',exact:true});
+ await options.click();const suggestOption=page.getByRole('menuitemcheckbox',{name:'Suggest next actions',exact:true});
+ assert.equal(await suggestOption.getAttribute('aria-checked'),'true');await suggestOption.click();
+ await until(async()=>(await api('/api/state')).nextActionSuggestions===false);
+ await suggestions.waitFor({state:'detached'});assert.equal((await api(`/api/agents/${agent.id}`)).nextActions,null);
+ await options.click();assert.equal(await suggestOption.getAttribute('aria-checked'),'false');await suggestOption.click();
+ await suggestions.waitFor();assert.equal((await api('/api/state')).nextActionSuggestions,true);
+
  assert.equal(await suggestions.getByRole('button',{name:actions[0].label,exact:true}).getAttribute('title'),actions[0].message);
  await page.reload();await suggestions.waitFor();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});

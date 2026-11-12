@@ -151,6 +151,7 @@ export interface Snapshot {
   reviews?: Record<string, string[]>;
   mode: Mode;
   nextActionMode: Mode;
+  nextActionSuggestions: boolean;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
   artifactRoot: string;

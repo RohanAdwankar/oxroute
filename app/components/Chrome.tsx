@@ -3,6 +3,7 @@
 import type { Mode, Snapshot } from "../lib/types";
 import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
+import { SplitAction } from "./SplitAction";
 import { useEffect, useState, type ReactNode } from "react";
 
 /** Global input routing and next-action continuation are independent. */
@@ -11,6 +12,7 @@ export function Chrome({
   notice,
   onMode,
   onNextActionMode,
+  onNextActionSuggestions,
   inboxOpen,
   onInbox,
   tasksOpen,
@@ -29,6 +31,7 @@ export function Chrome({
   notice: string | null;
   onMode: (mode: Mode) => void;
   onNextActionMode: (mode: Mode) => void;
+  onNextActionSuggestions: (enabled: boolean) => void;
   inboxOpen: boolean;
   onInbox: () => void;
   tasksOpen: boolean;
@@ -74,9 +77,11 @@ export function Chrome({
         />
       </div>
 
-      <ModeButton label="Continue next actions automatically" icon="play"
-        active={snapshot.nextActionMode === "auto"}
-        onClick={() => onNextActionMode(snapshot.nextActionMode === "auto" ? "ask" : "auto")} />
+      <SplitAction label="Continue next actions automatically" icon="play" from="left"
+        pressed={snapshot.nextActionMode === "auto"}
+        onClick={() => onNextActionMode(snapshot.nextActionMode === "auto" ? "ask" : "auto")}
+        menu={[{ label: "Suggest next actions", icon: snapshot.nextActionSuggestions ? "tick" : "stop",
+          checked: snapshot.nextActionSuggestions, onClick: () => onNextActionSuggestions(!snapshot.nextActionSuggestions) }]} />
 
       <Cell
         onClick={onInbox}

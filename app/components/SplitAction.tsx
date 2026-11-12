@@ -16,6 +16,7 @@ export function SplitAction({
   icon,
   onClick,
   disabled,
+  pressed,
   menu,
   up = false,
   from = "right",
@@ -26,7 +27,8 @@ export function SplitAction({
   icon: IconName;
   onClick: () => void;
   disabled?: boolean;
-  menu: { label: string; icon: IconName; onClick: () => void }[];
+  pressed?: boolean;
+  menu: { label: string; icon: IconName; checked?: boolean; onClick: () => void }[];
   /// Whether the menu opens upward, for a square sitting on the bottom
   /// edge where there is no screen left below it.
   up?: boolean;
@@ -63,8 +65,9 @@ export function SplitAction({
         }}
         disabled={disabled}
         aria-label={label}
+        aria-pressed={pressed}
         title={hint ?? label}
-        className="flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        className={`flex h-[var(--cell)] w-[var(--cell)] cursor-pointer items-center justify-center text-mid hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 ${pressed ? "bg-wash text-ink" : ""}`}
       >
         <Icon name={icon} size={14} />
       </button>
@@ -95,7 +98,8 @@ export function SplitAction({
             <button
               key={item.label}
               type="button"
-              role="menuitem"
+              role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={item.checked}
               onClick={() => {
                 setOpen(false);
                 item.onClick();

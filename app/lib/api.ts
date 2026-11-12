@@ -192,6 +192,7 @@ export const api = {
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
   setNextActionMode: (mode: Mode) => post<Snapshot>("/api/next-action-mode", { mode }),
+  setNextActionSuggestions: (enabled: boolean) => post<Snapshot>("/api/next-action-suggestions", { enabled }),
 
   // Tags and boards. A board is its settings; moving a card is tagging it.
   tag: (agent: string, change: { add?: string[]; remove?: string[]; set?: string[] }) =>

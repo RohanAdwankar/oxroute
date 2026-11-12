@@ -406,6 +406,16 @@ impl Hub {
         Ok(())
     }
 
+    pub fn next_action_suggestions(&self) -> bool {
+        self.store.get("next-action-suggestions").ok().flatten().as_deref() == Some("true")
+    }
+
+    pub fn set_next_action_suggestions(&self, enabled: bool) -> Result<()> {
+        self.store.set("next-action-suggestions", if enabled { "true" } else { "false" })?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     // -- lifecycle -------------------------------------------------------
 
     /// Start every background task: the harness pumps, the sources, the stall
@@ -2113,6 +2123,8 @@ impl Hub {
     async fn next_actions_once(self: &Arc<Self>, agent_id: &str) -> Result<()> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         if agent.status != AgentStatus::Complete { return Ok(()); }
+        if !self.next_action_suggestions() && self.next_action_mode() != Mode::Auto { return Ok(()); }
+        if self.store.tasks()?.iter().any(|task| task.agent_id == agent_id && task.status == TaskStatus::Incomplete) { return Ok(()); }
         let Some(entry_id) = self.store.latest_entry_id(agent_id)? else { return Ok(()); };
         let entries = self.store.recent_messages(agent_id, 8)?;
         if self.next_actions(agent_id)?.is_some() { return Ok(()); }
@@ -3032,6 +3044,7 @@ impl Hub {
         Ok(Snapshot {
             mode: self.mode().as_str().to_string(),
             next_action_mode: self.next_action_mode().as_str().to_string(),
+            next_action_suggestions: self.next_action_suggestions(),
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -3859,6 +3872,7 @@ mod task_tests {
 pub struct Snapshot {
     pub mode: String,
     pub next_action_mode: String,
+    pub next_action_suggestions: bool,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,

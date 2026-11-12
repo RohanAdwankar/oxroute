@@ -255,6 +255,7 @@ async fn serve() -> Result<()> {
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
         .route("/api/next-action-mode", post(next_action_mode))
+        .route("/api/next-action-suggestions", post(next_action_suggestions))
         .route("/api/agents/{id}/model", post(change_model))
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
@@ -405,7 +406,7 @@ async fn agent(
         "agent": agent,
         "timeline": timeline,
         "hasEarlier": has_earlier,
-        "nextActions": hub.next_actions(&id)?,
+        "nextActions": if hub.next_action_suggestions() { hub.next_actions(&id)? } else { None },
         "delivery": agent.delivery(),
     }))).into_response())
 }
@@ -1271,6 +1272,14 @@ async fn mode(
 
 async fn next_action_mode(State(hub): Hubs, Json(body): Json<ModeBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.set_next_action_mode(Mode::parse(&body.mode))?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+#[derive(Deserialize)]
+struct NextActionSuggestionsBody { enabled: bool }
+
+async fn next_action_suggestions(State(hub): Hubs, Json(body): Json<NextActionSuggestionsBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    hub.set_next_action_suggestions(body.enabled)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
