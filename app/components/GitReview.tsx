@@ -10,8 +10,8 @@ import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
 
 type Line = { text: string; old: number | null; next: number | null };
-type Expansion = { lines: string[]; more: boolean; busy?: boolean; error?: string };
-type Context = { key: string; old: number; next: number; limit: number; side: "before" | "after" };
+type Expansion = { gap?: string; lines: string[]; more: boolean; busy?: boolean; error?: string };
+type Context = { key: string; gap: string; old: number; next: number; limit: number; direction: "up" | "down"; side: "before" | "after" };
 
 function hunkStart(header: string) {
   const ranges = header.split(" ").slice(1, 3).map(range => range.slice(1).split(",").map(Number));
@@ -81,41 +81,53 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
   const snapshot = review?.snapshot;
+  const expanding = useRef(new Set<string>());
   const [expanded, setExpanded] = useState<Record<string, Expansion>>({});
   const files = useMemo(() => snapshot?.files.map(item => {
     const original = lines(item.patch), rows: Line[] = [], controls = new Map<number, Context>();
-    let old = 0, next = 0;
+    let old = 1, next = 1;
     const side = item.patch.split("\n").includes("+++ /dev/null") ? "before" : "after";
+    const key = (direction: "up" | "down", old: number, next: number) => JSON.stringify([endpoint, review?.full, snapshot.headCommit, item.path, direction, old, next]);
     for (const [index, row] of original.entries()) {
       if (row.text.startsWith("@@ ")) {
-        ({ old, next } = hunkStart(row.text));
-      } else {
-        if (row.old !== null) old = row.old + 1;
-        if (row.next !== null) next = row.next + 1;
+        const start = hunkStart(row.text), up = key("up", start.old, start.next);
+        const saved = expanded[up]?.lines ?? [];
+        const limit = Math.min(start.old - old, start.next - next) - (expanded[key("down", old, next)]?.lines.length ?? 0);
+        rows.push(row);
+        if (limit > saved.length) controls.set(rows.length - 1, { key: up, gap: key("down", old, next), ...start, limit, direction: "up", side });
+        rows.push(...saved.map((text, at) => ({ text: ` ${text}`, old: start.old - saved.length + at, next: start.next - saved.length + at })));
+        ({ old, next } = start);
+        continue;
       }
+      if (row.old !== null) old = row.old + 1;
+      if (row.next !== null) next = row.next + 1;
       rows.push(row);
       const following = original[index + 1];
-      if ((row.old === null && row.next === null) || (following && !following.text.startsWith("@@ "))) continue;
-      const limit = following ? Math.min(hunkStart(following.text).old - old, hunkStart(following.text).next - next) : Infinity;
-      const key = JSON.stringify([endpoint, review?.full, snapshot.headCommit, item.path, old, next]);
-      const saved = expanded[key];
+      if (following && !following.text.startsWith("@@ ")) continue;
+      const start = following ? hunkStart(following.text) : null;
+      const limit = start ? Math.min(start.old - old, start.next - next) - (expanded[key("up", start.old, start.next)]?.lines.length ?? 0) : Infinity;
+      const down = key("down", old, next), saved = expanded[down];
       rows.push(...(saved?.lines ?? []).map((text, at) => ({ text: ` ${text}`, old: old + at, next: next + at })));
-      if (limit > (saved?.lines.length ?? 0) && saved?.more !== false) controls.set(rows.length - 1, { key, old, next, limit, side });
+      if (limit > (saved?.lines.length ?? 0) && saved?.more !== false) controls.set(rows.length - 1, { key: down, gap: down, old, next, limit, direction: "down", side });
     }
     return { ...item, rows, controls, code: diffCode(rows, item.path) };
   }) ?? [], [snapshot, expanded, endpoint, review?.full]);
 
   const expand = async (path: string, context: Context) => {
     const saved = expanded[context.key] ?? { lines: [], more: true };
-    if (saved.busy) return;
-    setExpanded(current => ({ ...current, [context.key]: { ...saved, busy: true, error: "" } }));
+    if (expanding.current.has(context.gap)) return;
+    expanding.current.add(context.gap);
+    setExpanded(current => ({ ...current, [context.key]: { ...saved, gap: context.gap, busy: true, error: "" } }));
     try {
-      const query = new URLSearchParams({ path, side: context.side, start: String((context.side === "before" ? context.old : context.next) + saved.lines.length), count: String(Math.min(20, context.limit - saved.lines.length)), ...(review?.full ? { full: "true" } : {}) });
+      const count = Math.min(20, context.limit - saved.lines.length);
+      const anchor = context.side === "before" ? context.old : context.next;
+      const start = context.direction === "up" ? anchor - saved.lines.length - count : anchor + saved.lines.length;
+      const query = new URLSearchParams({ path, side: context.side, start: String(start), count: String(count), ...(review?.full ? { full: "true" } : {}) });
       const more = await response<{ lines: string[]; more: boolean }>(fetch(`${endpoint}/context?${query}`));
-      setExpanded(current => ({ ...current, [context.key]: { lines: [...saved.lines, ...more.lines], more: more.more } }));
+      setExpanded(current => ({ ...current, [context.key]: { lines: context.direction === "up" ? [...more.lines, ...saved.lines] : [...saved.lines, ...more.lines], more: context.direction === "up" || more.more } }));
     } catch (error) {
       setExpanded(current => ({ ...current, [context.key]: { ...saved, error: String(error) } }));
-    }
+    } finally { expanding.current.delete(context.gap); }
   };
 
   useEffect(() => {
@@ -239,10 +251,10 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
           }}>
             {item.rows.map((row, index) => {
               const context = item.controls.get(index), status = context ? expanded[context.key] : undefined;
-              return <Fragment key={index}><div data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>
+              return <Fragment key={`${row.old}:${row.next}:${row.text}`}><div data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>
               {context && <div className="sticky left-0 w-fit py-1 font-sans text-[11px] text-mid">
-                <button type="button" disabled={status?.busy} className="cursor-pointer px-2 py-1 hover:bg-band disabled:opacity-40"
-                  onClick={() => void expand(item.path, context)}>{status?.busy ? "Loading context…" : status?.error ? "Retry expansion" : "↓ Expand down"}</button>
+                <button type="button" aria-label={status?.error ? "Retry expansion" : `Expand ${context.direction}`} title={status?.error ? "Retry expansion" : `Expand ${context.direction}`} aria-busy={!!status?.busy} disabled={Object.values(expanded).some(value => value.gap === context.gap && value.busy)} className="cursor-pointer px-2 py-1 hover:bg-band disabled:opacity-40"
+                  onClick={() => void expand(item.path, context)}><span className={status?.busy ? "inline-block animate-spin" : context.direction === "up" ? "inline-block rotate-180" : "inline-block"}><Icon name={status?.busy ? "refresh" : "chevronDown"} size={14} /></span></button>
                 {status?.error && <span role="alert">{status?.error}</span>}
               </div>}
             </Fragment>; })}
