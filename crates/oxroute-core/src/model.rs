@@ -631,6 +631,8 @@ impl InboxState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
     pub signal: Signal,
     pub state: InboxState,
     /// Human-readable: `sent to migrate-staging-nodepool`, `discarded`.
@@ -820,6 +822,7 @@ mod tests {
             agent_ids: vec!["a".into()],
             suggested: Some("a".into()),
             recommendation: None,
+            source_url: None,
         };
         let encoded = serde_json::to_value(&item).unwrap();
         assert!(encoded.get("agentIds").is_some());

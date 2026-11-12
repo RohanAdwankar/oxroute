@@ -1,0 +1,5 @@
+{
+  "display_information": {"name": "Oxroute inbox", "description": "Read personal context into the Oxroute inbox without sending messages."},
+  "oauth_config": {"scopes": {"user": ["channels:read", "channels:history", "groups:read", "groups:history", "im:read", "im:history", "mpim:read", "mpim:history", "search:read"]}},
+  "settings": {"socket_mode_enabled": true, "event_subscriptions": {"user_events": ["message.channels", "message.groups", "message.im", "message.mpim"]}}
+}

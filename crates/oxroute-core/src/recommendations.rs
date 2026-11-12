@@ -102,3 +102,8 @@ mod tests {
         assert!(parse_routing(&json!({"action":"spawn","agentIds":["first"],"reason":"New work"}).to_string(), &available).is_err());
     }
 }
+
+/// Preserve recent context within a character budget; the full conversation stays in storage.
+pub fn recent_text(text:&str,budget:usize)->String {
+    text.chars().rev().take(budget).collect::<Vec<_>>().into_iter().rev().collect()
+}

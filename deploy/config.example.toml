@@ -108,3 +108,11 @@ label = "Astra"
 #
 # [diagram]
 # path = "docs/architecture.mmd"
+
+# -- personal inbox (read-only) ------------------------------------------
+# Separate from the bot above. Supply rotating access tokens in protected files.
+# [inbox]
+# outlook_token_file = "~/.config/oxroute/outlook-token"
+# slack_token_file = "~/.config/oxroute/slack-inbox-user-token"
+# slack_app_token_file = "~/.config/oxroute/slack-inbox-app-token"
+# slack_channels = [] # optional channel IDs, beyond DMs/group DMs/mentions

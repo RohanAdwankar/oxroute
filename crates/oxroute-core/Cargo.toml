@@ -21,3 +21,6 @@ time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 async-trait = "0.1.92"
 libc = "0.2.189"
 toml = "1.0.7"
+
+[dev-dependencies]
+axum = "0.8"

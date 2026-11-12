@@ -84,6 +84,8 @@ struct FileConfig {
     claude: FileClaude,
     #[serde(default)]
     diagram: FileDiagram,
+    #[serde(default)]
+    inbox: crate::inbox::Config,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +149,7 @@ struct FileClaude {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub inbox: crate::inbox::Config,
     /// Which file this came from, for `doctor` to point at.
     pub source: Option<PathBuf>,
     /// Where agents run.
@@ -347,6 +350,12 @@ impl Config {
         );
 
         Ok(Config {
+            inbox: crate::inbox::Config {
+                slack_app_token_file: from_env(&["OXROUTE_SLACK_INBOX_APP_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_app_token_file.map(|p|expand(&p.to_string_lossy()))),
+                slack_channels: file.inbox.slack_channels,
+                outlook_token_file: from_env(&["OXROUTE_OUTLOOK_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.outlook_token_file.map(|p|expand(&p.to_string_lossy()))),
+                slack_token_file: from_env(&["OXROUTE_SLACK_INBOX_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_token_file.map(|p|expand(&p.to_string_lossy()))),
+            },
             source,
             workspace: pick(
                 &["OXROUTE_WORKSPACE", "CODEX_SLACK_WORKSPACE"],

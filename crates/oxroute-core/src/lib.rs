@@ -27,6 +27,7 @@ pub mod agent;
 pub mod config;
 pub mod dashboard;
 pub mod hub;
+pub mod inbox;
 pub mod migrate;
 pub mod model;
 pub mod naming;

@@ -76,6 +76,7 @@ export interface TaskItem {
 }
 
 export interface InboxItem {
+  sourceUrl?: string;
   signal: Signal;
   state: InboxState;
   outcome: string;
@@ -166,6 +167,7 @@ export interface Snapshot {
   paneLinks: Record<string, string>;
   quoteThreads?: QuoteThread[];
   inbox: InboxItem[];
+  inboxConnectors?: {source: string; configured: boolean; lastSync: number | null; error: string | null}[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];
   taskNotesDeferred?: boolean;

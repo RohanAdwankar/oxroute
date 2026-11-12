@@ -16,6 +16,7 @@ import { Icon } from "./Icon";
  */
 export function Inbox({
   items,
+  connectors,
   rows,
   onShowDone,
   agents,
@@ -29,6 +30,7 @@ export function Inbox({
   onCollapse,
 }: {
   items: InboxItem[];
+  connectors?: {source: string; configured: boolean; lastSync: number | null; error: string | null}[];
   /// The column as it is drawn; the cursor counts these.
   rows: InboxRow[];
   onShowDone: () => void;
@@ -98,6 +100,9 @@ export function Inbox({
           ),
         )}
       </div>
+      {connectors?.filter(source => source.configured).map(source => <div key={source.source} className="px-[18px] py-1 text-[11px] text-faint" title={source.error ?? "Read-only; waiting for your routing decision"}>
+        {source.source === "outlook-inbox" ? "Outlook" : "Slack"} · {source.error ? "sync interrupted" : source.lastSync ? "synced" : "loading"}
+      </div>)}
     </aside>
   );
 }
@@ -219,7 +224,7 @@ function Row({
   const footer = waiting
     ? item.suggested
       ? `→ ${name(item.suggested)}`
-      : "not routed yet"
+      : item.recommendation?.action === "spawn" ? "→ New agent" : item.recommendation?.action === "discard" ? "→ Dismiss" : "not routed yet"
     : item.outcome || "done";
   const footerTone = waiting
     ? "text-hold"
@@ -248,7 +253,7 @@ function Row({
       <span className="flex items-center gap-[7px]">
         <span className="tnum text-[9.5px] text-faint">{clock(signal.at)}</span>
         <span className="tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
-          {signal.source}
+          {signal.source === "outlook-inbox" ? "Outlook" : signal.source === "slack-inbox" ? "Slack" : signal.source}
         </span>
         {signal.label && (
           <span className="tnum truncate text-[9.5px] text-faint">{signal.label}</span>
@@ -259,7 +264,7 @@ function Row({
         {signal.text ? clip(signal.text, 130) : `${signal.attachments.length} attachment(s)`}
       </span>
 
-      <span className={`tnum text-[10px] ${footerTone}`}>{footer}</span>
+      <span title={waiting ? item.recommendation?.reason : undefined} className={`tnum text-[10px] ${footerTone}`}>{footer}</span>
     </button>
   );
 }

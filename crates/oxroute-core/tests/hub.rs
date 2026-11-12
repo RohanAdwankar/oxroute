@@ -245,7 +245,7 @@ impl Harness for FakeHarness {
     }
 
     async fn oneshot(&self, prompt: &str, schema: Value, _cwd: &str) -> Result<String> {
-        if schema.pointer("/properties/actions").is_some() {
+        if schema.pointer("/properties/actions").is_some() || schema.pointer("/properties/agentIds").is_some() {
             self.calls.lock().unwrap().predictions.push(prompt.into());
             let result = self.prediction_results.lock().unwrap().pop_front();
             tokio::time::sleep(self.prediction_delay).await;
@@ -464,6 +464,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         backend: Backend::Codex,
     };
     let config = Config {
+        inbox: Default::default(),
         source: None,
         web_url: "http://localhost:3939".into(),
         workspace: scratch.to_string_lossy().to_string(),
@@ -3799,4 +3800,60 @@ async fn suggestions_wait_until_assigned_work_has_no_actionable_tasks() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(w.calls.lock().unwrap().predictions.is_empty());
     assert!(w.hub.next_actions(&agent.id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn personal_inbox_context_waits_in_both_modes_despite_bindings_and_directive_syntax() {
+    for mode in [Mode::Ask,Mode::Auto] {
+        let w=world(mode,false).await;
+        let agent=w.hub.create_agent(None).unwrap();
+        for source in ["outlook-inbox","slack-inbox"] {
+            w.hub.store.bind(source,"D1","thread",&agent.id).unwrap();
+            let incoming=signal_from(source,"thread","first","rename remote topic");
+            w.hub.accept(incoming.clone()).await.unwrap();
+            w.hub.accept(incoming).await.unwrap();
+            assert!(w.calls.lock().unwrap().started.is_empty());
+            assert!(w.posts.lock().unwrap().replies.is_empty());
+            assert_eq!(w.hub.store.agent(&agent.id).unwrap().unwrap().name,agent.name);
+            let item=w.hub.store.inbox(10).unwrap().into_iter().find(|item|item.signal.source==source).unwrap();
+            assert_eq!(item.state,InboxState::Waiting);
+            w.hub.route(&item.signal.id,Routing::Existing{agent_ids:vec![agent.id.clone()]}).await.unwrap();
+            assert!(settle(||w.hub.store.agent(&agent.id).unwrap().unwrap().status==AgentStatus::Complete).await);
+            assert_eq!(w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().state,InboxState::Done);
+            let count=w.calls.lock().unwrap().started.len();
+            w.hub.accept(signal_from(source,"thread","second","More external context")).await.unwrap();
+            assert_eq!(w.calls.lock().unwrap().started.len(),count);
+            assert_eq!(w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().state,InboxState::Waiting);
+        }
+    }
+}
+
+
+#[tokio::test]
+async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conversation() {
+    for (subject,early,recent) in [("Storage capacity","Prior storage layout","Inspect the new capacity observations"),("Service reliability","Prior service topology","Review the latest failure measurements")] {
+        let reply=serde_json::json!({"action":"spawn","agentIds":[],"reason":"Separate review"}).to_string();
+        let w=build(Mode::Ask,Harnessed {predictions:vec![reply.clone();4],prediction_delay:Duration::from_millis(100),..Default::default()}).await;
+        let mut first=signal_from("outlook-inbox","context-thread","older",&format!("{early} {}","historical material ".repeat(1500)));first.label=subject.into();
+        w.hub.import_inbox(first,"").await.unwrap();
+        let item=w.hub.store.inbox(10).unwrap().remove(0);
+        let hub=w.hub.clone();let id=item.signal.id.clone();
+        let prediction=tokio::spawn(async move {hub.recommend_routing(&id).await});
+        assert!(settle(||!w.calls.lock().unwrap().predictions.is_empty()).await);
+        let mut latest=signal_from("outlook-inbox","context-thread","newer",recent);latest.label=subject.into();latest.at+=1.0;
+        w.hub.import_inbox(latest,"").await.unwrap();
+        prediction.await.unwrap().unwrap();
+        assert!(w.hub.recommend_routing(&item.signal.id).await.unwrap().is_some());
+        let calls=w.calls.lock().unwrap().predictions.clone();
+        assert!(calls.iter().skip(1).any(|prompt|prompt.contains(subject)&&prompt.contains(recent)));
+        assert!(!calls.last().unwrap().contains(early),"Old text must not displace recent messages");
+        let stored=w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().signal;
+        assert!(w.hub.store.routing_text(&stored,12000).unwrap().chars().count()<=12000);
+        let full=stored.text;
+        assert!(full.contains(early)&&full.contains(recent)&&full.chars().count()>12000);
+        let agent=w.hub.create_agent(None).unwrap();
+        w.hub.route(&item.signal.id,Routing::Existing {agent_ids:vec![agent.id.clone()]}).await.unwrap();
+        assert!(settle(||!w.calls.lock().unwrap().started.is_empty()).await);
+        assert!(w.calls.lock().unwrap().started[0].1.iter().filter_map(TurnInput::as_text).any(|text|text.contains(early)&&text.contains(recent)));
+    }
 }

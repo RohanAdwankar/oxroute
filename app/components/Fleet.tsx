@@ -84,6 +84,7 @@ export function Fleet({
         {routing ? (
           <>
             <span className="shrink-0 text-[12px] text-faint">Send this to</span>
+            {routing.sourceUrl && <a href={routing.sourceUrl} target="_blank" rel="noreferrer" aria-label="Open source message" title="Open source message" className="text-faint hover:text-ink"><Icon name="external" size={14} /></a>}
             <span className="truncate text-[14px]">
               {routing.signal.text
                 ? `“${clip(routing.signal.text, 120)}”`
@@ -115,6 +116,7 @@ export function Fleet({
         )}
       </div>
 
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{routing.signal.text}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

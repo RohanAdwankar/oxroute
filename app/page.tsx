@@ -1381,6 +1381,7 @@ export default function Home() {
           <>
             <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
               <Inbox
+                connectors={snapshot.inboxConnectors}
                 items={snapshot.inbox}
                 rows={rows}
                 onShowDone={() => setInboxDone((shown) => !shown)}
