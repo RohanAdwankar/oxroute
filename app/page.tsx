@@ -37,6 +37,7 @@ import {
   verbose,
   graph,
   wrap,
+  nextActionLayout,
   scalePanes,
   minimumPaneScale,
   terminalFontScale,
@@ -227,6 +228,7 @@ export default function Home() {
   const loud = useSyncExternalStore(verbose.subscribe, verbose.get, verbose.fallback);
   const drawn = useSyncExternalStore(graph.subscribe, graph.get, graph.fallback);
   const wrapped = useSyncExternalStore(wrap.subscribe, wrap.get, wrap.fallback);
+  const nextLayout = useSyncExternalStore(nextActionLayout.subscribe, nextActionLayout.get, nextActionLayout.fallback);
   const scaled = useSyncExternalStore(scalePanes.subscribe, scalePanes.get, scalePanes.fallback);
   const scaleFloor = useSyncExternalStore(minimumPaneScale.subscribe, minimumPaneScale.get, minimumPaneScale.fallback);
   const terminalScale = useSyncExternalStore(terminalFontScale.subscribe, terminalFontScale.get, terminalFontScale.fallback);
@@ -1252,6 +1254,8 @@ export default function Home() {
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
+          nextActionLayout={nextLayout}
+          onNextActionLayout={nextActionLayout.set}
           automaticTags={snapshot.automaticTags}
           onAutomaticTags={enabled => void run(() => api.setAutomaticTags(enabled))}
           automaticTitles={snapshot.automaticTitles}

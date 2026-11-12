@@ -64,6 +64,17 @@ try{
  await page.goto(`${ui}/?agent=${agent.id}`);
  const suggestions=page.getByRole('group',{name:'Suggested next steps'});
  await suggestions.waitFor();assert.equal(await suggestions.getByRole('button').count(),3);
+ const firstChoice=suggestions.getByRole('button').first();
+ assert.ok((await firstChoice.boundingBox()).height<40,'Suggestions default to subtle inline choices');
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ await page.getByTitle('Large choices with descriptions',{exact:true}).click();await page.keyboard.press('Escape');
+ await page.waitForFunction(()=>document.documentElement.dataset.nextActionLayout==='stacked');
+ assert.ok((await firstChoice.boundingBox()).height>=96,'Stacked layout remains available');
+ if(process.env.STACKED_SCREENSHOT)await page.screenshot({path:process.env.STACKED_SCREENSHOT});
+ await page.reload();await suggestions.waitFor();assert.ok((await firstChoice.boundingBox()).height>=96,'Layout persists across reload');
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ await page.getByTitle('Small inline suggestions',{exact:true}).click();await page.keyboard.press('Escape');
+ await page.waitForFunction(()=>document.documentElement.dataset.nextActionLayout==='subtle');
  const settings = await api('/api/state'); assert.equal(settings.mode,'ask'); assert.equal(settings.nextActionMode,'ask'); assert.equal(settings.nextActionSuggestions,true);
  const options=page.getByRole('button',{name:'Continue next actions automatically options',exact:true});
  await options.click();const suggestOption=page.getByRole('menuitemcheckbox',{name:'Suggest next actions',exact:true});

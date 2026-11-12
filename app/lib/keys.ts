@@ -199,3 +199,6 @@ export const verbose = choice<Verbose>("oxroute.verbose", "verbose", ["off", "on
 /** Paper or ink: the same palette, read the other way round. */
 export type Theme = "light" | "dark";
 export const theme = choice<Theme>("oxroute.theme", "theme", ["light", "dark"]);
+
+/** How next-action suggestions appear below a completed turn. */
+export const nextActionLayout = choice("oxroute.nextActionLayout", "nextActionLayout", ["subtle", "stacked"] as const);

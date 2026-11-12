@@ -31,6 +31,8 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
  * belongs in the interface itself.
  */
 export function Settings({
+  nextActionLayout,
+  onNextActionLayout,
   automaticTags,
   onAutomaticTags,
   automaticTitles,
@@ -53,6 +55,8 @@ export function Settings({
   onVim,
   onClose,
 }: {
+  nextActionLayout: "subtle" | "stacked";
+  onNextActionLayout: (layout: "subtle" | "stacked") => void;
   automaticTags: boolean;
   onAutomaticTags: (enabled: boolean) => void;
   automaticTitles: boolean;
@@ -93,6 +97,9 @@ export function Settings({
         className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
+        <Choice title="Next-action layout" detail="How suggestions appear after a completed turn."
+          options={[{ value: "subtle", label: "Subtle", detail: "Small inline suggestions" }, { value: "stacked", label: "Stacked", detail: "Large choices with descriptions" }]}
+          chosen={nextActionLayout} onChoose={onNextActionLayout} />
         <Choice title="Automatic card tags" detail="Luna adds topic tags after turns. Your tags stay unchanged; removed tags stay removed."
           options={[{ value: true, label: "On", detail: "Tag cards automatically" }, { value: false, label: "Off", detail: "Manage tags yourself" }]}
           chosen={automaticTags} onChoose={onAutomaticTags} />
