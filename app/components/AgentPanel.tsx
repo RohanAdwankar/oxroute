@@ -889,11 +889,17 @@ export function AgentPanel({
             })
           )}
           {agent.status === "complete" && optimistic.length === 0 && view.nextActions && (
-            <div role="group" aria-label="Suggested next steps" className="flex flex-wrap gap-x-4 gap-y-2 py-3 text-[12px] text-faint">
-              {view.nextActions.actions.map(action => <button key={action.message} type="button" title={action.message}
-                disabled={busy} onClick={() => sayImmediately(action.message, [], false)}
-                className="cursor-pointer text-left hover:text-ink disabled:opacity-40">{action.label}</button>)}
-            </div>
+            <section aria-label="Suggested next steps" role="group" className="max-w-3xl py-6">
+              <h3 className="mb-3 text-[16px] font-medium text-ink">Next</h3>
+              <div className="grid gap-3">
+                {view.nextActions.actions.map(action => <button key={action.message} type="button" aria-label={action.label} title={action.message}
+                  disabled={busy} onClick={() => sayImmediately(action.message, [], false)}
+                  className="min-h-24 cursor-pointer border border-rule px-5 py-4 text-left hover:bg-wash focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40">
+                  <span className="block text-[16px] font-medium text-ink">{action.label}</span>
+                  <span className="mt-1 block text-[14px] leading-relaxed text-mid">{action.message}</span>
+                </button>)}
+              </div>
+            </section>
           )}
         </div>
       </div>
