@@ -1900,6 +1900,7 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
         outcome: row.get("outcome")?,
         agent_ids,
         suggested: None,
+        recommendation: None,
     })
 }
 
@@ -2056,6 +2057,7 @@ mod tests {
         let next = crate::recommendations::NEXT;
         let routing = crate::recommendations::ROUTING;
         let context = serde_json::json!({"subject":"Compare storage options"});
+        let late = store.recommendation(next, "late", &context, &serde_json::json!(["Inspect"]), 0).unwrap();
         let first = store.recommendation(next, "one", &context, &serde_json::json!(["Compare", "Inspect", "Explain"]), 0).unwrap();
         let second = store.recommendation(next, "two", &context, &serde_json::json!(["Summarize"]), 0).unwrap();
         assert!(store.recommendation_feedback(next).unwrap().is_empty());
@@ -2073,6 +2075,11 @@ mod tests {
         assert_eq!(store.recommendation_feedback(next).unwrap()[0].id, second);
         assert_eq!(store.recommendation_guidance(next).unwrap().revision, 1);
         assert!(store.save_recommendation_guidance(next, 0, "Stale writer", &feedback).is_err());
+        let second_feedback = store.recommendation_feedback(next).unwrap();
+        store.save_recommendation_guidance(next, 1, "Prefer concise context", &second_feedback).unwrap();
+        store.choose_recommendation(late, "late", &serde_json::json!("Compare measurements")).unwrap();
+        store.show_recommendation(late).unwrap();
+        assert_eq!(store.recommendation_feedback(next).unwrap()[0].id, late, "Late choices on older predictions are not lost behind a cursor");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import {useRecommendationExposure} from "../lib/recommendation-exposure";
+import { useRef, useState } from "react";
 
 import { clip, since } from "../lib/format";
 import { hintFor } from "../lib/keys";
@@ -71,13 +72,15 @@ export function Fleet({
 }) {
   // Which model a new agent gets. It also picks the harness, since a model
   // belongs to exactly one.
+  const recommendationElement = useRef<HTMLDivElement>(null);
+  useRecommendationExposure(routing?.recommendation?.recommendationId, recommendationElement);
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
   const shown = agents;
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-[var(--bar)] shrink-0 items-center gap-3 border-b border-rule px-[var(--pane-x)]">
+      <div ref={recommendationElement} className="flex h-[var(--bar)] shrink-0 items-center gap-3 border-b border-rule px-[var(--pane-x)]">
         {routing ? (
           <>
             <span className="shrink-0 text-[12px] text-faint">Send this to</span>
@@ -86,6 +89,9 @@ export function Fleet({
                 ? `“${clip(routing.signal.text, 120)}”`
                 : `${routing.signal.attachments.length} attachment(s)`}
             </span>
+            {routing.recommendation && <span className="ml-auto truncate text-[11.5px] text-faint" title={routing.recommendation.reason} aria-label="Suggested route">
+              {routing.recommendation.action === "existing" ? routing.recommendation.agentIds.map(id => agents.find(agent => agent.id === id)?.name ?? id).join(", ") : routing.recommendation.action === "spawn" ? "New agent" : "Dismiss"}
+            </span>}
           </>
         ) : (
           <>
@@ -131,7 +137,7 @@ export function Fleet({
                 tags={tags[agent.id] ?? []}
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
-                suggested={routing?.suggested === agent.id}
+                suggested={routing?.suggested === agent.id || !!routing?.recommendation?.agentIds.includes(agent.id)}
                 focused={active && index === cursor}
                 hint={vim ? hintFor(index) : null}
                 onToggle={() => onToggle(agent.id)}

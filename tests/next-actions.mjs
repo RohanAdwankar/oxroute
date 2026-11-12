@@ -27,7 +27,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  if(method==='turn/start') {
   const turn={id:`turn-${++next}`,status:'completed'};result={turn};
   const prediction=!!params.outputSchema?.properties?.actions;
-  const text=prediction?JSON.stringify({actions,automatic}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
+  const text=params.outputSchema?.properties?.guidance?JSON.stringify({guidance:'Keep useful replies grounded in the current work'}):prediction?JSON.stringify({actions,automatic}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
   if(prediction){predictions++;automatic=null;}else if(!params.outputSchema)turns.push(params.input);
   setTimeout(()=>{
    for(const [method,extra] of [['turn/started',{turn}],['item/completed',{item:{id:`item-${next}`,type:'agentMessage',text,phase:'final_answer'}}],['turn/completed',{turn}]])

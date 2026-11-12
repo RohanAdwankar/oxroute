@@ -82,6 +82,7 @@ export interface InboxItem {
   agentIds: string[];
   /** The agent this thread is already wired to. Pre-ticked when routing. */
   suggested: string | null;
+  recommendation?: {recommendationId: number; action: "existing" | "spawn" | "discard"; agentIds: string[]; reason: string};
 }
 
 export interface Entry {

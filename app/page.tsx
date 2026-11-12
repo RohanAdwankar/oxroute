@@ -506,7 +506,7 @@ export default function Home() {
     (item: InboxItem, agents: Agent[]) => {
       showAgent(null);
       setRouting(item.signal.id);
-      setTicked(new Set(item.suggested ? [item.suggested] : []));
+      setTicked(new Set(!item.recommendation && item.suggested ? [item.suggested] : []));
       setFocus("fleet");
       // Start on the agent this thread already belongs to, if it has one.
       const at = agents.findIndex((a) => a.id === item.suggested);
@@ -921,6 +921,14 @@ export default function Home() {
   const deleteTask = useCallback((id: string) => void run(() => api.deleteTask(id)), [run]);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
+  useEffect(() => {
+    if (!routing) return;
+    let current = true;
+    void api.routingRecommendation(routing).then(recommendation => {
+      if (current && recommendation) setSnapshot(snapshot => ({...snapshot, inbox: snapshot.inbox.map(item => item.signal.id === routing ? {...item, recommendation} : item)}));
+    }).catch(complain);
+    return () => {current = false;};
+  }, [routing, complain]);
   const activeBoard = snapshot.boards.find((board) => board.id === boardId) ?? (boardId ? snapshot.boards[0] : null);
   const knownTags = [...new Set(Object.values(snapshot.tags).flat())].sort();
   const clearRouting = () => {

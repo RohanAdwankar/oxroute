@@ -8,6 +8,7 @@ import type {
   Agent,
   AgentView,
   Entry,
+  InboxItem,
   Arranged,
   Backend,
   Board,
@@ -108,6 +109,7 @@ export const api = {
   toolOutputs: (id: string, first: number, last: number, signal: AbortSignal) =>
     call<Record<string, string>>(`/api/agents/${encodeURIComponent(id)}/outputs?${new URLSearchParams({ first: String(first), last: String(last) })}`, { signal, priority: "high" }),
 
+  routingRecommendation: (signal: string) => post<InboxItem["recommendation"] | null>(`/api/routing-recommendations/${encodeURIComponent(signal)}`, {}),
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),
   routeSpawn: (signal: string, model?: string) =>

@@ -49,6 +49,8 @@ Metadata uses `gpt-6-luna` by default. An explicit `OXROUTE_TITLE_MODEL` or `[co
 
 **Next-action layout** is a browser preference in the same settings menu. Suggestions default to subtle inline choices; select **Stacked** for larger choices with descriptions. The Play dropdown independently controls whether next actions are suggested, and its main control governs automatic continuation.
 
+**Learn from choices** starts on. Displayed next-action choices and inbox routing advice learn from your selections and typed or routed alternatives. Silence and automatic continuations are not feedback. Each domain keeps separate versioned guidance; switching learning off retains that guidance. Routing advice appears in the existing destination chooser; automatic delivery and explicit bindings keep their existing behavior.
+
 ## Agent CLI
 
 `oxroute-agent` discovers named commands and request flags from

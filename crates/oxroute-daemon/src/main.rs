@@ -233,6 +233,7 @@ async fn serve() -> Result<()> {
         .route("/api/native-preview", get(native_preview))
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
+        .route("/api/routing-recommendations/{id}", post(routing_recommendation))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -573,6 +574,10 @@ struct RouteBody {
     signal: String,
     #[serde(flatten)]
     routing: Routing,
+}
+
+async fn routing_recommendation(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Option<oxroute_core::recommendations::RoutingAdvice>>, Failed> {
+    Ok(Json(hub.recommend_routing(&id).await?))
 }
 
 async fn route(

@@ -642,6 +642,8 @@ pub struct InboxItem {
     /// The agent this thread is already wired to, if any. Pre-ticked in the UI.
     #[serde(default)]
     pub suggested: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<crate::recommendations::RoutingAdvice>,
 }
 
 /// Everything the hub pushes out. Surfaces subscribe and re-render.
@@ -817,6 +819,7 @@ mod tests {
             outcome: String::new(),
             agent_ids: vec!["a".into()],
             suggested: Some("a".into()),
+            recommendation: None,
         };
         let encoded = serde_json::to_value(&item).unwrap();
         assert!(encoded.get("agentIds").is_some());

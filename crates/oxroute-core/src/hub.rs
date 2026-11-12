@@ -451,8 +451,8 @@ impl Hub {
     }
 
     pub fn recommendation_shown(self: &Arc<Self>, id: i64) -> Result<()> {
-        if self.recommendation_learning() {
-            if let Some(domain) = self.store.show_recommendation(id)? { self.clone().learn_recommendations(&domain); }
+        if let Some(domain) = self.store.show_recommendation(id)? {
+            if self.recommendation_learning() { self.clone().learn_recommendations(&domain); }
         }
         Ok(())
     }
@@ -661,6 +661,7 @@ impl Hub {
             ticker.tick().await;
             loop {
                 ticker.tick().await;
+                for domain in [recommendations::NEXT, recommendations::ROUTING] { self.clone().learn_recommendations(domain); }
                 let at = now();
                 let reason = dashboard::stalled_reason(self.config.stall_timeout);
                 match self
@@ -994,6 +995,47 @@ impl Hub {
 
     /// Send a waiting signal somewhere. This is what the inbox's buttons do,
     /// in every surface.
+    fn routing_advice(&self, signal: &str) -> Result<Option<recommendations::RoutingAdvice>> {
+        self.store.get(&format!("routing-advice:{signal}"))?.map(|value| serde_json::from_str(&value).map_err(Into::into)).transpose()
+    }
+
+    pub async fn recommend_routing(self: &Arc<Self>, signal_id: &str) -> Result<Option<recommendations::RoutingAdvice>> {
+        let lock = self.lock_for(&format!("routing-advice:{signal_id}")).await;
+        let _held = lock.lock().await;
+        let item = self.store.inbox_item(signal_id)?.context("no such inbox item")?;
+        if item.state != InboxState::Waiting || self.store.bound_agent(&item.signal.source, &item.signal.conversation, &item.signal.thread_key)?.is_some() { return Ok(None); }
+        let agents = self.store.unarchived_agents()?;
+        let available: Vec<_> = agents.iter().map(|agent| agent.id.clone()).collect();
+        if let Some(advice) = self.routing_advice(signal_id)? {
+            if advice.choice.agent_ids.iter().all(|id| available.contains(id)) { return Ok(Some(advice)); }
+        }
+        let tags = self.store.all_tags()?;
+        let roster: Vec<_> = agents.iter().map(|agent| serde_json::json!({"id":agent.id,"name":agent.name,"status":agent.status,"tags":tags.get(&agent.id)})).collect();
+        let context = serde_json::json!({"item":{"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text.chars().take(12000).collect::<String>()},"agents":roster});
+        let guidance = self.store.recommendation_guidance(recommendations::ROUTING)?;
+        let response = self.harness(Backend::Codex).metadata(&recommendations::apply(&recommendations::routing_prompt(&context), &guidance), recommendations::routing_schema(), &self.config.workspace).await?;
+        let available: Vec<_> = self.store.unarchived_agents()?.into_iter().map(|agent| agent.id).collect();
+        let choice = recommendations::parse_routing(&response, &available)?;
+        if self.store.inbox_item(signal_id)?.is_none_or(|item| item.state != InboxState::Waiting) { return Ok(None); }
+        let recommendation_id = self.store.recommendation(recommendations::ROUTING, signal_id, &context, &serde_json::to_value(&choice)?, guidance.revision)?;
+        let advice = recommendations::RoutingAdvice {recommendation_id,choice};
+        self.store.set(&format!("routing-advice:{signal_id}"), &serde_json::to_string(&advice)?)?;
+        self.emit(Event::Sync);
+        Ok(Some(advice))
+    }
+
+    fn learn_routing_choice(self: &Arc<Self>, signal_id: &str, actual: &Routing) {
+        if !self.recommendation_learning() { return; }
+        let result: Result<()> = (|| {
+            if let Some(advice) = self.routing_advice(signal_id)? {
+                self.store.choose_recommendation(advice.recommendation_id, signal_id, &serde_json::to_value(actual)?)?;
+                self.clone().learn_recommendations(recommendations::ROUTING);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result { tracing::warn!(%error, "could not record routing choice"); }
+    }
+
     pub async fn route(self: &Arc<Self>, signal_id: &str, routing: Routing) -> Result<()> {
         let item = self
             .store
@@ -1004,9 +1046,11 @@ impl Hub {
         }
         let signal = item.signal;
 
+        let actual = routing.clone();
         let agents = match routing {
             Routing::Discard => {
                 self.resolve(&signal, "discarded", &[]).await;
+                self.learn_routing_choice(signal_id, &actual);
                 return Ok(());
             }
             Routing::Spawn {
@@ -1055,6 +1099,7 @@ impl Hub {
         let names = agents.iter().map(|a| a.name.clone()).collect::<Vec<_>>().join(", ");
         let ids = agents.iter().map(|a| a.id.clone()).collect::<Vec<_>>();
         self.resolve(&signal, &format!("sent to {names}"), &ids).await;
+        self.learn_routing_choice(signal_id, &actual);
 
         for agent in agents {
             // Only the thread's own agent answers back into the thread; a
@@ -3158,6 +3203,10 @@ impl Hub {
                 )
                 .ok()
                 .flatten();
+            if item.state == InboxState::Waiting && item.suggested.is_none() {
+                item.recommendation = self.routing_advice(&item.signal.id)?;
+                if let Some(advice) = &item.recommendation { item.suggested = advice.choice.agent_ids.first().cloned(); }
+            }
         }
         let quote_threads = self.store.quote_threads()?;
         let mut pane_links = self.store.pane_links()?;

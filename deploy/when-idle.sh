@@ -131,6 +131,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/downloads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/artifact-links.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/app-links.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/next-actions.mjs)
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/recommendation-learning.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/card-automation.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 node tests/file-workflows.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/workstream-cards.mjs)
