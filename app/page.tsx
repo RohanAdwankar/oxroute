@@ -61,6 +61,7 @@ type Column = (typeof COLUMNS)[number];
 
 const EMPTY: Snapshot = {
   mode: "ask",
+  nextActionMode: "ask",
   defaultModel: "",
   artifactRoot: "",
   agents: [],
@@ -1295,6 +1296,7 @@ export default function Home() {
         snapshot={snapshot}
         notice={notice}
         onMode={(mode: Mode) => void run(() => api.setMode(mode))}
+        onNextActionMode={(mode: Mode) => void run(() => api.setNextActionMode(mode))}
         inboxOpen={inboxOpen}
         onInbox={() => setInboxVisible(!inboxOpen)}
         tasksOpen={tasksOpen}

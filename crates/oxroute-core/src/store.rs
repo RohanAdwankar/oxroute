@@ -162,6 +162,8 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    // Split the old shared switch once, preserving its existing behavior.
+    conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('next-action-mode', COALESCE((SELECT value FROM kv WHERE key = 'mode'), 'ask'))", [])?;
     // Reviews retain publication identity; Git owns the diff content.
     conn.execute("UPDATE kv SET value = json_remove(value, '$.snapshot.files')
         WHERE key GLOB 'review:*' AND json_valid(value)
@@ -1871,6 +1873,21 @@ mod tests {
         let rescued = holder.join().unwrap();
         for reader in readers { reader.await.unwrap(); }
         assert!(!rescued, "Database contention starved an unrelated async request");
+    }
+
+    #[test]
+    fn splitting_routing_settings_preserves_the_old_value_only_once() {
+        for mode in ["ask", "auto"] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute("INSERT INTO kv (key, value) VALUES ('mode', ?1)", [mode]).unwrap();
+            migrate(&conn).unwrap();
+            let next = || conn.query_row("SELECT value FROM kv WHERE key = 'next-action-mode'", [], |row| row.get::<_, String>(0)).unwrap();
+            assert_eq!(next(), mode);
+            conn.execute("UPDATE kv SET value = ?1 WHERE key = 'mode'", [if mode == "auto" { "ask" } else { "auto" }]).unwrap();
+            migrate(&conn).unwrap();
+            assert_eq!(next(), mode);
+        }
     }
 
     #[test]

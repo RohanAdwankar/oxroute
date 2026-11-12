@@ -5,16 +5,12 @@ import { Icon, type IconName } from "./Icon";
 import { Search } from "./Search";
 import { useEffect, useState, type ReactNode } from "react";
 
-/**
- * The top bar: the wordmark, the one global switch, and the counters.
- *
- * The mode switch is the only setting in the interface, and it is up here
- * because it changes what happens to everything that arrives next.
- */
+/** Global input routing and next-action continuation are independent. */
 export function Chrome({
   snapshot,
   notice,
   onMode,
+  onNextActionMode,
   inboxOpen,
   onInbox,
   tasksOpen,
@@ -32,6 +28,7 @@ export function Chrome({
   snapshot: Snapshot;
   notice: string | null;
   onMode: (mode: Mode) => void;
+  onNextActionMode: (mode: Mode) => void;
   inboxOpen: boolean;
   onInbox: () => void;
   tasksOpen: boolean;
@@ -62,20 +59,24 @@ export function Chrome({
   }, [panes]);
   return (
     <header data-app-header style={{ zoom: scale }} className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
-      <div className="flex items-stretch" role="group" aria-label="routing mode">
+      <div className="flex items-stretch" role="group" aria-label="Input routing">
         <ModeButton
-          label="Ask me first"
+          label="Ask me before routing inputs"
           icon="ask"
           active={snapshot.mode === "ask"}
           onClick={() => onMode("ask")}
         />
         <ModeButton
-          label="Auto route"
+          label="Route inputs automatically"
           icon="auto"
           active={snapshot.mode === "auto"}
           onClick={() => onMode("auto")}
         />
       </div>
+
+      <ModeButton label="Continue next actions automatically" icon="play"
+        active={snapshot.nextActionMode === "auto"}
+        onClick={() => onNextActionMode(snapshot.nextActionMode === "auto" ? "ask" : "auto")} />
 
       <Cell
         onClick={onInbox}

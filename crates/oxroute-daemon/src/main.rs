@@ -254,6 +254,7 @@ async fn serve() -> Result<()> {
         .route("/api/task-attachments", post(create_task_with_attachments))
         .route("/api/task-diagram.svg", get(task_diagram))
         .route("/api/mode", post(mode))
+        .route("/api/next-action-mode", post(next_action_mode))
         .route("/api/agents/{id}/model", post(change_model))
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
@@ -1265,6 +1266,11 @@ async fn mode(
     Json(body): Json<ModeBody>,
 ) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.set_mode(Mode::parse(&body.mode))?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+async fn next_action_mode(State(hub): Hubs, Json(body): Json<ModeBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    hub.set_next_action_mode(Mode::parse(&body.mode))?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 

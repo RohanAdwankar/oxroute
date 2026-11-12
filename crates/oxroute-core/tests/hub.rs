@@ -3686,6 +3686,7 @@ async fn completed_work_produces_three_private_persisted_replies() {
 #[tokio::test]
 async fn auto_route_continues_authorized_work_and_accepts_no_further_action() {
     let w = build(Mode::Auto, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+    w.hub.set_next_action_mode(Mode::Auto).unwrap();
     let agent = w.hub.create_agent(None).unwrap();
     w.hub.say_to(&agent.id, "Inspect and apply the needed changes").await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2 && w.hub.next_actions(&agent.id).unwrap().is_some()).await);
@@ -3707,4 +3708,23 @@ async fn an_intervening_user_message_discards_delayed_predictions() {
     tokio::time::sleep(Duration::from_millis(250)).await;
     assert!(w.hub.next_actions(&agent.id).unwrap().is_none());
     assert_eq!(w.calls.lock().unwrap().started.len(),2);
+}
+
+#[tokio::test]
+async fn next_action_continuation_is_independent_of_input_routing() {
+    for input in [Mode::Ask, Mode::Auto] {
+        for next in [Mode::Ask, Mode::Auto] {
+            let w = build(input, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+            w.hub.set_next_action_mode(next).unwrap();
+            assert_eq!(w.hub.mode(), input);
+            let agent = w.hub.create_agent(None).unwrap();
+            w.hub.say_to(&agent.id, "Inspect and apply the agreed changes").await.unwrap();
+            let expected = if next == Mode::Auto { 2 } else { 1 };
+            assert!(settle(|| w.calls.lock().unwrap().started.len() == expected && w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            assert_eq!(w.calls.lock().unwrap().started.len(), expected);
+            w.hub.set_mode(if input == Mode::Auto { Mode::Ask } else { Mode::Auto }).unwrap();
+            assert_eq!(w.hub.next_action_mode(), next);
+        }
+    }
 }

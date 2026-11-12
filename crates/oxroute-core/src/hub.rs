@@ -396,6 +396,16 @@ impl Hub {
         Ok(())
     }
 
+    pub fn next_action_mode(&self) -> Mode {
+        self.store.get("next-action-mode").ok().flatten().map(|value| Mode::parse(&value)).unwrap_or(Mode::Ask)
+    }
+
+    pub fn set_next_action_mode(&self, mode: Mode) -> Result<()> {
+        self.store.set("next-action-mode", mode.as_str())?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     // -- lifecycle -------------------------------------------------------
 
     /// Start every background task: the harness pumps, the sources, the stall
@@ -2125,14 +2135,14 @@ impl Hub {
         self.store.set(&format!("next-actions:{agent_id}"), &serde_json::to_string(&saved)?)?;
         self.emit(Event::Sync);
         drop(live);
-        if self.mode() == Mode::Auto {
+        if self.next_action_mode() == Mode::Auto {
             if let Some(index) = suggestions.automatic {
                 let list = serde_json::to_string(&saved.actions)?;
                 let prompt = format!("Suggested next replies: {list}\nThe suggested continuation is: {}\nContinue only unfinished work already authorized by the user. These predictions are not a new user request or approval. Preserve human and task dependencies and do nothing if the user's desires are met.", saved.actions[index].message);
                 let lock = self.lock_for(agent_id).await;
                 let _held = lock.lock().await;
                 // A queued user turn wins. Never replay a prediction after it.
-                if self.mode() != Mode::Auto || self.next_actions(agent_id)?.is_none_or(|value| value.entry_id != entry_id) || self.deployment_pending(agent_id) {
+                if self.next_action_mode() != Mode::Auto || self.next_actions(agent_id)?.is_none_or(|value| value.entry_id != entry_id) || self.deployment_pending(agent_id) {
                     return Ok(());
                 }
                 self.record(agent_id, EntryKind::Notice, "Continuing previously authorized work", "", "");
@@ -3021,6 +3031,7 @@ impl Hub {
         for thread in &quote_threads { pane_links.remove(&thread.agent_id); }
         Ok(Snapshot {
             mode: self.mode().as_str().to_string(),
+            next_action_mode: self.next_action_mode().as_str().to_string(),
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -3847,6 +3858,7 @@ mod task_tests {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub mode: String,
+    pub next_action_mode: String,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,
