@@ -1455,6 +1455,10 @@ export default function Home() {
                     <AgentPanel
                       paneHandle={paneHandle}
                       view={view}
+                      globalAutorun={snapshot.nextActionMode === "auto"}
+                      onAutorun={enabled => api.setAutorun(id, enabled).then(result => {
+                        setDetails(current => current[id] ? {...current, [id]: {...current[id], autorun: result.autorun}} : current);
+                      }).catch(complain)}
                       onEarlier={async () => {
                         const page = await api.agent(id, view.timeline[0]?.id);
                         setDetails(current => {

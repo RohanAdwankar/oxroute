@@ -77,6 +77,7 @@ async function agentPost<T>(agent: string, path: string, payload: unknown) {
 }
 
 export const api = {
+  setAutorun: (agent: string, enabled: boolean | null) => agentPost<{autorun: boolean | null}>(agent, `/api/agents/${encodeURIComponent(agent)}/autorun`, {enabled}),
   snapshot: () => call<Snapshot>("/api/state", { headers: { "x-oxroute-task-notes": "deferred" } }),
   taskNotes: () => call<TaskNote[]>("/api/task-notes"),
   search: (query: string, signal?: AbortSignal) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`, { signal }),

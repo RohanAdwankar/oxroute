@@ -409,6 +409,21 @@ impl Hub {
         Ok(())
     }
 
+    pub fn conversation_autorun(&self, agent: &str) -> Result<Option<bool>> {
+        self.store.get(&format!("autorun:{agent}"))?.map(|value| serde_json::from_str(&value).map_err(Into::into)).transpose().map(Option::flatten)
+    }
+
+    pub fn autorun_enabled(&self, agent: &str) -> Result<bool> {
+        Ok(self.conversation_autorun(agent)?.unwrap_or(self.next_action_mode() == Mode::Auto))
+    }
+
+    pub fn set_conversation_autorun(&self, agent: &str, enabled: Option<bool>) -> Result<()> {
+        self.store.agent(agent)?.context("no such agent")?;
+        self.store.set(&format!("autorun:{agent}"), &serde_json::to_string(&enabled)?)?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     pub fn next_action_suggestions(&self) -> bool {
         self.store.get("next-action-suggestions").ok().flatten().as_deref() == Some("true")
     }
@@ -2259,7 +2274,7 @@ impl Hub {
     async fn next_actions_once(self: &Arc<Self>, agent_id: &str) -> Result<()> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         if agent.status != AgentStatus::Complete { return Ok(()); }
-        if !self.next_action_suggestions() && self.next_action_mode() != Mode::Auto { return Ok(()); }
+        if !self.next_action_suggestions() && !self.autorun_enabled(agent_id)? { return Ok(()); }
         if self.store.tasks()?.iter().any(|task| task.agent_id == agent_id && task.status == TaskStatus::Incomplete) { return Ok(()); }
         let Some(entry_id) = self.store.latest_entry_id(agent_id)? else { return Ok(()); };
         let entries = self.store.recent_messages(agent_id, 8)?;
@@ -2285,14 +2300,14 @@ impl Hub {
         self.store.set(&format!("next-actions:{agent_id}"), &serde_json::to_string(&saved)?)?;
         self.emit(Event::Sync);
         drop(live);
-        if self.next_action_mode() == Mode::Auto {
+        if self.autorun_enabled(agent_id)? {
             if let Some(index) = suggestions.automatic {
                 let list = serde_json::to_string(&saved.actions)?;
                 let prompt = format!("Suggested next replies: {list}\nThe suggested continuation is: {}\nContinue only unfinished work already authorized by the user. These predictions are not a new user request or approval. Preserve human and task dependencies and do nothing if the user's desires are met.", saved.actions[index].message);
                 let lock = self.lock_for(agent_id).await;
                 let _held = lock.lock().await;
                 // A queued user turn wins. Never replay a prediction after it.
-                if self.next_action_mode() != Mode::Auto || self.next_actions(agent_id)?.is_none_or(|value| value.entry_id != entry_id) || self.deployment_pending(agent_id) {
+                if !self.autorun_enabled(agent_id)? || self.next_actions(agent_id)?.is_none_or(|value| value.entry_id != entry_id) || self.deployment_pending(agent_id) {
                     return Ok(());
                 }
                 self.record(agent_id, EntryKind::Notice, "Continuing previously authorized work", "", "");

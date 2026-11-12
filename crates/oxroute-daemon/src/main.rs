@@ -262,6 +262,7 @@ async fn serve() -> Result<()> {
         .route("/api/recommendation-learning", get(recommendation_learning).post(set_recommendation_learning))
         .route("/api/recommendations/{id}/shown", post(recommendation_shown))
         .route("/api/agents/{id}/model", post(change_model))
+        .route("/api/agents/{id}/autorun", post(conversation_autorun))
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
         .route("/api/agents/{id}/diagram/preview", post(diagram_preview))
@@ -412,6 +413,7 @@ async fn agent(
         "agent": agent,
         "timeline": timeline,
         "hasEarlier": has_earlier,
+        "autorun": hub.conversation_autorun(&id)?,
         "nextActions": if hub.next_action_suggestions() { hub.next_actions(&id)? } else { None },
         "delivery": agent.delivery(),
     }))).into_response())
@@ -419,6 +421,14 @@ async fn agent(
 
 #[derive(Deserialize)]
 struct ToolOutputsQuery { first: i64, last: i64 }
+
+#[derive(Deserialize)]
+struct AutorunBody { enabled: Option<bool> }
+
+async fn conversation_autorun(State(hub): Hubs, Path(id): Path<String>, Json(body): Json<AutorunBody>) -> Result<Json<serde_json::Value>, Failed> {
+    hub.set_conversation_autorun(&id, body.enabled)?;
+    Ok(Json(json!({"autorun":hub.conversation_autorun(&id)?})))
+}
 
 async fn tool_outputs(State(hub): Hubs, Path(id): Path<String>, Query(query): Query<ToolOutputsQuery>) -> Result<Json<HashMap<i64, String>>, Failed> {
     if query.first <= 0 || query.last < query.first { return Err(anyhow::anyhow!("invalid entry range").into()); }

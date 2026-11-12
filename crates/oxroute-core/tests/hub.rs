@@ -3711,6 +3711,45 @@ async fn an_intervening_user_message_discards_delayed_predictions() {
 }
 
 #[tokio::test]
+async fn conversation_autorun_overrides_global_mode_without_affecting_other_agents() {
+    for global in [Mode::Ask, Mode::Auto] {
+        for override_ in [None, Some(false), Some(true)] {
+            let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(Some(0)), next_reply(None)], ..Default::default() }).await;
+            w.hub.set_next_action_mode(global).unwrap();
+            let agent = w.hub.create_agent(None).unwrap();
+            let other = w.hub.create_agent(None).unwrap();
+            w.hub.set_conversation_autorun(&agent.id, override_).unwrap();
+            assert_eq!(w.hub.conversation_autorun(&agent.id).unwrap(), override_);
+            assert_eq!(w.hub.autorun_enabled(&other.id).unwrap(), global == Mode::Auto);
+            let expected = if override_.unwrap_or(global == Mode::Auto) { 2 } else { 1 };
+            w.hub.say_to(&agent.id, "Inspect the authorized work").await.unwrap();
+            assert!(settle(|| w.calls.lock().unwrap().started.len() == expected && w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            assert_eq!(w.calls.lock().unwrap().started.len(), expected);
+            assert_eq!(w.hub.mode(), Mode::Ask);
+            assert!(w.hub.next_action_suggestions());
+            w.hub.set_conversation_autorun(&agent.id, None).unwrap();
+            assert_eq!(w.hub.autorun_enabled(&agent.id).unwrap(), global == Mode::Auto);
+        }
+    }
+}
+
+#[tokio::test]
+async fn disabling_conversation_autorun_preserves_active_turn_and_pending_suggestions() {
+    let w = build(Mode::Ask, Harnessed { predictions: vec![next_reply(Some(0))], delay:Duration::from_millis(150), prediction_delay:Duration::from_millis(150), ..Default::default() }).await;
+    w.hub.set_next_action_mode(Mode::Auto).unwrap();
+    let agent = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&agent.id, "Inspect the current work").await.unwrap();
+    assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
+    w.hub.set_conversation_autorun(&agent.id, Some(false)).unwrap();
+    assert_eq!(w.hub.store.agent(&agent.id).unwrap().unwrap().status, AgentStatus::Working);
+    assert!(settle(|| !w.calls.lock().unwrap().predictions.is_empty()).await);
+    assert!(settle(|| w.hub.next_actions(&agent.id).unwrap().is_some()).await);
+    assert_eq!(w.calls.lock().unwrap().started.len(), 1);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty(), "Turning off autorun does not interrupt a turn");
+}
+
+#[tokio::test]
 async fn next_action_continuation_is_independent_of_input_routing() {
     for input in [Mode::Ask, Mode::Auto] {
         for next in [Mode::Ask, Mode::Auto] {

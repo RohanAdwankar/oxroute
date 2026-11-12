@@ -159,6 +159,8 @@ export function AgentPanel({
   onReact,
   models,
   onModel,
+  globalAutorun,
+  onAutorun,
   initialPreview,
   paneHandle,
   quoteThreads,
@@ -194,6 +196,8 @@ export function AgentPanel({
   /// session's harness can actually run.
   models: ModelInfo[];
   onModel: (model: string) => void;
+  globalAutorun: boolean;
+  onAutorun: (enabled: boolean | null) => Promise<void>;
   onInterrupt: () => void;
   /// Branch this session and read the branch here, in this pane.
   onFork: () => void;
@@ -213,6 +217,12 @@ export function AgentPanel({
   verbose: boolean;
 }) {
   const recommendationElement = useRef<HTMLElement>(null);
+  const [changingAutorun, setChangingAutorun] = useState(false);
+  const changeAutorun = async (enabled: boolean | null) => {
+    setChangingAutorun(true);
+    try { await onAutorun(enabled); }
+    finally { setChangingAutorun(false); }
+  };
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
   const [diffs, setDiffs] = useState(() => diffsFor(view.agent.id));
   const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
@@ -750,6 +760,14 @@ export function AgentPanel({
           className="flex cursor-pointer items-center justify-center px-3 text-mid hover:text-ink">
           <Icon name="diff" size={14} />
         </button>}
+        <SplitAction label="Conversation autorun" icon="play" pressed={view.autorun ?? globalAutorun} disabled={changingAutorun}
+          hint={`Autorun ${view.autorun ?? globalAutorun ? "on" : "off"}${view.autorun == null ? " · using global setting" : " · this conversation"}`}
+          onClick={() => void changeAutorun(!(view.autorun ?? globalAutorun))}
+          menu={[
+            {label: "Use global setting", icon: view.autorun == null ? "tick" : "settings", checked: view.autorun == null, onClick: () => void changeAutorun(null)},
+            {label: "Autorun on", icon: view.autorun === true ? "tick" : "play", checked: view.autorun === true, onClick: () => void changeAutorun(true)},
+            {label: "Autorun off", icon: view.autorun === false ? "tick" : "stop", checked: view.autorun === false, onClick: () => void changeAutorun(false)},
+          ]} />
         <SplitAction
           label={can.fork ? "Fork in chat" : `${agent.backend} cannot fork a session`}
           icon="fork"
