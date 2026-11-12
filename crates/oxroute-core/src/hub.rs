@@ -426,6 +426,16 @@ impl Hub {
         Ok(())
     }
 
+    pub fn automatic_tags(&self) -> bool {
+        self.store.get("automatic-tags").ok().flatten().as_deref() == Some("true")
+    }
+
+    pub fn set_automatic_tags(&self, enabled: bool) -> Result<()> {
+        self.store.set("automatic-tags", if enabled { "true" } else { "false" })?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     // -- lifecycle -------------------------------------------------------
 
     /// Start every background task: the harness pumps, the sources, the stall
@@ -2746,10 +2756,13 @@ impl Hub {
                 return;
             }
             let outcome = self.name_once(&agent_id, target, recent).await;
-            self.naming.lock().await.remove(&agent_id);
             if let Err(error) = outcome {
                 tracing::debug!(agent = agent_id, %error, "naming failed");
             }
+            if let Err(error) = self.tags_once(&agent_id).await {
+                tracing::debug!(agent = agent_id, %error, "automatic tagging failed");
+            }
+            self.naming.lock().await.remove(&agent_id);
         });
     }
 
@@ -2797,6 +2810,32 @@ impl Hub {
             return Ok(());
         }
         if self.store.generated_title(agent_id, &title)? { self.publish_title(agent_id, &title).await?; }
+        Ok(())
+    }
+
+    async fn tags_once(self: &Arc<Self>, agent_id: &str) -> Result<()> {
+        if !self.automatic_tags() { return Ok(()); }
+        let agent = self.store.agent(agent_id)?.context("no such agent")?;
+        let revision = self.store.latest_entry_id(agent_id)?;
+        let entries = self.store.recent_messages(agent_id, 8)?;
+        let messages: Vec<_> = entries.iter().filter_map(|entry| match entry.kind {
+            EntryKind::Received | EntryKind::You => Some(("user".into(), entry.text.clone())),
+            EntryKind::Said => Some(("assistant".into(), entry.text.clone())),
+            _ => None,
+        }).collect();
+        if messages.is_empty() { return Ok(()); }
+        let response = self.harness(Backend::Codex).metadata(
+            &tags::prompt(&naming::conversation(&messages), &self.store.tags(agent_id)?),
+            tags::schema(), &agent.cwd,
+        ).await?;
+        if !self.automatic_tags() || self.store.latest_entry_id(agent_id)? != revision { return Ok(()); }
+        let suggested = tags::parse_suggestions(&response)?;
+        let excluded: Vec<String> = self.store.get(&format!("excluded-tags:{agent_id}"))?
+            .map(|value| serde_json::from_str(&value)).transpose()?.unwrap_or_default();
+        let current = self.store.tags(agent_id)?;
+        let additions: Vec<_> = suggested.into_iter().filter(|tag| !excluded.contains(tag)).collect();
+        self.store.set_tags(agent_id, &tags::change(&current, &additions, &[], &[]))?;
+        self.emit(Event::Sync);
         Ok(())
     }
 
@@ -3059,6 +3098,7 @@ impl Hub {
             next_action_mode: self.next_action_mode().as_str().to_string(),
             next_action_suggestions: self.next_action_suggestions(),
             automatic_titles: self.automatic_titles(),
+            automatic_tags: self.automatic_tags(),
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -3453,6 +3493,14 @@ impl Hub {
         }
         let current = self.store.tags(agent_id)?;
         let next = tags::change(&current, add, remove, set);
+        let excluded_key = format!("excluded-tags:{agent_id}");
+        let mut excluded: Vec<String> = self.store.get(&excluded_key)?
+            .map(|value| serde_json::from_str(&value)).transpose()?.unwrap_or_default();
+        excluded.extend(remove.iter().filter_map(|tag| tags::normalize(tag)).filter(|tag| !tag.contains(':')));
+        excluded.retain(|tag| !next.contains(tag));
+        excluded.sort();
+        excluded.dedup();
+        self.store.set(&excluded_key, &serde_json::to_string(&excluded)?)?;
         self.store.set_tags(agent_id, &next)?;
         if current.iter().filter(|v| v.starts_with("workflow:")).ne(next.iter().filter(|v| v.starts_with("workflow:"))) {
             if let Some(mut brief) = self.workstream(agent_id)? {
@@ -3888,6 +3936,7 @@ pub struct Snapshot {
     pub next_action_mode: String,
     pub next_action_suggestions: bool,
     pub automatic_titles: bool,
+    pub automatic_tags: bool,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,

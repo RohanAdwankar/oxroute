@@ -31,6 +31,8 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
  * belongs in the interface itself.
  */
 export function Settings({
+  automaticTags,
+  onAutomaticTags,
   automaticTitles,
   onAutomaticTitles,
   theme,
@@ -51,6 +53,8 @@ export function Settings({
   onVim,
   onClose,
 }: {
+  automaticTags: boolean;
+  onAutomaticTags: (enabled: boolean) => void;
   automaticTitles: boolean;
   onAutomaticTitles: (enabled: boolean) => void;
   theme: Theme;
@@ -89,6 +93,9 @@ export function Settings({
         className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
+        <Choice title="Automatic card tags" detail="Luna adds topic tags after turns. Your tags stay unchanged; removed tags stay removed."
+          options={[{ value: true, label: "On", detail: "Tag cards automatically" }, { value: false, label: "Off", detail: "Manage tags yourself" }]}
+          chosen={automaticTags} onChoose={onAutomaticTags} />
         <Choice title="Automatic card titles" detail="Luna names cards until you choose a title. Existing titles stay unchanged."
           options={[{ value: true, label: "On", detail: "Name untitled cards automatically" }, { value: false, label: "Off", detail: "Keep titles as they are" }]}
           chosen={automaticTitles} onChoose={onAutomaticTitles} />

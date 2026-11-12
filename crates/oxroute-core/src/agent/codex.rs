@@ -706,7 +706,7 @@ impl Harness for CodexHarness {
     }
 
     async fn metadata(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
-        self.structured(prompt, schema, cwd, Some("gpt-6-luna")).await
+        self.structured(prompt, schema, cwd, Some(self.title_model.as_deref().unwrap_or("gpt-6-luna"))).await
     }
 }
 
