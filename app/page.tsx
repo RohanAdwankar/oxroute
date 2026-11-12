@@ -331,7 +331,11 @@ export default function Home() {
     };
   }, [say]);
 
-  const reload = useCallback(() => setRevision((current) => current + 1), []);
+  const snapshotDirty = useRef(false);
+  const reload = useCallback(() => {
+    if (snapshotUpdates.current) { snapshotDirty.current = true; return; }
+    setRevision((current) => current + 1);
+  }, []);
 
   const entryFocused = useCallback((entry: number) => {
     setFocusEntry(current => current === entry ? null : current);
@@ -553,12 +557,25 @@ export default function Home() {
         else setFocus("inbox");
       },
       (error: unknown) => live && complain(error),
-    ).finally(() => { if (snapshotUpdates.current === updates) snapshotUpdates.current = null; });
+    ).finally(() => {
+      if (snapshotUpdates.current !== updates) return;
+      snapshotUpdates.current = null;
+      if (live && snapshotDirty.current) { snapshotDirty.current = false; reload(); }
+    });
     return () => {
       live = false;
       if (snapshotUpdates.current === updates) snapshotUpdates.current = null;
     };
-  }, [revision, complain, openRouting, setInboxVisible, pendingSnapshot]);
+  }, [revision, complain, openRouting, setInboxVisible, pendingSnapshot, reload]);
+
+  useEffect(() => {
+    if (!tasksOpen || !snapshot.taskNotesDeferred) return;
+    let live = true;
+    void api.taskNotes().then(taskNotes => {
+      if (live) setSnapshot(current => ({...current, taskNotes, taskNotesDeferred: false}));
+    }).catch(complain);
+    return () => { live = false; };
+  }, [tasksOpen, snapshot.taskNotesDeferred, revision, complain]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -1620,7 +1637,8 @@ export default function Home() {
             >
               <span className="absolute inset-y-0 -left-[4px] w-[8px]" />
             </div>
-            <div data-task-pane className="flex min-h-0 shrink-0 overflow-hidden" style={{ width: taskWidth }}>
+            <div data-task-pane className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: taskWidth }}>
+          {snapshot.taskNotesDeferred && <p role="status" className="px-4 py-2 text-[11px] text-faint">Loading task history…</p>}
           <TaskPanel
             tasks={taskItems}
             rows={tasks}

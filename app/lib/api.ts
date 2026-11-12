@@ -21,6 +21,7 @@ import type {
   NativeSession,
   Snapshot,
   TaskItem,
+  TaskNote,
   Workstream,
 } from "./types";
 
@@ -76,7 +77,8 @@ async function agentPost<T>(agent: string, path: string, payload: unknown) {
 }
 
 export const api = {
-  snapshot: () => call<Snapshot>("/api/state"),
+  snapshot: () => call<Snapshot>("/api/state", { headers: { "x-oxroute-task-notes": "deferred" } }),
+  taskNotes: () => call<TaskNote[]>("/api/task-notes"),
   search: (query: string, signal?: AbortSignal) => call<SearchGroup[]>(`/api/search?q=${encodeURIComponent(query)}`, { signal }),
   /// The harnesses' own sessions, which take as long as they take.
   searchNative: (query: string, signal?: AbortSignal) =>

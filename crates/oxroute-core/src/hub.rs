@@ -3190,6 +3190,10 @@ impl Hub {
     // -- reading ---------------------------------------------------------
 
     pub fn snapshot(&self, inbox_limit: usize) -> Result<Snapshot> {
+        self.snapshot_with_notes(inbox_limit, true)
+    }
+
+    pub fn snapshot_with_notes(&self, inbox_limit: usize, notes: bool) -> Result<Snapshot> {
         let agents = self.store.unarchived_agents()?;
         let archived = self.store.archived_agents()?;
         let mut inbox = self.store.inbox(inbox_limit)?;
@@ -3228,7 +3232,8 @@ impl Hub {
             quote_threads,
             inbox,
             tasks: self.store.tasks()?,
-            task_notes: self.store.task_notes()?,
+            task_notes: if notes { self.store.task_notes()? } else { vec![] },
+            task_notes_deferred: !notes,
             tags: self.store.all_tags()?,
             boards: self.store.boards()?,
             sources: self.sources.keys().cloned().collect(),
@@ -4075,6 +4080,8 @@ pub struct Snapshot {
     pub tasks: Vec<TaskItem>,
     /// Why each task is where it is, oldest first.
     pub task_notes: Vec<TaskNote>,
+    #[serde(default)]
+    pub task_notes_deferred: bool,
     /// Agent id -> its tags. Defaulted, like `boards`, so a client talking
     /// to an older daemon still reads a snapshot.
     #[serde(default)]

@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import {chromium, webkit} from 'playwright';
+
+const browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
+const gate=()=>{let resolve;return {promise:new Promise(done=>resolve=done),release:()=>resolve()};};
+const first=gate(),second=gate(),history=gate();
+const agent={id:'startup-session',name:'Service inspection',backend:'codex',model:'fixture',status:'working',updatedAt:1};
+const task={id:'inspection-task',text:'Inspect capacity',status:'incomplete',agentId:agent.id,images:[],parentTaskId:'',blockedByTaskId:'',createdAt:1,updatedAt:1,position:0};
+const notes=Array.from({length:5},(_,index)=>({id:`note-${index}`,taskId:task.id,text:`Recorded observation ${index}`,agentId:'',at:index+1}));
+let calls=0,active=0,maximum=0,noteCalls=0;
+try {
+ const page=await browser.newPage({viewport:{width:1280,height:900}});
+ await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget {constructor(){super();window.startupStream=this;}close(){}};});
+ await page.route('**/api/state',async route=>{
+  assert.equal(route.request().headers()['x-oxroute-task-notes'],'deferred');
+  const number=++calls;maximum=Math.max(maximum,++active);
+  if(number===1)await first.promise;else if(number===2)await second.promise;
+  active--;
+  await route.fulfill({json:{mode:'ask',agents:[agent],archived:[],messages:{},tasks:[{...task,text:number===1?task.text:'Inspect current capacity'}],taskNotes:[],taskNotesDeferred:true,inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}});
+ });
+ await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
+ await page.route('**/api/agents/*',r=>r.fulfill({json:{agent,timeline:[],delivery:'start'}}));
+ await page.route('**/api/task-notes',async r=>{noteCalls++;await history.promise;await r.fulfill({json:notes});});
+ await page.goto(`${process.env.TEST_URL}/?agent=${agent.id}`);
+ await page.waitForFunction(()=>!!window.startupStream);
+ await page.evaluate(()=>{for(let n=0;n<20;n++)window.startupStream.onmessage({data:JSON.stringify({type:'sync'})});});
+ assert.equal(calls,1,'Concurrent invalidations share the pending snapshot');
+ first.release();
+ await page.getByRole('button',{name:'Settings',exact:true}).waitFor();
+ await page.waitForFunction(()=>!document.body.textContent.includes('Connecting to the oxroute daemon'));
+ assert.equal(noteCalls,0,'Closed task history does not block the initial conversation');
+ await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
+ await page.getByText('Loading task history…',{exact:true}).waitFor();
+ await page.getByText(task.text,{exact:true}).waitFor();
+ second.release();
+ await page.getByText('Inspect current capacity',{exact:true}).waitFor();
+ history.release();
+ const panel=page.getByRole('complementary',{name:'Tasks',exact:true});
+ await panel.getByText('Recorded observation 4').waitFor();
+ await panel.getByRole('button',{name:'3 earlier',exact:true}).click();
+ for(const note of notes)await panel.getByText(note.text).waitFor();
+ assert.equal(maximum,1,'Snapshot reads remain serial');
+ assert.equal(calls,2,'A pending invalidation is reconciled without losing later task changes');
+ const reads=noteCalls;
+ await page.reload();
+ await panel.getByText('Recorded observation 4').waitFor();
+ assert.ok(noteCalls>reads,'Restoring an open sidebar also restores its history');
+ await panel.getByRole('button',{name:'3 earlier',exact:true}).click();
+ for(const note of notes)await panel.getByText(note.text).waitFor();
+ if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
+ console.log('Initial conversation renders before task history; concurrent syncs coalesce, later task changes reconcile, and every historical note remains accessible.');
+}finally{first.release();second.release();history.release();await browser.close();}

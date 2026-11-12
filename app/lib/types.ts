@@ -168,6 +168,7 @@ export interface Snapshot {
   inbox: InboxItem[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];
+  taskNotesDeferred?: boolean;
   /** Agent id -> its tags. */
   tags: Record<string, string[]>;
   /** Every board, in tab order. */

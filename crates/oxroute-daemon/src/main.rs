@@ -377,8 +377,9 @@ async fn client_failures(State(hub): Hubs) -> Result<Json<Vec<serde_json::Value>
 }
 
 #[utoipa::path(get, path = "/api/state", operation_id = "state.show", responses((status = 200, body = serde_json::Value)))]
-async fn state(State(hub): Hubs) -> Result<Json<oxroute_core::Snapshot>, Failed> {
-    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+async fn state(State(hub): Hubs, headers: HeaderMap) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    let notes = headers.get("x-oxroute-task-notes").is_none_or(|value| value != "deferred");
+    Ok(Json(hub.snapshot_with_notes(INBOX_LIMIT, notes)?))
 }
 
 #[derive(Deserialize)]
@@ -1832,6 +1833,41 @@ mod tests {
         assert_eq!(hub.turns_in_flight().await, 0, "Task sign-off never starts agent work or authorizes publication");
         server.abort();
         drop(hub);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn deferred_snapshot_preserves_tasks_and_full_history_remains_available() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("snapshot-api"));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.toml");
+        std::fs::write(&path, "owner = 'fixture'\n").unwrap();
+        let store = Store::in_memory().unwrap();
+        for id in ["storage", "network"] {
+            store.save_task(&TaskItem {id:id.into(),text:id.into(),status:TaskStatus::Done,
+                agent_id:String::new(),parent_task_id:String::new(),blocked_by_task_id:String::new(),
+                images:vec![],position:0.0,created_at:1.0,updated_at:1.0}).unwrap();
+            for index in 0..4 {
+                store.save_task_note(&oxroute_core::TaskNote {id:format!("{id}-{index}"),task_id:id.into(),
+                    text:format!("Observation {index}"),agent_id:String::new(),at:index as f64}).unwrap();
+            }
+        }
+        let hub = Hub::new(Config::load_from(&path).unwrap(), store);
+        let router = Router::new().route("/api/state", get(state)).route("/api/task-notes", get(task_notes)).with_state(hub);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        let mut full:serde_json::Value = client.get(format!("{url}/api/state")).send().await.unwrap().json().await.unwrap();
+        let mut compact:serde_json::Value = client.get(format!("{url}/api/state")).header("x-oxroute-task-notes", "deferred").send().await.unwrap().json().await.unwrap();
+        let notes:serde_json::Value = client.get(format!("{url}/api/task-notes")).send().await.unwrap().json().await.unwrap();
+        assert_eq!(full["taskNotes"], notes);
+        assert_eq!(notes.as_array().unwrap().len(), 8);
+        assert_eq!(compact["taskNotes"], json!([]));
+        assert_eq!(compact["taskNotesDeferred"], true);
+        for value in [&mut full, &mut compact] { value.as_object_mut().unwrap().remove("taskNotes"); value.as_object_mut().unwrap().remove("taskNotesDeferred"); }
+        assert_eq!(full, compact, "Deferring notes does not remove tasks, approvals, settings or navigation data");
+        server.abort();
         std::fs::remove_dir_all(root).unwrap();
     }
 

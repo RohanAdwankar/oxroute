@@ -218,6 +218,15 @@ export const TaskPanel = memo(function TaskPanel({
   // Names cover archived sessions so a task assigned to one still reads,
   // while only live agents can be chosen.
   const names = useMemo(() => new Map(named.map((agent) => [agent.id, agent.name])), [named]);
+  const notesByTask = useMemo(() => {
+    const grouped = new Map<string, TaskNote[]>();
+    for (const note of notes) {
+      const mine = grouped.get(note.taskId) ?? [];
+      mine.push(note);
+      grouped.set(note.taskId, mine);
+    }
+    return grouped;
+  }, [notes]);
   const graphTasks = scope ? tasks.filter(task => scope.includes(task.agentId)) : tasks;
   const graphQuery = new URLSearchParams({ v: graphTasks.map(task => task.updatedAt).join("-"), ...(scope ? { agents: JSON.stringify(scope) } : {}) });
   // A flowchart of things that do not depend on each other is a list with
@@ -229,7 +238,7 @@ export const TaskPanel = memo(function TaskPanel({
   );
 
   const row = (task: TaskItem, at: number, depth: number) => {
-    const mine = notes.filter((note) => note.taskId === task.id);
+    const mine = notesByTask.get(task.id) ?? [];
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} depth={depth} onContextMenu={event => {
       event.preventDefault(); setAdding(false);
