@@ -416,6 +416,16 @@ impl Hub {
         Ok(())
     }
 
+    pub fn automatic_titles(&self) -> bool {
+        self.store.get("automatic-titles").ok().flatten().as_deref() != Some("false")
+    }
+
+    pub fn set_automatic_titles(&self, enabled: bool) -> Result<()> {
+        self.store.set("automatic-titles", if enabled { "true" } else { "false" })?;
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
     // -- lifecycle -------------------------------------------------------
 
     /// Start every background task: the harness pumps, the sources, the stall
@@ -711,7 +721,7 @@ impl Hub {
             }
             HarnessEvent::Named { name, .. } => {
                 if !naming::placeholder(&name) {
-                    let _ = self.store.rename_agent(&agent_id, &name);
+                    let _ = self.store.generated_title(&agent_id, &name);
                     self.emit(Event::Sync);
                 }
             }
@@ -1242,8 +1252,12 @@ impl Hub {
     }
 
     pub async fn rename(self: &Arc<Self>, agent_id: &str, title: &str) -> Result<()> {
+        self.store.manual_title(agent_id, title)?;
+        self.publish_title(agent_id, title).await
+    }
+
+    async fn publish_title(self: &Arc<Self>, agent_id: &str, title: &str) -> Result<()> {
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
-        self.store.rename_agent(agent_id, title)?;
         if !agent.session_id.is_empty() {
             let _ = self.harness(agent.backend).set_name(&agent.session_id, title).await;
         }
@@ -2745,6 +2759,7 @@ impl Hub {
         target: Option<Target>,
         recent: bool,
     ) -> Result<()> {
+        if !self.automatic_titles() || self.store.get(&format!("manual-title:{agent_id}"))?.is_some() { return Ok(()); }
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let body = match (&target, recent) {
             (Some(target), true) => {
@@ -2774,17 +2789,15 @@ impl Hub {
             return Ok(());
         }
 
-        let harness = self.harness(agent.backend);
-        // Naming runs on whichever harness the agent uses; one that has no
-        // cheap path simply keeps the provisional title.
-        let response = harness
-            .oneshot(&naming::prompt(&body, recent), naming::schema(), &agent.cwd)
+        let response = self.harness(Backend::Codex)
+            .metadata(&naming::prompt(&body, recent), naming::schema(), &agent.cwd)
             .await?;
         let title = naming::parse(&response);
         if title.is_empty() {
             return Ok(());
         }
-        self.rename(agent_id, &title).await
+        if self.store.generated_title(agent_id, &title)? { self.publish_title(agent_id, &title).await?; }
+        Ok(())
     }
 
     // -- talking back ----------------------------------------------------
@@ -3045,6 +3058,7 @@ impl Hub {
             mode: self.mode().as_str().to_string(),
             next_action_mode: self.next_action_mode().as_str().to_string(),
             next_action_suggestions: self.next_action_suggestions(),
+            automatic_titles: self.automatic_titles(),
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -3873,6 +3887,7 @@ pub struct Snapshot {
     pub mode: String,
     pub next_action_mode: String,
     pub next_action_suggestions: bool,
+    pub automatic_titles: bool,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,

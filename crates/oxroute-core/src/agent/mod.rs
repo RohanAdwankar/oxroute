@@ -160,6 +160,11 @@ pub trait Harness: Send + Sync {
         Ok(vec![])
     }
 
+    /// Card metadata uses a small model independently of turn and routing models.
+    async fn metadata(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
+        self.oneshot(prompt, schema, cwd).await
+    }
+
     /// Ask the harness to answer a one-shot prompt on a throwaway session.
     /// Used for naming; a harness that cannot do it cheaply should say so.
     async fn oneshot(&self, _prompt: &str, _schema: Value, _cwd: &str) -> Result<String> {

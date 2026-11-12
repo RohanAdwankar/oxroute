@@ -63,6 +63,7 @@ const EMPTY: Snapshot = {
   mode: "ask",
   nextActionMode: "ask",
   nextActionSuggestions: true,
+  automaticTitles: true,
   defaultModel: "",
   artifactRoot: "",
   agents: [],
@@ -1250,6 +1251,8 @@ export default function Home() {
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
+          automaticTitles={snapshot.automaticTitles}
+          onAutomaticTitles={enabled => void run(() => api.setAutomaticTitles(enabled))}
           theme={tone}
           onTheme={theme.set}
           verbose={loud}

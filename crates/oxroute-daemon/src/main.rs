@@ -256,6 +256,7 @@ async fn serve() -> Result<()> {
         .route("/api/mode", post(mode))
         .route("/api/next-action-mode", post(next_action_mode))
         .route("/api/next-action-suggestions", post(next_action_suggestions))
+        .route("/api/automatic-titles", post(automatic_titles))
         .route("/api/agents/{id}/model", post(change_model))
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
@@ -1280,6 +1281,11 @@ struct NextActionSuggestionsBody { enabled: bool }
 
 async fn next_action_suggestions(State(hub): Hubs, Json(body): Json<NextActionSuggestionsBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.set_next_action_suggestions(body.enabled)?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+async fn automatic_titles(State(hub): Hubs, Json(body): Json<NextActionSuggestionsBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    hub.set_automatic_titles(body.enabled)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 

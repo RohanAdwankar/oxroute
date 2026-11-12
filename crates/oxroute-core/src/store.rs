@@ -162,6 +162,11 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    // Existing titles have no provenance. Preserve them once; new cards record it explicitly.
+    if !conn.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key = 'title-provenance')", [], |row| row.get::<_, bool>(0))? {
+        conn.execute("INSERT OR IGNORE INTO kv (key, value) SELECT 'manual-title:' || id, 'true' FROM agents WHERE name NOT IN ('New agent', 'session', '')", [])?;
+        conn.execute("INSERT INTO kv (key, value) VALUES ('title-provenance', 'true')", [])?;
+    }
     conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('next-action-suggestions', 'true')", [])?;
     // Split the old shared switch once, preserving its existing behavior.
     conn.execute("INSERT OR IGNORE INTO kv (key, value) VALUES ('next-action-mode', COALESCE((SELECT value FROM kv WHERE key = 'mode'), 'ask'))", [])?;
@@ -588,6 +593,22 @@ impl Store {
             c.execute("UPDATE agents SET name = ?2 WHERE id = ?1", params![id, name])?;
             Ok(())
         })
+    }
+
+    pub fn manual_title(&self, id: &str, name: &str) -> Result<()> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('manual-title:' || ?1, 'true')", params![id])?;
+            tx.execute("UPDATE agents SET name = ?2 WHERE id = ?1", params![id, name])?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn generated_title(&self, id: &str, name: &str) -> Result<bool> {
+        self.with(|c| Ok(c.execute("UPDATE agents SET name = ?2 WHERE id = ?1
+            AND NOT EXISTS (SELECT 1 FROM kv WHERE key = 'manual-title:' || ?1)
+            AND NOT EXISTS (SELECT 1 FROM kv WHERE key = 'automatic-titles' AND value = 'false')", params![id, name])? > 0))
     }
 
     pub fn set_agent_session(&self, id: &str, session_id: &str) -> Result<()> {
@@ -1964,6 +1985,21 @@ mod tests {
         let untouched: String = conn.query_row("SELECT value FROM kv WHERE key = 'unrelated'", [], |r| r.get(0)).unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&untouched).unwrap(), review);
         migrate(&conn).unwrap();
+    }
+
+    #[test]
+    fn explicit_title_and_disabled_setting_win_over_generated_titles() {
+        let store = Store::in_memory().unwrap();
+        for id in ["first", "second"] {
+            store.create_agent(&agent(id)).unwrap();
+            assert!(store.generated_title(id, "A generated title").unwrap());
+            store.manual_title(id, "My chosen title").unwrap();
+            assert!(!store.generated_title(id, "A late result").unwrap());
+            assert_eq!(store.agent(id).unwrap().unwrap().name, "My chosen title");
+        }
+        store.create_agent(&agent("third")).unwrap();
+        store.set("automatic-titles", "false").unwrap();
+        assert!(!store.generated_title("third", "A late result").unwrap());
     }
 
     fn agent(id: &str) -> Agent {

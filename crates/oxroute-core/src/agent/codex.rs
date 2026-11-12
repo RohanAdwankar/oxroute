@@ -702,6 +702,16 @@ impl Harness for CodexHarness {
     }
 
     async fn oneshot(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
+        self.structured(prompt, schema, cwd, self.title_model.as_deref()).await
+    }
+
+    async fn metadata(&self, prompt: &str, schema: Value, cwd: &str) -> Result<String> {
+        self.structured(prompt, schema, cwd, Some("gpt-6-luna")).await
+    }
+}
+
+impl CodexHarness {
+    async fn structured(&self, prompt: &str, schema: Value, cwd: &str, model: Option<&str>) -> Result<String> {
         let cwd = if cwd.is_empty() { &self.default_cwd } else { cwd };
         let config = self.title_config(cwd).await;
         let connection = self.connection().await?;
@@ -709,7 +719,7 @@ impl Harness for CodexHarness {
             .request(
                 "thread/start",
                 json!({
-                    "model": self.title_model,
+                    "model": model,
                     "cwd": cwd,
                     "approvalPolicy": APPROVAL_POLICY,
                     "sandbox": "read-only",

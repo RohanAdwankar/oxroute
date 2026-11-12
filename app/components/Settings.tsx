@@ -31,6 +31,8 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
  * belongs in the interface itself.
  */
 export function Settings({
+  automaticTitles,
+  onAutomaticTitles,
   theme,
   onTheme,
   verbose,
@@ -49,6 +51,8 @@ export function Settings({
   onVim,
   onClose,
 }: {
+  automaticTitles: boolean;
+  onAutomaticTitles: (enabled: boolean) => void;
   theme: Theme;
   onTheme: (next: Theme) => void;
   verbose: Verbose;
@@ -85,6 +89,9 @@ export function Settings({
         className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
+        <Choice title="Automatic card titles" detail="Luna names cards until you choose a title. Existing titles stay unchanged."
+          options={[{ value: true, label: "On", detail: "Name untitled cards automatically" }, { value: false, label: "Off", detail: "Keep titles as they are" }]}
+          chosen={automaticTitles} onChoose={onAutomaticTitles} />
         <Choice
           title="Look"
           detail="Which way round the palette reads."

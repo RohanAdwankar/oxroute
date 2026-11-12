@@ -152,6 +152,7 @@ export interface Snapshot {
   mode: Mode;
   nextActionMode: Mode;
   nextActionSuggestions: boolean;
+  automaticTitles: boolean;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
   artifactRoot: string;
