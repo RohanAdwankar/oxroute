@@ -100,8 +100,7 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
         review.text = Some(tokio::fs::read_to_string(saved).await.context("Text review requires UTF-8")?);
     }
     hub.store.set(&format!("document:{}", review.id), &serde_json::to_string(&review)?)?;
-    let entry = hub.store.add_entry(&review.agent_id, now(), EntryKind::Notice, &format!("[Review {}](/api/agents/{}/file-reviews/{})", review.name.replace('[', "").replace(']', ""), review.agent_id, review.id), "", "")?;
-    hub.emit(Event::Timeline { entry: Box::new(entry) });
+
     Ok(Json(review))
 }
 

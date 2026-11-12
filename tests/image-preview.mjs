@@ -18,6 +18,8 @@ for(const ext of ['png','jpg','webp','gif','svg']) {
  assert.deepEqual(Buffer.from(await rendered.arrayBuffer()),await readFile(path),'Image rendering retains source bytes and format');
 }
 
+assert.equal((await api(`/api/agents/${agent.id}`)).timeline.length,0,'Opening image reviews creates no conversation entries');
+
 const upload=new FormData();upload.append('agent',agent.id);upload.append('queued','true');upload.append('text','Attached picture');upload.append('files',new Blob([await readFile(source)]),'picture.png');
 const uploaded=await fetch(`${native}/api/say-attachments`,{method:'POST',body:upload});assert.ok(uploaded.ok,await uploaded.text());
 const view=await api(`/api/agents/${agent.id}`);
