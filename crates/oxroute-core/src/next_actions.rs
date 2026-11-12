@@ -22,6 +22,8 @@ pub struct Suggestions {
 #[serde(rename_all = "camelCase")]
 pub struct NextActions {
     pub entry_id: i64,
+    #[serde(default)]
+    pub recommendation_id: i64,
     pub actions: Vec<NextAction>,
 }
 

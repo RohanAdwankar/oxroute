@@ -31,6 +31,8 @@ const HINTS: { value: boolean; label: string; detail: string }[] = [
  * belongs in the interface itself.
  */
 export function Settings({
+  recommendationLearning,
+  onRecommendationLearning,
   nextActionLayout,
   onNextActionLayout,
   automaticTags,
@@ -55,6 +57,8 @@ export function Settings({
   onVim,
   onClose,
 }: {
+  recommendationLearning: boolean;
+  onRecommendationLearning: (enabled: boolean) => void;
   nextActionLayout: "subtle" | "stacked";
   onNextActionLayout: (layout: "subtle" | "stacked") => void;
   automaticTags: boolean;
@@ -97,6 +101,9 @@ export function Settings({
         className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
+        <Choice title="Learn from choices" detail="Improve next-action and input-routing guidance from choices you see and the alternatives you choose."
+          options={[{ value: true, label: "On", detail: "Adapt recommendations over time" }, { value: false, label: "Off", detail: "Keep current guidance without learning" }]}
+          chosen={recommendationLearning} onChoose={onRecommendationLearning} />
         <Choice title="Next-action layout" detail="How suggestions appear after a completed turn."
           options={[{ value: "subtle", label: "Subtle", detail: "Small inline suggestions" }, { value: "stacked", label: "Stacked", detail: "Large choices with descriptions" }]}
           chosen={nextActionLayout} onChoose={onNextActionLayout} />

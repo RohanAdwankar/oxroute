@@ -32,6 +32,7 @@ use crate::config::{free_bytes, Config, Mode};
 use crate::dashboard;
 use crate::model::*;
 use crate::naming;
+use crate::recommendations;
 use crate::progress::{Progress, MAX_BYTES};
 use crate::source::{Posted, Source, SourceEvent};
 use crate::store::{ActiveTurn, Store};
@@ -212,6 +213,7 @@ pub struct Hub {
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     follow_ups: AsyncMutex<HashMap<String, Vec<FollowUp>>>,
     naming: AsyncMutex<HashSet<String>>,
+    learning: AsyncMutex<HashSet<String>>,
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
     task_dispatch: AsyncMutex<()>,
@@ -322,6 +324,7 @@ impl Hub {
             locks: AsyncMutex::new(HashMap::new()),
             follow_ups: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
+            learning: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
             task_dispatch: AsyncMutex::new(()),
             conversation_links: AsyncMutex::new(()),
@@ -436,11 +439,65 @@ impl Hub {
         Ok(())
     }
 
+    pub fn recommendation_learning(&self) -> bool {
+        self.store.get("recommendation-learning").ok().flatten().as_deref() != Some("false")
+    }
+
+    pub fn set_recommendation_learning(self: &Arc<Self>, enabled: bool) -> Result<()> {
+        self.store.set("recommendation-learning", if enabled { "true" } else { "false" })?;
+        if enabled { for domain in [recommendations::NEXT, recommendations::ROUTING] { self.clone().learn_recommendations(domain); } }
+        self.emit(Event::Sync);
+        Ok(())
+    }
+
+    pub fn recommendation_shown(self: &Arc<Self>, id: i64) -> Result<()> {
+        if self.recommendation_learning() {
+            if let Some(domain) = self.store.show_recommendation(id)? { self.clone().learn_recommendations(&domain); }
+        }
+        Ok(())
+    }
+
+    fn learn_recommendations(self: Arc<Self>, domain: &str) {
+        let domain = domain.to_string();
+        tokio::spawn(async move {
+            // Hold this guard until the pending feedback check finishes, so a
+            // concurrent choice either joins this batch or starts the next worker.
+            let mut running = self.learning.lock().await;
+            if !running.insert(domain.clone()) { return; }
+            drop(running);
+            loop {
+                let result: Result<bool> = async {
+                    if !self.recommendation_learning() { return Ok(false); }
+                    let feedback = self.store.recommendation_feedback(&domain)?;
+                    if feedback.is_empty() { return Ok(false); }
+                    let previous = self.store.recommendation_guidance(&domain)?;
+                    let response = self.harness(Backend::Codex).metadata(&recommendations::learning_prompt(&domain, &previous, &feedback), recommendations::learning_schema(), &self.config.workspace).await?;
+                    let guidance = recommendations::parse_guidance(&response)?;
+                    if !self.recommendation_learning() { return Ok(false); }
+                    self.store.save_recommendation_guidance(&domain, previous.revision, &guidance, &feedback)?;
+                    self.emit(Event::Sync);
+                    Ok(true)
+                }.await;
+                let mut running = self.learning.lock().await;
+                match result {
+                    Ok(true) => { drop(running); }
+                    Ok(false) if self.recommendation_learning() && self.store.recommendation_feedback(&domain).is_ok_and(|feedback| !feedback.is_empty()) => { drop(running); }
+                    result => {
+                        running.remove(&domain);
+                        if let Err(error) = result { tracing::warn!(%domain, %error, "recommendation learning failed"); }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     // -- lifecycle -------------------------------------------------------
 
     /// Start every background task: the harness pumps, the sources, the stall
     /// watch. Returns once they are running.
     pub async fn start(self: &Arc<Self>) -> Result<()> {
+        for domain in [recommendations::NEXT, recommendations::ROUTING] { self.clone().learn_recommendations(domain); }
         tokio::fs::create_dir_all(&self.config.artifacts).await.ok();
         tokio::fs::create_dir_all(&self.config.attachments).await.ok();
 
@@ -1065,9 +1122,19 @@ impl Hub {
             .as_ref()
             .filter(|target| !opened && target.source == crate::source::slack::SOURCE)
             .map(|_| shown.clone());
+        let recommendation = self.next_actions(&agent.id)?;
         let Some(entry) = self.store.accept_user_entry(&agent.id, now(), &shown, detail, request_id)? else {
             return Ok(());
         };
+        if self.recommendation_learning() {
+            if let Some(suggestions) = recommendation {
+                let selected = suggestions.actions.iter().position(|action| action.message == text);
+                if let Err(error) = self.store.choose_recommendation(suggestions.recommendation_id, &agent.id, &serde_json::json!({"selected": selected, "message": text.chars().take(8000).collect::<String>(), "hasAttachments": !images.is_empty()})) {
+                    tracing::warn!(%error, "could not record recommendation choice");
+                }
+                self.clone().learn_recommendations(recommendations::NEXT);
+            }
+        }
         self.emit(Event::Timeline { entry: Box::new(entry.clone()) });
         // Once accepted, a disconnected HTTP request must not cancel delivery.
         let hub = self.clone();
@@ -2157,8 +2224,9 @@ impl Hub {
             "conversation": conversation,
             "tasks": self.store.tasks()?.into_iter().filter(|task| task.agent_id == agent_id).collect::<Vec<_>>()
         }))?;
+        let guidance = self.store.recommendation_guidance(recommendations::NEXT)?;
         let response = self.harness(agent.backend).oneshot(
-            &crate::next_actions::prompt(&context), crate::next_actions::schema(), &agent.cwd,
+            &recommendations::apply(&crate::next_actions::prompt(&context), &guidance), crate::next_actions::schema(), &agent.cwd,
         ).await?;
         let suggestions = crate::next_actions::parse(&response)?;
         // An intervening send, turn, or task notice invalidates this prediction.
@@ -2167,7 +2235,8 @@ impl Hub {
             || self.store.latest_entry_id(agent_id)? != Some(entry_id) {
             return Ok(());
         }
-        let saved = crate::next_actions::NextActions { entry_id, actions: suggestions.actions };
+        let recommendation_id = self.store.recommendation(recommendations::NEXT, agent_id, &serde_json::from_str(&context)?, &serde_json::to_value(&suggestions.actions)?, guidance.revision)?;
+        let saved = crate::next_actions::NextActions { entry_id, recommendation_id, actions: suggestions.actions };
         self.store.set(&format!("next-actions:{agent_id}"), &serde_json::to_string(&saved)?)?;
         self.emit(Event::Sync);
         drop(live);
@@ -3099,6 +3168,7 @@ impl Hub {
             next_action_suggestions: self.next_action_suggestions(),
             automatic_titles: self.automatic_titles(),
             automatic_tags: self.automatic_tags(),
+            recommendation_learning: self.recommendation_learning(),
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -3937,6 +4007,7 @@ pub struct Snapshot {
     pub next_action_suggestions: bool,
     pub automatic_titles: bool,
     pub automatic_tags: bool,
+    pub recommendation_learning: bool,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
     pub default_model: String,

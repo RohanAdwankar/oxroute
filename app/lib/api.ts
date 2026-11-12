@@ -192,6 +192,8 @@ export const api = {
     call<unknown>(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setMode: (mode: Mode) => post<Snapshot>("/api/mode", { mode }),
   setNextActionMode: (mode: Mode) => post<Snapshot>("/api/next-action-mode", { mode }),
+  recommendationShown: (id: number) => post<unknown>(`/api/recommendations/${id}/shown`, {}),
+  setRecommendationLearning: (enabled: boolean) => post<Snapshot>("/api/recommendation-learning", { enabled }),
   setAutomaticTags: (enabled: boolean) => post<Snapshot>("/api/automatic-tags", { enabled }),
   setAutomaticTitles: (enabled: boolean) => post<Snapshot>("/api/automatic-titles", { enabled }),
   setNextActionSuggestions: (enabled: boolean) => post<Snapshot>("/api/next-action-suggestions", { enabled }),

@@ -31,6 +31,7 @@ pub mod migrate;
 pub mod model;
 pub mod naming;
 pub mod next_actions;
+pub mod recommendations;
 pub mod progress;
 pub mod rpc;
 pub mod source;

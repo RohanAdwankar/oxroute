@@ -148,6 +148,26 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
 
+CREATE TABLE IF NOT EXISTS recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    context TEXT NOT NULL,
+    offered TEXT NOT NULL,
+    prompt_revision INTEGER NOT NULL,
+    shown INTEGER NOT NULL DEFAULT 0,
+    actual TEXT,
+    trained_revision INTEGER
+);
+CREATE INDEX IF NOT EXISTS recommendation_feedback ON recommendations (domain, trained_revision, shown);
+CREATE TABLE IF NOT EXISTS recommendation_prompts (
+    domain TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    guidance TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (domain, revision)
+);
+
 CREATE TABLE IF NOT EXISTS boards (
     id         TEXT PRIMARY KEY,
     spec       TEXT NOT NULL,
@@ -1669,6 +1689,49 @@ impl Store {
         })
     }
 
+    pub fn recommendation(&self, domain: &str, owner: &str, context: &serde_json::Value, offered: &serde_json::Value, revision: i64) -> Result<i64> {
+        self.with(|c| {
+            c.execute("INSERT INTO recommendations (domain, owner, context, offered, prompt_revision) VALUES (?1, ?2, ?3, ?4, ?5)", params![domain, owner, context.to_string(), offered.to_string(), revision])?;
+            Ok(c.last_insert_rowid())
+        })
+    }
+
+    pub fn show_recommendation(&self, id: i64) -> Result<Option<String>> {
+        self.with(|c| {
+            c.execute("UPDATE recommendations SET shown = 1 WHERE id = ?1", [id])?;
+            Ok(c.query_row("SELECT domain FROM recommendations WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+        })
+    }
+
+    pub fn choose_recommendation(&self, id: i64, owner: &str, actual: &serde_json::Value) -> Result<bool> {
+        self.with(|c| Ok(c.execute("UPDATE recommendations SET actual = ?3 WHERE id = ?1 AND owner = ?2 AND actual IS NULL", params![id, owner, actual.to_string()])? > 0))
+    }
+
+    pub fn recommendation_guidance(&self, domain: &str) -> Result<crate::recommendations::Guidance> {
+        self.with(|c| Ok(c.query_row("SELECT revision, guidance FROM recommendation_prompts WHERE domain = ?1 ORDER BY revision DESC LIMIT 1", [domain], |r| Ok(crate::recommendations::Guidance {revision:r.get(0)?, guidance:r.get(1)?})).optional()?.unwrap_or(crate::recommendations::Guidance {revision:0, guidance:String::new()})))
+    }
+
+    pub fn recommendation_feedback(&self, domain: &str) -> Result<Vec<crate::recommendations::Feedback>> {
+        self.with(|c| {
+            let mut statement = c.prepare("SELECT id, context, offered, actual FROM recommendations WHERE domain = ?1 AND shown = 1 AND actual IS NOT NULL AND trained_revision IS NULL ORDER BY id LIMIT 8")?;
+            let rows = statement.query_map([domain], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.into_iter().map(|(id,context,offered,actual)| Ok(crate::recommendations::Feedback {id,context:serde_json::from_str(&context)?,offered:serde_json::from_str(&offered)?,actual:serde_json::from_str(&actual)?})).collect()
+        })
+    }
+
+    pub fn save_recommendation_guidance(&self, domain: &str, previous: i64, guidance: &str, feedback: &[crate::recommendations::Feedback]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            let current: i64 = tx.query_row("SELECT COALESCE(MAX(revision),0) FROM recommendation_prompts WHERE domain = ?1", [domain], |r| r.get(0))?;
+            anyhow::ensure!(current == previous, "recommendation guidance changed");
+            let revision = previous + 1;
+            tx.execute("INSERT INTO recommendation_prompts VALUES (?1, ?2, ?3, ?4)", params![domain,revision,guidance,crate::model::now()])?;
+            for item in feedback { tx.execute("UPDATE recommendations SET trained_revision = ?2 WHERE id = ?1 AND domain = ?3 AND trained_revision IS NULL", params![item.id,revision,domain])?; }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
     // -- boards ----------------------------------------------------------
 
     /// Boards in the order they were made, which is the order of the tabs.
@@ -1985,6 +2048,31 @@ mod tests {
         let untouched: String = conn.query_row("SELECT value FROM kv WHERE key = 'unrelated'", [], |r| r.get(0)).unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&untouched).unwrap(), review);
         migrate(&conn).unwrap();
+    }
+
+    #[test]
+    fn recommendation_feedback_is_presented_unique_and_domain_scoped() {
+        let store = Store::in_memory().unwrap();
+        let next = crate::recommendations::NEXT;
+        let routing = crate::recommendations::ROUTING;
+        let context = serde_json::json!({"subject":"Compare storage options"});
+        let first = store.recommendation(next, "one", &context, &serde_json::json!(["Compare", "Inspect", "Explain"]), 0).unwrap();
+        let second = store.recommendation(next, "two", &context, &serde_json::json!(["Summarize"]), 0).unwrap();
+        assert!(store.recommendation_feedback(next).unwrap().is_empty());
+        assert!(!store.choose_recommendation(first, "other", &serde_json::json!("Alternative")).unwrap());
+        store.choose_recommendation(first, "one", &serde_json::json!("Show measurements")).unwrap();
+        assert!(store.recommendation_feedback(next).unwrap().is_empty(), "Unseen predictions are not learning evidence");
+        store.show_recommendation(first).unwrap();
+        assert!(!store.choose_recommendation(first, "one", &serde_json::json!("Duplicate retry")).unwrap());
+        let feedback = store.recommendation_feedback(next).unwrap();
+        store.save_recommendation_guidance(next, 0, "Prefer measurable follow-ups", &feedback).unwrap();
+        assert!(store.recommendation_feedback(next).unwrap().is_empty());
+        assert_eq!(store.recommendation_guidance(routing).unwrap().revision, 0);
+        store.show_recommendation(second).unwrap();
+        store.choose_recommendation(second, "two", &serde_json::json!("Give context")).unwrap();
+        assert_eq!(store.recommendation_feedback(next).unwrap()[0].id, second);
+        assert_eq!(store.recommendation_guidance(next).unwrap().revision, 1);
+        assert!(store.save_recommendation_guidance(next, 0, "Stale writer", &feedback).is_err());
     }
 
     #[test]

@@ -66,6 +66,7 @@ const EMPTY: Snapshot = {
   nextActionSuggestions: true,
   automaticTitles: true,
   automaticTags: false,
+  recommendationLearning: true,
   defaultModel: "",
   artifactRoot: "",
   agents: [],
@@ -1254,6 +1255,8 @@ export default function Home() {
       {help && <Help onClose={() => setHelp(false)} />}
       {settings && (
         <Settings
+          recommendationLearning={snapshot.recommendationLearning}
+          onRecommendationLearning={enabled => void run(() => api.setRecommendationLearning(enabled))}
           nextActionLayout={nextLayout}
           onNextActionLayout={nextActionLayout.set}
           automaticTags={snapshot.automaticTags}

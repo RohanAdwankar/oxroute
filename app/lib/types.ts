@@ -154,6 +154,7 @@ export interface Snapshot {
   nextActionSuggestions: boolean;
   automaticTitles: boolean;
   automaticTags: boolean;
+  recommendationLearning: boolean;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
   defaultModel: string;
   artifactRoot: string;
@@ -288,7 +289,7 @@ export type DiagramEdit =
   | { op: "removeEdge"; from: string; to: string };
 
 export interface AgentView {
-  nextActions?: { entryId: number; actions: { label: string; message: string }[] } | null;
+  nextActions?: { recommendationId?: number; entryId: number; actions: { label: string; message: string }[] } | null;
   hasEarlier?: boolean;
   agent: Agent;
   timeline: Entry[];

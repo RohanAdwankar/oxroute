@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import { api } from "../lib/api";
 import { clock, since } from "../lib/format";
 import { isTyping } from "../lib/keys";
@@ -211,6 +212,7 @@ export function AgentPanel({
   /// toggle with the rest.
   verbose: boolean;
 }) {
+  const recommendationElement = useRef<HTMLElement>(null);
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
   const [diffs, setDiffs] = useState(() => diffsFor(view.agent.id));
   const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
@@ -352,6 +354,7 @@ export function AgentPanel({
     }
     return unmatched;
   }, [pending, view.timeline]);
+  useRecommendationExposure(agent.status === "complete" && optimistic.length === 0 ? view.nextActions?.recommendationId : undefined, recommendationElement);
   const items = useMemo(() => compactTimeline([...view.timeline, ...optimistic]), [view.timeline, optimistic]);
   const reviewTitles = useMemo(() => JSON.stringify(view.timeline.filter(entry => entry.kind === "review")
     .map(entry => [entry.detail, entry.text])), [view.timeline]);
@@ -889,7 +892,7 @@ export function AgentPanel({
             })
           )}
           {agent.status === "complete" && optimistic.length === 0 && view.nextActions && (
-            <section aria-label="Suggested next steps" role="group" className="next-choices">
+            <section ref={recommendationElement} aria-label="Suggested next steps" role="group" className="next-choices">
               <h3>Next</h3>
               <div>
                 {view.nextActions.actions.map(action => <button key={action.message} type="button" aria-label={action.label} title={action.message}

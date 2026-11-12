@@ -258,6 +258,8 @@ async fn serve() -> Result<()> {
         .route("/api/next-action-suggestions", post(next_action_suggestions))
         .route("/api/automatic-titles", post(automatic_titles))
         .route("/api/automatic-tags", post(automatic_tags))
+        .route("/api/recommendation-learning", get(recommendation_learning).post(set_recommendation_learning))
+        .route("/api/recommendations/{id}/shown", post(recommendation_shown))
         .route("/api/agents/{id}/model", post(change_model))
         .route("/api/boards/{id}/move", post(move_card))
         .route("/api/agents/{id}/diagram", get(diagram_view))
@@ -1293,6 +1295,22 @@ async fn automatic_titles(State(hub): Hubs, Json(body): Json<NextActionSuggestio
 async fn automatic_tags(State(hub): Hubs, Json(body): Json<NextActionSuggestionsBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
     hub.set_automatic_tags(body.enabled)?;
     Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+async fn recommendation_learning(State(hub): Hubs) -> Result<Json<serde_json::Value>, Failed> {
+    Ok(Json(json!({"enabled":hub.recommendation_learning(),
+        "nextActions":hub.store.recommendation_guidance(oxroute_core::recommendations::NEXT)?,
+        "inputRouting":hub.store.recommendation_guidance(oxroute_core::recommendations::ROUTING)?})))
+}
+
+async fn set_recommendation_learning(State(hub): Hubs, Json(body): Json<NextActionSuggestionsBody>) -> Result<Json<oxroute_core::Snapshot>, Failed> {
+    hub.set_recommendation_learning(body.enabled)?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
+}
+
+async fn recommendation_shown(State(hub): Hubs, Path(id): Path<i64>) -> Result<Json<serde_json::Value>, Failed> {
+    hub.recommendation_shown(id)?;
+    Ok(Json(json!({"ok":true})))
 }
 
 // -- tags and boards ---------------------------------------------------------
