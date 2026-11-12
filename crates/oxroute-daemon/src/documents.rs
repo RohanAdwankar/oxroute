@@ -1,7 +1,7 @@
 //! Immutable submitted-file reviews. Human decisions never authorize Git publication.
 use super::*;
 use oxroute_core::model::{now, EntryKind, Event};
-use std::{path::PathBuf, sync::LazyLock};
+use std::{collections::HashMap, path::PathBuf, sync::{Arc, LazyLock, Weak}};
 use tokio::{process::Command, sync::Mutex};
 
 macro_rules! ensure {
@@ -9,6 +9,7 @@ macro_rules! ensure {
 }
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 static RENDER: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static CAPTURES: LazyLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +74,14 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
     let sha256 = digest.finish().iter().map(|b| format!("{b:02x}")).collect::<String>();
     let identity = format!("{agent}\0{name}\0{sha256}");
     let id = openssl::sha::sha256(identity.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let _guard = RENDER.lock().await;
+    let capture = {
+        let mut locks = CAPTURES.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let lock = locks.get(&id).and_then(Weak::upgrade).unwrap_or_else(|| Arc::new(Mutex::new(())));
+        locks.insert(id.clone(), Arc::downgrade(&lock));
+        lock
+    };
+    let _capture = capture.lock().await;
     if let Ok(review) = record(&hub, &agent, &id) {
         tokio::fs::remove_file(temporary).await?;
         return Ok(Json(review));
@@ -83,13 +91,14 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
     tokio::fs::create_dir_all(&folder).await?;
     let saved = folder.join(format!("source.{}", review.extension));
     tokio::fs::rename(temporary, &saved).await?;
-    if review.extension == "pptx" {
-        let profile = folder.join("profile");
-        let mut command = Command::new("libreoffice");
-        command.arg(format!("-env:UserInstallation=file://{}", profile.display())).args(["--headless", "--convert-to", "pdf", "--outdir"]).arg(&folder).arg(&saved);
-        run(command).await?;
-    }
     if ["pdf", "pptx"].contains(&review.extension.as_str()) {
+        let _render = RENDER.lock().await;
+        if review.extension == "pptx" {
+            let profile = folder.join("profile");
+            let mut command = Command::new("libreoffice");
+            command.arg(format!("-env:UserInstallation=file://{}", profile.display())).args(["--headless", "--convert-to", "pdf", "--outdir"]).arg(&folder).arg(&saved);
+            run(command).await?;
+        }
         let mut command = Command::new("pdfinfo");
         command.arg(folder.join("source.pdf"));
         let info = run(command).await?;
