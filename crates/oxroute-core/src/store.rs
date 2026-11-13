@@ -1810,6 +1810,28 @@ impl Store {
         self.with(|c| Ok(c.execute("UPDATE recommendations SET actual = ?3 WHERE id = ?1 AND owner = ?2 AND actual IS NULL", params![id, owner, actual.to_string()])? > 0))
     }
 
+    pub fn recommendation_stats(&self) -> Result<HashMap<String, crate::recommendations::FeedbackStats>> {
+        self.read(|c| {
+            let mut query = c.prepare("SELECT domain,offered,actual FROM recommendations WHERE shown=1 AND actual IS NOT NULL")?;
+            let rows = query.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?;
+            let mut stats = HashMap::<String, crate::recommendations::FeedbackStats>::new();
+            for row in rows {
+                let (domain,offered,actual) = row?;
+                let actual:serde_json::Value = serde_json::from_str(&actual)?;
+                let matched = if domain == crate::recommendations::NEXT {
+                    actual["selected"].as_u64().is_some()
+                } else {
+                    let offered:serde_json::Value = serde_json::from_str(&offered)?;
+                    let destinations = |value:&serde_json::Value| value["agentIds"].as_array().map(|ids| ids.iter().filter_map(|id|id.as_str()).map(str::to_owned).collect::<std::collections::BTreeSet<_>>()).unwrap_or_default();
+                    offered["action"] == actual["action"] && (offered["action"] != "existing" || destinations(&offered) == destinations(&actual))
+                };
+                let item = stats.entry(domain).or_default();
+                item.decisions += 1; item.matched += usize::from(matched);
+            }
+            Ok(stats)
+        })
+    }
+
     pub fn recommendation_guidance(&self, domain: &str) -> Result<crate::recommendations::Guidance> {
         self.with(|c| Ok(c.query_row("SELECT revision, guidance FROM recommendation_prompts WHERE domain = ?1 ORDER BY revision DESC LIMIT 1", [domain], |r| Ok(crate::recommendations::Guidance {revision:r.get(0)?, guidance:r.get(1)?})).optional()?.unwrap_or(crate::recommendations::Guidance {revision:0, guidance:String::new()})))
     }
@@ -2181,6 +2203,31 @@ mod tests {
             assert!(store.save_routing_advice(&signal.id,revision,&serde_json::json!({}),choice.clone(),0).unwrap().is_none());
             let (_,current)=store.inbox_version(&signal.id).unwrap().unwrap();assert!(current>revision);
             assert!(store.save_routing_advice(&signal.id,current,&serde_json::json!({}),choice,0).unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn recommendation_statistics_count_only_presented_choices_per_domain() {
+        let store = Store::in_memory().unwrap();
+        let next = crate::recommendations::NEXT;
+        let routing = crate::recommendations::ROUTING;
+        for (domain, offered, actual, shown) in [
+            (next, serde_json::json!([]), serde_json::json!({"selected":0}), true),
+            (next, serde_json::json!([]), serde_json::json!({"selected":null}), true),
+            (next, serde_json::json!([]), serde_json::json!({"selected":0}), false),
+            (routing, serde_json::json!({"action":"existing","agentIds":["a","b"]}), serde_json::json!({"action":"existing","agentIds":["b","a"]}), true),
+            (routing, serde_json::json!({"action":"spawn"}), serde_json::json!({"action":"existing","agentIds":["a"]}), true),
+        ] {
+            let id = store.recommendation(domain, "owner", &serde_json::json!({}), &offered, 0).unwrap();
+            if shown { store.show_recommendation(id).unwrap(); }
+            store.choose_recommendation(id, "owner", &actual).unwrap();
+        }
+        let silent = store.recommendation(next, "owner", &serde_json::json!({}), &serde_json::json!([]), 0).unwrap();
+        store.show_recommendation(silent).unwrap();
+        let stats = store.recommendation_stats().unwrap();
+        for domain in [next, routing] {
+            assert_eq!(stats[domain].decisions, 2);
+            assert_eq!(stats[domain].matched, 1);
         }
     }
 

@@ -572,13 +572,13 @@ export default function Home() {
   }, [revision, complain, openRouting, setInboxVisible, pendingSnapshot, reload]);
 
   useEffect(() => {
-    if (!tasksOpen || !snapshot.taskNotesDeferred) return;
+    if ((!tasksOpen && !focusOpen) || !snapshot.taskNotesDeferred) return;
     let live = true;
     void api.taskNotes().then(taskNotes => {
       if (live) setSnapshot(current => ({...current, taskNotes, taskNotesDeferred: false}));
     }).catch(complain);
     return () => { live = false; };
-  }, [tasksOpen, snapshot.taskNotesDeferred, revision, complain]);
+  }, [tasksOpen, focusOpen, snapshot.taskNotesDeferred, revision, complain]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -939,6 +939,7 @@ export default function Home() {
   const handOffTask = useCallback((task: TaskItem, fork: boolean) =>
     void run(() => api.handOffTask(task.id, fork, snapshot.defaultModel)), [run, snapshot.defaultModel]);
   const deleteTask = useCallback((id: string) => void run(() => api.deleteTask(id)), [run]);
+  const approveFocusTask = useCallback((task: TaskItem) => void updateTask({...task, status:"complete", blockedByTaskId:""}, "approved", true), [updateTask]);
 
   const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
   useEffect(() => {
@@ -1436,7 +1437,7 @@ export default function Home() {
 
         {focusOpen ? <Focus snapshot={{ ...snapshot, tasks: taskItems }} busy={id => id in savingTasks}
           onOpenTask={taskLinks.open} onOpenAgent={showAgent} onCorrect={correctTask}
-          onApprove={task => void updateTask({ ...task, status: "complete", blockedByTaskId: "" }, "approved", true)} /> : open ? (
+          onApprove={approveFocusTask} /> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}

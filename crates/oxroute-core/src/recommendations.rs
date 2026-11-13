@@ -6,6 +6,12 @@ use serde_json::{json, Value};
 pub const NEXT: &str = "next-actions";
 pub const ROUTING: &str = "input-routing";
 
+#[derive(Default, Serialize)]
+pub struct FeedbackStats {
+    pub decisions: usize,
+    pub matched: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Guidance {

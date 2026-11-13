@@ -92,7 +92,14 @@ try{
  await choices.getByRole('button',{name:actions[1].label,exact:true}).click();
  await until(async()=>(await api('/api/recommendation-learning')).nextActions.revision>positiveBefore);
  assert.ok(reflections.at(-1).includes('"selected":1'),'Choosing a proposed response supplies positive feedback');
- await suggestions(agent);await send(agent,'Check another configuration source');await suggestions(agent);
+ await suggestions(agent);
+ const focus=await api('/api/focus');
+ assert.ok(focus.suggestions.some(item=>item.agent.id===agent.id));
+ assert.equal(focus.feedback['next-actions'].decisions,2);
+ assert.equal(focus.feedback['next-actions'].matched,1);
+ const predictions=predictionPrompts.length;
+ await api('/api/focus');assert.equal(predictionPrompts.length,predictions,'Reading Focus never generates predictions or runs suggestions');
+ await send(agent,'Check another configuration source');await suggestions(agent);
  await until(()=>predictionPrompts.some(prompt=>prompt.includes(learned)));
  const routeFirst=await api('/api/agents',{}),routeChosen=await api('/api/agents',{});
  await api('/api/rename',{agent:routeFirst.id,name:'General checks'});await api('/api/rename',{agent:routeChosen.id,name:'Storage project'});

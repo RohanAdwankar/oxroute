@@ -12,6 +12,7 @@ try {
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
  const errors=[], writes=[]; page.on('pageerror',error=>errors.push(String(error)));
  await page.route('**/api/state',r=>r.fulfill({json:state}));
+ await page.route('**/api/focus',r=>r.fulfill({json:{suggestions:[],feedback:{}}}));
  await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
  await page.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1),agent=agents.find(a=>a.id===id);return r.fulfill({json:{agent,timeline:[],delivery:'start'}});});
  let fail=false;
@@ -22,7 +23,9 @@ try {
  await tab.click();
  await page.getByRole('region',{name:'Focus',exact:true}).waitFor();
  assert.equal(new URL(page.url()).searchParams.get('view'),'focus');
- assert.equal(await rows.count(),10);
+ assert.equal(await rows.count(),17);
+ assert.equal(await rows.first().getAttribute('data-focus-task'),'waiting-11');
+ await page.getByRole('combobox',{name:'Sort attention queue'}).selectOption('priority');
  assert.equal(await rows.nth(0).getAttribute('data-focus-task'),'urgent-decision','Explicit priority outranks age');
  assert.equal(await rows.nth(1).getAttribute('data-focus-task'),'ready');
  assert.equal(await rows.nth(2).getAttribute('data-focus-task'),'unlock','Dependency impact ranks ahead of ordinary human actions');
@@ -44,7 +47,7 @@ try {
  await page.getByRole('status').getByText('Save unavailable',{exact:true}).waitFor();
  await ready.waitFor();
  fail=false;await ready.getByRole('button',{name:'Approve',exact:true}).click();
- await ready.waitFor({state:'detached'});assert.equal(await rows.count(),10,'Closing an item brings the next task into the ten');
+ await ready.waitFor({state:'detached'});assert.equal(await rows.count(),16,'Closing an item leaves every remaining human action visible');
  assert.equal(writes.at(-1).status,'complete');assert.equal(writes.at(-1).approved,true);
  await page.locator('[data-focus-task="urgent-decision"]').getByRole('button',{name:'Open conversation',exact:true}).click();
  await page.locator('[data-agent-pane="urgent"]').waitFor();
@@ -59,5 +62,5 @@ try {
  await page.setViewportSize({width:420,height:900});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  assert.deepEqual(errors,[]);
- console.log('Focus ranks ten recorded human actions, explains priority and blockers, preserves navigation and drafts, retries failed approvals and replaces completed items.');
+ console.log('Focus shows every human action, defaults to recent activity, supports priority sorting, preserves navigation and drafts, and retries failed approvals.');
 } finally { await browser.close(); }

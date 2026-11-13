@@ -301,6 +301,11 @@ export interface AgentView {
   delivery: Delivery;
 }
 
+export interface FocusData {
+  suggestions: {agent: Agent; nextActions: NonNullable<AgentView["nextActions"]>}[];
+  feedback: Record<string, {decisions: number; matched: number}>;
+}
+
 export interface QuoteAnchor {
   entryId: number;
   start: number;

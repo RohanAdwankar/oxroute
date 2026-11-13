@@ -234,6 +234,7 @@ async fn serve() -> Result<()> {
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
         .route("/api/routing-recommendations/{id}", post(routing_recommendation))
+        .route("/api/focus", get(focus_queue))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -589,6 +590,18 @@ struct RouteBody {
 
 async fn routing_recommendation(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Option<oxroute_core::recommendations::RoutingAdvice>>, Failed> {
     Ok(Json(hub.recommend_routing(&id).await?))
+}
+
+async fn focus_queue(State(hub): Hubs) -> Result<Json<serde_json::Value>, Failed> {
+    let mut suggestions = vec![];
+    if hub.next_action_suggestions() {
+        for agent in hub.store.unarchived_agents()? {
+            if let Some(next) = hub.next_actions(&agent.id)? {
+                suggestions.push(json!({"agent":agent,"nextActions":next}));
+            }
+        }
+    }
+    Ok(Json(json!({"suggestions":suggestions,"feedback":hub.store.recommendation_stats()?})))
 }
 
 async fn route(

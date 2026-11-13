@@ -11,6 +11,7 @@ try {
  page.on('pageerror',error=>errors.push(String(error)));
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.fixtureEvents=[];window.EventSource=class extends EventTarget{constructor(){super();window.fixtureEvents.push(this);}close(){}};});
  await page.route('**/api/state',r=>r.fulfill({json:state}));
+ await page.route('**/api/focus',r=>r.fulfill({json:{suggestions:[],feedback:{}}}));
  await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
  await page.route('**/api/agents/*',r=>contextFail?r.fulfill({status:503,json:{error:'Context temporarily unavailable'}}):r.fulfill({json:{agent,timeline,delivery:'start'}}));
  await page.route('**/api/agents/*/messages',r=>contextFail?r.fulfill({status:503,json:{error:'Context temporarily unavailable'}}):r.fulfill({json:timeline.filter(entry=>['said','you','received'].includes(entry.kind)).slice(-4)}));
