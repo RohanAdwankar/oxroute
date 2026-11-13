@@ -15,6 +15,7 @@ try{
  const context=await browser.newContext({viewport:{width:1440,height:1000}}),writes=[],diagrams=[];
  await context.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};localStorage.setItem('oxroute.tasks','true');if(localStorage.getItem('oxroute.graph')===null)localStorage.setItem('oxroute.graph','on');});
  await context.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents,archived:[],tasks,taskNotes:[],messages:{},tags:{},paneLinks:{},inbox:[],boards:[],sources:[],models:[],backends:[]}}));
+ await context.route('**/api/focus',r=>r.fulfill({json:{suggestions:[],feedback:{}}}));
  await context.route('**/api/terminals',r=>r.fulfill({json:[]}));
  await context.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:agents.find(a=>a.id===id),timeline:[],delivery:'start'}});});
  await context.route('**/api/task-diagram.svg?*',r=>{diagrams.push(new URL(r.request().url()).searchParams.get('agents'));return r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'});});
