@@ -4,6 +4,7 @@ import {api} from "../lib/api";
 import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import type {FocusData} from "../lib/types";
 import {Icon} from "./Icon";
+import {Markdown} from "./Markdown";
 import {since} from "../lib/format";
 
 export const FocusSuggestions = memo(function FocusSuggestions({item, preview, onOpen, onSent}: {
@@ -25,7 +26,7 @@ export const FocusSuggestions = memo(function FocusSuggestions({item, preview, o
     <div className="flex items-center gap-3 text-[11.5px] text-faint"><span>Suggested next steps</span><span>{since(agent.updatedAt)}</span>
       <button type="button" onClick={()=>onOpen(agent.id)} className="ml-auto cursor-pointer hover:text-ink" aria-label={`Open ${agent.name}`} title="Open conversation"><Icon name="external" size={14}/></button></div>
     <p className="mt-1 text-[15px] font-medium">{agent.name}</p>
-    {preview&&<p className="mt-2 line-clamp-4 whitespace-pre-wrap text-[13px] text-mid">{preview}</p>}
+    {preview&&<div className="mt-2 line-clamp-4 text-[13px] text-mid"><Markdown>{preview}</Markdown></div>}
     {sent?<p role="status" className="mt-3 text-[12px] text-faint">Sent to conversation</p>:<section role="group" aria-label={`Suggested next steps for ${agent.name}`} className="next-choices">
       <div>{nextActions.actions.map(action=><button key={action.message} type="button" className="cursor-pointer text-left hover:bg-wash focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40" disabled={pending} aria-label={action.label} title={action.message} onClick={()=>void send(action.message)}><span>{action.label}</span><span>{action.message}</span></button>)}</div>
     </section>}

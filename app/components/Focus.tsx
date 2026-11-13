@@ -9,6 +9,7 @@ import {TaskApproval} from "./TaskApproval";
 import {FocusReply} from "./FocusReply";
 import {FocusSuggestions} from "./FocusSuggestions";
 import {Icon} from "./Icon";
+import {Markdown} from "./Markdown";
 
 type TaskRow = ReturnType<typeof focusTasks>["items"][number];
 type Actions = {onOpenTask:(id:string)=>void; onOpenAgent:(id:string)=>void; onApprove:(task:TaskItem)=>void; onCorrect:(task:TaskItem)=>void};
@@ -22,7 +23,7 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
         <span>active {since(item.at)}</span><span>{agent?.name??(task.agentId?"Session unavailable":"Unassigned")}{archived?" · archived":""}</span>
       </div>
       <button type="button" title={task.text} onClick={()=>actions.onOpenTask(task.id)} className="mt-1 line-clamp-2 cursor-pointer text-left text-[15px] font-medium text-ink hover:underline">{task.text}</button>
-      <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-mid">{note?.text||(task.status==="done"?"Review the result, then approve it or send a correction.":"Reply below to continue working with the agent.")}</p>
+      <div className="mt-2 text-[13px] leading-relaxed text-mid"><Markdown>{note?.text||(task.status==="done"?"Review the result, then approve it or send a correction.":"Reply below to continue working with the agent.")}</Markdown></div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {task.status==="done"&&<TaskApproval task={task} busy={pending} approve={()=>actions.onApprove(task)} correct={()=>actions.onCorrect(task)}/>}
         {agent&&<button type="button" title="Open conversation" aria-label="Open conversation" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenAgent(task.agentId)}><Icon name="external"/></button>}

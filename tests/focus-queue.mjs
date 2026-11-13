@@ -3,7 +3,7 @@ import {chromium,webkit} from 'playwright';
 const browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 const agent={id:'attention',name:'Network rollout',backend:'codex',model:'fixture',status:'complete',updatedAt:Date.now()/1000};
 const actions=[{label:'Inspect evidence',message:'Inspect the verification evidence'},{label:'Compare options',message:'Compare available rollout options'},{label:'Explain impact',message:'Explain the rollout impact'}];
-const state={mode:'ask',nextActionSuggestions:true,agents:[agent],archived:[],messages:{attention:'Validation passed. Choose a next step.'},tasks:Array.from({length:24},(_,i)=>({id:`review-${i}`,text:`Review configuration ${i}`,status:'done',agentId:agent.id,updatedAt:Date.now()/1000-60+i,createdAt:1,parentTaskId:'',blockedByTaskId:'',images:[]})),taskNotes:[],inbox:[],tags:{},paneLinks:{},boards:[],sources:[],models:[],backends:[]};
+const state={mode:'ask',nextActionSuggestions:true,agents:[agent],archived:[],messages:{attention:'**Validation passed.** Choose a `next step`.'},tasks:Array.from({length:24},(_,i)=>({id:`review-${i}`,text:`Review configuration ${i}`,status:'done',agentId:agent.id,updatedAt:Date.now()/1000-60+i,createdAt:1,parentTaskId:'',blockedByTaskId:'',images:[]})),taskNotes:[{id:'review-note',taskId:'review-23',text:'**Runtime checks passed.**\n\n- Inspect `service.toml`\n- Read the [deployment guide](https://example.com/guide)\n\n```sh\ncheck-service --status\n```',at:2,agentId:agent.id}],inbox:[],tags:{},paneLinks:{},boards:[],sources:[],models:[],backends:[]};
 const data={suggestions:[{agent,nextActions:{entryId:1,recommendationId:42,actions}}],feedback:{'next-actions':{decisions:8,matched:6},'input-routing':{decisions:3,matched:2}}};
 try{
  const page=await browser.newPage({viewport:{width:1280,height:960}}),writes=[],errors=[];let fail=true;
@@ -28,6 +28,13 @@ try{
  await page.goto(`${process.env.TEST_URL}/?view=focus`);
  const row=page.locator('[data-focus-suggestions="attention"]'),tasks=page.locator('[data-focus-task]');
  await row.waitFor();assert.ok((await row.getByRole('button',{name:'Inspect evidence',exact:true}).boundingBox()).height>=90);assert.equal(await tasks.count(),24);assert.equal(await page.locator('ol').first().locator(':scope > li').first().getAttribute('data-focus-suggestions'),'attention');
+ await row.locator('strong').getByText('Validation passed.',{exact:true}).waitFor();
+ await row.locator('code').getByText('next step',{exact:true}).waitFor();
+ const result=page.locator('[data-focus-task="review-23"]');
+ await result.locator('strong').getByText('Runtime checks passed.',{exact:true}).waitFor();
+ assert.equal(await result.locator('.message-markdown li').count(),2);
+ assert.equal(await result.getByRole('link',{name:'deployment guide',exact:true}).getAttribute('href'),'https://example.com/guide');
+ await result.locator('pre code').getByText('check-service --status',{exact:true}).waitFor();
  await page.getByLabel('Recommendation feedback').getByText('Next actions: 6/8 choices matched · Routing: 2/3 choices matched',{exact:true}).waitFor();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
  await row.getByRole('button',{name:'Inspect evidence',exact:true}).click();await row.getByRole('alert').waitFor();
