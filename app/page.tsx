@@ -159,6 +159,9 @@ export default function Home() {
   }, []);
   const requests = useRef(new Map<string, { promise: Promise<AgentView>; updates: Map<number, Entry>; reactions: Map<number, string> }>());
   const snapshotUpdates = useRef<Map<string, DaemonEvent> | null>(null);
+  const taskNotesRequest = useRef<Promise<void> | null>(null);
+  const taskNotesDirty = useRef(false);
+  const [taskNotesRevision, setTaskNotesRevision] = useState(0);
   const warmed = useRef(new Set<string>());
   const warmQueue = useRef<string[]>([]);
   const warming = useRef(0);
@@ -533,7 +536,8 @@ export default function Home() {
         paneLinks.current = next.paneLinks ?? {};
         for (const [agent, ids] of Object.entries(next.reviews ?? {})) for (const id of ids) preloadReview(reviewEndpoint(agent, id));
         for (const agent of [...next.agents, ...next.archived]) creatingAgents.current.delete(agent.id);
-        setSnapshot(pendingSnapshot([...updates.values()].reduce(streamedSnapshot, next)));
+        const reconciled = pendingSnapshot([...updates.values()].reduce(streamedSnapshot, next));
+        setSnapshot(current => reconciled.taskNotesDeferred ? {...reconciled, taskNotes: current.taskNotes} : reconciled);
         const selectedAgent = new URL(window.location.href).searchParams.get("agent");
         if (selectedAgent && !customPanes.current) {
           const group = linkedPanes(selectedAgent, next.paneLinks ?? {});
@@ -574,12 +578,19 @@ export default function Home() {
 
   useEffect(() => {
     if ((!tasksOpen && !focusOpen) || !snapshot.taskNotesDeferred) return;
-    let live = true;
-    void api.taskNotes().then(taskNotes => {
-      if (live) setSnapshot(current => ({...current, taskNotes, taskNotesDeferred: false}));
-    }).catch(complain);
-    return () => { live = false; };
-  }, [tasksOpen, focusOpen, snapshot.taskNotesDeferred, revision, complain]);
+    if (taskNotesRequest.current) { taskNotesDirty.current = true; return; }
+    const request = api.taskNotes().then(taskNotes => {
+      const taskNotesDeferred = taskNotesDirty.current;
+      setSnapshot(current => ({...current, taskNotes, taskNotesDeferred}));
+    }).catch(complain).finally(() => {
+      taskNotesRequest.current = null;
+      if (taskNotesDirty.current) {
+        taskNotesDirty.current = false;
+        setTaskNotesRevision(current => current + 1);
+      }
+    });
+    taskNotesRequest.current = request;
+  }, [tasksOpen, focusOpen, snapshot.taskNotesDeferred, revision, taskNotesRevision, complain]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -1657,7 +1668,6 @@ export default function Home() {
               <span className="absolute inset-y-0 -left-[4px] w-[8px]" />
             </div>
             <div data-task-pane className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: taskWidth }}>
-          {snapshot.taskNotesDeferred && <p role="status" className="px-4 py-2 text-[11px] text-faint">Loading task history…</p>}
           <TaskPanel
             tasks={taskItems}
             rows={tasks}

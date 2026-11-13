@@ -57,7 +57,6 @@ export function Focus({snapshot,busy,...actions}: Actions & {snapshot:Snapshot;b
         </select>
       </div>
       {Object.values(data.feedback).some(item=>item.decisions>0)&&<p aria-label="Recommendation feedback" title="Matches among recorded choices after recommendations were shown; untouched suggestions are excluded." className="mt-2 text-[11.5px] text-faint">{[["next-actions","Next actions"],["input-routing","Routing"]].flatMap(([key,label])=>{const item=data.feedback[key];return item?.decisions?[`${label}: ${item.matched}/${item.decisions} choices matched`]:[];}).join(" · ")}</p>}
-      {snapshot.taskNotesDeferred&&<p role="status" className="mt-2 text-[11.5px] text-faint">Loading task history…</p>}
       {error&&<button type="button" onClick={refresh} aria-label="Retry suggestions" className="mt-2 cursor-pointer text-hold" title={error}><Icon name="refresh" size={14}/></button>}
       <ol className="mt-5">{queue.map(item=>item.task?card(item.task):<FocusSuggestions key={item.key} item={item.suggestion!} preview={snapshot.messages[item.suggestion!.agent.id]??""} onOpen={actions.onOpenAgent} onSent={refresh}/>)}</ol>
       {ongoing.length>0&&<section aria-label="Following up" className="mt-6"><h2 className="mb-3 text-[13px] text-mid">Following up</h2><ol>{ongoing.map(card)}</ol></section>}
