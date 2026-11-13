@@ -272,9 +272,10 @@ export function AgentPanel({
     const reveal = () => {
       const query = new URLSearchParams(window.location.search);
       const review = query.get("review");
-      if (query.get("agent") === agent.id && review) {
+      if (query.get("agent") !== agent.id) return;
+      setReviewingGit(!!review);
+      if (review) {
         setReviewId(review);
-        setReviewingGit(true);
         setMode("type");
       }
     };
@@ -282,6 +283,14 @@ export function AgentPanel({
     window.addEventListener("popstate", reveal);
     return () => window.removeEventListener("popstate", reveal);
   }, [agent.id]);
+  const closeReview = () => {
+    setReviewingGit(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("agent") === agent.id && url.searchParams.has("review")) {
+      url.searchParams.delete("review");
+      window.history.replaceState(null, "", url);
+    }
+  };
   const latestReview = view.timeline.findLast(entry => entry.kind === "review");
   useEffect(() => {
     if (latestReview) preloadReview(reviewEndpoint(agent.id, latestReview.detail));
@@ -756,7 +765,7 @@ export function AgentPanel({
           <Icon name={archived ? "restore" : "archive"} size={14} />
         </button>
         {reviewId && <button aria-label="Open change review" title="Open change review" aria-pressed={reviewingGit === true}
-          onClick={() => { setReviewingGit(value => !value); setMode("type"); }}
+          onClick={() => { if (reviewingGit) closeReview(); else setReviewingGit(true); setMode("type"); }}
           className="flex cursor-pointer items-center justify-center px-3 text-mid hover:text-ink">
           <Icon name="diff" size={14} />
         </button>}
@@ -806,10 +815,10 @@ export function AgentPanel({
         </span>
       </div>
 
-      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} onRevised={setReviewId} active={reviewingGit === true} onClose={() => setReviewingGit(false)} onQuote={quote => {
+      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} onRevised={setReviewId} active={reviewingGit === true} onClose={closeReview} onQuote={quote => {
         setDiffs(current => [...current, quote]);
         setMode("type");
-        setReviewingGit(false);
+        closeReview();
         window.requestAnimationFrame(() => composer.current?.focus());
       }} /></div>}
       {mode === "diagram" && (

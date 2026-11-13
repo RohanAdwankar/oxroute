@@ -362,6 +362,7 @@ export default function Home() {
     setFocusEntry(entry ?? null);
     const url = new URL(window.location.href);
     url.searchParams.delete("view");
+    if (!id || url.searchParams.get("agent") !== id) url.searchParams.delete("review");
     if (id) url.searchParams.set("agent", id);
     else url.searchParams.delete("agent");
     if (id && entry !== undefined) url.searchParams.set("entry", String(entry));
@@ -755,6 +756,7 @@ export default function Home() {
   const setUrlAgent = (id: string | null) => {
     setOpen(id);
     const url = new URL(window.location.href);
+    if (!id || url.searchParams.get("agent") !== id) url.searchParams.delete("review");
     if (id) url.searchParams.set("agent", id);
     else url.searchParams.delete("agent");
     url.searchParams.delete("entry");
