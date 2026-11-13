@@ -241,6 +241,7 @@ export const TaskPanel = memo(function TaskPanel({
     const mine = notesByTask.get(task.id) ?? [];
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} depth={depth} onContextMenu={event => {
+      if ((event.target as Element).closest("a[href]")) return;
       event.preventDefault(); setAdding(false);
       setMenu({ id: task.id, x: Math.min(event.clientX, window.innerWidth - 300), y: Math.min(event.clientY, window.innerHeight - 180) });
     }} focused={active && at === cursor} shown={task.id === shown}>

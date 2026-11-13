@@ -19,6 +19,8 @@ try{for(const standalone of [false,true]){
  });
  const address=`${process.env.TEST_URL}/?agent=${agent.id}`;await page.goto(address);await page.locator('[data-composer]').waitFor();
  const link=page.getByRole('link',{name:'External docs',exact:true});await link.waitFor();assert.equal(await link.getAttribute('target'),'_blank');
+ const nativeMenu=await link.locator('strong').evaluate(element=>element.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2})));
+ assert.equal(nativeMenu,true,'Links retain the browser menu with Copy Link Address');
  // All ordinary browser links and explicit modifier gestures retain their targets.
  const controls=await page.evaluate(external=>{
   const checks=[];

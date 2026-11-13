@@ -831,9 +831,11 @@ export function AgentPanel({
         ref={timeline}
         hidden={mode !== "type" || reviewingGit === true}
         onPointerDown={(event) => {
+          if ((event.target as Element).closest("a[href]")) return;
           if ((event.button === 2 || (event.button === 0 && event.ctrlKey)) && selectedQuote.current) event.preventDefault();
         }}
         onContextMenu={(event) => {
+          if ((event.target as Element).closest("a[href]")) return;
           // Use the completed selection, before focus or context-click changes it.
           const selected = selectedQuote.current;
           selectedQuote.current = null;
