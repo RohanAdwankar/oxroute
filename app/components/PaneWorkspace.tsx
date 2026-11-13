@@ -64,7 +64,6 @@ export function PaneWorkspace({ workspace, ids, revision, keyboard, onActivate, 
       if (event.key === "Escape" && (reading || zoomed)) { stop(); setReading(false); setZoomed(false); return; }
       const direction = { h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0] }[event.key];
       if (!direction || reading || zoomed) return;
-      stop();
       const panes = Array.from(root.current?.querySelectorAll<HTMLElement>("[data-agent-pane]") ?? []);
       const from = panes.find(pane => pane.dataset.agentPane === active)?.getBoundingClientRect();
       if (!from) return;
@@ -74,6 +73,8 @@ export function PaneWorkspace({ workspace, ids, revision, keyboard, onActivate, 
         const x = box.x + box.width / 2 - from.x - from.width / 2, y = box.y + box.height / 2 - from.y - from.height / 2;
         return { id: pane.dataset.agentPane!, forward: x * dx + y * dy, sideways: Math.abs(x * dy + y * dx) };
       }).filter(pane => pane.forward > 1).sort((a, b) => a.sideways - b.sideways || a.forward - b.forward);
+      // With no vertical neighbor, let the conversation handle j/k scrolling.
+      if (candidates.length || dx) stop();
       if (candidates[0]) setFocused(candidates[0].id);
     };
     document.addEventListener("keydown", onKey, true);

@@ -17,7 +17,7 @@ try{
  await page.goto(`${process.env.TEST_URL}/?agent=${agent.id}`);await page.locator('[data-entry="160"]').waitFor();
  const pane=page.locator('[data-agent-pane]'),transcript=page.locator('[data-transcript]');
  const hold=async(key,count)=>{for(let n=0;n<count;n++){await page.keyboard.down(key);await page.waitForTimeout(16);}await page.keyboard.up(key);};
- await transcript.click({position:{x:200,y:200}});await page.keyboard.press('i');
+ await page.getByRole('tab',{name:agent.name,exact:true}).click();
  for(const width of [420,635,1000]){
   await pane.evaluate((node,width)=>node.style.maxWidth=`${width}px`,width);await page.waitForTimeout(100);
   const metrics=()=>transcript.evaluate(node=>({top:node.scrollTop,height:node.scrollHeight,viewport:node.clientHeight,windowY:window.scrollY}));
