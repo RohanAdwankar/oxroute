@@ -32,7 +32,15 @@ binary=$HOME/.local/bin/oxrouted
 agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
-backup_root=$(uv run --no-project python -c 'import shutil,sys; print(max(sys.argv[1:], key=lambda path: shutil.disk_usage(path).free))' /tmp "$state")
+backup_root=$(uv run --no-project python -c '
+import pathlib,shutil,sys
+required = pathlib.Path(sys.argv[1]).stat().st_size + 1024**3
+root = max(sys.argv[2:], key=lambda path: shutil.disk_usage(path).free)
+free = shutil.disk_usage(root).free
+if free < required:
+    sys.exit(f"Deployment preserved: backup needs {required/1024**3:.1f} GiB including headroom; {root} has {free/1024**3:.1f} GiB free")
+print(root)
+' "$database" /tmp "$state")
 backup=$(mktemp -d "$backup_root/oxroute-deploy.XXXXXX")
 export TMPDIR=$backup
 cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
