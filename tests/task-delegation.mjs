@@ -14,6 +14,7 @@ try{
  page.on('pageerror',error=>errors.push(String(error)));
  await page.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents:[coordinator,...workers],archived:[],messages:{},tasks,taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}}));
  await page.route('**/api/events',r=>r.fulfill({contentType:'text/event-stream',body:': fixture\n\n'}));
+ await page.route('**/api/client-failures',r=>r.fulfill({json:{}}));
  await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
  await page.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:[coordinator,...workers].find(agent=>agent.id===id),timeline:id===coordinator.id?timeline:[],delivery:'start'}});});
  let fail=false;
