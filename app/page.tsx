@@ -243,6 +243,7 @@ export default function Home() {
   /// Digits typed before a motion, and a lone g waiting for its pair.
   const typed = useRef("");
   const pendingG = useRef(false);
+  const readingMotion = useRef<{node: HTMLElement; top: number; actual: number} | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1047,7 +1048,15 @@ export default function Home() {
         // In an open agent the middle column is a conversation, not a list,
         // so moving in it means reading it.
         if (focus === "fleet" && reading) {
-          document.querySelector('[data-pane-active="true"] [data-transcript]')?.scrollBy({ top: delta * 90 });
+          const node = document.querySelector<HTMLElement>('[data-pane-active="true"] [data-transcript]');
+          if (node) {
+            const previous = readingMotion.current;
+            // Keep the fractional target: scaled scroll offsets round differently across engines.
+            const top = previous?.node === node && previous.actual === node.scrollTop ? previous.top : node.scrollTop;
+            const target = Math.max(0, Math.min(top + delta * 90, node.scrollHeight - node.clientHeight));
+            node.scrollTop = target;
+            readingMotion.current = {node, top: target, actual: node.scrollTop};
+          }
           return;
         }
         const setAt =
@@ -1056,6 +1065,7 @@ export default function Home() {
       };
       /// The top or the bottom of whatever is in front of you.
       const toEnd = (way: number) => {
+        readingMotion.current = null;
         if (focus === "fleet" && reading) {
           const node = document.querySelector('[data-pane-active="true"] [data-transcript]');
           node?.scrollTo({ top: way < 0 ? 0 : node.scrollHeight, behavior: "smooth" });
