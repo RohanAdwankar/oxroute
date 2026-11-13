@@ -7,10 +7,9 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 /** Task replies have their own durable draft, independent of the conversation composer. */
-export function FocusReply({ task, agent, onSent }: { task: TaskItem; agent: Agent; onSent: () => void }) {
+export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
   const key = `oxroute.taskReply.${task.id}`;
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } });
-  const [expanded, setExpanded] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
@@ -49,9 +48,9 @@ export function FocusReply({ task, agent, onSent }: { task: TaskItem; agent: Age
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setPending(false); }
   };
-  return <div className="mt-3" data-focus-reply={task.id}>
+  return <div className="mt-3 cursor-auto" data-focus-reply={task.id}>
     <div className="flex items-center gap-3 text-[11.5px] text-mid">
-      <button type="button" title="Conversation context" aria-label="Conversation context" aria-expanded={expanded} onClick={() => setExpanded(value => !value)} className="cursor-pointer hover:text-ink"><Icon name="thread" /></button>
+      <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} className="sr-only focus:not-sr-only">Conversation context</button>
       <span role="status">{pending ? "Sending…" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
       {expanded && <button type="button" title="Refresh context" aria-label="Refresh context" onClick={() => setRevision(value => value + 1)} className="cursor-pointer hover:text-ink"><Icon name="refresh" /></button>}
     </div>
@@ -63,7 +62,7 @@ export function FocusReply({ task, agent, onSent }: { task: TaskItem; agent: Age
     {sent && <p className="my-2 whitespace-pre-wrap text-[12px] text-mid">You: {sent}</p>}
     <form className="mt-2 flex items-end gap-2" onSubmit={event => { event.preventDefault(); void send(); }}>
       <textarea aria-label={`Reply about ${task.text}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
-        onChange={event => change(event.target.value)} onFocus={() => setExpanded(true)}
+        onChange={event => change(event.target.value)} onFocus={() => onExpanded(true)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}
         className="min-w-0 flex-1 resize-y border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
       <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className="cursor-pointer p-2 text-mid hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="send" /></button>

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium,webkit } from 'playwright';
 
 const agent = {id:'followup',name:'Deployment',backend:'codex',model:'fixture',status:'complete',updatedAt:1};
 const task = (id,text) => ({id,text,status:'waiting_for_human',agentId:agent.id,updatedAt:Date.now()/1000-60,createdAt:Date.now()/1000-60,parentTaskId:'',blockedByTaskId:'',images:[]});
 const state = {mode:'ask',agents:[agent],archived:[],tasks:[task('window','Choose maintenance window'),task('region','Choose region')],taskNotes:[{id:'n',taskId:'window',text:'Saturday has no scheduled workloads. Sunday overlaps reporting.',at:1,agentId:agent.id}],tags:{},messages:{},paneLinks:{},inbox:[],boards:[],sources:[],models:[],backends:[]};
 let timeline=[{id:1,agentId:agent.id,kind:'said',text:'I recommend Saturday because reporting finishes Friday.',at:1,detail:''}], fail=false, contextFail=false;
-const browser=await chromium.launch();
+const browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try {
  const page=await browser.newPage({viewport:{width:1280,height:960}}), errors=[], writes=[];
  page.on('pageerror',error=>errors.push(String(error)));
@@ -19,6 +19,16 @@ try {
  const url=`${process.env.TEST_URL??'http://127.0.0.1:13981'}/?view=focus`;
  await page.goto(url);
  const row=id=>page.locator(`[data-focus-task="${id}"]`), reply=id=>row(id).getByRole('textbox');
+ const contextToggle=row('window').getByRole('button',{name:'Conversation context',exact:true});
+ const note=row('window').getByText('Saturday has no scheduled workloads. Sunday overlaps reporting.',{exact:true});
+ await note.click();await row('window').getByText('I recommend Saturday because reporting finishes Friday.',{exact:true}).waitFor();
+ assert.equal(await contextToggle.getAttribute('aria-expanded'),'true');
+ await note.click();assert.equal(await contextToggle.getAttribute('aria-expanded'),'false');
+ await contextToggle.focus();await page.keyboard.press('Enter');assert.equal(await contextToggle.getAttribute('aria-expanded'),'true','Context stays keyboard accessible');
+ await contextToggle.press('Enter');
+ await note.evaluate(node=>{const range=document.createRange();range.selectNodeContents(node);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);node.click();});
+ assert.equal(await contextToggle.getAttribute('aria-expanded'),'false','Selecting text does not toggle context');
+ await page.evaluate(()=>getSelection().removeAllRanges());
  await reply('window').fill('Saturday, after 9.');
  await row('window').getByText('I recommend Saturday because reporting finishes Friday.',{exact:true}).waitFor();
  await reply('region').fill('Keep this other draft.');
@@ -41,12 +51,11 @@ try {
  await page.reload();
  await row('window').getByText('Following up',{exact:true}).waitFor();
  await row('window').getByText('Scheduling the change',{exact:true}).waitFor();
- await row('window').getByRole('button',{name:'Conversation context',exact:true}).click();
+ await row('window').getByText('Following up',{exact:true}).click();
  await row('window').getByText('I recommend Saturday because reporting finishes Friday.',{exact:true}).waitFor();
  agent.status='complete';agent.updatedAt=3;state.tasks[0].status='done';timeline.push({id:3,agentId:agent.id,kind:'said',text:'The Saturday maintenance is scheduled. The service passed its checks.',at:3,detail:''});
  await page.evaluate(agent=>window.fixtureEvents.at(-1).onmessage({data:JSON.stringify({type:'agentChanged',agent})}),agent);
- await row('window').getByText('Review result',{exact:true}).waitFor();
- await row('window').getByRole('button',{name:'Conversation context',exact:true}).click();
+ await row('window').getByText('Review result',{exact:true}).click();
  await row('window').getByText('The Saturday maintenance is scheduled. The service passed its checks.',{exact:true}).waitFor();
  contextFail=true;await row('window').getByRole('button',{name:'Refresh context',exact:true}).click();
  await row('window').getByRole('alert').getByText('Context temporarily unavailable',{exact:true}).waitFor();

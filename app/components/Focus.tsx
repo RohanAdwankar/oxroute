@@ -15,7 +15,11 @@ type TaskRow = ReturnType<typeof focusTasks>["items"][number];
 type Actions = {onOpenTask:(id:string)=>void; onOpenAgent:(id:string)=>void; onApprove:(task:TaskItem)=>void; onCorrect:(task:TaskItem)=>void};
 const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...actions}: Actions & {item:TaskRow;agent?:Agent;archived:boolean;pending:boolean;onFollow:(id:string)=>void}) {
   const {task,note,priority,unblocks}=item;
-  return <li data-focus-task={task.id} className="flex gap-4 border-t border-hair py-4" style={{contentVisibility:"auto",containIntrinsicSize:"auto 240px"}}>
+  const [expanded,setExpanded]=useState(false);
+  return <li data-focus-task={task.id} onClick={event=>{
+    if(!agent||(event.target as Element).closest("button,a,input,textarea,select,[data-focus-reply]")||window.getSelection()?.toString())return;
+    setExpanded(value=>!value);
+  }} className={`flex gap-4 border-t border-hair py-4 ${agent?"cursor-pointer":""}`} style={{contentVisibility:"auto",containIntrinsicSize:"auto 240px"}}>
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11.5px] text-faint">
         <span className="text-mid">{task.status==="done"?"Review result":task.status==="waiting_for_human"?"Decision or access needed":"Following up"}</span>
@@ -28,7 +32,7 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
         {task.status==="done"&&<TaskApproval task={task} busy={pending} approve={()=>actions.onApprove(task)} correct={()=>actions.onCorrect(task)}/>}
         {agent&&<button type="button" title="Open conversation" aria-label="Open conversation" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenAgent(task.agentId)}><Icon name="external"/></button>}
       </div>
-      {agent&&<FocusReply task={task} agent={agent} onSent={()=>onFollow(task.id)}/>}
+      {agent&&<FocusReply task={task} agent={agent} expanded={expanded} onExpanded={setExpanded} onSent={()=>onFollow(task.id)}/>}
     </div>
   </li>;
 });
