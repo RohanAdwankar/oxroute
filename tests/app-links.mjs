@@ -29,7 +29,8 @@ try{for(const standalone of [false,true]){
   return checks;
  },external);assert.ok(controls.every(target=>target==='_blank'));
  if(process.env.SCREENSHOT&&standalone)await page.screenshot({path:process.env.SCREENSHOT});
- if(standalone){let popups=0;page.on('popup',()=>popups++);await link.locator('strong').click();await page.waitForURL(external);assert.equal(popups,0);}
- else{const opened=page.waitForEvent('popup');await link.click();const popup=await opened;await popup.waitForURL(external);assert.equal(page.url(),address);await popup.close();}
+ const opened=page.waitForEvent('popup');await link.click();const popup=await opened;await popup.waitForURL(external);assert.equal(page.url(),address);await popup.close();
+ const manifest=await(await page.request.get(new URL('/manifest.webmanifest',address).href)).json();assert.equal(manifest.scope,'/');
+
  await context.close();
-}console.log('External links use native same-frame navigation in app mode; ordinary browser popups, internal files, downloads, non-web schemes and modifier gestures retain their behavior.');}finally{await browser.close();}
+}console.log('External links preserve native new-window navigation in browser and app modes; Oxroute has an explicit same-origin app scope. Internal files, downloads, non-web schemes and modifier gestures retain their behavior.');}finally{await browser.close();}
