@@ -165,7 +165,14 @@ function choice<T extends string>(key: string, attribute: string, values: readon
     },
     subscribe(watcher: () => void): () => void {
       watchers.add(watcher);
+      const sync = (event: StorageEvent) => {
+        if (event.key !== key && event.key !== null) return;
+        value = null;
+        watcher();
+      };
+      window.addEventListener("storage", sync);
       return () => {
+        window.removeEventListener("storage", sync);
         watchers.delete(watcher);
       };
     },
@@ -202,3 +209,6 @@ export const theme = choice<Theme>("oxroute.theme", "theme", ["light", "dark"]);
 
 /** How next-action suggestions appear below a completed turn. */
 export const nextActionLayout = choice("oxroute.nextActionLayout", "nextActionLayout", ["subtle", "stacked"] as const);
+
+/** Default task scope; individual windows can override it. */
+export const defaultWindowTasks = choice("oxroute.defaultWindowTasks", "defaultWindowTasks", ["on", "off"] as const);

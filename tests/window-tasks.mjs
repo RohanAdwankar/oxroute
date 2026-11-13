@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {chromium,webkit} from 'playwright';
 const agents=['alpha','bravo','charlie','delta'].map(id=>({id,name:`${id} session`,backend:'codex',model:'fixture',status:'complete',updatedAt:Date.now()/1000}));
 const tasks=[
  ['alpha','Prepare alpha report','incomplete','alpha','', ''],
@@ -10,7 +10,7 @@ const tasks=[
  ['delta-access','Grant delta access','waiting_for_human','delta','',''],
  ['unassigned','Unassigned task','incomplete','','',''],
 ].map(([id,text,status,agentId,parentTaskId,blockedByTaskId])=>({id,text,status,agentId,parentTaskId,blockedByTaskId,images:[],createdAt:1,updatedAt:1}));
-const browser=await chromium.launch();
+const browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try{
  const context=await browser.newContext({viewport:{width:1440,height:1000}}),writes=[],diagrams=[];
  await context.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};localStorage.setItem('oxroute.tasks','true');if(localStorage.getItem('oxroute.graph')===null)localStorage.setItem('oxroute.graph','on');});
@@ -25,12 +25,23 @@ try{
  await page.goto(`${process.env.TEST_URL??'http://127.0.0.1:13979'}/?agent=alpha`);
  const panel=page.getByRole('complementary',{name:'Tasks',exact:true}),filter=panel.getByRole('button',{name:'Only open conversations',exact:true});
  const shown=()=>panel.locator('[data-task-open]').allTextContents();
- await filter.waitFor();assert.equal(await filter.getAttribute('aria-pressed'),'false');
+ await filter.waitFor();assert.equal(await filter.getAttribute('aria-pressed'),'true','Window task scope is enabled by default');
+ assert.deepEqual(await shown(),['Prepare alpha report','Review bravo change','Continue bravo rollout']);
+ const changeDefault=async(value)=>{
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'settings',exact:true});
+  const section=dialog.locator('section').filter({has:page.getByText('Tasks from this window',{exact:true})});
+  await section.getByRole('button',{name:value==='on'?'On Tasks from open cards':'Off Tasks from every card',exact:true}).click();
+  if(process.env.SETTINGS_SCREENSHOT)await page.screenshot({path:process.env.SETTINGS_SCREENSHOT});
+  await page.keyboard.press('Escape');
+ };
+ await changeDefault('off');
+ assert.equal(await filter.getAttribute('aria-pressed'),'false','Global setting changes windows without an override');
  assert.ok((await shown()).includes('Unassigned task'));
  await filter.click();
  assert.deepEqual(await shown(),['Prepare alpha report','Review bravo change','Continue bravo rollout']);
  await page.waitForFunction(()=>document.querySelector('[alt="Task dependency flowchart"]')?.getAttribute('src')?.includes('agents='));
- assert.deepEqual(JSON.parse(diagrams.at(-1)),['alpha','bravo','charlie']);
+ assert.deepEqual(JSON.parse(new URL(await page.getByAltText('Task dependency flowchart').getAttribute('src'),page.url()).searchParams.get('agents')),['alpha','bravo','charlie']);
  assert.ok(!(await shown()).includes('Plan delta rollout'),'An unrelated parent is not pulled into this window');
  const search=panel.getByRole('searchbox',{name:'Search tasks'});
  await search.fill('charlie');assert.deepEqual(await shown(),['Approve charlie result'],'Search includes completed tasks within scope');
@@ -47,6 +58,20 @@ try{
  await otherFilter.waitFor();assert.equal(await otherFilter.getAttribute('aria-pressed'),'false','Window scope preference is independent');
  await otherFilter.click();assert.deepEqual(await otherPanel.locator('[data-task-open]').allTextContents(),['Plan delta rollout','Grant delta access']);
  assert.deepEqual(await shown(),['Prepare alpha report','Review bravo change','Continue bravo rollout'],'Another window does not alter membership');
+ const following=await context.newPage();await following.goto(`${process.env.TEST_URL}/?agent=delta`);
+ const followingFilter=following.getByRole('button',{name:'Only open conversations',exact:true});
+ await followingFilter.waitFor();assert.equal(await followingFilter.getAttribute('aria-pressed'),'false');
+ await changeDefault('on');
+ await following.waitForFunction(()=>document.querySelector('button[aria-label="Only open conversations"]')?.getAttribute('aria-pressed')==='true');
+ assert.equal(await otherFilter.getAttribute('aria-pressed'),'true','Manual choices survive global setting changes');
+ await followingFilter.click();
+ await changeDefault('off');await changeDefault('on');
+ assert.equal(await followingFilter.getAttribute('aria-pressed'),'false','Local all-tasks override survives a global default change');
+ await following.reload();await followingFilter.waitFor();assert.equal(await followingFilter.getAttribute('aria-pressed'),'false','Local override survives reload');
+ const fresh=await context.newPage();await fresh.goto(`${process.env.TEST_URL}/?agent=delta`);
+ const freshFilter=fresh.getByRole('button',{name:'Only open conversations',exact:true});
+ await freshFilter.waitFor();assert.equal(await freshFilter.getAttribute('aria-pressed'),'true','New windows use the saved global default');
+ await fresh.close();await following.close();
  await page.getByRole('button',{name:'Close tab alpha session',exact:true}).click();
  assert.deepEqual(await shown(),[],'Closing a tab removes its split conversation tasks');
  await search.fill('alpha');assert.deepEqual(await shown(),[]);

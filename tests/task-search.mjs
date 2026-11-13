@@ -19,6 +19,7 @@ try {
   await page.goto(process.env.TEST_URL ?? 'http://localhost:3941');
   await page.getByRole('button', { name: 'Show or hide tasks', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Tasks', exact: true });
+  await panel.getByRole('button', { name: 'Only open conversations', exact: true }).click();
   const search = panel.getByRole('searchbox', { name: 'Search tasks' });
   const shown = () => panel.locator('[data-task-open]').allTextContents();
   assert.deepEqual(await shown(), [tasks[0].text, tasks[2].text, tasks[3].text]);

@@ -43,6 +43,8 @@ export function Settings({
   onTheme,
   verbose,
   onVerbose,
+  defaultWindowTasks,
+  onDefaultWindowTasks,
   graph,
   onGraph,
   wrap,
@@ -69,6 +71,8 @@ export function Settings({
   onTheme: (next: Theme) => void;
   verbose: Verbose;
   onVerbose: (next: Verbose) => void;
+  defaultWindowTasks: "on" | "off";
+  onDefaultWindowTasks: (next: "on" | "off") => void;
   graph: Graph;
   onGraph: (next: Graph) => void;
   wrap: "off" | "on";
@@ -137,6 +141,9 @@ export function Settings({
           chosen={wrap}
           onChoose={onWrap}
         />
+        <Choice title="Tasks from this window" detail="Default task scope for all windows. Each sidebar can override it."
+          options={[{ value: "on", label: "On", detail: "Tasks from open cards" }, { value: "off", label: "Off", detail: "Tasks from every card" }]}
+          chosen={defaultWindowTasks} onChoose={onDefaultWindowTasks} />
         <Choice
           title="Task list"
           detail="Whether blocked work is drawn as well as listed."

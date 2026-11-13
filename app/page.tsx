@@ -38,6 +38,7 @@ import {
   graph,
   wrap,
   nextActionLayout,
+  defaultWindowTasks,
   scalePanes,
   minimumPaneScale,
   terminalFontScale,
@@ -219,10 +220,15 @@ export default function Home() {
   const [inboxDone, setInboxDone] = useState(false);
   const [tasksDone, setTasksDone] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
-  const [windowTasks, setWindowTasks] = useState(() => {
-    try { return sessionStorage.getItem("oxroute.windowTasks") === "true"; } catch { return false; }
+  const scopedTasks = useSyncExternalStore(defaultWindowTasks.subscribe, defaultWindowTasks.get, defaultWindowTasks.fallback);
+  const [windowTaskOverride, setWindowTaskOverride] = useState<boolean | null>(() => {
+    try { const saved = sessionStorage.getItem("oxroute.windowTasks"); return saved === null ? null : saved === "true"; } catch { return null; }
   });
-  useEffect(() => { sessionStorage.setItem("oxroute.windowTasks", String(windowTasks)); }, [windowTasks]);
+  const windowTasks = windowTaskOverride ?? scopedTasks === "on";
+  const setWindowTasks = (enabled: boolean) => {
+    setWindowTaskOverride(enabled);
+    sessionStorage.setItem("oxroute.windowTasks", String(enabled));
+  };
   const [shownTask, setShownTask] = useState<string | null>(null);
   /// Finished work you have said "not yet" to, answered in its composer.
   const [correcting, setCorrecting] = useState<TaskItem | null>(null);
@@ -935,7 +941,7 @@ export default function Home() {
     const matches = scoped.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
     return taskRows(taskAncestors(scoped, matches), tasksDone || !!taskSearch);
   }, [taskItems, taskScope, taskSearch, taskNames, tasksDone]);
-  const scopeTasks = useCallback(() => { setWindowTasks(current => !current); setTaskAt(0); }, []);
+  const scopeTasks = () => { setWindowTasks(!windowTasks); setTaskAt(0); };
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
   const showDoneTasks = useCallback(() => setTasksDone(shown => !shown), []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
@@ -1319,6 +1325,8 @@ export default function Home() {
           onTheme={theme.set}
           verbose={loud}
           onVerbose={verbose.set}
+          defaultWindowTasks={scopedTasks}
+          onDefaultWindowTasks={defaultWindowTasks.set}
           graph={drawn}
           onGraph={graph.set}
           wrap={wrapped}
