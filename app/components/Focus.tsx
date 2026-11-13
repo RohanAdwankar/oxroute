@@ -34,7 +34,7 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
 
 export function Focus({snapshot,busy,...actions}: Actions & {snapshot:Snapshot;busy:(id:string)=>boolean}) {
   const [sort,setSort]=useState<FocusSort>(()=>{try{const value=localStorage.getItem("oxroute.focusSort");if(["recent","oldest","priority","unblocks"].includes(value??""))return value as FocusSort;}catch{}return "recent";});
-  const {items:ranked,total}=useMemo(()=>focusTasks(snapshot,sort),[snapshot.tasks,snapshot.tags,snapshot.taskNotes,sort]);
+  const {items:ranked,total}=useMemo(()=>focusTasks({tasks:snapshot.tasks,tags:snapshot.tags,taskNotes:snapshot.taskNotes},sort),[snapshot.tasks,snapshot.tags,snapshot.taskNotes,sort]);
   const [following,setFollowing]=useState<string[]>(()=>{try{return JSON.parse(sessionStorage.getItem("oxroute.focusFollowing")??"[]");}catch{return [];}});
   const follow=useCallback((id:string)=>setFollowing(current=>{const next=[...current.filter(task=>task!==id),id];try{sessionStorage.setItem("oxroute.focusFollowing",JSON.stringify(next));}catch{}return next;}),[]);
   const [data,setData]=useState<FocusData>({suggestions:[],feedback:{}}),[error,setError]=useState(""),[revision,setRevision]=useState(0);
