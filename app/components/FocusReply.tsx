@@ -7,8 +7,8 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 /** Task replies have their own durable draft, independent of the conversation composer. */
-export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
-  const key = `oxroute.taskReply.${task.id}`;
+export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
+  const key = task ? `oxroute.taskReply.${task.id}` : `oxroute.homeReply.${agent.id}`;
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } });
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,14 +41,14 @@ export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task
     try { localStorage.setItem(`${key}.request`, JSON.stringify(request.current)); } catch { /* The current request remains retryable in memory. */ }
     setPending(true); setError("");
     try {
-      await api.say(agent.id, `Regarding task ${task.id} (${task.text}):\n\n${text}`, [], true, [], request.current.id);
+      await api.say(agent.id, task ? `Regarding task ${task.id} (${task.text}):\n\n${text}` : text, [], true, [], request.current.id);
       change(""); setSent(text); request.current = null;
       try { localStorage.removeItem(`${key}.request`); } catch { /* The sent draft is already cleared in memory. */ }
       setRevision(value => value + 1); onSent();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setPending(false); }
   };
-  return <div className="mt-3 cursor-auto" data-focus-reply={task.id}>
+  return <div className="mt-3 cursor-auto" data-focus-reply={task?.id ?? agent.id}>
     <div className="relative flex items-center gap-3 text-[11.5px] text-mid">
       <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} style={{position:"absolute",right:0,top:0}} className="sr-only focus:not-sr-only focus:bg-card">Conversation context</button>
       <span role="status">{pending ? "Sending…" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
@@ -61,8 +61,8 @@ export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task
     </div>}
     {sent && <p className="my-2 whitespace-pre-wrap text-[12px] text-mid">You: {sent}</p>}
     <form className="mt-2 flex items-end gap-2" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <textarea aria-label={`Reply about ${task.text}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
-        onChange={event => change(event.target.value)} onFocus={() => onExpanded(true)}
+      <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
+        onChange={event => change(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}
         className="min-w-0 flex-1 resize-y border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
       <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className="cursor-pointer p-2 text-mid hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="send" /></button>

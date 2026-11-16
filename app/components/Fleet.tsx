@@ -1,7 +1,7 @@
 "use client";
 
 import {useRecommendationExposure} from "../lib/recommendation-exposure";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { clip, since } from "../lib/format";
 import { hintFor } from "../lib/keys";
@@ -44,6 +44,8 @@ export function Fleet({
   cursor,
   active,
   vim,
+  renderActions,
+  onArchive,
 }: {
   agents: Agent[];
   archivedCount: number;
@@ -69,6 +71,8 @@ export function Fleet({
   active: boolean;
   /// Show the one-key hints. Off means the mouse is doing the work.
   vim: boolean;
+  renderActions?: (agent: Agent) => ReactNode;
+  onArchive?: (agent: Agent, archived: boolean) => void;
 }) {
   // Which model a new agent gets. It also picks the harness, since a model
   // belongs to exactly one.
@@ -76,7 +80,13 @@ export function Fleet({
   useRecommendationExposure(routing?.recommendation?.recommendationId, recommendationElement);
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
-  const shown = agents;
+  const [order,setOrder]=useState<string[]|null>(null);
+  const roster=agents.map(agent=>agent.id).join(",");
+  useEffect(()=>{if(order===null&&agents.length)setOrder(agents.map(agent=>agent.id));},[roster,order,agents]);
+  const visible=order??agents.map(agent=>agent.id);
+  const byId=new Map(agents.map(agent=>[agent.id,agent]));
+  const arrivals=agents.filter(agent=>!visible.includes(agent.id));
+  const shown=routing?agents:visible.flatMap(id=>byId.has(id)?[byId.get(id)!]:[]);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -103,6 +113,7 @@ export function Fleet({
                 : `${shown.length} agent${shown.length === 1 ? "" : "s"}`}
             </span>
             <span className="flex-1" />
+        {arrivals.length>0&&<button type="button" aria-label={`Show ${arrivals.length} new cards`} onClick={()=>setOrder([...arrivals.map(agent=>agent.id),...visible])} className="cursor-pointer bg-card px-2 py-1 text-[12px] text-ink">↑ {arrivals.length} new {arrivals.length===1?"card":"cards"}</button>}
             <button
               type="button"
               onClick={onShowArchived}
@@ -145,6 +156,9 @@ export function Fleet({
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}
                 onPin={() => onPin(agent.id, !agent.pinned)}
+                actions={!routing&&!showArchived?renderActions?.(agent):null}
+                onArchive={!routing&&onArchive?()=>onArchive(agent,!showArchived):undefined}
+                archived={showArchived}
               />
             ))}
           </div>
@@ -230,6 +244,9 @@ function Card({
   onToggle,
   onOpen,
   onPin,
+  actions,
+  onArchive,
+  archived,
 }: {
   agent: Agent;
   preview?: string;
@@ -242,13 +259,17 @@ function Card({
   onToggle: () => void;
   onOpen: () => void;
   onPin: () => void;
+  actions?: ReactNode;
+  onArchive?: () => void;
+  archived: boolean;
 }) {
   // While routing, the agents this could go to stay bright and the rest
   // recede, so a large fleet is still readable at a glance.
   const dimmed = routing && !ticked && !suggested;
 
   return (
-    <article
+    <article data-home-card={agent.id} onClick={event=>{if(!routing&&!(event.target as Element).closest("a,button,input,textarea,select,[data-home-actions],[data-quote-thread]")&&!window.getSelection()?.toString())onOpen();}}
+      style={{contentVisibility:"auto",containIntrinsicSize:"auto 300px"}}
       className={[
         "group relative flex min-h-[140px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
@@ -291,6 +312,7 @@ function Card({
             <Icon name="pin" size={14} />
           </button>
         )}
+        {!routing&&onArchive&&<button type="button" aria-label={`${archived?"Restore":"Archive"} ${agent.name}`} title={archived?"Restore conversation":"Archive conversation"} disabled={!archived&&agent.status==="working"} onClick={onArchive} className="cursor-pointer text-faint hover:text-ink disabled:cursor-default disabled:opacity-40"><Icon name={archived?"restore":"archive"} size={14}/></button>}
         {routing && (
           <button
             type="button"
@@ -323,6 +345,7 @@ function Card({
       <div className="mt-[12px] max-h-[3lh] overflow-hidden line-clamp-3 text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
+      {actions}
 
     </article>
   );

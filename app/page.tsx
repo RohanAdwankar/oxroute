@@ -13,6 +13,7 @@ import { usePaneTransfer, type PaneOffer } from "./lib/pane-transfer";
 import { Chrome } from "./components/Chrome";
 import { SessionTabs } from "./components/SessionTabs";
 import { Focus } from "./components/Focus";
+import { HomeActions } from "./components/HomeActions";
 import { Fleet } from "./components/Fleet";
 import { FrontendVersion } from "./components/FrontendVersion";
 import { Help } from "./components/Help";
@@ -47,7 +48,7 @@ import {
   setVimMode,
   subscribeVimMode,
 } from "./lib/keys";
-import type { Agent, AgentView, DaemonEvent, Entry, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
+import type { FocusData, Agent, AgentView, DaemonEvent, Entry, InboxItem, Mode, Snapshot, TaskItem } from "./lib/types";
 
 /** Preserve task roster identity while activity/status fields stream past. */
 function useTaskAgents(agents: Agent[]) {
@@ -202,6 +203,8 @@ export default function Home() {
   const [savingTasks, setSavingTasks] = useState<Record<string, TaskItem>>({});
   const [creatingTasks, setCreatingTasks] = useState<Record<string, TaskItem & { existing: Set<string> }>>({});
   const [showArchived, setShowArchived] = useState(false);
+  const [homeAdvice,setHomeAdvice]=useState<FocusData>({suggestions:[],feedback:{}});
+  const [homeRevision,setHomeRevision]=useState(0);
   const [ready, setReady] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxWidth, setInboxWidth] = useState(340);
@@ -598,6 +601,14 @@ export default function Home() {
     });
     taskNotesRequest.current = request;
   }, [tasksOpen, focusOpen, snapshot.taskNotesDeferred, revision, taskNotesRevision, complain]);
+
+  const homeAdviceKey=JSON.stringify(snapshot.agents.map(agent=>[agent.id,agent.status,agent.updatedAt]));
+  useEffect(()=>{
+    if(open||focusOpen||!snapshot.nextActionSuggestions)return;
+    const controller=new AbortController();
+    api.focus(controller.signal).then(setHomeAdvice).catch(error=>{if(!controller.signal.aborted)complain(error);});
+    return()=>controller.abort();
+  },[open,focusOpen,homeAdviceKey,homeRevision,snapshot.nextActionSuggestions,complain]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -1614,7 +1625,9 @@ export default function Home() {
               /> : <p className="px-[var(--pane-x)] py-6 text-[13px] text-faint">Create a board to arrange sessions by tags.</p>}
               </>
             ) : (
-              <Fleet
+              <Fleet key={showArchived?"archived":"home"}
+                renderActions={agent=><HomeActions agent={agent} nextActions={snapshot.nextActionSuggestions?homeAdvice.suggestions.find(item=>item.agent.id===agent.id&&item.agent.updatedAt===agent.updatedAt)?.nextActions:undefined} tasks={taskItems.filter(task=>task.agentId===agent.id)} busy={id=>id in savingTasks} onSent={()=>{setHomeRevision(value=>value+1);reload();}} onTask={taskLinks.open} onApprove={approveFocusTask} onCorrect={correctTask}/>}
+                onArchive={requestArchive}
                 agents={showArchived ? snapshot.archived : snapshot.agents}
                 archivedCount={snapshot.archived.length}
                 showArchived={showArchived}
