@@ -979,10 +979,10 @@ export default function Home() {
   const showDoneTasks = useCallback(() => setTasksDone(shown => !shown), []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
   const taskActions = useMemo(() => ({
-    tasks: taskItems, busy: taskBusy,
+    tasks: taskItems, embedded: focusOpen, busy: taskBusy,
     approve: (task: TaskItem) => void updateTask({ ...task, status: "complete" }, "approved", true),
     approveAll: approveTaskTree, correct: correctTask,
-  }), [taskItems, taskBusy, updateTask, approveTaskTree, correctTask]);
+  }), [taskItems, focusOpen, taskBusy, updateTask, approveTaskTree, correctTask]);
   const createSubtask = useCallback((text: string, parent: TaskItem) => {
     setTaskQuery(""); return file(text, [], parent.agentId, parent.id);
   }, [file]);
