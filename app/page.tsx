@@ -842,7 +842,7 @@ export default function Home() {
     setArchiveError("");
     setSnapshot(current => pendingSnapshot(current));
     if (archived) {
-      choosePanes(panes.filter(id => id !== agent.id));
+      if (panes.includes(agent.id)) choosePanes(panes.filter(id => id !== agent.id));
       setTabIds(current => current.filter(id => id !== agent.id));
     }
     const after = window.location.href;
@@ -858,13 +858,20 @@ export default function Home() {
       if (blank && !sessionStorage.getItem("oxroute.blankAgent")) sessionStorage.setItem("oxroute.blankAgent", agent.id);
       if (archived && window.location.href === after) {
         if (open) writePanes(open, layout);
-        showAgent(open);
+        if (!focusOpen) showAgent(open);
         setPanes(panes);
         if (modal) { setArchiveError(error instanceof Error ? error.message : String(error)); setArchiving(agent); }
       }
       complain(error);
       reload();
     });
+  };
+
+  const requestArchive = (agent: Agent, archived: boolean) => {
+    if (archived && snapshot.tasks.some(task => task.agentId === agent.id && task.status !== "complete")) {
+      setArchiveError("");
+      setArchiving(agent);
+    } else archiveAgent(agent, archived);
   };
 
   const tabLayout = (id: string): PaneLayout => id === open ? syncPanes(readPanes(id), panes) ?? id : readPanes(id) ?? id;
@@ -1467,7 +1474,7 @@ export default function Home() {
         ) : null}
 
         {focusOpen ? <Focus snapshot={{ ...snapshot, tasks: taskItems }} busy={id => id in savingTasks}
-          onOpenTask={taskLinks.open} onOpenAgent={showAgent} onCorrect={correctTask}
+          onOpenTask={taskLinks.open} onOpenAgent={showAgent} onArchive={agent => requestArchive(agent, true)} onCorrect={correctTask}
           onApprove={approveFocusTask} /> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
@@ -1563,12 +1570,7 @@ export default function Home() {
                       }
                       onRename={(name) => void run(() => api.rename(id, name))}
                       archived={snapshot.archived.some((agent) => agent.id === id)}
-                      onArchive={(archived) => {
-                        if (archived && snapshot.tasks.some((task) => task.agentId === id && task.status !== "complete")) {
-                          setArchiveError("");
-                          setArchiving(view.agent);
-                        } else archiveAgent(view.agent, archived);
-                      }}
+                      onArchive={archived => requestArchive(view.agent, archived)}
                       focusEntry={panes.length === 1 ? focusEntry : null}
                       onEntryFocused={entryFocused}
                       verbose={loud === "on"}

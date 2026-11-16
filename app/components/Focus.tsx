@@ -12,7 +12,7 @@ import {Icon} from "./Icon";
 import {Markdown} from "./Markdown";
 
 type TaskRow = ReturnType<typeof focusTasks>["items"][number];
-type Actions = {onOpenTask:(id:string)=>void; onOpenAgent:(id:string)=>void; onApprove:(task:TaskItem)=>void; onCorrect:(task:TaskItem)=>void};
+type Actions = {onArchive:(agent:Agent)=>void; onOpenTask:(id:string)=>void; onOpenAgent:(id:string)=>void; onApprove:(task:TaskItem)=>void; onCorrect:(task:TaskItem)=>void};
 const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...actions}: Actions & {item:TaskRow;agent?:Agent;archived:boolean;pending:boolean;onFollow:(id:string)=>void}) {
   const {task,note,priority,unblocks}=item;
   const [expanded,setExpanded]=useState(false);
@@ -31,6 +31,7 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {task.status==="done"&&<TaskApproval task={task} busy={pending} approve={()=>actions.onApprove(task)} correct={()=>actions.onCorrect(task)}/>}
         <button type="button" title="Open task" aria-label="Open task" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenTask(task.id)}><Icon name="tasks"/></button>
+        {agent&&!archived&&<button type="button" title={agent.status==="working"?"Stop the active turn before archiving":"Archive conversation"} aria-label={`Archive ${agent.name}`} disabled={agent.status==="working"} className="cursor-pointer text-mid hover:text-ink disabled:cursor-default disabled:opacity-40" onClick={()=>actions.onArchive(agent)}><Icon name="archive"/></button>}
         {agent&&<button type="button" title="Open conversation" aria-label="Open conversation" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenAgent(task.agentId)}><Icon name="external"/></button>}
       </div>
       {agent&&<FocusReply task={task} agent={agent} expanded={expanded} onExpanded={setExpanded} onSent={()=>onFollow(task.id)}/>}
@@ -64,7 +65,7 @@ export function Focus({snapshot,busy,...actions}: Actions & {snapshot:Snapshot;b
       </div>
       {Object.values(data.feedback).some(item=>item.decisions>0)&&<p aria-label="Recommendation feedback" title="Matches among recorded choices after recommendations were shown; untouched suggestions are excluded." className="mt-2 text-[11.5px] text-faint">{[["next-actions","Next actions"],["input-routing","Routing"]].flatMap(([key,label])=>{const item=data.feedback[key];return item?.decisions?[`${label}: ${item.matched}/${item.decisions} choices matched`]:[];}).join(" · ")}</p>}
       {error&&<button type="button" onClick={refresh} aria-label="Retry suggestions" className="mt-2 cursor-pointer text-hold" title={error}><Icon name="refresh" size={14}/></button>}
-      <ol className="mt-5">{queue.map(item=>item.task?card(item.task):<FocusSuggestions key={item.key} item={item.suggestion!} preview={snapshot.messages[item.suggestion!.agent.id]??""} onOpen={actions.onOpenAgent} onSent={refresh}/>)}</ol>
+      <ol className="mt-5">{queue.map(item=>item.task?card(item.task):<FocusSuggestions key={item.key} item={item.suggestion!} preview={snapshot.messages[item.suggestion!.agent.id]??""} onOpen={actions.onOpenAgent} onArchive={actions.onArchive} onSent={refresh}/>)}</ol>
       {ongoing.length>0&&<section aria-label="Following up" className="mt-6"><h2 className="mb-3 text-[13px] text-mid">Following up</h2><ol>{ongoing.map(card)}</ol></section>}
     </div>
   </section>;
