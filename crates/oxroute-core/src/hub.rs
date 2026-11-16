@@ -1981,7 +1981,13 @@ impl Hub {
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(
-            "Oxroute has a shared task list. Use oxroute-agent --server http://{listen} \
+            "Oxroute tasks represent substantial deliverables, meaningful delegated work, or \
+             dependencies that need durable tracking and human review. Reuse an existing \
+             matching task rather than creating duplicates. Answer quick questions and do \
+             routine investigation, explanation, checking and validation within the existing \
+             work; do not create standalone approval tasks for these steps. Create a task \
+             only when the outcome itself warrants tracking, not for each tool call or step. \
+             Use oxroute-agent --server http://{listen} \
              --agent {id} for task work. Commands: tasks list --filter status=incomplete \
              --fields id,text,status,parentTaskId; tasks create --text TEXT \
              --parent-task-id PARENT; tasks update --id TASK --status STATUS --note REASON; \
