@@ -12,7 +12,7 @@ import { dockPanes, paneIds, readPanes, removePane, syncPanes, writePanes, type 
 import { usePaneTransfer, type PaneOffer } from "./lib/pane-transfer";
 import { Chrome } from "./components/Chrome";
 import { SessionTabs } from "./components/SessionTabs";
-import { Focus } from "./components/Focus";
+import { Icon } from "./components/Icon";
 import { HomeActions } from "./components/HomeActions";
 import { Fleet } from "./components/Fleet";
 import { FrontendVersion } from "./components/FrontendVersion";
@@ -134,6 +134,9 @@ export default function Home() {
   const [routing, setRouting] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [focusOpen, setFocusOpen] = useState(false);
+  const [focusAgentId,setFocusAgentId]=useState<string|null>(null);
+  const [focusError,setFocusError]=useState("");
+  const [focusRetry,setFocusRetry]=useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [tabIds, setTabIds] = useState<string[]>(() => {
     try {
@@ -142,7 +145,7 @@ export default function Home() {
       return Array.isArray(saved) ? [...new Set(saved.filter((id): id is string => typeof id === "string"))] : [];
     } catch { return []; }
   });
-  if (open && !tabIds.includes(open)) setTabIds([...tabIds, open]);
+  if (open && !focusOpen && !tabIds.includes(open)) setTabIds([...tabIds, open]);
   useEffect(() => { sessionStorage.setItem("oxroute.sessionTabs", JSON.stringify(tabIds)); }, [tabIds]);
   const [panes, setPanes] = useState<string[]>([]);
   const [paneRevision, setPaneRevision] = useState(0);
@@ -587,7 +590,7 @@ export default function Home() {
   }, [revision, complain, openRouting, setInboxVisible, pendingSnapshot, reload]);
 
   useEffect(() => {
-    if ((!tasksOpen && !focusOpen) || !snapshot.taskNotesDeferred) return;
+    if (!tasksOpen || !snapshot.taskNotesDeferred) return;
     if (taskNotesRequest.current) { taskNotesDirty.current = true; return; }
     const request = api.taskNotes().then(taskNotes => {
       const taskNotesDeferred = taskNotesDirty.current;
@@ -600,7 +603,7 @@ export default function Home() {
       }
     });
     taskNotesRequest.current = request;
-  }, [tasksOpen, focusOpen, snapshot.taskNotesDeferred, revision, taskNotesRevision, complain]);
+  }, [tasksOpen, snapshot.taskNotesDeferred, revision, taskNotesRevision, complain]);
 
   const homeAdviceKey=JSON.stringify(snapshot.agents.map(agent=>[agent.id,agent.status,agent.updatedAt]));
   useEffect(()=>{
@@ -609,6 +612,18 @@ export default function Home() {
     api.focus(controller.signal).then(setHomeAdvice).catch(error=>{if(!controller.signal.aborted)complain(error);});
     return()=>controller.abort();
   },[open,focusOpen,homeAdviceKey,homeRevision,snapshot.nextActionSuggestions,complain]);
+
+  useEffect(()=>{
+    if(!focusOpen||(focusAgentId&&open!==null))return;
+    let live=true;setFocusError("");
+    api.openFocus().then(agent=>{
+      if(!live)return;
+      setFocusAgentId(agent.id);
+      setSnapshot(current=>({...current,focusAgentId:agent.id,agents:current.agents.some(item=>item.id===agent.id)?current.agents:[...current.agents,agent],archived:current.archived.filter(item=>item.id!==agent.id)}));
+      setOpen(agent.id);setPanes([agent.id]);customPanes.current=false;setFocusEntry(null);
+    }).catch(error=>{if(live)setFocusError(error instanceof Error?error.message:String(error));});
+    return()=>{live=false;};
+  },[focusOpen,focusRetry,open===null,focusAgentId]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {
@@ -1484,13 +1499,13 @@ export default function Home() {
           </>
         ) : null}
 
-        {focusOpen ? <Focus snapshot={{ ...snapshot, tasks: taskItems }} busy={id => id in savingTasks}
-          onOpenTask={taskLinks.open} onOpenAgent={showAgent} onArchive={agent => requestArchive(agent, true)} onCorrect={correctTask}
-          onApprove={approveFocusTask} /> : open ? (
+        {focusOpen&&(!focusAgentId||!open) ? <section aria-label="Focus" className="min-w-0 flex-1 px-[var(--pane-x)] py-6 text-[13px] text-faint">
+          {focusError?<><p role="alert">{focusError}</p><button type="button" aria-label="Retry Focus" title="Retry Focus" className="mt-3 cursor-pointer" onClick={()=>setFocusRetry(value=>value+1)}><Icon name="refresh"/></button></>:<p role="status">Opening Focus…</p>}
+        </section> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}
-            mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => choosePanes(panes.filter(pane => pane !== id))}>
+            mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => focusOpen?showAgent(null):choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
               if (id.startsWith("terminal_")) return <TerminalPane id={id} handle={paneHandle} agents={[...snapshot.agents, ...snapshot.archived]} onEnd={() => { setTerminals(current => current.filter(terminal => terminal.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
@@ -1628,7 +1643,7 @@ export default function Home() {
               <Fleet key={showArchived?"archived":"home"}
                 renderActions={agent=><HomeActions agent={agent} nextActions={snapshot.nextActionSuggestions?homeAdvice.suggestions.find(item=>item.agent.id===agent.id&&item.agent.updatedAt===agent.updatedAt)?.nextActions:undefined} tasks={taskItems.filter(task=>task.agentId===agent.id)} busy={id=>id in savingTasks} onSent={()=>{setHomeRevision(value=>value+1);reload();}} onTask={taskLinks.open} onApprove={approveFocusTask} onCorrect={correctTask}/>}
                 onArchive={requestArchive}
-                agents={showArchived ? snapshot.archived : snapshot.agents}
+                agents={(showArchived ? snapshot.archived : snapshot.agents).filter(agent=>agent.id!==snapshot.focusAgentId)}
                 archivedCount={snapshot.archived.length}
                 showArchived={showArchived}
                 onShowArchived={() => {

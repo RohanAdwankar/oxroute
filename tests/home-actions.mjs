@@ -28,8 +28,12 @@ try{
  await first.getByRole('group',{name:`Suggested next steps for ${agents[0].name}`,exact:true}).waitFor();
  const reply=first.getByRole('textbox',{name:`Reply to ${agents[0].name}`,exact:true});
  await reply.fill('A custom question outside the suggested options.');assert.equal(historyReads,0,'Typing a reply never fetches or expands history');
- await page.reload();assert.equal(await reply.inputValue(),'A custom question outside the suggested options.');
- await first.getByRole('button',{name:'Send reply',exact:true}).click();await first.getByText('Reply sent',{exact:true}).waitFor();
+ await page.evaluate(task=>localStorage.setItem(`oxroute.taskReply.${task.id}`,'A saved task-specific question.'),task);
+ await page.reload();
+ await first.getByRole('textbox',{name:`Reply about ${task.text}`,exact:true}).waitFor();
+ assert.equal(await first.getByRole('textbox',{name:`Reply about ${task.text}`,exact:true}).inputValue(),'A saved task-specific question.');
+ assert.equal(await reply.inputValue(),'A custom question outside the suggested options.');
+ await first.getByRole('form',{name:`Reply to ${agents[0].name}`,exact:true}).getByRole('button',{name:'Send reply',exact:true}).click();await first.getByText('Reply sent',{exact:true}).waitFor();
  assert.equal(writes.at(-1).text,'A custom question outside the suggested options.');assert.equal(writes.at(-1).queued,true);
  await first.getByRole('button',{name:'Inspect evidence',exact:true}).click();await first.getByText('Sent to conversation',{exact:true}).waitFor();assert.equal(writes.at(-1).text,'Inspect the validation evidence');
  await first.getByRole('button',{name:'Approve',exact:true}).click();await first.getByRole('button',{name:'Approve',exact:true}).waitFor({state:'detached'});assert.equal(task.status,'complete');

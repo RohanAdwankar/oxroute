@@ -17,7 +17,7 @@ try{
  await context.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents,archived:[],tasks,taskNotes:[],messages:{},tags:{},paneLinks:{},inbox:[],boards:[],sources:[],models:[],backends:[]}}));
  await context.route('**/api/focus',r=>r.fulfill({json:{suggestions:[],feedback:{}}}));
  await context.route('**/api/terminals',r=>r.fulfill({json:[]}));
- await context.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:agents.find(a=>a.id===id),timeline:[],delivery:'start'}});});
+ await context.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:agents.find(a=>a.id===id),timeline:id==='charlie'?[{id:1,agentId:id,at:1,kind:'said',text:'[Linked task](#task/delta-access)',detail:''}]:[],delivery:'start'}});});
  await context.route('**/api/task-diagram.svg?*',r=>{diagrams.push(new URL(r.request().url()).searchParams.get('agents'));return r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'});});
  context.on('request',r=>{if(r.method()!=='GET')writes.push(r.url());});
  const page=await context.newPage();
@@ -77,8 +77,8 @@ try{
  await search.fill('alpha');assert.deepEqual(await shown(),[]);
  await filter.click();assert.deepEqual(await shown(),['Prepare alpha report'],'Switching back to all tasks retains search');
  await search.fill('');await filter.click();
- await page.getByRole('tab',{name:'Focus',exact:true}).click();
- await page.locator('[data-focus-task="delta-access"]').getByRole('button',{name:'Open task',exact:true}).click();
+ await page.getByRole('tab',{name:'charlie session',exact:true}).click();
+ await page.locator('[data-task-reference="delta-access"]').getByRole('button',{name:'Task Grant delta access',exact:true}).click();
  assert.equal(await filter.getAttribute('aria-pressed'),'false','An explicit task link reveals its task outside the current window scope');
  await panel.locator('[data-task-row][aria-current="true"]').getByRole('button',{name:'Grant delta access',exact:true}).waitFor();
  await page.keyboard.press('Enter');

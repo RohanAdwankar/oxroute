@@ -7,7 +7,7 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 /** Task replies have their own durable draft, independent of the conversation composer. */
-export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
+export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
   const key = task ? `oxroute.taskReply.${task.id}` : `oxroute.homeReply.${agent.id}`;
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } });
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -60,7 +60,7 @@ export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task
       {entries.map(entry => <div key={entry.id} className="mb-3"><p className="mb-1 text-[11px] text-faint">{entry.kind === "said" ? agent.name : "You"}</p><Markdown>{entry.text}</Markdown></div>)}
     </div>}
     {sent && <p className="my-2 whitespace-pre-wrap text-[12px] text-mid">You: {sent}</p>}
-    <form className="mt-2 flex items-end gap-2" onSubmit={event => { event.preventDefault(); void send(); }}>
+    <form aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} className="mt-2 flex items-end gap-2" onSubmit={event => { event.preventDefault(); void send(); }}>
       <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
         onChange={event => change(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}

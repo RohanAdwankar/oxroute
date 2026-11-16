@@ -158,6 +158,7 @@ export interface Snapshot {
   automaticTags: boolean;
   recommendationLearning: boolean;
   /** What a new agent gets when nobody picks. Matches a `ModelInfo.id`. */
+  focusAgentId?: string | null;
   defaultModel: string;
   artifactRoot: string;
   agents: Agent[];

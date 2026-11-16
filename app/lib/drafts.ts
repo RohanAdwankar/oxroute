@@ -35,10 +35,14 @@ export function keepDiffs(who: string, diffs: DiffQuote[]): void {
 }
 
 export function draftFor(who: string): string {
+  if (!drafts.has(who)) {
+    try { const saved=sessionStorage.getItem(`oxroute.draft.${who}`); if(saved)drafts.set(who,saved); } catch { /* Keep editing when browser storage is unavailable. */ }
+  }
   return drafts.get(who) ?? "";
 }
 
 export function keepDraft(who: string, text: string): void {
   if (text) drafts.set(who, text);
   else drafts.delete(who);
+  try { if(text)sessionStorage.setItem(`oxroute.draft.${who}`,text);else sessionStorage.removeItem(`oxroute.draft.${who}`); } catch { /* The active draft remains in memory. */ }
 }
