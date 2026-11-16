@@ -6,6 +6,7 @@ import { FileReviews, ReviewFileButton, ReviewImage, savedReview } from "./FileR
 import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import { encodePrFormLink } from "../lib/pr-links";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
 
@@ -93,7 +94,7 @@ const markdownComponents: Components = {
       onClick={() => links.open(id)} className="inline-flex cursor-pointer items-center gap-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em] text-ink hover:text-mid">
       <Icon name={task ? "tasks" : "diff"} size={12} />{children}
     </button>;
-    return <><a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>{href && <ReviewFileButton url={href} />}</>;
+    return <><a {...props} href={href && encodePrFormLink(href)} target="_blank" rel="noreferrer">{children}</a>{href && <ReviewFileButton url={href} />}</>;
   },
 };
 
