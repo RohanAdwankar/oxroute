@@ -33,19 +33,19 @@ agent_binary=$HOME/.local/bin/oxroute-agent
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
 backup_root=$(uv run --no-project python -c '
-import pathlib,shutil,sys
-required = pathlib.Path(sys.argv[1]).stat().st_size + 1024**3
-root = max(sys.argv[2:], key=lambda path: shutil.disk_usage(path).free)
+import shutil,sys
+required = 1024**3
+root = max(sys.argv[1:], key=lambda path: shutil.disk_usage(path).free)
 free = shutil.disk_usage(root).free
 if free < required:
     sys.exit(f"Deployment preserved: backup needs {required/1024**3:.1f} GiB including headroom; {root} has {free/1024**3:.1f} GiB free")
 print(root)
-' "$database" /tmp "$state")
+' /tmp "$state")
 backup=$(mktemp -d "$backup_root/oxroute-deploy.XXXXXX")
 export TMPDIR=$backup
 cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
 trap cleanup EXIT
-uv run --no-project python -c 'import sqlite3,sys; sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True).backup(sqlite3.connect(sys.argv[2]))' "$database" "$backup/database.sqlite3"
+uv run --no-project python "$repository/deploy/database-backup.py" backup "$database" "$backup/database.sqlite3.gz"
 cp -a "$binary" "$backup/oxrouted"
 if test -e "$agent_binary"; then cp -a "$agent_binary" "$backup/oxroute-agent"; fi
 cp -a "$web" "$backup/web"
@@ -74,7 +74,7 @@ rollback() {
     rm -f "$agent_binary"
   fi
   # Restore review bodies stripped by migration, without reverting other data.
-  uv run --no-project python -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("ATTACH DATABASE ? AS previous",(sys.argv[2],)); c.execute("INSERT OR REPLACE INTO kv SELECT * FROM previous.kv WHERE key GLOB '\''review:*'\''"); c.commit()' "$database" "$backup/database.sqlite3"
+  uv run --no-project python "$repository/deploy/database-backup.py" restore-reviews "$database" "$backup/database.sqlite3.gz"
   systemctl --user start oxroute.service oxroute-web.service
   curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
   # A deployment failure must not replace human decisions or task dependencies.

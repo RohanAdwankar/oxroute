@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +23,14 @@ class DeploymentRecovery(unittest.TestCase):
                 daemon = release / "bin/oxrouted"
                 daemon.write_bytes(b"fixture binary")
                 daemon.chmod(0o755)
+                agent_binary = root / "agent-binary"
+                agent_binary.write_bytes(b"old agent binary")
+                (release / "bin/oxroute-agent").write_bytes(b"new agent binary")
+                (release / "bin/oxroute-agent").chmod(0o755)
+                validation = release / "validation"
+                (validation / "deploy").mkdir(parents=True)
+                (validation / "REVISION").write_text("fixture")
+                shutil.copy2(SCRIPT.parent / "database-backup.py", validation / "deploy/database-backup.py")
                 (release / "web/.next/BUILD_ID").write_text("fixture")
                 binary, web = root / "binary", root / "web"
                 binary.symlink_to(daemon)
@@ -31,6 +40,7 @@ class DeploymentRecovery(unittest.TestCase):
                     "release": str(release), "repository": str(root),
                     "commit": "fixture", "version": "fixture",
                     "binarySha256": hashlib.sha256(daemon.read_bytes()).hexdigest(),
+                    "agentBinarySha256": hashlib.sha256((release / "bin/oxroute-agent").read_bytes()).hexdigest(),
                     "agentId": "fixture", "tasks": [{"id": "task-fixture", "text": "Fixture"}],
                 }))
                 with sqlite3.connect(root / "database") as database:
@@ -38,6 +48,7 @@ class DeploymentRecovery(unittest.TestCase):
                 script = SCRIPT.read_text()
                 for before, after in [
                     ('binary=$HOME/.local/bin/oxrouted', f'binary={binary}'),
+                    ('agent_binary=$HOME/.local/bin/oxroute-agent', f'agent_binary={agent_binary}'),
                     ('web=$HOME/.local/share/oxroute/web', f'web={web}'),
                     ('database=$HOME/.local/state/oxroute/oxroute.sqlite3', f'database={root}/database'),
                     ('sleep 2', 'sleep 0'),
@@ -55,7 +66,7 @@ if [[ "$1" == start ]]; then
   if [[ "$count" == 2 && "$FAIL_RESTART" == 1 ]]; then exit 1; fi
 fi
 ''',
-                    "node": 'exit 1',
+                    "node": 'if [[ "$*" == *--input-type* ]]; then exit 0; fi; exit 1',
                     "curl": '''
 case "$*" in
   *api/state*) echo '{"agents":[]}';;
@@ -79,12 +90,12 @@ esac
                 self.assertFalse(pending.exists(), "A failed release must leave the retry queue: " + result.stderr)
                 self.assertTrue((state / "failed-deployment.json").exists())
                 if not fail_restart:
-                    self.assertTrue((root / "task-updates").exists(), result.stderr)
+                    self.assertFalse((root / "task-updates").exists(), "Rollback must preserve human task states")
                 calls = (root / "services").read_text()
                 subprocess.run(["bash", str(root / "script")], env=env, check=True)
                 self.assertEqual((root / "services").read_text(), calls,
                                  "The next timer tick must not restart services again")
-                self.assertFalse(list(state.glob("deploy-backup.*")))
+                self.assertFalse(list(state.glob("oxroute-deploy.*")))
 
 
 if __name__ == "__main__":
