@@ -49,7 +49,7 @@ try {
  fail=false;await ready.getByRole('button',{name:'Approve',exact:true}).click();
  await ready.waitFor({state:'detached'});assert.equal(await rows.count(),16,'Closing an item leaves every remaining human action visible');
  assert.equal(writes.at(-1).status,'complete');assert.equal(writes.at(-1).approved,true);
- await page.locator('[data-focus-task="urgent-decision"]').getByRole('button',{name:'Open conversation',exact:true}).click();
+ await page.locator('[data-focus-task="urgent-decision"]').getByRole('button',{name:'Resolve urgent-decision',exact:true}).click();
  await page.locator('[data-agent-pane="urgent"]').waitFor();
  await page.goBack();await rows.first().waitFor();
  await page.getByRole('tab',{name:'ordinary session',exact:true}).click();

@@ -22,10 +22,10 @@ export const FocusSuggestions = memo(function FocusSuggestions({item, preview, o
     catch(error){setError(error instanceof Error?error.message:String(error));}
     finally{setPending(false);}
   };
-  return <li ref={element} data-focus-suggestions={agent.id} className="border-t border-hair py-4" style={{contentVisibility:"auto",containIntrinsicSize:"auto 220px"}}>
+  return <li ref={element} data-focus-suggestions={agent.id} onClick={event=>{if(!(event.target as Element).closest("a,button,input,textarea,select,[data-quote-thread]")&&!window.getSelection()?.toString())onOpen(agent.id);}} className="cursor-pointer border-t border-hair py-4" style={{contentVisibility:"auto",containIntrinsicSize:"auto 220px"}}>
     <div className="flex items-center gap-3 text-[11.5px] text-faint"><span>Suggested next steps</span><span>{since(agent.updatedAt)}</span>
       <button type="button" onClick={()=>onOpen(agent.id)} className="ml-auto cursor-pointer hover:text-ink" aria-label={`Open ${agent.name}`} title="Open conversation"><Icon name="external" size={14}/></button></div>
-    <p className="mt-1 text-[15px] font-medium">{agent.name}</p>
+    <button type="button" onClick={()=>onOpen(agent.id)} className="mt-1 cursor-pointer text-left text-[15px] font-medium">{agent.name}</button>
     {preview&&<div className="mt-2 line-clamp-4 text-[13px] text-mid"><Markdown>{preview}</Markdown></div>}
     {sent?<p role="status" className="mt-3 text-[12px] text-faint">Sent to conversation</p>:<section role="group" aria-label={`Suggested next steps for ${agent.name}`} className="next-choices">
       <div>{nextActions.actions.map(action=><button key={action.message} type="button" className="cursor-pointer text-left hover:bg-wash focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40" disabled={pending} aria-label={action.label} title={action.message} onClick={()=>void send(action.message)}><span>{action.label}</span><span>{action.message}</span></button>)}</div>

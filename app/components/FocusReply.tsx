@@ -49,8 +49,8 @@ export function FocusReply({ task, agent, expanded, onExpanded, onSent }: { task
     finally { setPending(false); }
   };
   return <div className="mt-3 cursor-auto" data-focus-reply={task.id}>
-    <div className="flex items-center gap-3 text-[11.5px] text-mid">
-      <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} className="sr-only focus:not-sr-only">Conversation context</button>
+    <div className="relative flex items-center gap-3 text-[11.5px] text-mid">
+      <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} style={{position:"absolute",right:0,top:0}} className="sr-only focus:not-sr-only focus:bg-card">Conversation context</button>
       <span role="status">{pending ? "Sending…" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
       {expanded && <button type="button" title="Refresh context" aria-label="Refresh context" onClick={() => setRevision(value => value + 1)} className="cursor-pointer hover:text-ink"><Icon name="refresh" /></button>}
     </div>

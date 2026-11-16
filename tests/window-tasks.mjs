@@ -78,7 +78,7 @@ try{
  await filter.click();assert.deepEqual(await shown(),['Prepare alpha report'],'Switching back to all tasks retains search');
  await search.fill('');await filter.click();
  await page.getByRole('tab',{name:'Focus',exact:true}).click();
- await page.locator('[data-focus-task="delta-access"]').getByRole('button',{name:'Grant delta access',exact:true}).click();
+ await page.locator('[data-focus-task="delta-access"]').getByRole('button',{name:'Open task',exact:true}).click();
  assert.equal(await filter.getAttribute('aria-pressed'),'false','An explicit task link reveals its task outside the current window scope');
  await panel.locator('[data-task-row][aria-current="true"]').getByRole('button',{name:'Grant delta access',exact:true}).waitFor();
  await page.keyboard.press('Enter');

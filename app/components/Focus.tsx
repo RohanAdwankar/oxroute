@@ -18,7 +18,7 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
   const [expanded,setExpanded]=useState(false);
   return <li data-focus-task={task.id} onClick={event=>{
     if(!agent||(event.target as Element).closest("button,a,input,textarea,select,[data-focus-reply]")||window.getSelection()?.toString())return;
-    setExpanded(value=>!value);
+    actions.onOpenAgent(agent.id);
   }} className={`flex gap-4 border-t border-hair py-4 ${agent?"cursor-pointer":""}`} style={{contentVisibility:"auto",containIntrinsicSize:"auto 240px"}}>
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11.5px] text-faint">
@@ -26,10 +26,11 @@ const TaskCard=memo(function TaskCard({item,agent,archived,pending,onFollow,...a
         {priority<4&&<span>priority p{priority}</span>}{unblocks>0&&<span>unblocks {unblocks} {unblocks===1?"task":"tasks"}</span>}
         <span>active {since(item.at)}</span><span>{agent?.name??(task.agentId?"Session unavailable":"Unassigned")}{archived?" · archived":""}</span>
       </div>
-      <button type="button" title={task.text} onClick={()=>actions.onOpenTask(task.id)} className="mt-1 line-clamp-2 cursor-pointer text-left text-[15px] font-medium text-ink hover:underline">{task.text}</button>
+      <button type="button" title={task.text} onClick={()=>agent?actions.onOpenAgent(agent.id):actions.onOpenTask(task.id)} className="mt-1 line-clamp-2 cursor-pointer text-left text-[15px] font-medium text-ink hover:underline">{task.text}</button>
       <div className="mt-2 text-[13px] leading-relaxed text-mid"><Markdown>{note?.text||(task.status==="done"?"Review the result, then approve it or send a correction.":"Reply below to continue working with the agent.")}</Markdown></div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {task.status==="done"&&<TaskApproval task={task} busy={pending} approve={()=>actions.onApprove(task)} correct={()=>actions.onCorrect(task)}/>}
+        <button type="button" title="Open task" aria-label="Open task" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenTask(task.id)}><Icon name="tasks"/></button>
         {agent&&<button type="button" title="Open conversation" aria-label="Open conversation" className="cursor-pointer text-mid hover:text-ink" onClick={()=>actions.onOpenAgent(task.agentId)}><Icon name="external"/></button>}
       </div>
       {agent&&<FocusReply task={task} agent={agent} expanded={expanded} onExpanded={setExpanded} onSent={()=>onFollow(task.id)}/>}

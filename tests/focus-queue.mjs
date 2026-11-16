@@ -16,6 +16,7 @@ try{
   if(path==='/api/focus')return r.fulfill({json:data});
   if(path==='/api/client-failures')return r.fulfill({json:{}});
   if(path==='/api/terminals')return r.fulfill({json:[]});
+  if(path===`/api/agents/${agent.id}`)return r.fulfill({json:{agent,timeline:[],delivery:'start'}});
   if(path==='/api/recommendations/42/shown')return r.fulfill({json:{}});
   if(path==='/api/say'){
    writes.push(r.request().postDataJSON());
@@ -36,6 +37,13 @@ try{
  assert.equal(await result.getByRole('link',{name:'deployment guide',exact:true}).getAttribute('href'),'https://example.com/guide');
  await result.locator('pre code').getByText('check-service --status',{exact:true}).waitFor();
  await page.getByLabel('Recommendation feedback').getByText('Next actions: 6/8 choices matched · Routing: 2/3 choices matched',{exact:true}).waitFor();
+ await row.getByRole('button',{name:agent.name,exact:true}).click();
+ await page.locator(`[data-agent-pane="${agent.id}"]`).waitFor();
+ assert.equal(writes.length,0,'Opening a conversation does not choose a suggestion');
+ await page.goBack();await row.waitFor();
+ await row.getByText('Suggested next steps',{exact:true}).click();
+ await page.locator(`[data-agent-pane="${agent.id}"]`).waitFor();
+ await page.goBack();await row.waitFor();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
  await row.getByRole('button',{name:'Inspect evidence',exact:true}).click();await row.getByRole('alert').waitFor();
  assert.equal(writes.length,1);fail=false;
