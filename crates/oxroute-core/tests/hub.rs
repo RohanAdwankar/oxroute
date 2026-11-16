@@ -3857,3 +3857,99 @@ async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conv
         assert!(w.calls.lock().unwrap().started[0].1.iter().filter_map(TurnInput::as_text).any(|text|text.contains(early)&&text.contains(recent)));
     }
 }
+
+#[tokio::test]
+async fn focus_identity_and_periodic_wakes_preserve_human_dependencies() {
+    let w=world(Mode::Ask,false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let (one,two)=tokio::join!(w.hub.ensure_focus_agent(),w.hub.ensure_focus_agent());
+    let focus=one.unwrap();assert_eq!(focus.id,two.unwrap().id);
+    assert_eq!(w.hub.snapshot(10).unwrap().focus_agent_id.as_deref(),Some(focus.id.as_str()));
+    assert!(!w.hub.autorun_enabled(&focus.id).unwrap());
+    let at=now();
+    w.hub.sweep_focus(at).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(w.calls.lock().unwrap().started.is_empty(),"No model calls while the fleet has no work");
+    let worker=w.hub.create_agent(None).unwrap();
+    let mut task=TaskItem{id:new_id("task"),text:"Choose a deployment window".into(),agent_id:worker.id.clone(),status:TaskStatus::WaitingForHuman,blocked_by_task_id:String::new(),parent_task_id:String::new(),images:vec![],created_at:at,updated_at:at,position:0.0};
+    w.hub.store.save_task(&task).unwrap();
+    w.hub.sweep_focus(at).await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==1&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
+    assert_eq!(w.hub.store.tasks().unwrap()[0].status,TaskStatus::WaitingForHuman);
+    w.hub.sweep_focus(at+1199.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;assert_eq!(w.calls.lock().unwrap().started.len(),1);
+    w.hub.sweep_focus(at+1201.0).await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==2&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
+    task.status=TaskStatus::Complete;w.hub.store.save_task(&task).unwrap();
+    w.hub.sweep_focus(at+2405.0).await.unwrap();tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(),2);
+    w.hub.reconcile_threads().await.unwrap();
+    assert!(w.posts.lock().unwrap().threads.is_empty(),"Focus must remain a local conversation");
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+}
+
+#[tokio::test]
+async fn focus_internal_messages_are_durable_idempotent_and_local() {
+    let w=world(Mode::Ask,false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();
+    let worker=w.hub.create_agent(None).unwrap();
+    w.hub.store.bind("slack","D1","existing-thread",&worker.id).unwrap();
+    let request=uuid::Uuid::new_v4().to_string();
+    assert!(w.hub.send_focus_message(&worker.id,&focus.id,"Review existing evidence",&request).await.is_err());
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
+    assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
+    assert_eq!(w.calls.lock().unwrap().started.len(),1);
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
+    assert!(w.hub.send_focus_message(&focus.id,&worker.id,"Different request",&request).await.is_err());
+    assert_eq!(w.calls.lock().unwrap().started.len(),1);
+    assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    w.hub.reconcile_threads().await.unwrap();
+    assert_eq!(w.posts.lock().unwrap().threads,Vec::<String>::new(),"An internal-only recipient must not be mirrored externally");
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+    let unbound=w.hub.create_agent(None).unwrap();
+    w.hub.send_focus_message(&focus.id,&unbound.id,"Check existing work",&uuid::Uuid::new_v4().to_string()).await.unwrap();
+    assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
+    w.hub.store.set("dashboard","slack\u{1f}D1\u{1f}root").unwrap();
+    w.hub.reconcile_threads().await.unwrap();
+    assert!(w.posts.lock().unwrap().threads.is_empty(),"Background repair must not mirror internal-only conversations");
+    // A later explicit human message retains the existing source-linking workflow.
+    w.hub.say_to(&unbound.id,"Please explain the evidence to me").await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==3).await);
+    assert!(!w.posts.lock().unwrap().threads.is_empty());
+}
+
+#[tokio::test]
+async fn focus_messages_wait_for_existing_turns_without_interrupting() {
+    let w=build(Mode::Ask,Harnessed{source:false,delay:Duration::from_millis(160),..Harnessed::default()}).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id,"Inspect the current configuration").await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
+    w.hub.send_focus_message(&focus.id,&worker.id,"Report the remaining blocker",&uuid::Uuid::new_v4().to_string()).await.unwrap();
+    assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
+    let calls=w.calls.lock().unwrap();assert_eq!(calls.started.len(),2);assert!(calls.interrupted.is_empty());
+    assert!(calls.start_times[1].duration_since(calls.start_times[0])>=Duration::from_millis(150));
+}
+
+#[test]
+fn focus_wake_receipts_and_outbox_survive_reopening_the_store() {
+    let root=std::env::temp_dir().join(format!("oxroute-focus-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();let path=root.join("state.sqlite3");
+    {let store=Store::open(&path).unwrap();store.set("focus.agent","persistent-focus").unwrap();store.set("focus-wake:1900000000","delivered").unwrap();store.enqueue_focus_message("request","persistent-focus","recipient","Continue authorized work").unwrap();}
+    let store=Store::open(&path).unwrap();assert_eq!(store.last_focus_wake().unwrap(),Some(1900000000.0));assert_eq!(store.get("focus.agent").unwrap().as_deref(),Some("persistent-focus"));
+    assert_eq!(store.pending_focus_messages().unwrap().len(),1);store.finish_focus_message("request").unwrap();drop(store);
+    assert!(Store::open(&path).unwrap().pending_focus_messages().unwrap().is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn focus_timer_never_overlaps_an_active_coordinator_turn() {
+    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();let at=now();
+    w.hub.store.save_task(&TaskItem{id:new_id("task"),text:"Choose an available window".into(),agent_id:worker.id,status:TaskStatus::WaitingForHuman,blocked_by_task_id:String::new(),parent_task_id:String::new(),images:vec![],created_at:at,updated_at:at,position:0.0}).unwrap();
+    w.hub.sweep_focus(at).await.unwrap();assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
+    w.hub.sweep_focus(at+1300.0).await.unwrap();tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(),1);assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    w.hub.interrupt(&focus.id).await.unwrap();
+}

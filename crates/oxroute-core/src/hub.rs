@@ -38,6 +38,8 @@ use crate::source::{Posted, Source, SourceEvent};
 use crate::store::{ActiveTurn, Store};
 use crate::tags::{self, Arranged, Board};
 
+mod focus;
+
 const ERROR_REPLY: &str = "That request could not be completed.";
 const LOW_STORAGE_REPLY: &str = "Disk is critically low. This request was not started.";
 /// Wait this long before posting a progress message. Most turns that answer
@@ -213,6 +215,7 @@ pub struct Hub {
     locks: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     follow_ups: AsyncMutex<HashMap<String, Vec<FollowUp>>>,
     naming: AsyncMutex<HashSet<String>>,
+    focus_jobs: AsyncMutex<HashSet<String>>,
     learning: AsyncMutex<HashSet<String>>,
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
@@ -324,6 +327,7 @@ impl Hub {
             locks: AsyncMutex::new(HashMap::new()),
             follow_ups: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
+            focus_jobs: AsyncMutex::new(HashSet::new()),
             learning: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
             task_dispatch: AsyncMutex::new(()),
@@ -697,6 +701,7 @@ impl Hub {
                 if let Err(error) = self.reconcile_threads().await {
                     tracing::warn!(%error, "source thread reconciliation failed");
                 }
+                if let Err(error)=self.sweep_focus(at).await { tracing::warn!(%error,"Focus sweep failed"); }
                 self.hand_out_open_work().await;
                 self.refresh_dashboard().await;
             }
@@ -1968,6 +1973,7 @@ impl Hub {
 
         let artifact_dir = self.config.artifacts.join(&agent.id).join(new_id("turn"));
         tokio::fs::create_dir_all(&artifact_dir).await?;
+        if self.focus_agent_id()?.as_deref()==Some(&agent.id) { inputs.push(TurnInput::text(self.focus_context(&agent.id)?)); }
         let prompt_at = inputs.len();
         inputs.push(TurnInput::text(format!(
             "Place every image, video, or other file you want returned to the user in \
@@ -2189,6 +2195,7 @@ impl Hub {
             let answer = turn.answer.lock().unwrap().clone();
             match (status.as_str(), answer) {
                 ("completed", Some(text)) if !text.is_empty() => Ok(Some(text)),
+                ("completed", _) if self.focus_agent_id()?.as_deref()==Some(&agent.id) => Ok(Some(String::new())),
                 (other, _) => Err(anyhow::anyhow!("the turn ended with {other}")),
             }
         };
@@ -2226,7 +2233,7 @@ impl Hub {
         // it is the same answer whether or not an attachment was written
         // down in between.
         let repeated = turn.narrated.lock().unwrap().contains(&answer);
-        if !repeated {
+        if !repeated && !answer.is_empty() {
             self.record(&agent.id, EntryKind::Said, &answer, "", "");
         }
         self.store.set_agent_status(&agent.id, AgentStatus::Complete, now())?;
@@ -2984,6 +2991,7 @@ impl Hub {
     /// Where this agent normally answers, when a message did not come with a
     /// thread of its own.
     async fn home_target(&self, agent_id: &str) -> Option<Target> {
+        if self.focus_agent_id().ok().flatten().as_deref()==Some(agent_id) { return Some(Target::new("you","local",agent_id)); }
         self.home_binding(agent_id)
             .map(|b| Target::new(b.source, b.conversation, b.thread_key))
     }
@@ -3110,7 +3118,9 @@ impl Hub {
     pub async fn reconcile_threads(&self) -> Result<()> {
         if self.sources.is_empty() { return Ok(()); }
         let workers: HashSet<_> = self.store.task_forks()?.into_iter().map(|(_, _, child)| child).collect();
+        let focus=self.focus_agent_id()?;
         for agent in self.store.unarchived_agents()? {
+            if focus.as_deref()==Some(&agent.id) || (self.store.get(&format!("focus-local-origin:{}",agent.id))?.is_some() && !self.store.has_human_message(&agent.id)?) {continue;}
             let binding = self.home_binding(&agent.id);
             if agent.backend == Backend::Codex && binding.is_none() && !workers.contains(&agent.id) {
                 // An unused UI card is local until its first message. Retain
@@ -3250,6 +3260,7 @@ impl Hub {
             automatic_tags: self.automatic_tags(),
             recommendation_learning: self.recommendation_learning(),
             inbox_connectors: crate::inbox::statuses(self),
+            focus_agent_id: self.focus_agent_id()?,
             default_model: self.config.default_model.clone(),
             artifact_root: self.config.artifacts.to_string_lossy().into_owned(),
             agents,
@@ -4093,6 +4104,7 @@ pub struct Snapshot {
     pub inbox_connectors: Vec<crate::inbox::Status>,
     /// The model a new agent gets when nobody picks one. An id, matching one
     /// of `models[].id`.
+    pub focus_agent_id: Option<String>,
     pub default_model: String,
     pub artifact_root: String,
     pub agents: Vec<Agent>,

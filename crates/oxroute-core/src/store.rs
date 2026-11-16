@@ -18,7 +18,14 @@ use crate::model::{
 };
 use crate::tags::Board;
 
+#[derive(Debug, Clone)]
+pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String}
+
 const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS focus_messages (
+ id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS agents (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
@@ -1910,6 +1917,26 @@ impl Store {
             values.into_iter().map(|value| Ok(serde_json::from_str(&value)?)).collect()
         })
     }
+
+    pub fn has_human_message(&self,agent:&str)->Result<bool> {
+        self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE agent_id=?1 AND kind IN ('you','received'))",[agent],|row|row.get(0))?))
+    }
+    pub fn last_focus_wake(&self) -> Result<Option<f64>> {
+        self.read(|c|Ok(c.query_row("SELECT MAX(CAST(substr(key,12) AS REAL)) FROM kv WHERE key GLOB 'focus-wake:*'",[],|row|row.get(0))?))
+    }
+    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str)->Result<()> {
+        self.with(|c|{
+            let tx=c.unchecked_transaction()?;
+            tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text) VALUES (?1,?2,?3,?4)",params![id,sender,target,text])?;
+            let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 FROM focus_messages WHERE id=?1",params![id,sender,target,text],|row|row.get::<_,bool>(0))?;
+            anyhow::ensure!(same,"requestId was already used for another message");tx.commit()?;Ok(())
+        })
+    }
+    pub fn pending_focus_messages(&self)->Result<Vec<FocusMessage>> {
+        self.read(|c|{let mut q=c.prepare("SELECT id,sender,target,text FROM focus_messages WHERE accepted=0 ORDER BY rowid")?;
+            let rows=q.query_map([],|row|Ok(FocusMessage{id:row.get(0)?,sender:row.get(1)?,target:row.get(2)?,text:row.get(3)?}))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+    }
+    pub fn finish_focus_message(&self,id:&str)->Result<()> {self.with(|c|{c.execute("UPDATE focus_messages SET accepted=1 WHERE id=?1",[id])?;Ok(())})}
 
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         self.read(|c| {
