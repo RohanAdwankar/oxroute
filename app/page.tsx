@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
+import { EmbeddedReviews } from "./components/FocusReview";
+import { receiveDraft } from "./lib/drafts";
 import { TaskActions } from "./components/TaskReference";
 
 import { ArchiveAgent } from "./components/ArchiveAgent";
@@ -1340,6 +1342,7 @@ export default function Home() {
     <ArtifactRoot.Provider value={snapshot.artifactRoot}>
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={taskActions}>
+    <EmbeddedReviews.Provider value={focusOpen&&focusAgentId?{owners:new Map(Object.entries(snapshot.reviews??{}).flatMap(([id,reviews])=>reviews.map(review=>[review,{id,name:[...snapshot.agents,...snapshot.archived].find(agent=>agent.id===id)?.name??"Conversation"}]))),quote:quote=>receiveDraft(focusAgentId,{text:"",files:[],diffs:[quote]})}:null}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} error={archiveError} onCancel={() => setArchiving(null)} onArchive={completeTasks => archiveAgent(archiving, true, completeTasks)} />}
@@ -1737,6 +1740,7 @@ export default function Home() {
         )}
       </div>
     </main>
+    </EmbeddedReviews.Provider>
     </TaskActions.Provider>
     </TaskLinks.Provider>
     </ArtifactRoot.Provider>

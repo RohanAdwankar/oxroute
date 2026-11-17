@@ -7,6 +7,7 @@ import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
 import { encodePrFormLink } from "../lib/pr-links";
+import { EmbeddedReviews, FocusReview } from "./FocusReview";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
 
@@ -63,6 +64,11 @@ function referenceLinks(titles: Map<string, string>) {
 
 // Stable renderer identities preserve native selections when Markdown updates.
 const markdownComponents: Components = {
+  p: function Paragraph({node,children}) {
+    const reviews=useContext(EmbeddedReviews);
+    const embedded=node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
+    return embedded?<div>{children}</div>:<p>{children}</p>;
+  },
   img: ({src, alt, title}) => <ReviewImage src={src} alt={alt} title={title} />,
   span: function QuoteSpan({ node, children, ...props }) {
     const quotes = useContext(QuoteLinks);
@@ -85,6 +91,8 @@ const markdownComponents: Components = {
     const openFile = useContext(FileReviews);
     const reviews = useContext(ReviewLinks);
     const tasks = useContext(TaskLinks);
+    const embedded=useContext(EmbeddedReviews);
+    if(href?.startsWith("#review/")&&embedded?.owners.has(href.slice(8)))return <FocusReview id={href.slice(8)}/>;
     if (href && savedReview(href) && openFile) return <button type="button" className="cursor-pointer underline" onClick={() => openFile(href)}>{children}</button>;
     const task = href?.startsWith("#task/");
     const links = task ? tasks : reviews;
@@ -107,6 +115,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
   const tasks = useContext(TaskLinks);
   const quotes = useContext(QuoteLinks);
   const root = useContext(ArtifactRoot);
+  const embedded=useContext(EmbeddedReviews);
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
@@ -125,7 +134,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
         // Tables, task lists and strikethrough are GFM rather than CommonMark,
         // so without this an agent's table arrives as a wall of pipes.
         // A shell's home-directory tildes are literal; deletion needs ~~.
-        remarkPlugins={[[remarkGfm, { singleTilde: false }], ...((reviews || tasks) ? [referenceLinks(new Map([...(reviews?.titles ?? []), ...(tasks?.titles ?? [])]))] : [])]}
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], ...((reviews || tasks || embedded) ? [referenceLinks(new Map([...(reviews?.titles ?? []), ...(tasks?.titles ?? []), ...[...(embedded?.owners??[])].map(([id,owner])=>[id,`Review from ${owner.name}`] as [string,string])]))] : [])]}
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : [])]}
