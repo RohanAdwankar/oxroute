@@ -17,6 +17,7 @@ const browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(proc
 try{
  const page=await browser.newPage({viewport:{width:1280,height:900}}),writes=[],errors=[];
  page.on('pageerror',error=>errors.push(String(error)));
+ await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
  await page.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents:[coordinator,...workers,manual],archived:[],messages:{},tasks,taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}}));
  await page.route('**/api/events',r=>r.fulfill({contentType:'text/event-stream',body:': fixture\n\n'}));
  await page.route('**/api/client-failures',r=>r.fulfill({json:{}}));
@@ -65,6 +66,7 @@ try{
  fail=false;await notice.getByRole('button',{name:'Approve',exact:true}).click();
  await notice.getByText('Approved',{exact:true}).waitFor();
  assert.equal(writes.length,2,'Approval keeps its existing explicit failure and retry behavior');
+ await page.waitForLoadState('networkidle');
  await page.reload();await notice.getByText('Approved',{exact:true}).waitFor();
  assert.deepEqual(errors,[]);
  console.log('Delegation notices omit redundant fork rows and duplicate worker IDs while task navigation, worker navigation, approvals, retries and unrelated content remain available.');
