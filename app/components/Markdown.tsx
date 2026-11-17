@@ -64,6 +64,29 @@ function referenceLinks(titles: Map<string, string>) {
   };
 }
 
+/** Conversation references keep their prose intact and share one deck after the reply. */
+function conversationCards(known: Set<string>) {
+  return () => (tree: Node) => {
+    const links = new Map<string, Node>();
+    const id = (node: Node) => node.type === "element" && node.tagName === "a" && node.properties?.href?.startsWith("#agent/") && known.has(node.properties.href.slice(7)) ? node.properties.href.slice(7) : "";
+    const remember = (node: Node) => { links.set(id(node), node); };
+    const visit = (node: Node) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap(child => {
+        if (id(child)) { remember(child); return child.children ?? []; }
+        if (node.type === "root" && child.tagName === "p" && child.children?.some(id) && child.children.every(part => id(part) || part.type === "text" && !part.value?.trim())) {
+          child.children.filter(id).forEach(remember);
+          return [];
+        }
+        visit(child);
+        return [child];
+      });
+    };
+    visit(tree);
+    if (links.size) tree.children?.push({ type: "element", tagName: "p", properties: {}, children: [...links.values()] });
+  };
+}
+
 // Stable renderer identities preserve native selections when Markdown updates.
 const markdownComponents: Components = {
   p: function Paragraph({node,children}) {
@@ -72,7 +95,7 @@ const markdownComponents: Components = {
     const agentLink=(child:typeof nodes[number])=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#agent/")&&cards&&[...cards.state.agents,...cards.state.archived].some(agent=>agent.id===(child.properties.href as string).slice(7));
     const ids=nodes.filter(agentLink).map(child=>child.type==="element"?String(child.properties.href).slice(7):"");
     if(ids.length&&nodes.every(child=>agentLink(child)||child.type==="text"&&!child.value.trim()))return <FocusCards ids={ids}/>;
-    const embedded=ids.length||node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
+    const embedded=node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
     return embedded?<div>{children}</div>:<p>{children}</p>;
   },
   img: ({src, alt, title}) => <ReviewImage src={src} alt={alt} title={title} />,
@@ -97,8 +120,7 @@ const markdownComponents: Components = {
     const openFile = useContext(FileReviews);
     const reviews = useContext(ReviewLinks);
     const tasks = useContext(TaskLinks);
-    const embedded=useContext(EmbeddedReviews),cards=useContext(ConversationCards);
-    if(href?.startsWith("#agent/")&&cards&&[...cards.state.agents,...cards.state.archived].some(agent=>agent.id===href.slice(7)))return <FocusCards ids={[href.slice(7)]}/>;
+    const embedded=useContext(EmbeddedReviews);
     if(href?.startsWith("#review/")&&embedded?.owners.has(href.slice(8)))return <FocusReview id={href.slice(8)}/>;
     if (href && savedReview(href) && openFile) return <button type="button" className="cursor-pointer underline" onClick={() => openFile(href)}>{children}</button>;
     const task = href?.startsWith("#task/");
@@ -122,7 +144,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
   const tasks = useContext(TaskLinks);
   const quotes = useContext(QuoteLinks);
   const root = useContext(ArtifactRoot);
-  const embedded=useContext(EmbeddedReviews);
+  const embedded=useContext(EmbeddedReviews), cards=useContext(ConversationCards);
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
@@ -144,7 +166,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
         remarkPlugins={[[remarkGfm, { singleTilde: false }], ...((reviews || tasks || embedded) ? [referenceLinks(new Map([...(reviews?.titles ?? []), ...(tasks?.titles ?? []), ...[...(embedded?.owners??[])].map(([id,owner])=>[id,`Review from ${owner.name}`] as [string,string])]))] : [])]}
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : [])]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : []), ...(cards ? [conversationCards(new Set([...cards.state.agents, ...cards.state.archived].map(agent => agent.id)))] : [])]}
         components={markdownComponents}
       >
         {children}

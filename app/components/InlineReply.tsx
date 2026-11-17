@@ -7,7 +7,7 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 /** Task replies have their own durable draft, independent of the conversation composer. */
-export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
+export function InlineReply({ task, agent, expanded, onExpanded, onSent, compact = false }: { compact?: boolean; task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
   const key = task ? `oxroute.taskReply.${task.id}` : `oxroute.homeReply.${agent.id}`;
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } });
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -49,7 +49,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
     } catch (error) { setDraft(original);setSent(previous);setError(error instanceof Error ? error.message : String(error)); }
     finally { setPending(false); }
   };
-  return <div className="mt-3 cursor-auto" data-focus-reply={task?.id ?? agent.id}>
+  return <div className={`${compact ? "mt-2" : "mt-3"} cursor-auto`} data-focus-reply={task?.id ?? agent.id}>
     <div className="relative flex items-center gap-3 text-[11.5px] text-mid">
       <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} style={{position:"absolute",right:0,top:0}} className="sr-only focus:not-sr-only focus:bg-card">Conversation context</button>
       <span role="status">{pending ? "Queued" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
@@ -61,12 +61,12 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
       {entries.map(entry => <div key={entry.id} className="mb-3"><p className="mb-1 text-[11px] text-faint">{entry.kind === "said" ? agent.name : "You"}</p><Markdown>{entry.text}</Markdown></div>)}
     </div>}
     {sent && <p className="my-2 whitespace-pre-wrap text-[12px] text-mid">You: {sent}</p>}
-    <form aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} className="mt-2 flex items-end gap-2" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
+    <form aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} className={`${compact ? "mt-1" : "mt-2"} flex items-end gap-2`} onSubmit={event => { event.preventDefault(); void send(); }}>
+      <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={compact ? 1 : 2}
         onChange={event => change(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}
         className="no-scrollbar min-w-0 max-w-full flex-1 resize-y overflow-x-hidden border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
-      <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className="cursor-pointer p-2 text-mid hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="send" /></button>
+      <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className={`cursor-pointer ${compact ? "p-1" : "p-2"} text-mid hover:text-ink disabled:cursor-default disabled:opacity-30`}><Icon name="send" /></button>
     </form>
     {(error || contextError) && <p role="alert" className="mt-2 text-[12px] text-mid">{error || contextError}</p>}
   </div>;

@@ -24,7 +24,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  if(method==='turn/start'){
   const turn={id:`turn-${++serial}`,status:'completed'};result={turn};
   if(focusMode&&!focusThread&&!params.outputSchema)focusThread=params.threadId;
-  const text=params.outputSchema?JSON.stringify({actions:[],title:'Focus',tags:[]}):params.threadId===focusThread?workerIds.map((id,index)=>`[Conversation ${index+1}](#agent/${id})`).join('\n')+`\n\n[Inspect the network change](#review/${reviewId})`:'**Validation is ready.** The current result and evidence can be reviewed here.';
+  const text=params.outputSchema?JSON.stringify({actions:[],title:'Focus',tags:[]}):params.threadId===focusThread?`Start with **[Conversation 1](#agent/${workerIds[0]})**, then compare the alternatives.\n\n[Conversation 2](#agent/${workerIds[1]})\n\n- [Conversation 3](#agent/${workerIds[2]})\n\nThe comparison is ready; choose the next action after reading the evidence.\n\n[Inspect the network change](#review/${reviewId})`:'**Validation is ready.** The current result and evidence can be reviewed here.';
   if(!params.outputSchema)turns.push(params);
   setTimeout(()=>{for(const [method,extra]of[['turn/started',{turn}],['item/completed',{item:{id:`message-${turn.id}`,type:'agentMessage',text,phase:'final_answer'}}],['turn/completed',{turn}]])if(socket.readyState===1)socket.send(JSON.stringify({method,params:{threadId:params.threadId,...extra}}));},20);
  }
@@ -72,9 +72,28 @@ try{
  await page.goto(ui);await page.getByRole('tab',{name:'Focus',exact:true}).click();
  const deck=page.locator('[data-focus-deck]').first();try{await deck.waitFor();}catch(error){console.error((await page.locator('body').innerText()).slice(0,5000));console.error('Turns',turns.length,'Focus thread',focusThread);throw error;}
  assert.equal(await page.locator('[data-focus-deck]').count(),1,'Three recommendations form one stack');
+ const entry=deck.locator('xpath=ancestor::*[@data-entry][1]');
+ const introduction=entry.locator('p').filter({hasText:'Start with Conversation 1, then compare the alternatives.'});
+ await introduction.waitFor();
+ const closing=entry.getByText('The comparison is ready; choose the next action after reading the evidence.',{exact:true});
+ await closing.waitFor();
+ assert.equal(await entry.locator('li').filter({hasText:'Conversation 3'}).count(),1,'List references retain their readable labels');
+ assert.ok(await closing.evaluate(node=>!!(node.compareDocumentPosition(node.closest('[data-entry]').querySelector('[data-focus-deck]'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Conversation cards follow all reply prose');
+ assert.equal(await introduction.locator('[data-focus-deck]').count(),0,'A reference inside emphasis cannot split its sentence');
+
  const card=id=>deck.locator(`[data-focus-conversation="${id}"]`);
  await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor();
  assert.equal(await deck.locator('[data-focus-conversation]').count(),1,'Only the selected card is interactive');
+ const reply=card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true});
+ assert.ok((await reply.boundingBox()).height<40,'The empty inline reply uses one compact line');
+ if(process.env.PLACEMENT_SCREENSHOT){
+  const review=page.locator(`[data-focus-review="${reviewId}"]`).first();
+  await review.getByRole('button',{name:`Collapse review from ${names[1]}`,exact:true}).click();
+  await introduction.scrollIntoViewIfNeeded();
+  await entry.screenshot({path:process.env.PLACEMENT_SCREENSHOT});
+  await review.getByRole('button',{name:`Expand review from ${names[1]}`,exact:true}).click();
+ }
+
  const composer=page.locator('[data-composer]');await composer.fill('Retain the coordinator draft.');
  await card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true}).fill('A saved inline question.');
  const taskList=card(workerIds[0]).getByRole('region',{name:`Tasks for ${names[0]}`,exact:true});
