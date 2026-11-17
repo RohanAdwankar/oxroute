@@ -3971,3 +3971,37 @@ async fn focus_sees_unanswered_messages_and_a_user_response_resets_them() {
     let context=w.calls.lock().unwrap().started[1].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();
     assert!(context.contains("\"unansweredMessages\":0"));
 }
+
+#[tokio::test]
+async fn shared_shell_routing_survives_priority_changes_in_both_backends() {
+    for backend in [Backend::Codex, Backend::ClaudeCode] {
+        let w = build(Mode::Auto, Harnessed { source: false, backend, ..Default::default() }).await;
+        let agent = w.hub.create_agent(None).unwrap();
+        for (turn, (following, granted)) in [(true, true), (false, true), (true, true), (false, false)].into_iter().enumerate() {
+            let terminal = |id: &str, shared: bool, owner: &str, grants: Vec<&str>| serde_json::json!({
+                "terminal": {"id": id, "sharedShell": shared, "followAgentId": owner,
+                    "following": following, "granted": grants}
+            });
+            let records = serde_json::json!([
+                terminal("shared", true, &agent.id, if granted { vec![&agent.id] } else { vec![] }),
+                terminal("ordinary", false, &agent.id, vec![&agent.id]),
+                terminal("foreign", true, "another-session", vec![&agent.id]),
+                terminal("revoked", true, &agent.id, vec![]),
+            ]);
+            w.hub.store.set("terminal-panes", &records.to_string()).unwrap();
+            w.hub.say_to(&agent.id, "Continue shell work").await.unwrap();
+            assert!(settle(|| w.calls.lock().unwrap().started.len() == turn + 1
+                && w.hub.store.agent(&agent.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+            let calls = w.calls.lock().unwrap();
+            let routes = calls.started[turn].1.iter().filter_map(TurnInput::as_text)
+                .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+                .find_map(|context| context.get("sharedTerminalExecution").cloned())
+                .unwrap_or_else(|| serde_json::json!([]));
+            let expected = if granted { serde_json::json!([{
+                "terminalId": "shared", "execute": "/api/terminals/shared/execute",
+                "priority": if following { "agent" } else { "user" },
+            }]) } else { serde_json::json!([]) };
+            assert_eq!(routes, expected, "Only the active priority changes; routing and grants remain authoritative");
+        }
+    }
+}

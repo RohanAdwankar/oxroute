@@ -2027,6 +2027,22 @@ impl Hub {
              show, create, update and delete; use their generated --help for fields. \
              Tag this session when asked and keep its stage tag current.",
         )));
+        let terminals: Vec<serde_json::Value> = self.store.get("terminal-panes")?
+            .map(|data| serde_json::from_str(&data)).transpose()?.unwrap_or_default();
+        let shared_routes: Vec<_> = terminals.iter().filter_map(|record| {
+            let terminal = &record["terminal"];
+            let granted = terminal["granted"].as_array()
+                .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(agent.id.as_str())));
+            if terminal["sharedShell"] != true || terminal["followAgentId"].as_str() != Some(agent.id.as_str()) || !granted {
+                return None;
+            }
+            let id = terminal["id"].as_str()?;
+            Some(serde_json::json!({"terminalId": id, "execute": format!("/api/terminals/{id}/execute"),
+                "priority": if terminal["following"] == true { "agent" } else { "user" }}))
+        }).collect();
+        if !shared_routes.is_empty() {
+            inputs.push(TurnInput::text(serde_json::json!({"sharedTerminalExecution": shared_routes}).to_string()));
+        }
         inputs.push(TurnInput::text(format!(
             "Interactive terminal panes are listed by GET http://{listen}/api/terminals. \
              Read output at GET http://{listen}/api/terminals/<id>?after=<byte-offset>. \
@@ -2041,8 +2057,10 @@ impl Hub {
              Use only your own agentId. Never call claim, consent, resize or delete endpoints, obtain \
              browser controller credentials, or approve your own access to a user terminal. \
              Terminal access does not authorize unrelated actions. \
-             Before shell work, check the terminal list for following=true and followAgentId matching \
-             your agentId. When present, execute shell commands in that shared Bash through POST \
+             Before shell work, check the terminal list for sharedShell=true and followAgentId matching \
+             your agentId with a current grant. Use that same shared Bash in both priority modes: \
+             following=true gives the agent priority; following=false gives the user priority. \
+             Priority changes never change shell identity or the execution route. Execute through POST \
              /api/terminals/<id>/execute with {{\"agentId\":\"{id}\",\"command\":\"shell code\"}}. \
              Poll GET /api/terminals/<id>?after=<offset>&wait=true for bytes and execution \
              (id, running, exitCode, cwd, disconnected). Disconnection without an exit code is not \
@@ -2051,7 +2069,8 @@ impl Hub {
              before submitting another command. The user's partial command is preserved. \
              Native command tools remain available; their subprocess state is separate from the \
              shared shell. Do not execute a shell command twice or claim native subprocesses share \
-             terminal state. In normal mode user input has priority; retry only after it is idle.",
+             terminal state. In user-priority shared mode, let execute arbitrate user activity and retry \
+             when idle. Ordinary terminals retain their established granted-input behavior.",
             listen = self.config.listen, id = agent.id,
         )));
         if self.store.tags(&agent.id)?.iter().any(|tag| tag == "publication:direct") {

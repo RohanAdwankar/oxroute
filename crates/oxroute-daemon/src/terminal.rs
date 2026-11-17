@@ -299,24 +299,26 @@ impl Terminals {
         self.attach(id)?;
         let mut live = self.live.lock().unwrap();
         let terminal = live.get_mut(id).context("Terminal disconnected")?;
-        if !controller.is_empty() {
-            anyhow::ensure!(
-                !record.terminal.following || !self.running(&record)?,
-                "Agent command has priority; switch follow off to take control"
-            );
-            terminal.user_input = Some(std::time::Instant::now());
-        } else if record.terminal.following {
-            anyhow::ensure!(
-                record.terminal.follow_agent_id == agent,
-                "The followed agent has priority"
-            );
-        } else {
-            anyhow::ensure!(
-                terminal
-                    .user_input
-                    .is_none_or(|at| at.elapsed().as_secs() >= 2),
-                "User input has priority; wait until the terminal is idle"
-            );
+        if record.terminal.shared_shell {
+            if !controller.is_empty() {
+                anyhow::ensure!(
+                    !record.terminal.following || !self.running(&record)?,
+                    "Agent command has priority; switch follow off to take control"
+                );
+                terminal.user_input = Some(std::time::Instant::now());
+            } else if record.terminal.following {
+                anyhow::ensure!(
+                    record.terminal.follow_agent_id == agent,
+                    "The followed agent has priority"
+                );
+            } else {
+                anyhow::ensure!(
+                    terminal
+                        .user_input
+                        .is_none_or(|at| at.elapsed().as_secs() >= 2),
+                    "User input has priority; wait until the terminal is idle"
+                );
+            }
         }
         let root = terminal_shell::directory(&self.hub.config.database, id);
         if record.terminal.shared_shell
@@ -962,7 +964,8 @@ mod tests {
         std::fs::write(&config_file, "owner = 'fixture'\n").unwrap();
         let mut config = Config::load_from(&config_file).unwrap();
         config.workspace = root.to_string_lossy().into();
-        config.listen = "127.0.0.1:0".into();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        config.listen = listener.local_addr().unwrap().to_string();
         config.database = root.join("state.sqlite");
         let store = Store::open(&config.database).unwrap();
         for id in ["requester", "other-agent"] {
@@ -988,7 +991,6 @@ mod tests {
         let (sent, mut notifications) = tokio::sync::mpsc::unbounded_channel();
         let mut hub = Hub::new(config, store);
         hub.with_harness(Arc::new(TerminalHarness(sent)));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/terminals", listener.local_addr().unwrap());
         let router = routes(hub.clone()).unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -1058,6 +1060,15 @@ mod tests {
         client
             .post(format!("{target}/resize"))
             .json(&json!({"controller":controller,"rows":31,"cols":93}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        // An ordinary terminal permits its granted agent immediately after its owner types.
+        client
+            .post(format!("{target}/input"))
+            .json(&json!({"controller":controller,"data":"printf 'owner-input\\n'\r"}))
             .send()
             .await
             .unwrap()

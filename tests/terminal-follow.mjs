@@ -38,9 +38,9 @@ try {
   await page.goto(`${base}/?agent=${agent.id}`);
   await page.getByLabel('Choose visible agents', { exact: true }).click();
   await page.getByRole('button', { name: 'New follow terminal', exact: true }).click();
-  const pane = page.locator('[data-terminal-pane]');
-  await pane.waitFor();
+  await page.locator('[data-terminal-pane]').waitFor();
   const [terminal] = await api('/api/terminals');
+  const pane = page.locator(`[data-terminal-pane="${terminal.id}"]`);
   assert.equal(terminal.following, true);
   assert.equal(terminal.followAgentId, agent.id);
   assert.deepEqual(terminal.granted, [agent.id]);
@@ -101,6 +101,23 @@ try {
   assert.ok(stopped.interrupted || stopped.exitCode === 130, JSON.stringify(stopped));
   await toggle.click();
   await until(async () => (await api('/api/terminals'))[0].following);
+  // Changing priority preserves the shell process, its state, and the execution endpoint.
+  assert.equal((await execute('priority_shell=$BASHPID')).exitCode, 0);
+  const route = `${target}/execute`;
+  await page.waitForTimeout(2100); // Let the opted-in shell's user-input lease expire after Ctrl-C.
+  for (const following of [false, true, false, true]) {
+    await toggle.click();
+    await until(async () => (await api('/api/terminals')).find(item => item.id === terminal.id).following === following);
+    const info = (await api('/api/terminals')).find(item => item.id === terminal.id);
+    assert.equal(info.sharedShell, true);
+    assert.equal(info.followAgentId, agent.id);
+    assert.deepEqual(info.granted, [agent.id]);
+    const response = await api(route, { agentId: agent.id, command: '[[ $BASHPID == "$priority_shell" && $shared_value == retained ]] && kill -0 "$shared_job"' });
+    let result;
+    await until(async () => { result = (await api(target)).execution; return result.id === response.id && !result.running; });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.cwd, first.cwd);
+  }
   // The tmux shell and command record survive losing their daemon attachment.
   daemon.kill('SIGTERM'); await new Promise(done => daemon.once('exit', done));
   daemon = launch();
@@ -115,8 +132,21 @@ try {
   const normal = (await api('/api/terminals', { agentId: agent.id })).terminal;
   assert.equal(normal.sharedShell, false);
   assert.equal(normal.following, false);
+  const ordinary = page.locator(`[data-terminal-pane="${normal.id}"]`);
+  await ordinary.waitFor();
+  await ordinary.getByRole('button', { name: 'Revoke', exact: true }).waitFor();
+  const ordinaryEditor = ordinary.locator('.xterm:visible .xterm-helper-textarea');
+  await ordinaryEditor.focus();
+  await page.keyboard.type('printf "ordinary-user-ready\\n"');
+  const ownerInput = page.waitForResponse(response => new URL(response.url()).pathname === `/api/terminals/${normal.id}/input`
+    && response.request().method() === 'POST' && response.request().postDataJSON().data.includes('\r'));
+  await page.keyboard.press('Enter');
+  assert.ok((await ownerInput).ok());
+  const immediate = performance.now();
   await api(`/api/terminals/${normal.id}/input`, { agentId: agent.id, data: 'printf "ordinary-shell-ready\\n"\r' });
+  assert.ok(performance.now() - immediate < 2000, 'Ordinary granted input succeeds without a user-idle delay');
   await until(async () => (await api(`/api/terminals/${normal.id}/history`)).text.split('\n').some(line => line.trim() === 'ordinary-shell-ready'));
+  await until(async () => (await api(`/api/terminals/${normal.id}/history`)).text.split('\n').some(line => line.trim() === 'ordinary-user-ready'));
   const ended = await execute('exit 7');
   assert.equal(ended.disconnected, true, 'Shell termination does not leave an execution running forever');
   assert.equal(ended.exitCode, null, 'A lost shell is not reported as successful execution');
