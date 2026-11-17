@@ -74,19 +74,23 @@ function Row({
   );
 }
 
-/** Progress stays available without filling the task list. */
-function Notes({ notes }: { notes: TaskNote[] }) {
-  return <details className="group/notes mt-2">
-    <summary aria-label="Task history" title={`Task history · ${notes.length}`} className="flex w-fit cursor-pointer list-none items-center text-faint hover:text-ink [&::-webkit-details-marker]:hidden">
-      <span className="transition-transform group-open/notes:rotate-180"><Icon name="chevronDown" size={14} /></span>
-    </summary>
-    <ul className="mt-2 flex flex-col gap-1">
+/** Keep history and actions on the same line; expand notes only when asked. */
+function TaskDetails({ notes, children }: { notes: TaskNote[]; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      {children}
+      {notes.length > 0 && <button type="button" aria-label="Task history" aria-expanded={open} title={`Task history · ${notes.length}`} onClick={() => setOpen(!open)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }} className={`ml-auto cursor-pointer text-faint hover:text-ink ${open ? "rotate-180" : ""}`}>
+        <Icon name="chevronDown" size={14} />
+      </button>}
+    </div>
+    {open && <ul className="mt-2 flex flex-col gap-1">
       {[...notes].reverse().map(note => <li key={note.id} className="break-words text-[11px] leading-[1.45] text-faint">
         <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
         {note.text}
       </li>)}
-    </ul>
-  </details>;
+    </ul>}
+  </>;
 }
 
 /** Keep drafts local so a keystroke never redraws the task list. */
@@ -250,12 +254,6 @@ export const TaskPanel = memo(function TaskPanel({
           {task.text}
         </button>
       )}
-      {task.status === "done" && <div className="mt-2">
-        <TaskApproval task={task} busy={busy(task.id)}
-          approve={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
-          approveAll={tasks.some(child => child.parentTaskId === task.id) ? () => onApproveAll(task) : undefined}
-          correct={() => onCorrect(task)} />
-      </div>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {task.images.map((image) => (
@@ -268,7 +266,6 @@ export const TaskPanel = memo(function TaskPanel({
           ))}
         </div>
       )}
-      {mine.length > 0 && <Notes notes={mine} />}
       {asking && (
         <input key={asking.status}
           autoFocus
@@ -297,7 +294,7 @@ export const TaskPanel = memo(function TaskPanel({
           className="mt-2 w-full border-b border-edge bg-transparent py-1 text-[11.5px] outline-none placeholder:text-faint"
         />
       )}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <TaskDetails notes={mine}>
         <select
           value={asking ? asking.status : task.status}
           disabled={busy(task.id)}
@@ -356,7 +353,13 @@ export const TaskPanel = memo(function TaskPanel({
           {task.agentId && <option value={FORK_AGENT}>Fork {names.get(task.agentId) ?? "it"}</option>}
           </>}
         </TaskSelect>
-      </div>
+      {task.status === "done" && <>
+        <TaskApproval task={task} busy={busy(task.id)}
+          approve={() => onUpdate({ ...task, status: "complete" }, "approved", true)}
+          approveAll={tasks.some(child => child.parentTaskId === task.id) ? () => onApproveAll(task) : undefined}
+          correct={() => onCorrect(task)} />
+      </>}
+      </TaskDetails>
     </div>
     <button type="button" onClick={() => onDelete(task.id)} disabled={busy(task.id)} aria-label={`delete ${task.text}`} title="Delete task" className="flex h-7 w-7 cursor-pointer items-center justify-center text-faint opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30">
       <Icon name="discard" size={14} />

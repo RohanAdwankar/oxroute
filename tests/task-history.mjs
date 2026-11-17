@@ -49,11 +49,15 @@ try {
   const disclosure = row.getByLabel('Task history', { exact: true });
   await disclosure.waitFor();
   assert.equal(await panel.getByText(completed.text, { exact: true }).count(), 0);
-  assert.ok((await row.boundingBox()).height < 180, 'Long progress notes do not determine the default row height');
+  assert.ok((await row.boundingBox()).height < 120, 'Long progress notes do not determine the default row height');
   for (const text of history) assert.equal(await row.locator('li').filter({ hasText: text }).isVisible(), false);
+  const statusBounds = await row.getByRole('combobox', { name: `status for ${task.text}`, exact: true }).boundingBox();
+  const historyBounds = await disclosure.boundingBox();
+  assert.ok(Math.abs(historyBounds.y + historyBounds.height / 2 - statusBounds.y - statusBounds.height / 2) < 8, 'History shares the status line');
   await disclosure.focus(); await page.keyboard.press('Enter');
-  for (const text of history) assert.equal(await row.locator('li').filter({ hasText: text }).isVisible(), true, 'All history can be read without truncation');
+  for (const text of history) await row.locator('li').filter({ hasText: text }).waitFor({ state: 'visible' });
   await disclosure.click();
+  await disclosure.blur();
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await row.getByRole('button', { name: 'Approve', exact: true }).click();
   await row.waitFor({ state: 'detached' });

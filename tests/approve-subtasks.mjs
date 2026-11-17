@@ -37,7 +37,7 @@ await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
 const browser=await(process.env.TEST_BROWSER==='webkit'?webkit:chromium).launch(process.env.WEBKIT_EXECUTABLE?{executablePath:process.env.WEBKIT_EXECUTABLE}:{});
 try{
  const page=await browser.newPage({viewport:{width:1180,height:850}});
- await page.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');localStorage.setItem('oxroute.taskWidth','590')});
+ await page.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');sessionStorage.setItem('oxroute.windowTasks','false');localStorage.setItem('oxroute.taskWidth','590')});
  await page.goto(`http://127.0.0.1:${proxy.address().port}`);
  const row=text=>page.locator('[data-task-row]').filter({has:page.locator('[data-task-open]',{hasText:text})});
  await Promise.all([page.waitForResponse(response=>response.url().endsWith(`/api/tasks/${normal.id}`)&&response.request().method()==='PUT'),row(normal.text).getByRole('button',{name:'Approve',exact:true}).click()]);
