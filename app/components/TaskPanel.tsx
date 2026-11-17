@@ -151,7 +151,6 @@ export const TaskPanel = memo(function TaskPanel({
   onScope,
   onSearch,
   notes,
-  onShowDone,
   cursor,
   active,
   shown,
@@ -176,7 +175,6 @@ export const TaskPanel = memo(function TaskPanel({
   onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
   notes: TaskNote[];
-  onShowDone: () => void;
   cursor: number;
   active: boolean;
   /// A task just filed from a composer, to be scrolled to once.
@@ -227,7 +225,7 @@ export const TaskPanel = memo(function TaskPanel({
     }
     return grouped;
   }, [notes]);
-  const graphTasks = scope ? tasks.filter(task => scope.includes(task.agentId)) : tasks;
+  const graphTasks = tasks.filter(task => task.status !== "complete" && (!scope || scope.includes(task.agentId)));
   const graphQuery = new URLSearchParams({ v: graphTasks.map(task => task.updatedAt).join("-"), ...(scope ? { agents: JSON.stringify(scope) } : {}) });
   // A flowchart of things that do not depend on each other is a list with
   // extra steps, so it is drawn only when asked for and only once something
@@ -268,7 +266,7 @@ export const TaskPanel = memo(function TaskPanel({
           }}
           data-task-open
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
-          className={`block w-full cursor-pointer text-left text-[13px] leading-[1.45] ${task.status === "complete" ? "text-faint line-through" : "text-ink"}`}
+          className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink"
         >
           {task.text}
         </button>
@@ -426,22 +424,7 @@ export const TaskPanel = memo(function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>}
-          {rows.map((entry, at) =>
-            entry.kind === "band" ? (
-              <button
-                key="done"
-                type="button"
-                onClick={onShowDone}
-                className={`w-full cursor-pointer border-b border-rule bg-band px-5 py-2 text-left text-[11px] text-faint hover:text-ink ${
-                  active && at === cursor ? "border-l-[3px] border-l-ink pl-[17px]" : ""
-                }`}
-              >
-                Done · {entry.count}
-              </button>
-            ) : (
-              row(entry.task, at, entry.depth)
-            ),
-          )}
+          {rows.map((entry, at) => row(entry.task, at, entry.depth))}
         </>}
       </div>
     </aside>

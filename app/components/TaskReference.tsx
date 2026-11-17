@@ -18,7 +18,7 @@ export function TaskReference({ id, open }: { id: string; open: () => void }) {
   const [editing,setEditing]=useState(!!draft);
   const [pending,setPending]=useState(false);
   const [error,setError]=useState("");
-  if (!task || !actions) return null;
+  if (!task || !actions || task.status === "complete") return null;
   const change=(text:string)=>{setDraft(text);keepDraft(key,text);};
   const revise=async()=>{
     if(!draft.trim()||pending)return;
@@ -32,7 +32,7 @@ export function TaskReference({ id, open }: { id: string; open: () => void }) {
       className="inline-flex min-w-0 cursor-pointer items-center gap-1 text-left text-ink hover:text-mid">
       <Icon name="tasks" size={12} />{task.text}
     </button>
-    <span className="text-[11px] text-mid">{task.status === "complete" ? "Approved" : task.status === "done" ? "For review" : task.status.replaceAll("_", " ")}</span>
+    <span className="text-[11px] text-mid">{task.status === "done" ? "For review" : task.status.replaceAll("_", " ")}</span>
     <TaskApproval task={task} busy={actions.busy(id)||pending} approve={() => actions.approve(task)} approveAll={actions.tasks.some(child => child.parentTaskId === id) ? () => actions.approveAll(task) : undefined} correct={() => actions.embedded?setEditing(value=>!value):actions.correct(task)} />
     {actions.embedded&&editing&&<span className="flex w-full flex-wrap items-end gap-2">
       <textarea aria-label={`Revision for ${task.text}`} placeholder="What should change?" value={draft} disabled={pending} rows={2} onChange={event=>change(event.target.value)} className="min-w-0 flex-1 resize-y border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid"/>

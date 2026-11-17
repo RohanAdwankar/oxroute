@@ -226,7 +226,6 @@ export default function Home() {
   const [fleetAt, setFleetAt] = useState(0);
   const [taskAt, setTaskAt] = useState(0);
   const [inboxDone, setInboxDone] = useState(false);
-  const [tasksDone, setTasksDone] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
   const scopedTasks = useSyncExternalStore(defaultWindowTasks.subscribe, defaultWindowTasks.get, defaultWindowTasks.fallback);
   const [windowTaskOverride, setWindowTaskOverride] = useState<boolean | null>(() => {
@@ -290,9 +289,8 @@ export default function Home() {
       showTasks(true);
       setWindowTasks(false);
       setTaskQuery("");
-      setTasksDone(true);
       setShownTask(id);
-      setTaskAt(taskRows(snapshot?.tasks ?? [], true).findIndex(row => row.kind === "task" && row.task.id === id));
+      setTaskAt(taskRows(snapshot?.tasks ?? []).findIndex(row => row.task.id === id));
       setFocus("tasks");
     },
   }), [snapshot?.tasks, showTasks, setWindowTasks]);
@@ -979,12 +977,11 @@ export default function Home() {
   useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
   const tasks = useMemo(() => {
     const scoped = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
-    const matches = scoped.filter(task => !taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch));
-    return taskRows(taskAncestors(scoped, matches), tasksDone || !!taskSearch);
-  }, [taskItems, taskScope, taskSearch, taskNames, tasksDone]);
+    const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch)));
+    return taskRows(taskAncestors(scoped, matches));
+  }, [taskItems, taskScope, taskSearch, taskNames]);
   const scopeTasks = useCallback(() => { setWindowTasks(!windowTasks); setTaskAt(0); }, [windowTasks, setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
-  const showDoneTasks = useCallback(() => setTasksDone(shown => !shown), []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
   const taskActions = useMemo(() => ({
     tasks: taskItems, embedded: focusOpen, busy: taskBusy,
@@ -1191,11 +1188,11 @@ export default function Home() {
           if (focus !== "tasks") return;
           stop();
           const row = tasks[taskAt];
-          if (row?.kind !== "task") return;
+          if (!row) return;
           const up = event.key === "K";
           // The task it lands after: the one two places up when moving up,
           // and the one immediately below when moving down.
-          const live = tasks.filter((entry) => entry.kind === "task").map((entry) => entry.task);
+          const live = tasks.map((entry) => entry.task);
           const at = live.findIndex((task) => task.id === row.task.id);
           const to = up ? at - 1 : at + 1;
           if (to < 0 || to >= live.length) return;
@@ -1226,11 +1223,7 @@ export default function Home() {
           if (focus === "tasks") {
             // Enter opens whatever the cursor is on, and with an empty
             // column the only thing to open is the box that fills it.
-            const row = tasks[taskAt];
-            if (row?.kind === "band") return setTasksDone((shown) => !shown);
-            // The band is a row but not a task, so the two counts differ.
-            const nth = tasks.slice(0, taskAt).filter((entry) => entry.kind === "task").length;
-            document.querySelectorAll<HTMLElement>("[data-task-open]")[nth]?.click();
+            document.querySelectorAll<HTMLElement>("[data-task-open]")[taskAt]?.click();
             return;
           }
           // What is in front of you is a conversation, so enter starts
@@ -1725,7 +1718,6 @@ export default function Home() {
             onScope={scopeTasks}
             onSearch={searchTasks}
             notes={snapshot.taskNotes}
-            onShowDone={showDoneTasks}
             cursor={taskAt}
             active={focus === "tasks"}
             shown={shownTask}

@@ -35,12 +35,12 @@ try {
   const parent = page.getByRole('combobox', { name: 'Parent task', exact: true });
   assert.deepEqual(await parent.locator('option').evaluateAll(options => options.map(o => o.value)), ['', 'plan', 'archive', 'docs']);
   await parent.selectOption('archive');
-  await row('Earlier work').waitFor();
+  await row('Earlier work').waitFor({state:'detached'});
   assert.equal(tasks.find(task => task.id === 'artifact').parentTaskId, 'archive');
   assert.equal(tasks.find(task => task.id === 'artifact').status, 'incomplete');
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('metadata');
-  await page.waitForFunction(() => document.querySelectorAll('[data-task-row]').length === 3);
-  assert.deepEqual(await page.locator('[data-task-open]').allTextContents(), ['Earlier work', 'Inspect artifact', 'Validate metadata']);
+  await page.waitForFunction(() => document.querySelectorAll('[data-task-row]').length === 2);
+  assert.deepEqual(await page.locator('[data-task-open]').allTextContents(), ['Inspect artifact', 'Validate metadata']);
   await page.getByRole('searchbox', { name: 'Search tasks' }).fill('');
   await row('Prepare release').click({ button: 'right' });
   await page.getByRole('button', { name: 'Add subtask', exact: true }).click();
@@ -49,7 +49,8 @@ try {
   await row('Check release notes').waitFor();
   assert.deepEqual(writes.at(-1), { text: 'Check release notes', agentId: agent.id, parentTaskId: 'plan' });
   await row('Check guide').getByRole('button', { name: 'Approve', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('select[aria-label="status for Check guide"]')?.value === 'complete');
+  await row('Check guide').waitFor({state:'detached'});
+  assert.equal(tasks.find(task => task.id === 'docs').status, 'complete');
   assert.equal(tasks.find(task => task.id === 'plan').status, 'incomplete');
   assert.equal(tasks.find(task => task.id === 'docs').parentTaskId, 'plan');
   await row('Inspect artifact').click({ button: 'right' });

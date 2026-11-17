@@ -24,7 +24,7 @@ try {
   const shown = () => panel.locator('[data-task-open]').allTextContents();
   assert.deepEqual(await shown(), [tasks[0].text, tasks[2].text, tasks[3].text]);
   await search.fill('  STORAGE  ');
-  assert.deepEqual(await shown(), [tasks[0].text, tasks[1].text], 'Search ignores case/outer spaces and includes completed matches');
+  assert.deepEqual(await shown(), [tasks[0].text], 'Search ignores case/outer spaces and omits completed matches');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await search.fill('North');
   assert.deepEqual(await shown(), [tasks[0].text], 'Search matches assigned agent names');
@@ -34,7 +34,7 @@ try {
   assert.deepEqual(await shown(), []);
   assert.ok(await panel.getByText('No matching tasks.', { exact: true }).isVisible());
   await search.fill('');
-  assert.deepEqual(await shown(), [tasks[0].text, tasks[2].text, tasks[3].text], 'Clearing restores the previous completed-task visibility');
+  assert.deepEqual(await shown(), [tasks[0].text, tasks[2].text, tasks[3].text], 'Clearing keeps completed tasks hidden');
   await search.fill('network');
   await search.press('Escape');
   await page.keyboard.press('Enter');
@@ -44,5 +44,5 @@ try {
   await page.getByRole('button', { name: 'Show or hide tasks', exact: true }).click();
   assert.equal(await search.inputValue(), 'network', 'Search remains while toggling the Tasks tab');
   assert.deepEqual(writes, [], 'Searching never mutates tasks or agents');
-  console.log('Task text/name search, completed matches, clearing, keyboard targeting and view toggling pass.');
+  console.log('Task text/name search hides completed work and preserves clearing, keyboard targeting and view toggling.');
 } finally { await browser.close(); }

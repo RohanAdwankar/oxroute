@@ -28,15 +28,15 @@ try {
   await page.goto(`${process.env.TEST_URL ?? 'http://127.0.0.1:3946'}/?agent=${agent.id}`);
   const message = page.locator('[data-entry="1"]');
   await message.getByRole('button', { name: `Task ${tasks[0].text}`, exact: true }).waitFor();
-  assert.equal(await message.getByRole('button', { name: /^Task / }).count(), 3);
+  assert.equal(await message.getByRole('button', { name: /^Task / }).count(), 2);
   assert.ok((await message.innerText()).includes(unknown));
   assert.ok((await message.innerText()).includes(`${tasks[0].id}extra`));
   assert.equal((await message.locator('pre').innerText()).trim(), tasks[0].id);
   assert.equal(await message.getByRole('link', { name: 'Existing link' }).getAttribute('href'), `https://example.invalid/${tasks[0].id}`);
   const notice = page.locator('[data-entry="2"]');
-  assert.equal(await notice.getByRole('button', { name: /^Task / }).count(), tasks.length, 'Resume notices show task previews');
-  for (const task of tasks) assert.equal((await notice.innerText()).split(task.text).length - 1, 1, 'Notice titles appear once');
-  for (const task of tasks) {
+  assert.equal(await notice.getByRole('button', { name: /^Task / }).count(), 2, 'Resume notices hide completed task previews');
+  for (const task of tasks.filter(task=>task.status!=='complete')) assert.equal((await notice.innerText()).split(task.text).length - 1, 1, 'Notice titles appear once');
+  for (const task of tasks.filter(task=>task.status!=='complete')) {
     await message.getByRole('button', { name: `Task ${task.text}`, exact: true }).click();
     await page.locator('[data-task-row]').filter({ hasText: task.text }).waitFor();
     await page.locator('[data-task-row][aria-current="true"]').filter({ hasText: task.text }).waitFor();
@@ -55,9 +55,10 @@ try {
   fail = false;
 
   await reference.getByRole('button', { name: 'Approve', exact: true }).click();
-  await reference.getByText('Approved', { exact: true }).waitFor();
+  await reference.waitFor({state:'detached'});
   assert.equal(await reference.getByRole('button', { name: 'Approve', exact: true }).count(), 0);
-  assert.equal(await page.locator('[data-task-row]').filter({ hasText: tasks[2].text }).locator('select').first().inputValue(), 'complete');
+  assert.equal(await page.locator('[data-task-row]').filter({hasText:tasks[2].text}).count(),0);
+  assert.equal(tasks[2].status,'complete','Hiding a task preserves its stored approval');
   assert.equal(writes.filter(url => new URL(url).pathname.startsWith('/api/tasks/')).length, 2, 'One failed approval and one explicit retry');
   console.log('Task references support navigation, inline approval, correction, failure recovery and synchronized task status.');
 } finally { await browser.close(); }

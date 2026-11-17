@@ -44,7 +44,7 @@ try{
  assert.deepEqual(JSON.parse(new URL(await page.getByAltText('Task dependency flowchart').getAttribute('src'),page.url()).searchParams.get('agents')),['alpha','bravo','charlie']);
  assert.ok(!(await shown()).includes('Plan delta rollout'),'An unrelated parent is not pulled into this window');
  const search=panel.getByRole('searchbox',{name:'Search tasks'});
- await search.fill('charlie');assert.deepEqual(await shown(),['Approve charlie result'],'Search includes completed tasks within scope');
+ await search.fill('charlie');assert.deepEqual(await shown(),[],'Search hides completed tasks within scope');
  await search.fill('delta');assert.deepEqual(await shown(),[]);
  await search.fill('');
  await page.getByRole('tab',{name:'charlie session',exact:true}).click();

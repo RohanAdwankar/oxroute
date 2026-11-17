@@ -64,10 +64,10 @@ try{
  await failureReported;
  await notice.getByRole('button',{name:'Approve',exact:true}).waitFor();
  fail=false;await notice.getByRole('button',{name:'Approve',exact:true}).click();
- await notice.getByText('Approved',{exact:true}).waitFor();
+ await notice.locator('[data-task-reference]').waitFor({state:'detached'});
  assert.equal(writes.length,2,'Approval keeps its existing explicit failure and retry behavior');
  await page.waitForLoadState('networkidle');
- await page.reload();await notice.getByText('Approved',{exact:true}).waitFor();
+ await page.reload();await notice.waitFor();assert.equal(await notice.locator('[data-task-reference]').count(),0);
  assert.deepEqual(errors,[]);
  console.log('Delegation notices omit redundant fork rows and duplicate worker IDs while task navigation, worker navigation, approvals, retries and unrelated content remain available.');
 }finally{await browser.close();}
