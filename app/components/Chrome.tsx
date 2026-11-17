@@ -106,7 +106,7 @@ export function Chrome({
 
       <Search cards={[...snapshot.agents, ...snapshot.archived]} onVisibility={onSearchVisibility} onOpen={onSearchOpen} onContinue={onSearchContinue} />
 
-      <div className="flex min-w-0 flex-1 items-stretch">{tabs}</div>
+      <div className="flex min-w-0 flex-1 basis-48 items-stretch">{tabs}</div>
 
       {notice && (
         <span className="min-w-0 flex-1 basis-[180px] truncate text-[12.5px] text-merge" role="status">

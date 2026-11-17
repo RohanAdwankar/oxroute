@@ -34,14 +34,7 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
   const tabs = [{ id: "focus", name: "Focus" }, ...ids.flatMap(id => sessions.find(session => session.id === id) ?? [])];
   const selectedId = focusOpen ? "focus" : active;
   const select = (id: string) => id === "focus" ? onFocus() : onSelect(id);
-  return <nav aria-label="Session tabs" className="flex h-[var(--cell)] min-w-0 flex-1 overflow-x-auto bg-card text-[12px]"
-    onDragOver={event => { if (carriesPane(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={event => {
-      if (!dragging.current) return onDrop(event);
-      event.preventDefault(); event.stopPropagation();
-      onReorder(dragging.current, null, true); setDrop(null);
-    }}>
-    <div role="tablist" aria-label="Sessions" className="flex min-w-0 items-stretch">
-      {tabs.map((session, index) => <div key={session.id}
+  const renderTab=(session: typeof tabs[number],index:number)=>(<div key={session.id}
         style={drop?.id === session.id ? { boxShadow: `inset ${drop.after ? "-2px" : "2px"} 0 var(--color-ink)` } : undefined}
         onDragOver={event => {
           if (!dragging.current || session.id === "focus") return;
@@ -55,12 +48,12 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
           event.preventDefault(); event.stopPropagation();
           const box = event.currentTarget.getBoundingClientRect();
           onReorder(dragging.current, session.id === "focus" ? ids[0] ?? null : session.id, session.id !== "focus" && event.clientX > box.x + box.width / 2); setDrop(null);
-        }} className={`flex shrink-0 items-stretch border-b ${selectedId === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
+        }} className={`flex shrink-0 items-stretch border-b ${session.id === "focus" ? "w-[var(--cell)] bg-card" : ""} ${selectedId === session.id ? "border-ink bg-wash text-ink" : "border-transparent text-faint hover:text-ink"}`}>
         <button type="button" role="tab" draggable={session.id !== "focus"} onDragStart={event => { dragging.current = session.id; onDragStart(event, session.id); }} onDragEnd={event => { dragging.current = null; setDrop(null); onDragEnd(event); }}
           onContextMenu={event => { if (session.id === "focus") return; event.preventDefault(); setMenu({ id: session.id, x: Math.max(0, Math.min(event.clientX, innerWidth - 200)), y: event.clientY }); }}
           ref={selectedId === session.id ? selected : null} aria-selected={selectedId === session.id} aria-label={session.id === "focus" ? "Focus" : undefined} title={session.name}
           tabIndex={selectedId === session.id || (!selectedId && index === 0) ? 0 : -1}
-          className="max-w-48 cursor-pointer truncate pl-3 pr-2 text-left" onClick={() => select(session.id)}
+          className={session.id === "focus" ? "flex w-full cursor-pointer items-center justify-center" : "max-w-48 cursor-pointer truncate pl-3 pr-2 text-left"} onClick={() => select(session.id)}
           onKeyDown={event => {
             const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
             if (next === null) return;
@@ -70,7 +63,18 @@ export function SessionTabs({ sessions, ids, active, onSelect, onClose, onDragSt
           }}>{session.id === "focus" ? <Icon name="review" size={14} /> : session.name}</button>
         {session.id !== "focus" && <button type="button" aria-label={`Close tab ${session.name}`} title="Close tab" className="cursor-pointer px-2 text-faint hover:text-ink"
           onClick={() => onClose(session.id)}>×</button>}
-      </div>)}
+      </div>);
+  return <nav aria-label="Session tabs" className="flex h-[var(--cell)] min-w-0 flex-1 overflow-hidden bg-card text-[12px]"
+    onDragOver={event => { if (carriesPane(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={event => {
+      if (!dragging.current) return onDrop(event);
+      event.preventDefault(); event.stopPropagation();
+      onReorder(dragging.current, null, true); setDrop(null);
+    }}>
+    <div role="tablist" aria-label="Sessions" className="flex min-w-0 flex-1 items-stretch">
+      {renderTab(tabs[0],0)}
+      <div className="flex min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {tabs.slice(1).map((session,index)=>renderTab(session,index+1))}
+      </div>
     </div>
     {menu && <div ref={menuRef} role="menu" aria-label="Tab actions" className="fixed z-50 bg-card p-1 shadow-md" style={{ left: menu.x, top: menu.y }}>
       <button role="menuitem" className="block cursor-pointer px-2 py-1 text-left hover:bg-band" onClick={() => { onDetach(menu.id); setMenu(null); }}>Move to new window</button>
