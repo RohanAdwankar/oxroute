@@ -7,14 +7,7 @@
  */
 export const RESERVED = new Set(["h", "j", "k", "l", "g", "m", "v", "i", "n", "d", "f"]);
 
-/**
- * Keyboard hints for the fleet.
- *
- * The goal is one keystroke from "this arrived" to "that agent has it", so
- * every agent on screen carries a letter you can type. The home row comes
- * first because that is where your hands already are, and anything the
- * interface has claimed drops out.
- */
+/** Direct fleet shortcuts; visible jump targets are revealed with f. */
 export const HINTS = [
   "a",
   "s",
@@ -58,10 +51,6 @@ export const LETTERS = new Set([
   "d",
   "f",
 ]);
-
-export function hintFor(index: number): string | null {
-  return HINTS[index] ?? null;
-}
 
 /**
  * True when the key should go to whatever the person is typing in rather

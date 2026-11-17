@@ -1669,7 +1669,6 @@ export default function Home() {
                 busy={busy}
                 cursor={fleetAt}
                 active={focus === "fleet"}
-                vim={vim && !jump}
                 onToggle={toggle}
                 onOpen={chooseAgent}
                 onPin={(id, pinned) => void run(() => api.pin(id, pinned))}

@@ -12,11 +12,11 @@ export function HomeActions({agent,nextActions,tasks,busy,onSent,onTask,onApprov
   const [expanded,setExpanded]=useState(false);
   const [draftTasks,setDraftTasks]=useState<string[]>([]);
   useEffect(()=>{try{setDraftTasks(tasks.filter(task=>localStorage.getItem(`oxroute.taskReply.${task.id}`)).map(task=>task.id));}catch{}},[tasks]);
-  return <div data-home-actions={agent.id} className="cursor-auto">
+  return <div data-home-actions={agent.id} className="min-w-0 cursor-auto">
     {agent.status==="complete"&&nextActions&&<ConversationChoices key={nextActions.entryId} agent={agent} nextActions={nextActions} onSent={onSent}/>}
     {tasks.filter(task=>task.status==="done"||task.status==="waiting_for_human"||draftTasks.includes(task.id)).map(task=><div key={task.id} className="mt-3 text-[12px]"><div className="flex items-start justify-between gap-3">
-      <button type="button" onClick={()=>onTask(task.id)} className="cursor-pointer text-left hover:underline">{task.text}</button>
-      {task.status==="done"&&<TaskApproval task={task} busy={busy(task.id)} approve={()=>onApprove(task)} correct={()=>onCorrect(task)}/>}
+      <button type="button" onClick={()=>onTask(task.id)} className="min-w-0 cursor-pointer break-words text-left hover:underline">{task.text}</button>
+      {task.status==="done"&&<span className="shrink-0"><TaskApproval task={task} busy={busy(task.id)} approve={()=>onApprove(task)} correct={()=>onCorrect(task)}/></span>}
     </div>{draftTasks.includes(task.id)&&<TaskDraft task={task} agent={agent} onSent={()=>{setDraftTasks(current=>current.filter(id=>id!==task.id));onSent();}}/>}</div>)}
     <InlineReply agent={agent} expanded={expanded} onExpanded={setExpanded} onSent={onSent}/>
   </div>;

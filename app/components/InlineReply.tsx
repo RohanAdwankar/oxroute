@@ -65,7 +65,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
       <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
         onChange={event => change(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}
-        className="min-w-0 flex-1 resize-y border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
+        className="min-w-0 max-w-full flex-1 resize-y overflow-x-hidden border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
       <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className="cursor-pointer p-2 text-mid hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="send" /></button>
     </form>
     {(error || contextError) && <p role="alert" className="mt-2 text-[12px] text-mid">{error || contextError}</p>}

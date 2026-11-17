@@ -4,7 +4,6 @@ import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { clip, since } from "../lib/format";
-import { hintFor } from "../lib/keys";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { TagChip } from "./Tags";
@@ -43,7 +42,6 @@ export function Fleet({
   busy,
   cursor,
   active,
-  vim,
   renderActions,
   onArchive,
 }: {
@@ -69,8 +67,6 @@ export function Fleet({
   cursor: number;
   /// True when the keyboard is driving this column.
   active: boolean;
-  /// Show the one-key hints. Off means the mouse is doing the work.
-  vim: boolean;
   renderActions?: (agent: Agent) => ReactNode;
   onArchive?: (agent: Agent, archived: boolean) => void;
 }) {
@@ -152,7 +148,6 @@ export function Fleet({
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id || !!routing?.recommendation?.agentIds.includes(agent.id)}
                 focused={active && index === cursor}
-                hint={vim ? hintFor(index) : null}
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}
                 onPin={() => onPin(agent.id, !agent.pinned)}
@@ -186,7 +181,6 @@ export function Fleet({
               title="Start a new agent"
               className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
             >
-              {vim && <Hint at="n" />}
               <Icon name="plus" />
             </button>
             <select
@@ -211,24 +205,11 @@ export function Fleet({
             title="Discard"
             className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
           >
-            {vim && <Hint at="d" />}
             <Icon name="discard" />
           </button>
         </footer>
       )}
     </section>
-  );
-}
-
-/** The letter that does this, in the same badge wherever it appears. */
-function Hint({ at }: { at: string }) {
-  return (
-    <span
-      aria-hidden
-      className="tnum absolute -top-2 -left-2 flex h-[22px] min-w-[22px] items-center justify-center rounded-[3px] bg-ink px-1 text-[12px] font-semibold text-paper"
-    >
-      {at}
-    </span>
   );
 }
 
@@ -240,7 +221,6 @@ function Card({
   ticked,
   suggested,
   focused,
-  hint,
   onToggle,
   onOpen,
   onPin,
@@ -255,7 +235,6 @@ function Card({
   ticked: boolean;
   suggested: boolean;
   focused: boolean;
-  hint: string | null;
   onToggle: () => void;
   onOpen: () => void;
   onPin: () => void;
@@ -271,15 +250,14 @@ function Card({
     <article data-home-card={agent.id} onClick={event=>{if(!routing&&!(event.target as Element).closest("a,button,input,textarea,select,[data-home-actions],[data-quote-thread]")&&!window.getSelection()?.toString())onOpen();}}
       style={{contentVisibility:"auto",containIntrinsicSize:"auto 300px"}}
       className={[
-        "group relative flex max-h-[min(60vh,32rem)] min-h-[140px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
-        ticked ? "border-2 border-ink" : "border border-rule",
+        "group relative flex max-h-[min(60vh,32rem)] min-h-[140px] w-full flex-col bg-card px-[19px] py-[17px] transition-opacity",
+        ticked ? "outline outline-1 outline-ink" : "",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
-        focused ? "ring-2 ring-ink ring-offset-2 ring-offset-paper" : "",
+        focused ? "shadow-[inset_2px_0_0_var(--color-mid)]" : "",
         dimmed ? "opacity-[0.42]" : "opacity-100",
       ].join(" ")}
     >
-      {hint && <Hint at={hint} />}
       <div className="flex min-w-0 shrink-0 items-center gap-[8px]">
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${DOT[agent.status] ?? DOT.complete}`}
@@ -342,7 +320,7 @@ function Card({
         )}
       </div>
 
-      <div data-card-scroll className="quiet-scroll min-h-0 overflow-y-auto">
+      <div data-card-scroll className="quiet-scroll min-h-0 overflow-y-auto overflow-x-hidden">
       <div className="mt-[12px] max-h-[3lh] overflow-hidden line-clamp-3 text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
