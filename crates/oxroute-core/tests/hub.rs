@@ -3953,3 +3953,21 @@ async fn focus_timer_never_overlaps_an_active_coordinator_turn() {
     assert_eq!(w.calls.lock().unwrap().started.len(),1);assert!(w.calls.lock().unwrap().interrupted.is_empty());
     w.hub.interrupt(&focus.id).await.unwrap();
 }
+
+#[tokio::test]
+async fn focus_sees_unanswered_messages_and_a_user_response_resets_them() {
+    let w=world(Mode::Ask,false).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();
+    for text in ["Choose an available rollout window", "The review evidence is ready"] {
+        w.hub.store.add_entry(&focus.id,now(),EntryKind::Said,text,"","").unwrap();
+    }
+    w.hub.store.add_entry(&focus.id,now(),EntryKind::Notice,"Background status changed","","").unwrap();
+    w.hub.open_focus().await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==1&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
+    let context=w.calls.lock().unwrap().started[0].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();
+    assert!(context.contains("\"unansweredMessages\":2")&&context.contains("Choose an available rollout window")&&context.contains("The review evidence is ready"));
+    w.hub.say_to(&focus.id,"Use the later window").await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==2).await);
+    let context=w.calls.lock().unwrap().started[1].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();
+    assert!(context.contains("\"unansweredMessages\":0"));
+}
