@@ -40,6 +40,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1300, height: 850 } });
   await page.addInitScript(() => {
     localStorage.setItem('oxroute.tasks', 'true');
+    sessionStorage.setItem('oxroute.windowTasks', 'false');
     window.SharedWorker = undefined;
     window.EventSource = class extends EventTarget { constructor() { super(); window.stream = this; } close() {} };
     window.taskRenders = 0; window.commits = 0;
@@ -142,6 +143,16 @@ try {
   await api('/api/rename', { agent: assigned, name: 'Renamed session' });
   await page.evaluate(() => window.stream.onmessage({ data: JSON.stringify({ type: 'sync' }) }));
   await page.waitForFunction(() => document.querySelector('[aria-label="assign Review item 0"] option:checked')?.textContent === 'Renamed session');
+  await panel.getByRole('button', { name: 'Only open conversations', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Only open conversations"]')?.getAttribute('aria-pressed') === 'true');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.taskRenders = 0; window.commits = 0; });
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate(({ agentId, text }) => window.stream.onmessage({ data: JSON.stringify({ type: 'progress', agentId, text }) }), { agentId: agents[0].id, text: `Scoped progress phase ${i}` });
+    await page.waitForTimeout(100);
+  }
+  assert.equal(await page.evaluate(() => window.taskRenders), 0, 'Window-scoped tasks also ignore unrelated progress');
+  assert.ok(await page.evaluate(() => window.commits >= 5), 'Scoped progress still reaches the conversation');
   await composer.focus();
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   const final = await api('/api/tasks');
