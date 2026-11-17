@@ -8,7 +8,7 @@ request=$state/pending-deployment.json
 test -f "$request" || exit 0
 exec 9>"$state/deploy.lock"
 flock -n 9 || exit 0
-idle() { curl -fsS --max-time 5 "$api/api/state" | jq -e '[.agents[] | select(.status == "working")] | length == 0' >/dev/null; }
+idle() { curl -fsS --max-time 10 -H 'x-oxroute-task-notes: deferred' "$api/api/state" | jq -e '[.agents[] | select(.status == "working")] | length == 0' >/dev/null; }
 idle || exit 0
 sleep 2
 idle || exit 0
