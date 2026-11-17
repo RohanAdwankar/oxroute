@@ -44,8 +44,10 @@ try {
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  history.release();
  const panel=page.getByRole('complementary',{name:'Tasks',exact:true});
- await panel.getByText('Recorded observation 4').waitFor();
- await panel.getByRole('button',{name:'3 earlier',exact:true}).click();
+ const disclosure=panel.getByRole('button',{name:'Task history',exact:true});
+ await disclosure.waitFor();
+ assert.equal(await disclosure.getAttribute('aria-expanded'),'false','Loaded history stays collapsed');
+ await disclosure.click();
  for(const note of notes)await panel.getByText(note.text).waitFor();
  assert.equal(maximum,1,'Snapshot reads remain serial');
  assert.equal(calls,3,'Pending and later invalidations reconcile without losing task changes');
@@ -63,9 +65,10 @@ try {
  await panel.getByText('New observation after refresh').waitFor();
  const reads=noteCalls;
  await page.reload();
- await panel.getByText('Recorded observation 4').waitFor();
+ await disclosure.waitFor();
  assert.ok(noteCalls>reads,'Restoring an open sidebar also restores its history');
- await panel.getByRole('button',{name:'4 earlier',exact:true}).click();
+ assert.equal(await disclosure.getAttribute('aria-expanded'),'false','Reload keeps history compact');
+ await disclosure.click();
  for(const note of notes)await panel.getByText(note.text).waitFor();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
  console.log('Initial conversation renders before task history; concurrent syncs coalesce, later task changes reconcile, and every historical note remains accessible.');

@@ -42,6 +42,9 @@ try {
     assert.ok(body.includes(`name="text"\r\n\r\n${feedback.trim()}\r\n`));
     await page.waitForTimeout(100);
     assert.equal(await composer.inputValue(), '');
+    const history = page.getByRole('button', { name: 'Task history', exact: true });
+    await history.waitFor();
+    if (await history.getAttribute('aria-expanded') !== 'true') await history.click();
     await page.locator('[data-task-row] li').filter({ hasText: feedback.trim() || 'Not yet' }).first().waitFor();
     assert.equal(await page.getByRole('button', { name: 'Not yet', exact: true }).count(), 0);
     if (key === 'Tab') {
