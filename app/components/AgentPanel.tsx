@@ -311,6 +311,8 @@ export function AgentPanel({
   useEffect(() => {
     if (latestReview) preloadReview(reviewEndpoint(agent.id, latestReview.detail));
   }, [agent.id, latestReview?.detail]);
+  const entriesRef = useRef(view.timeline);
+  entriesRef.current = view.timeline;
   const timeline = useRef<HTMLDivElement>(null);
   const timelineBody = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -425,11 +427,11 @@ export function AgentPanel({
   /// dragging the view back down.
   const jumpTo = useCallback((id: number) => {
     following.current = false;
-    const targetId = delegatedFork(view.timeline.find(entry => entry.id === id), view.timeline)?.id ?? id;
+    const targetId = delegatedFork(entriesRef.current.find(entry => entry.id === id), entriesRef.current)?.id ?? id;
     const target=timeline.current?.querySelector<HTMLElement>(`[data-entry="${targetId}"]`);
     target?.closest("details")?.setAttribute("open", "");
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [view.timeline]);
+  }, []);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;

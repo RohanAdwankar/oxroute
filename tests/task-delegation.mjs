@@ -57,8 +57,10 @@ try{
  const notice=page.locator('[data-entry="1"]');
  await notice.getByRole('button',{name:'Not yet',exact:true}).waitFor();
  if(process.env.SCREENSHOT)await notice.screenshot({path:process.env.SCREENSHOT});
+ const failureReported=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/client-failures');
  fail=true;await notice.getByRole('button',{name:'Approve',exact:true}).click();
  await page.getByText('Approval could not be saved',{exact:true}).waitFor();
+ await failureReported;
  await notice.getByRole('button',{name:'Approve',exact:true}).waitFor();
  fail=false;await notice.getByRole('button',{name:'Approve',exact:true}).click();
  await notice.getByText('Approved',{exact:true}).waitFor();
