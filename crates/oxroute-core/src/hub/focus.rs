@@ -65,7 +65,7 @@ impl Hub {
         let latest = self.store.recent_messages(&id, 100)?.into_iter().rev().find(|item| item.kind == EntryKind::Said && item.text.contains("#agent/"));
         if latest.is_none_or(|item| item.id != entry) { return Ok(false); }
         let cycle = self.store.last_human_entry(&id)?;
-        let key = format!("focus-batch:{id}:{cycle}:{entry}:{}", agents.join(","));
+        let key = format!("focus-batch:{id}:{cycle}:{entry}:{}", serde_json::to_string(&agents)?);
         if self.store.get(&key)?.is_some() { self.dispatch_focus_batches().await?;return Ok(false); }
         let mut reviewed = self.reviewed_focus_agents(&id)?;
         let fresh = agents.iter().any(|agent| !reviewed.contains(agent));
@@ -99,7 +99,7 @@ impl Hub {
                     let agent = hub.store.agent(&batch.focus)?.context("Focus missing")?;
                     let reviewed = hub.reviewed_focus_agents(&batch.focus)?;
                     let prompt = format!("The user finished navigating the recommended conversation batch from entry {}: {}. This is an explicit user navigation event, not a periodic check or an approval. Offer the next highest-priority relevant existing conversations as an embedded card stack. Exclude these already-reviewed conversations in this review cycle: {}. Preserve drafts, replies, review ownership and all approval/dependency states. Do not repeat an exhausted stack or invent work. If no relevant conversations remain, finish quietly without cards or a follow-up question.", batch.entry, batch.agents.join(", "), serde_json::to_string(&reviewed)?);
-                    hub.run_turn(&agent,vec![TurnInput::text(prompt)],None,Some(Target::new("you","local",&batch.focus)),None,Some((&receipt,"Focus finished a conversation-card batch"))).await
+                    hub.run_turn(&agent,vec![TurnInput::text(prompt)],None,Some(Target::new("you","local",&batch.focus)),None,Some((&receipt,""))).await
                 }.await;
                 if let Err(error) = result { tracing::warn!(%error,"Focus batch continuation remains queued"); }
                 hub.focus_jobs.lock().await.remove(&receipt);

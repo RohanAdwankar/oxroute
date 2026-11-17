@@ -129,7 +129,9 @@ try {
   await why.fill('Waiting on a prerequisite'); await why.press('Enter');
   await page.evaluate(() => window.stream.onmessage({ data: JSON.stringify({ type: 'sync' }) }));
   const blocker = panel.getByRole('combobox', { name: 'blocking task for Review item 0', exact: true });
+  await page.waitForFunction(() => { const field=document.querySelector('[aria-label="blocking task for Review item 0"]');return field&&!field.disabled; });
   await blocker.focus();
+  await blocker.locator('option').nth(tasks.length-2).waitFor({state:'attached'});
   assert.equal(await blocker.locator('option').count(), tasks.length - 1, 'All other tasks remain selectable as dependencies');
   const dependencies = await blocker.locator('option').evaluateAll(options => options.map(option => option.value));
   const dependencyAt = dependencies.indexOf(await blocker.inputValue());

@@ -2177,7 +2177,7 @@ impl Hub {
             Ok(turn_id) => {
                 if let Some((key, notice)) = receipt {
                     self.store.set(key, "delivered")?;
-                    self.record(&agent.id, EntryKind::Notice, notice, "", "");
+                    if !notice.is_empty() { self.record(&agent.id, EntryKind::Notice, notice, "", ""); }
                 }
                 self.store.clear_context(&context_ids)?;
                 if !turn_id.is_empty() {

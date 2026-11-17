@@ -20,7 +20,7 @@ export function FocusCards({ids}:{ids:string[]}) {
   const available=[...new Set(ids)].filter(id=>agents.some(agent=>agent.id===id));
   const at=Math.max(0,available.indexOf(selected)),agent=agents.find(agent=>agent.id===available[at]);
   if(!agent)return null;
-  const key=available.join(",");
+  const key=JSON.stringify(available);
   if(visited.current.key!==key)visited.current={key,ids:new Set()};
   visited.current.ids.add(agent.id);
   const next=async(button:HTMLButtonElement)=>{

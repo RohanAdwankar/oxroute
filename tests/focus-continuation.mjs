@@ -58,6 +58,9 @@ try{
  }
  const task=await api('/api/tasks',{text:'Review independent evidence'});
  await api(`/api/tasks/${task.id}`,{...task,agentId:ids[0],status:'done',note:'Ready for human review'},'PUT');
+ const historical=await api('/api/tasks',{text:'Historical approved work'});
+ await api(`/api/tasks/${historical.id}`,{...historical,agentId:ids[0],status:'complete',approved:true,note:'Explicit fixture human sign-off'},'PUT');
+ const diagram=await fetch(native+'/api/task-diagram.svg').then(r=>r.text());assert.ok(!diagram.includes(historical.text)&&diagram.includes(task.text),'Real diagram hides completed records and retains work awaiting review');
  const before=await api('/api/tasks');focusMode=true;
  browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
  const page=await browser.newPage({viewport:{width:1200,height:900}}),errors=[];page.on('pageerror',error=>errors.push(String(error)));
