@@ -7,7 +7,9 @@ import { Copyable } from "./Copyable";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
 import { encodePrFormLink } from "../lib/pr-links";
-import { EmbeddedReviews, FocusReview } from "./FocusReview";
+import { FocusReview } from "./FocusReview";
+import { EmbeddedReviews, ConversationCards } from "./FocusContext";
+import { FocusCards } from "./FocusCards";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
 
@@ -65,8 +67,12 @@ function referenceLinks(titles: Map<string, string>) {
 // Stable renderer identities preserve native selections when Markdown updates.
 const markdownComponents: Components = {
   p: function Paragraph({node,children}) {
-    const reviews=useContext(EmbeddedReviews);
-    const embedded=node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
+    const reviews=useContext(EmbeddedReviews),cards=useContext(ConversationCards);
+    const nodes=node?.children??[];
+    const agentLink=(child:typeof nodes[number])=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#agent/")&&cards&&[...cards.state.agents,...cards.state.archived].some(agent=>agent.id===(child.properties.href as string).slice(7));
+    const ids=nodes.filter(agentLink).map(child=>child.type==="element"?String(child.properties.href).slice(7):"");
+    if(ids.length&&nodes.every(child=>agentLink(child)||child.type==="text"&&!child.value.trim()))return <FocusCards ids={ids}/>;
+    const embedded=ids.length||node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
     return embedded?<div>{children}</div>:<p>{children}</p>;
   },
   img: ({src, alt, title}) => <ReviewImage src={src} alt={alt} title={title} />,
@@ -91,7 +97,8 @@ const markdownComponents: Components = {
     const openFile = useContext(FileReviews);
     const reviews = useContext(ReviewLinks);
     const tasks = useContext(TaskLinks);
-    const embedded=useContext(EmbeddedReviews);
+    const embedded=useContext(EmbeddedReviews),cards=useContext(ConversationCards);
+    if(href?.startsWith("#agent/")&&cards&&[...cards.state.agents,...cards.state.archived].some(agent=>agent.id===href.slice(7)))return <FocusCards ids={[href.slice(7)]}/>;
     if(href?.startsWith("#review/")&&embedded?.owners.has(href.slice(8)))return <FocusReview id={href.slice(8)}/>;
     if (href && savedReview(href) && openFile) return <button type="button" className="cursor-pointer underline" onClick={() => openFile(href)}>{children}</button>;
     const task = href?.startsWith("#task/");

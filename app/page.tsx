@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
-import { EmbeddedReviews } from "./components/FocusReview";
+import { EmbeddedReviews, ConversationCards } from "./components/FocusContext";
 import { receiveDraft } from "./lib/drafts";
 import { TaskActions } from "./components/TaskReference";
 
@@ -1342,6 +1342,7 @@ export default function Home() {
     <ArtifactRoot.Provider value={snapshot.artifactRoot}>
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={taskActions}>
+    <ConversationCards.Provider value={focusOpen?{state:{...snapshot,tasks:taskItems},onTask:taskLinks.open,onSent:reload}:null}>
     <EmbeddedReviews.Provider value={focusOpen&&focusAgentId?{owners:new Map(Object.entries(snapshot.reviews??{}).flatMap(([id,reviews])=>reviews.map(review=>[review,{id,name:[...snapshot.agents,...snapshot.archived].find(agent=>agent.id===id)?.name??"Conversation"}]))),quote:quote=>receiveDraft(focusAgentId,{text:"",files:[],diffs:[quote]})}:null}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
@@ -1741,6 +1742,7 @@ export default function Home() {
       </div>
     </main>
     </EmbeddedReviews.Provider>
+    </ConversationCards.Provider>
     </TaskActions.Provider>
     </TaskLinks.Provider>
     </ArtifactRoot.Provider>

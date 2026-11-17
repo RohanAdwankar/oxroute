@@ -36,6 +36,7 @@ const env={PATH:process.env.PATH,HOME:root,LANG:'C.UTF-8',RUST_LOG:'warn',CODEX_
 const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env});let daemon=start();
 let failRevision=true;
 const frontend=process.env.TEST_URL,proxy=createServer((req,res)=>{
+ if(req.url==='/paused'){res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><title>Paused fixture</title>');return;}
  if(failRevision&&req.method==='POST'&&req.url.includes('/correction')){failRevision=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Revision temporarily unavailable'}));return;}
  const upstream=new URL(req.url,req.url.startsWith('/api/')&&!req.url.startsWith('/api/version')?native:frontend);
  const call=request(upstream,{method:req.method,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});
@@ -77,7 +78,7 @@ try{
  await until(async()=>turns.length===3&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete');
  await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,3);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
- await page.goto('about:blank');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();
+ await page.goto(ui+'/paused');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();
  await until(async()=>{try{return(await fetch(native+'/api/health')).ok;}catch{return false;}});
  assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,3,'Accepted wake receipt survives restart');
  const restored=page;await restored.goto(`${ui}/?view=focus`);
