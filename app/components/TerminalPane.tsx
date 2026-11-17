@@ -5,7 +5,7 @@ import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
 import { terminalFontScale } from "../lib/keys";
 
-export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[]; agentId?: string }
+export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[]; agentId?: string; sharedShell?: boolean; following?: boolean; followAgentId?: string }
 export async function terminalApi<T>(path: string, body?: object, method = "POST", signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/terminals${path}`, { signal, ...(body ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" }) });
   const result = await response.json();
@@ -16,6 +16,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
   const host = useRef<HTMLDivElement>(null);
   const [info, setInfo] = useState<TerminalInfo>({ id, name: "Terminal", pending: [], granted: [] });
   const [error, setError] = useState("");
+  const [streamError, setStreamError] = useState("");
   const token = useCallback(() => localStorage.getItem(`oxroute.terminal.${id}`) ?? "", [id]);
   const decide = (agentId: string, allow: boolean) => terminalApi<TerminalInfo>(`/${id}/consent`, { controller: token(), agentId, allow }).then(setInfo).catch(error => setError(String(error)));
   useEffect(() => {
@@ -139,7 +140,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         terminal.options.fontSize = history.options.fontSize = 13 * scale * Number(terminalFontScale.get()) / 100;
         fit.fit();
         history.resize(terminal.cols, terminal.rows);
-        if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
+        if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setStreamError(String(error)));
       };
       const unsubscribeFont = terminalFontScale.subscribe(resize);
       const observer = new ResizeObserver(resize);
@@ -155,15 +156,16 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
             const owner = await terminalApi<{ controller: string }>(`/${id}/claim`, {}, "POST", controller.signal);
             if (!live) return;
             localStorage.setItem(`oxroute.terminal.${id}`, owner.controller);
-            void terminalApi(`/${id}/resize`, { controller: owner.controller, rows: terminal.rows, cols: terminal.cols }).catch(error => setError(String(error)));
+            void terminalApi(`/${id}/resize`, { controller: owner.controller, rows: terminal.rows, cols: terminal.cols }).catch(error => setStreamError(String(error)));
           }
           setInfo(current => JSON.stringify(current) === JSON.stringify(result.terminal) ? current : result.terminal);
           if (result.reset) { replaying = true; terminal.reset(); }
           if (result.bytes.length) await new Promise<void>(resolve => terminal.write(new Uint8Array(result.bytes), resolve));
           replaying = false;
+          setStreamError("");
           after = result.end;
           if (live) timer = setTimeout(poll, 0);
-        } catch (error) { if (live) { setError(String(error)); timer = setTimeout(poll, 200); } }
+        } catch (error) { if (live) { setStreamError(String(error)); timer = setTimeout(poll, 200); } }
       };
       void poll();
       dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); unsubscribeFont(); input.dispose(); binary.dispose(); historyInput.dispose(); historyScroll.dispose(); terminal.dispose(); history.dispose(); liveElement.remove(); historyElement.remove(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
@@ -174,6 +176,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
   return <section data-terminal-pane={id} className="flex min-h-0 min-w-0 flex-1 flex-col bg-paper text-ink">
     <header data-pane-header className="flex h-[var(--bar)] shrink-0 items-center gap-2 border-b border-rule px-2">
       {handle}<Icon name="terminal" size={14} /><span data-pane-title className="min-w-0 flex-1 truncate text-[13px]">{info.name}</span>
+      {info.sharedShell && <button type="button" aria-label="Follow agent" aria-pressed={!!info.following} title={info.following ? "Agent priority · click for user priority" : "User priority · click to follow agent"} className={`cursor-pointer ${info.following ? "text-ink" : "text-faint hover:text-ink"}`} onClick={() => void terminalApi<TerminalInfo>(`/${id}/follow`, { controller: token(), enabled: !info.following }).then(info => { setInfo(info); setError(""); }).catch(error => setError(String(error)))}><Icon name="thread" size={14} /></button>}
       <button title="End terminal session" aria-label="End terminal session" className="cursor-pointer text-faint hover:text-ink" onClick={() => {
         if (confirm("End this terminal session and its running shell?")) void terminalApi(`/${id}`, { controller: token() }, "DELETE").then(onEnd).catch(error => setError(String(error)));
       }}><Icon name="stop" size={13} /></button>
@@ -184,7 +187,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
       <button className="cursor-pointer" onClick={() => void decide(agent, false)}>Deny</button>
     </div>)}
     {info.granted.map(agent => <div key={agent} className="flex items-center gap-2 px-2 text-[11px] text-faint"><span>{name(agent)} can write</span><button className="cursor-pointer" onClick={() => void decide(agent, false)}>Revoke</button></div>)}
-    {error && <p role="alert" className="px-2 text-[12px] text-hold">{error}</p>}
+    {(error || streamError) && <p role="alert" className="px-2 text-[12px] text-hold">{error || streamError}</p>}
     <div ref={host} aria-label="Interactive terminal" className="min-h-0 flex-1 overflow-hidden bg-paper p-1 text-ink" />
   </section>;
 }

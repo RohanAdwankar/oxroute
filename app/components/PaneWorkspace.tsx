@@ -9,7 +9,7 @@ import { Icon } from "./Icon";
 
 type Split = { path: string; axis: "row" | "column"; side: "first" | "second" };
 
-export function AgentPicker({ agents, selected, onSelect, onTerminal }: { agents: Pick<Agent, "id" | "name">[]; selected: string[]; onSelect: (ids: string[]) => void; onTerminal?: () => void }) {
+export function AgentPicker({ agents, selected, onSelect, onTerminal, onFollowTerminal }: { agents: Pick<Agent, "id" | "name">[]; selected: string[]; onSelect: (ids: string[]) => void; onTerminal?: () => void; onFollowTerminal?: () => void }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
   const picker = useRef<HTMLDetailsElement>(null);
@@ -28,6 +28,7 @@ export function AgentPicker({ agents, selected, onSelect, onTerminal }: { agents
         <span className="truncate">{agent.name}</span>
       </label>)}</div>
       {onTerminal && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onTerminal(); }}><Icon name="terminal" size={13} />New terminal</button>}
+      {onFollowTerminal && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onFollowTerminal(); }}><Icon name="thread" size={13} />New follow terminal</button>}
     </div>}
   </details>;
 }

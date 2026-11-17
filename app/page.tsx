@@ -1396,7 +1396,12 @@ export default function Home() {
             if (open === id) showAgent(visible[index + 1] ?? visible[index - 1] ?? null);
           }} onDragStart={(event, id) => transfer.start(event, id, tabLayout(id))} onDragEnd={transfer.end}
           onDrop={event => transfer.drop(event, { kind: "tab" })} onDetach={id => transfer.detach(id, tabLayout(id))} />}
-        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onTerminal={() => {
+        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onFollowTerminal={snapshot.agents.some(agent => agent.id === open) ? () => {
+          void terminalApi<{ terminal: TerminalInfo }>("", { agentId: open, follow: true }).then(({ terminal }) => {
+            setTerminals(current => [...current, terminal]);
+            choosePanes([...panes, terminal.id]);
+          }).catch(complain);
+        } : undefined} onTerminal={() => {
           void terminalApi<{ terminal: TerminalInfo; controller: string }>("", {}).then(({ terminal, controller }) => {
             localStorage.setItem(`oxroute.terminal.${terminal.id}`, controller);
             setTerminals(current => [...current, terminal]);

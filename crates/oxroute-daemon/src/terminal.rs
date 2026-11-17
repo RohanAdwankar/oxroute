@@ -1,4 +1,7 @@
-use crate::Failed;
+use crate::{
+    terminal_shell::{self, Execution},
+    Failed,
+};
 use anyhow::{Context, Result};
 use axum::{
     extract::{Path, Query, State},
@@ -30,16 +33,25 @@ struct Terminal {
     pending: Vec<String>,
     #[serde(default)]
     agent_id: String,
+    #[serde(default)]
+    shared_shell: bool,
+    #[serde(default)]
+    follow_agent_id: String,
+    #[serde(default)]
+    following: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
     terminal: Terminal,
     controller: String,
+    #[serde(default)]
+    execution: Option<Execution>,
 }
 #[derive(Default)]
 struct Output {
     bytes: VecDeque<u8>,
     end: u64,
+    closed: bool,
 }
 struct Live {
     master: Box<dyn MasterPty + Send>,
@@ -47,6 +59,7 @@ struct Live {
     output: Arc<Mutex<Output>>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
     scrolling: bool,
+    user_input: Option<std::time::Instant>,
 }
 struct Terminals {
     hub: Arc<Hub>,
@@ -54,6 +67,7 @@ struct Terminals {
     records: Mutex<Vec<Record>>,
     live: Mutex<HashMap<String, Live>>,
     changed: Arc<tokio::sync::Notify>,
+    interaction: Mutex<()>,
 }
 type TermState = State<Arc<Terminals>>;
 
@@ -67,6 +81,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
     let terminals = Arc::new(Terminals {
         socket: format!("oxroute-terminals-{}", hub.config.listen.replace(':', "_")),
         hub,
+        interaction: Mutex::new(()),
         records: Mutex::new(records),
         live: Mutex::new(HashMap::new()),
         changed: Arc::new(tokio::sync::Notify::new()),
@@ -75,6 +90,8 @@ pub fn routes(hub: Arc<Hub>) -> Result<Router> {
         .route("/api/terminals", get(list).post(create))
         .route("/api/terminals/{id}", get(output).delete(end))
         .route("/api/terminals/{id}/input", post(input))
+        .route("/api/terminals/{id}/follow", post(follow))
+        .route("/api/terminals/{id}/execute", post(execute))
         .route("/api/terminals/{id}/resize", post(resize))
         .route("/api/terminals/{id}/scroll", post(scroll))
         .route("/api/terminals/{id}/history", get(history))
@@ -100,7 +117,7 @@ impl Terminals {
             .context("No such terminal")
     }
     fn attach(&self, id: &str) -> Result<()> {
-        self.record(id)?;
+        let record = self.record(id)?;
         let mut live = self.live.lock().unwrap();
         if live.contains_key(id) {
             return Ok(());
@@ -111,18 +128,38 @@ impl Terminals {
             .status
             .success();
         if !exists {
-            let started = std::process::Command::new("tmux")
-                .args([
-                    "-L",
-                    &self.socket,
-                    "new-session",
-                    "-d",
-                    "-s",
-                    id,
-                    "-c",
-                    &self.hub.config.workspace,
-                ])
-                .output()?;
+            let mut command = std::process::Command::new("tmux");
+            let cwd = if record.terminal.shared_shell {
+                self.hub
+                    .store
+                    .agent(&record.terminal.follow_agent_id)?
+                    .context("No such agent")?
+                    .cwd
+            } else {
+                self.hub.config.workspace.clone()
+            };
+            command.args([
+                "-L",
+                &self.socket,
+                "new-session",
+                "-d",
+                "-s",
+                id,
+                "-c",
+                &cwd,
+            ]);
+            if record.terminal.shared_shell {
+                let root = terminal_shell::directory(&self.hub.config.database, id);
+                let rc = terminal_shell::prepare(&root)?;
+                command.args([
+                    "-e",
+                    &format!("OXROUTE_SHELL={}", root.display()),
+                    "bash",
+                    "--rcfile",
+                ]);
+                command.arg(rc).arg("-i");
+            }
+            let started = command.output()?;
             anyhow::ensure!(
                 started.status.success(),
                 "Starting terminal: {}",
@@ -181,10 +218,13 @@ impl Terminals {
                 drop(output);
                 changed.notify_waiters();
             }
+            captured.lock().unwrap().closed = true;
+            changed.notify_waiters();
         });
         live.insert(
             id.to_owned(),
             Live {
+                user_input: None,
                 master: pair.master,
                 writer,
                 output,
@@ -217,6 +257,30 @@ impl Terminals {
         );
         Ok(record)
     }
+    fn leave_history(&self, id: &str, terminal: &mut Live) -> Result<()> {
+        if terminal.scrolling {
+            if self
+                .tmux(id, &["display-message", "-p", "#{pane_in_mode}"])?
+                .trim()
+                == "1"
+            {
+                self.tmux(id, &["send-keys", "-X", "cancel"])?;
+            }
+            self.tmux(id, &["set-option", "@oxroute-scrolling", "0"])?;
+            terminal.scrolling = false;
+        }
+        Ok(())
+    }
+    fn running(&self, record: &Record) -> Result<bool> {
+        match &record.execution {
+            Some(execution) => Ok(terminal_shell::finished(
+                &terminal_shell::directory(&self.hub.config.database, &record.terminal.id),
+                execution,
+            )?
+            .is_none()),
+            None => Ok(false),
+        }
+    }
     fn write(&self, id: &str, data: &[u8], controller: &str, agent: &str) -> Result<()> {
         let record = self.record(id)?;
         if controller.is_empty() {
@@ -235,17 +299,34 @@ impl Terminals {
         self.attach(id)?;
         let mut live = self.live.lock().unwrap();
         let terminal = live.get_mut(id).context("Terminal disconnected")?;
-        if terminal.scrolling {
-            if self
-                .tmux(id, &["display-message", "-p", "#{pane_in_mode}"])?
-                .trim()
-                == "1"
-            {
-                self.tmux(id, &["send-keys", "-X", "cancel"])?;
-            }
-            self.tmux(id, &["set-option", "@oxroute-scrolling", "0"])?;
-            terminal.scrolling = false;
+        if !controller.is_empty() {
+            anyhow::ensure!(
+                !record.terminal.following || !self.running(&record)?,
+                "Agent command has priority; switch follow off to take control"
+            );
+            terminal.user_input = Some(std::time::Instant::now());
+        } else if record.terminal.following {
+            anyhow::ensure!(
+                record.terminal.follow_agent_id == agent,
+                "The followed agent has priority"
+            );
+        } else {
+            anyhow::ensure!(
+                terminal
+                    .user_input
+                    .is_none_or(|at| at.elapsed().as_secs() >= 2),
+                "User input has priority; wait until the terminal is idle"
+            );
         }
+        let root = terminal_shell::directory(&self.hub.config.database, id);
+        if record.terminal.shared_shell
+            && data
+                .iter()
+                .any(|byte| matches!(byte, b'\r' | b'\n' | 3 | 4))
+        {
+            let _ = std::fs::remove_file(root.join("ready"));
+        }
+        self.leave_history(id, terminal)?;
         terminal.writer.write_all(data)?;
         terminal.writer.flush()?;
         Ok(())
@@ -267,12 +348,17 @@ async fn list(State(state): TermState) -> Json<Vec<Terminal>> {
 struct Create {
     #[serde(default)]
     agent_id: String,
+    #[serde(default)]
+    follow: bool,
 }
 async fn create(State(state): TermState, Json(body): Json<Create>) -> Result<Json<Value>, Failed> {
     if !body.agent_id.is_empty() {
         if state.hub.store.agent(&body.agent_id)?.is_none() {
             return Err(anyhow::anyhow!("No such agent").into());
         }
+    }
+    if body.follow && body.agent_id.is_empty() {
+        return Err(anyhow::anyhow!("A follow terminal needs an agent").into());
     }
     let id = new_id("terminal");
     let terminal = Terminal {
@@ -284,6 +370,13 @@ async fn create(State(state): TermState, Json(body): Json<Create>) -> Result<Jso
             vec![body.agent_id.clone()]
         },
         pending: vec![],
+        shared_shell: body.follow,
+        follow_agent_id: if body.follow {
+            body.agent_id.clone()
+        } else {
+            String::new()
+        },
+        following: body.follow,
         agent_id: body.agent_id,
     };
     let controller = new_id("control");
@@ -302,6 +395,7 @@ async fn create(State(state): TermState, Json(body): Json<Create>) -> Result<Jso
             .into());
         }
         records.push(Record {
+            execution: None,
             terminal: terminal.clone(),
             controller: controller.clone(),
         });
@@ -372,7 +466,24 @@ fn output_snapshot(state: &Terminals, id: &str, after: u64) -> Result<Value> {
         .range((after - start) as usize..)
         .copied()
         .collect::<Vec<_>>();
-    Ok(json!({ "terminal": record.terminal, "bytes": bytes, "end": output.end, "reset": reset }))
+    let execution = record
+        .execution
+        .as_ref()
+        .map(|execution| -> Result<Value> {
+            let root = terminal_shell::directory(&state.hub.config.database, id);
+            let completion = terminal_shell::finished(&root, execution)?;
+            Ok(
+                json!({"id":execution.id,"after":execution.after,"running":completion.is_none() && !output.closed,
+            "disconnected":output.closed,
+            "exitCode":completion,
+            "interrupted":completion == Some(130),
+            "cwd":std::fs::read_to_string(root.join("cwd")).unwrap_or_default()}),
+            )
+        })
+        .transpose()?;
+    Ok(
+        json!({ "terminal": record.terminal, "bytes": bytes, "end": output.end, "reset": reset, "execution": execution }),
+    )
 }
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -399,8 +510,157 @@ async fn input(
     } else {
         body.data.into_bytes()
     };
+    let _interaction = state.interaction.lock().unwrap();
     state.write(&id, &data, &body.controller, &body.agent_id)?;
     Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Follow {
+    controller: String,
+    enabled: bool,
+}
+async fn follow(
+    State(state): TermState,
+    Path(id): Path<String>,
+    Json(body): Json<Follow>,
+) -> Result<Json<Terminal>, Failed> {
+    let _interaction = state.interaction.lock().unwrap();
+    state.control(&id, &body.controller)?;
+    let mut records = state.records.lock().unwrap();
+    let record = records
+        .iter_mut()
+        .find(|r| r.terminal.id == id)
+        .context("No such terminal")?;
+    if body.enabled
+        && (!record.terminal.shared_shell
+            || !record
+                .terminal
+                .granted
+                .contains(&record.terminal.follow_agent_id))
+    {
+        return Err(anyhow::anyhow!(
+            "Follow requires a shared shell and its agent's terminal grant"
+        )
+        .into());
+    }
+    record.terminal.following = body.enabled;
+    let result = record.terminal.clone();
+    state.save(&records)?;
+    Ok(Json(result))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Execute {
+    agent_id: String,
+    command: String,
+}
+async fn execute(
+    State(state): TermState,
+    Path(id): Path<String>,
+    Json(body): Json<Execute>,
+) -> Result<Json<Value>, Failed> {
+    let result = (|| -> Result<Value> {
+        let _interaction = state.interaction.lock().unwrap();
+        anyhow::ensure!(!body.command.trim().is_empty(), "Command is empty");
+        state.attach(&id)?;
+        anyhow::ensure!(
+            !state
+                .live
+                .lock()
+                .unwrap()
+                .get(&id)
+                .context("Terminal disconnected")?
+                .output
+                .lock()
+                .unwrap()
+                .closed,
+            "Terminal shell ended; open a new terminal"
+        );
+        let root = terminal_shell::directory(&state.hub.config.database, &id);
+        let execution = {
+            let mut records = state.records.lock().unwrap();
+            let record = records
+                .iter_mut()
+                .find(|r| r.terminal.id == id)
+                .context("No such terminal")?;
+            anyhow::ensure!(
+                record.terminal.shared_shell,
+                "Use an explicitly created follow terminal for shared-shell commands"
+            );
+            anyhow::ensure!(
+                record.terminal.granted.contains(&body.agent_id),
+                "Terminal access required"
+            );
+            anyhow::ensure!(
+                !record.terminal.following || record.terminal.follow_agent_id == body.agent_id,
+                "The followed agent has priority"
+            );
+            anyhow::ensure!(
+                !state.running(record)?,
+                "A shared-shell command is already running"
+            );
+            anyhow::ensure!(
+                root.join("ready").is_file(),
+                "The shell is busy; wait for its prompt"
+            );
+            if !record.terminal.following {
+                anyhow::ensure!(
+                    state
+                        .live
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .context("Terminal disconnected")?
+                        .user_input
+                        .is_none_or(|at| at.elapsed().as_secs() >= 2),
+                    "User input has priority; wait until the terminal is idle"
+                );
+            }
+            let after = state
+                .live
+                .lock()
+                .unwrap()
+                .get(&id)
+                .context("Terminal disconnected")?
+                .output
+                .lock()
+                .unwrap()
+                .end;
+            let execution = Execution {
+                id: new_id("command"),
+                after,
+            };
+            if let Some(previous) = &record.execution {
+                terminal_shell::forget(&root, previous)?;
+            }
+            record.execution = Some(execution.clone());
+            state.save(&records)?;
+            execution
+        };
+        let sent = (|| -> Result<()> {
+            std::fs::write(
+                root.join(format!("{}.command", execution.id)),
+                &body.command,
+            )?;
+            std::fs::write(root.join("request"), &execution.id)?;
+            std::fs::remove_file(root.join("ready"))?;
+            let mut live = state.live.lock().unwrap();
+            state.leave_history(&id, live.get_mut(&id).context("Terminal disconnected")?)?;
+            state.tmux(&id, &["send-keys", "-l", "\x1b[99~"])?;
+            Ok(())
+        })();
+        if let Err(error) = sent {
+            let mut records = state.records.lock().unwrap();
+            if let Some(record) = records.iter_mut().find(|r| r.terminal.id == id) {
+                record.execution = None;
+            }
+            state.save(&records)?;
+            return Err(error);
+        }
+        Ok(json!({"id":execution.id,"after":execution.after}))
+    })()?;
+    Ok(Json(result))
 }
 async fn history(State(state): TermState, Path(id): Path<String>) -> Result<Json<Value>, Failed> {
     let snapshot = tokio::task::spawn_blocking(move || -> Result<Value> {
@@ -560,6 +820,7 @@ async fn consent(
 ) -> Result<Json<Terminal>, Failed> {
     state.control(&id, &body.controller)?;
     let (result, newly_allowed) = {
+        let _interaction = state.interaction.lock().unwrap();
         let mut records = state.records.lock().unwrap();
         let record = records
             .iter_mut()
@@ -582,6 +843,9 @@ async fn consent(
         if body.allow {
             record.terminal.granted.push(body.agent_id.clone());
         }
+        if !body.allow && record.terminal.follow_agent_id == body.agent_id {
+            record.terminal.following = false;
+        }
         let result = record.terminal.clone();
         state.save(&records)?;
         (result, newly_allowed)
@@ -600,17 +864,24 @@ async fn end(
     Path(id): Path<String>,
     Json(body): Json<Input>,
 ) -> Result<Json<Value>, Failed> {
+    let _interaction = state.interaction.lock().unwrap();
     state.control(&id, &body.controller)?;
-    let status = std::process::Command::new("tmux")
-        .args(["-L", &state.socket, "kill-session", "-t", &id])
-        .status()?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("Could not end terminal session").into());
+    let exists = std::process::Command::new("tmux")
+        .args(["-L", &state.socket, "has-session", "-t", &id])
+        .output()?
+        .status
+        .success();
+    if exists {
+        state.tmux(&id, &["kill-session"])?;
     }
     state.live.lock().unwrap().remove(&id);
     let mut records = state.records.lock().unwrap();
     records.retain(|r| r.terminal.id != id);
     state.save(&records)?;
+    let root = terminal_shell::directory(&state.hub.config.database, &id);
+    if root.exists() {
+        std::fs::remove_dir_all(root)?;
+    }
     Ok(Json(json!({"ok":true})))
 }
 

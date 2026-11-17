@@ -2040,7 +2040,18 @@ impl Hub {
              /api/terminals/<id>/access and {{\"agentId\":\"{id}\"}}, then wait until GET shows you in granted. \
              Use only your own agentId. Never call claim, consent, resize or delete endpoints, obtain \
              browser controller credentials, or approve your own access to a user terminal. \
-             Terminal access does not authorize unrelated actions.",
+             Terminal access does not authorize unrelated actions. \
+             Before shell work, check the terminal list for following=true and followAgentId matching \
+             your agentId. When present, execute shell commands in that shared Bash through POST \
+             /api/terminals/<id>/execute with {{\"agentId\":\"{id}\",\"command\":\"shell code\"}}. \
+             Poll GET /api/terminals/<id>?after=<offset>&wait=true for bytes and execution \
+             (id, running, exitCode, cwd, disconnected). Disconnection without an exit code is not \
+             success. Use the returned after offset to read the command's output. \
+             Directory changes, variables and jobs persist in that shell. Await execution completion \
+             before submitting another command. The user's partial command is preserved. \
+             Native command tools remain available; their subprocess state is separate from the \
+             shared shell. Do not execute a shell command twice or claim native subprocesses share \
+             terminal state. In normal mode user input has priority; retry only after it is idle.",
             listen = self.config.listen, id = agent.id,
         )));
         if self.store.tags(&agent.id)?.iter().any(|tag| tag == "publication:direct") {

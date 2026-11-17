@@ -39,6 +39,7 @@ use oxroute_core::{Config, Hub, Store};
 
 mod diagram;
 mod terminal;
+mod terminal_shell;
 
 const UPLOAD_BODY_LIMIT: usize = 256 * 1024 * 1024;
 const INBOX_LIMIT: usize = 200;
