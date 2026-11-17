@@ -173,6 +173,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-font.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-scroll.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/terminal-input-flow.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/terminal-follow.mjs)
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/terminals.mjs)
 curl -fsS "$api/api/terminals" | jq -e 'type == "array"' >/dev/null
 jq -c '.workstreams[]?' "$request" | while IFS= read -r item; do
   curl -fsS --max-time 10 -X PUT "$api/api/agents/$(jq -er .agentId <<< "$item")/workstream" \
