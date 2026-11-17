@@ -47,6 +47,13 @@ try{
  await first.getByRole('button',{name:'Inspect evidence',exact:true}).click();await first.getByText('Sent to conversation',{exact:true}).waitFor();assert.equal(writes.at(-1).text,'Inspect the validation evidence');
  assert.equal(writes[2].requestId,writes[3].requestId,'Choice retries remain idempotent');
  const crowded=card(agents[1].id);assert.ok((await crowded.boundingBox()).height<750,'Large task lists stay bounded within the viewport');
+ const scroll=crowded.locator('[data-card-scroll]');
+ const hasHiddenScrollbar=element=>getComputedStyle(element).scrollbarWidth==='none'||getComputedStyle(element,'::-webkit-scrollbar').display==='none';
+ assert.ok(await scroll.evaluate(hasHiddenScrollbar),'Overflowing card contents have no visible scrollbar');
+ await reply.fill(Array.from({length:40},(_,i)=>`Draft line ${i+1}`).join('\n'));
+ assert.ok(await reply.evaluate(hasHiddenScrollbar),'Long reply drafts have no visible scrollbar');
+ assert.ok(await reply.evaluate(element=>{element.scrollTop=element.scrollHeight;return element.scrollTop>0;}),'Long reply drafts remain scrollable');
+ await reply.fill('');
  const last=crowded.getByRole('button',{name:extra.at(-1).text,exact:true});
  const visible=await last.evaluate(button=>{let scroll=button.parentElement;while(scroll&&!(scroll.scrollHeight>scroll.clientHeight&&['auto','scroll'].includes(getComputedStyle(scroll).overflowY)))scroll=scroll.parentElement;if(!scroll)return false;scroll.scrollTop=scroll.scrollHeight;const a=button.getBoundingClientRect(),b=scroll.getBoundingClientRect();return a.top>=b.top&&a.bottom<=b.bottom;});
  assert.ok(visible,'Every task remains reachable by scrolling inside the card');

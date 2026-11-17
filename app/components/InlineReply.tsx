@@ -55,7 +55,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
       <span role="status">{pending ? "Queued" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
       {expanded && <button type="button" title="Refresh context" aria-label="Refresh context" onClick={() => setRevision(value => value + 1)} className="cursor-pointer hover:text-ink"><Icon name="refresh" /></button>}
     </div>
-    {expanded && <div className="quiet-scroll my-3 max-h-96 overflow-auto text-[13px] leading-relaxed" aria-label="Conversation context">
+    {expanded && <div className="no-scrollbar my-3 max-h-96 overflow-auto text-[13px] leading-relaxed" aria-label="Conversation context">
       {loading && <p className="text-faint">Loading…</p>}
       {!loading && !entries.length && <p className="text-faint">No conversation messages yet.</p>}
       {entries.map(entry => <div key={entry.id} className="mb-3"><p className="mb-1 text-[11px] text-faint">{entry.kind === "said" ? agent.name : "You"}</p><Markdown>{entry.text}</Markdown></div>)}
@@ -65,7 +65,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
       <textarea aria-label={task ? `Reply about ${task.text}` : `Reply to ${agent.name}`} placeholder="Reply…" value={draft} disabled={pending} rows={2}
         onChange={event => change(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}
-        className="min-w-0 max-w-full flex-1 resize-y overflow-x-hidden border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
+        className="no-scrollbar min-w-0 max-w-full flex-1 resize-y overflow-x-hidden border-b border-hair bg-transparent py-1 text-[13px] text-ink outline-none focus:border-mid disabled:opacity-50" />
       <button type="submit" aria-label="Send reply" title="Send reply" disabled={pending || !draft.trim()} className="cursor-pointer p-2 text-mid hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="send" /></button>
     </form>
     {(error || contextError) && <p role="alert" className="mt-2 text-[12px] text-mid">{error || contextError}</p>}

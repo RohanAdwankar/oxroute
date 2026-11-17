@@ -319,7 +319,7 @@ function Card({
         )}
       </div>
 
-      <div data-card-scroll className="quiet-scroll min-h-0 overflow-y-auto overflow-x-hidden">
+      <div data-card-scroll className="no-scrollbar min-h-0 overflow-y-auto overflow-x-hidden">
       <div className="mt-[12px] max-h-[3lh] overflow-hidden line-clamp-3 text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>

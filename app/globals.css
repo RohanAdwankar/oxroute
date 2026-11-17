@@ -274,6 +274,13 @@ html[data-wrap="on"] [data-quoted-diff-line] {
   background: transparent;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* What a highlighter marks, in the palette this interface already uses.
    One rule per kind of token, rather than a theme from somewhere else. */
 .hljs-comment,
