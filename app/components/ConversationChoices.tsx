@@ -11,13 +11,13 @@ export function ConversationChoices({agent,nextActions,onSent}:{agent:Agent;next
   const send=async(text:string)=>{
     if(pending||sent)return;
     if(request.current?.text!==text)request.current={text,id:crypto.randomUUID()};
-    setPending(true);setError("");
-    try{await api.say(agent.id,text,[],false,[],request.current.id);setSent(true);onSent();}
-    catch(error){setError(error instanceof Error?error.message:String(error));}
+    setPending(true);setSent(true);setError("");
+    try{await api.say(agent.id,text,[],false,[],request.current.id);onSent();}
+    catch(error){setSent(false);setError(error instanceof Error?error.message:String(error));}
     finally{setPending(false);}
   };
   return <div ref={element}>
-    {sent?<p role="status" className="mt-3 text-[12px] text-faint">Sent to conversation</p>:<section role="group" aria-label={`Suggested next steps for ${agent.name}`} className="next-choices">
+    {sent?<p role="status" className="mt-3 text-[12px] text-faint">{pending?"Queued for conversation":"Sent to conversation"}</p>:<section role="group" aria-label={`Suggested next steps for ${agent.name}`} className="next-choices">
       <div>{nextActions.actions.map(action=><button key={action.message} type="button" className="cursor-pointer text-left hover:bg-wash focus-visible:outline-2 focus-visible:outline-ink disabled:opacity-40" disabled={pending} aria-label={action.label} title={action.message} onClick={()=>void send(action.message)}><span>{action.label}</span><span>{action.message}</span></button>)}</div>
     </section>}
     {error&&<p role="alert" className="mt-2 text-[12px] text-hold">{error}</p>}

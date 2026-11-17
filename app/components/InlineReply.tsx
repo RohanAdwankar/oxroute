@@ -39,19 +39,20 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent }: { tas
     if (!request.current) { try { request.current = JSON.parse(localStorage.getItem(`${key}.request`) ?? "null"); } catch { /* Use a fresh request. */ } }
     if (request.current?.text !== text) request.current = { text, id: crypto.randomUUID() };
     try { localStorage.setItem(`${key}.request`, JSON.stringify(request.current)); } catch { /* The current request remains retryable in memory. */ }
-    setPending(true); setError("");
+    const original=draft,previous=sent;
+    setPending(true); setError("");setDraft("");setSent(text);
     try {
       await api.say(agent.id, task ? `Regarding task ${task.id} (${task.text}):\n\n${text}` : text, [], true, [], request.current.id);
-      change(""); setSent(text); request.current = null;
+      change(""); request.current = null;
       try { localStorage.removeItem(`${key}.request`); } catch { /* The sent draft is already cleared in memory. */ }
       setRevision(value => value + 1); onSent();
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setDraft(original);setSent(previous);setError(error instanceof Error ? error.message : String(error)); }
     finally { setPending(false); }
   };
   return <div className="mt-3 cursor-auto" data-focus-reply={task?.id ?? agent.id}>
     <div className="relative flex items-center gap-3 text-[11.5px] text-mid">
       <button type="button" aria-label="Conversation context" aria-expanded={expanded} onClick={() => onExpanded(!expanded)} style={{position:"absolute",right:0,top:0}} className="sr-only focus:not-sr-only focus:bg-card">Conversation context</button>
-      <span role="status">{pending ? "Sending…" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
+      <span role="status">{pending ? "Queued" : agent.status === "working" ? agent.activity || "Agent working…" : sent ? "Reply sent" : ""}</span>
       {expanded && <button type="button" title="Refresh context" aria-label="Refresh context" onClick={() => setRevision(value => value + 1)} className="cursor-pointer hover:text-ink"><Icon name="refresh" /></button>}
     </div>
     {expanded && <div className="quiet-scroll my-3 max-h-96 overflow-auto text-[13px] leading-relaxed" aria-label="Conversation context">
