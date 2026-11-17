@@ -1984,6 +1984,9 @@ impl Hub {
             "Keep the shared task list small and useful. Create a task only for a substantial \
              deliverable, independently delegated outcome, or durable dependency that would \
              otherwise be lost. Reuse a matching task and record progress in its notes. \
+             Task text must be a concise outcome. When requesting review, name exactly what \
+             the user should inspect or decide; put implementation history, validation output \
+             and caveats in notes or the conversation, never in the task title. \
              Keep routine investigation, implementation steps, validation, documentation, \
              status checks and review preparation inside that task or the conversation. \
              Do not create a task per feedback row, checklist item, tool call, minor follow-up \

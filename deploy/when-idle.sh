@@ -135,6 +135,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/window-tasks.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/task-progress-typing.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/subtasks.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/completed-tasks.mjs"
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/task-history.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/compact-panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/scale-panes.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/toolbar-scale.mjs"

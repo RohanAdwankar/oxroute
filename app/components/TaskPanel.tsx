@@ -74,40 +74,19 @@ function Row({
   );
 }
 
-/**
- * What has been said about a task, latest first.
- *
- * A task that has been argued over pushes every other task off the screen,
- * so only the last two stay in view; the rest are under them, one click
- * away and counted.
- */
-const RECENT = 2;
-
+/** Progress stays available without filling the task list. */
 function Notes({ notes }: { notes: TaskNote[] }) {
-  const [all, setAll] = useState(false);
-  const latest = [...notes].reverse();
-  const shown = all ? latest : latest.slice(0, RECENT);
-  return (
-    <div className="mt-2 flex flex-col gap-1">
-      <ul className="flex flex-col gap-1">
-        {shown.map((note) => (
-          <li key={note.id} className="text-[11px] leading-[1.45] text-faint">
-            <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
-            {note.text}
-          </li>
-        ))}
-      </ul>
-      {notes.length > RECENT && (
-        <button
-          type="button"
-          onClick={() => setAll((open) => !open)}
-          className="cursor-pointer self-start text-[10.5px] text-faint hover:text-ink"
-        >
-          {all ? "Latest only" : `${notes.length - RECENT} earlier`}
-        </button>
-      )}
-    </div>
-  );
+  return <details className="group/notes mt-2">
+    <summary aria-label="Task history" title={`Task history · ${notes.length}`} className="flex w-fit cursor-pointer list-none items-center text-faint hover:text-ink [&::-webkit-details-marker]:hidden">
+      <span className="transition-transform group-open/notes:rotate-180"><Icon name="chevronDown" size={14} /></span>
+    </summary>
+    <ul className="mt-2 flex flex-col gap-1">
+      {[...notes].reverse().map(note => <li key={note.id} className="break-words text-[11px] leading-[1.45] text-faint">
+        <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
+        {note.text}
+      </li>)}
+    </ul>
+  </details>;
 }
 
 /** Keep drafts local so a keystroke never redraws the task list. */
