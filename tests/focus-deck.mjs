@@ -55,6 +55,11 @@ try{
  }
  const item=await api('/api/tasks',{text:'Review storage evidence'});
  await api(`/api/tasks/${item.id}`,{...item,agentId:workerIds[0],status:'done',note:'Evidence is ready for human review'},'PUT');
+ const taskIds=[item.id];
+ for(let index=0;index<7;index++){
+  const task=await api('/api/tasks',{text:`Review prepared evidence ${index+1}`});taskIds.push(task.id);
+  await api(`/api/tasks/${task.id}`,{...task,agentId:workerIds[0],status:index%2&&index<5?'waiting_for_human':'done',note:'Existing decision requiring human attention'},'PUT');
+ }
  const repo=join(root,'source');await mkdir(repo);
  const git=(...args)=>execFileSync('git',['-C',repo,...args],{encoding:'utf8'}).trim();
  git('init','-b','main');git('config','user.name','Reviewer');git('config','user.email','review@example.invalid');git('remote','add','origin','https://example.invalid/repo.git');
@@ -72,7 +77,35 @@ try{
  assert.equal(await deck.locator('[data-focus-conversation]').count(),1,'Only the selected card is interactive');
  const composer=page.locator('[data-composer]');await composer.fill('Retain the coordinator draft.');
  await card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true}).fill('A saved inline question.');
- await card(workerIds[0]).getByRole('button',{name:'Approve',exact:true}).click();
+ const taskList=card(workerIds[0]).getByRole('region',{name:`Tasks for ${names[0]}`,exact:true});
+ await taskList.locator('[data-task-card]').first().waitFor();
+ assert.equal(await taskList.locator('[data-task-card]').count(),3,'Focus shows a bounded group of tasks');
+ await taskList.locator(`[data-task-card="${item.id}"]`).getByRole('button',{name:'Not yet',exact:true}).click();
+ await taskList.getByRole('textbox',{name:'Revision for Review storage evidence',exact:true}).fill('Keep this unsent revision while paging.');
+ const beforePaging=await api('/api/tasks'),seen=new Set();
+ for(let pageIndex=0;pageIndex<3;pageIndex++){
+  const ids=await taskList.locator('[data-task-card]').evaluateAll(nodes=>nodes.map(node=>node.dataset.taskCard));
+  assert.ok(ids.length<=3);ids.forEach(id=>seen.add(id));
+  if(pageIndex<2)await taskList.getByRole('button',{name:'Next tasks',exact:true}).press(pageIndex?'Space':'Enter');
+ }
+ assert.deepEqual([...seen].sort(),taskIds.slice().sort(),'Every attached task remains reachable');
+ await taskList.getByRole('button',{name:'Next tasks',exact:true}).waitFor({state:'visible'});
+ assert.equal(await taskList.getByRole('button',{name:'Next tasks',exact:true}).isDisabled(),true);
+ assert.deepEqual(await api('/api/tasks'),beforePaging,'Paging never mutates tasks or approval state');
+ assert.equal(await card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true}).inputValue(),'A saved inline question.');
+ if(process.env.TASK_SCREENSHOT)await page.screenshot({path:process.env.TASK_SCREENSHOT});
+ // Approving the last page remains inline, and shrinking the page preserves the limit.
+ const last=taskList.locator(`[data-task-card="${taskIds.at(-1)}"]`);
+ await last.getByRole('button',{name:'Approve',exact:true}).click();
+ await until(async()=>(await api('/api/tasks')).find(task=>task.id===taskIds.at(-1)).status==='complete');
+ await last.waitFor({state:'detached'});
+ await taskList.locator(`[data-task-card="${taskIds.at(-2)}"]`).getByRole('button',{name:'Approve',exact:true}).click();
+ await taskList.getByText('Tasks 4–6 / 6',{exact:true}).waitFor();
+ assert.equal(await taskList.locator('[data-task-card]').count(),3,'An emptied final page returns to available tasks');
+ await taskList.getByRole('button',{name:'Previous tasks',exact:true}).click();
+ assert.equal(await taskList.getByRole('textbox',{name:'Revision for Review storage evidence',exact:true}).inputValue(),'Keep this unsent revision while paging.');
+ assert.equal(await taskList.getByRole('button',{name:'Previous tasks',exact:true}).isDisabled(),true);
+ await taskList.locator(`[data-task-card="${item.id}"]`).getByRole('button',{name:'Approve',exact:true}).click();
  await until(async()=>(await api('/api/tasks')).find(task=>task.id===item.id).status==='complete');
  await deck.getByRole('button',{name:'Next card',exact:true}).click();await card(workerIds[1]).waitFor();
  await deck.getByRole('button',{name:'Next card',exact:true}).click();await card(workerIds[2]).waitFor();
@@ -99,7 +132,7 @@ try{
  assert.equal(new URL(page.url()).searchParams.get('view'),'focus','Cross-thread review approval stays inside Focus');
  assert.equal((await api(`/api/agents/${workerIds[1]}/reviews/${reviewId}`)).agentId,workerIds[1]);
  assert.deepEqual(errors,[]);assert.equal(interrupts,0);
- console.log('Focus stacks three conversation cards, including task-free work; cycling preserves drafts, replies stay inline, and source-owned real Git reviews approve inside Focus.');
+ console.log('Focus limits attached tasks to three per page, preserves access and approval state while paging, and stacks three conversation cards, including task-free work; cycling preserves drafts, replies stay inline, and source-owned real Git reviews approve inside Focus.');
 }finally{
  await browser?.close();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));
  daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));
