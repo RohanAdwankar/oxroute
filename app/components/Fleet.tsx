@@ -252,8 +252,7 @@ function Card({
       className={[
         "group relative flex max-h-[min(60vh,32rem)] min-h-[140px] w-full flex-col bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "outline outline-1 outline-ink" : "",
-        // The cursor is a ring rather than a fill, so it reads on top of the
-        // tick state instead of fighting it.
+        // Keep keyboard focus distinct from the selection outline.
         focused ? "shadow-[inset_2px_0_0_var(--color-mid)]" : "",
         dimmed ? "opacity-[0.42]" : "opacity-100",
       ].join(" ")}
