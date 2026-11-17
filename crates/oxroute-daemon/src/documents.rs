@@ -189,7 +189,11 @@ pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>,
     review.annotations = serde_json::to_value(body.annotations)?;
     review.decided_at = Some(now());
     hub.store.set(&format!("document:{}", review.id), &serde_json::to_string(&review)?)?;
-    let entry = hub.store.add_entry(&agent, now(), EntryKind::Notice, &format!("File review {}: {}", review.name, review.status), "", "")?;
-    hub.emit(Event::Timeline { entry: Box::new(entry) });
+    if review.status == "replied" {
+        hub.emit(Event::Sync);
+    } else {
+        let entry = hub.store.add_entry(&agent, now(), EntryKind::Notice, &format!("File review {}: {}", review.name, review.status), "", "")?;
+        hub.emit(Event::Timeline { entry: Box::new(entry) });
+    }
     Ok(Json(review))
 }

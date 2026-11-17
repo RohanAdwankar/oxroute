@@ -77,8 +77,12 @@ try {
  await dialog.getByRole('button',{name:'General feedback'}).click();
  await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Please align these two components.');
  if(process.env.IMAGE_SCREENSHOT)await page.screenshot({path:process.env.IMAGE_SCREENSHOT});
+ const beforeReply=(await api(`/api/agents/${agent.id}`)).timeline.map(entry=>entry.id);
  await dialog.getByRole('button',{name:'Send image reply'}).click();await dialog.getByText('Reply sent',{exact:true}).waitFor();
  const result=await api(`/api/agents/${agent.id}`), reply=result.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Please align'));
+ const delivered=result.timeline.filter(entry=>!beforeReply.includes(entry.id));
+ assert.equal(delivered.filter(entry=>entry.kind==='you').length,1,'One submission creates one user reply');
+ assert.deepEqual(delivered.filter(entry=>entry.kind==='notice'),[],'Image replies do not add a duplicate status note');
  assert.ok(reply,'Reply is delivered into owning conversation');assert.ok(reply.text.includes('Align this selection.'));assert.ok(!reply.text.includes('strokes')&&!reply.text.includes('SHA-256')&&!reply.text.includes('Saved original'),'Reply contains prose and the painted image, not coordinate or storage dumps');assert.match(reply.text,/Attached:/);
  const filename=reply.text.split('Attached: ')[1].split(', ')[0];
  const bytes=Buffer.from(await (await fetch(`${native}/api/attachments/${encodeURIComponent(filename)}`)).arrayBuffer());
@@ -90,5 +94,9 @@ try {
  const attachmentImage=page.locator('img[src^="/api/attachments/"]').first();await attachmentImage.focus();await page.keyboard.press('Enter');await dialog.waitFor();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
  assert.equal(page.context().pages().length,1);
+ await page.unroute(`**/api/agents/${agent.id}`);await page.reload();
+ await page.locator(`[data-entry="${reply.id}"]`).waitFor();
+ await page.locator(`[data-entry="${reply.id}"] img`).evaluate(image=>image.decode());
+ if(process.env.REPLY_SCREENSHOT)await page.screenshot({path:process.env.REPLY_SCREENSHOT});
  console.log('Real image workflow passed: Markdown and attachment enlargement, keyboard/Escape, area quote, freehand drawing, original download and annotated reply delivery.');
 } finally {await browser?.close();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));}
