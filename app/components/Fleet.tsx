@@ -271,7 +271,7 @@ function Card({
     <article data-home-card={agent.id} onClick={event=>{if(!routing&&!(event.target as Element).closest("a,button,input,textarea,select,[data-home-actions],[data-quote-thread]")&&!window.getSelection()?.toString())onOpen();}}
       style={{contentVisibility:"auto",containIntrinsicSize:"auto 300px"}}
       className={[
-        "group relative flex min-h-[140px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
+        "group relative flex max-h-[min(60vh,32rem)] min-h-[140px] w-full flex-col rounded-[3px] bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "border-2 border-ink" : "border border-rule",
         // The cursor is a ring rather than a fill, so it reads on top of the
         // tick state instead of fighting it.
@@ -342,11 +342,12 @@ function Card({
         )}
       </div>
 
+      <div data-card-scroll className="quiet-scroll min-h-0 overflow-y-auto">
       <div className="mt-[12px] max-h-[3lh] overflow-hidden line-clamp-3 text-[13px] leading-[1.55] text-mid">
         <Markdown>{preview || agent.stallReason || agent.model}</Markdown>
       </div>
       {actions}
-
+      </div>
     </article>
   );
 }

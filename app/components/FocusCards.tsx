@@ -40,9 +40,9 @@ function ConversationCard({agent}:{agent:Agent}) {
   const text=view?.timeline.findLast(entry=>entry.kind==="said")?.text??context.state.messages[agent.id]??"";
   const review=view?.timeline.findLast(entry=>entry.kind==="review");
   const sent=()=>{setRevision(value=>value+1);context.onSent();};
-  return <article data-focus-conversation={agent.id} aria-label={`Conversation ${agent.name}`} className="relative min-w-0 bg-paper p-4 ring-1 ring-hair">
+  return <article data-focus-conversation={agent.id} aria-label={`Conversation ${agent.name}`} className="quiet-scroll relative max-h-[min(70vh,42rem)] min-w-0 overflow-y-auto bg-paper p-4 ring-1 ring-hair">
     <header className="mb-3 flex items-baseline justify-between gap-3"><h3 className="font-semibold">{agent.name}</h3><span className="text-[11px] text-mid">{agent.status}</span></header>
-    <div className="quiet-scroll max-h-[50vh] overflow-auto"><ConversationCards.Provider value={null}>
+    <div><ConversationCards.Provider value={null}>
       {text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{agent.activity||"No reply yet."}</p>}
       {review&&!text.includes(review.detail)&&<FocusReview id={review.detail} initiallyExpanded={false}/>}
     </ConversationCards.Provider></div>
