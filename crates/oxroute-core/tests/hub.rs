@@ -3961,7 +3961,7 @@ async fn focus_sees_unanswered_messages_and_a_user_response_resets_them() {
     for text in ["Choose an available rollout window", "The review evidence is ready"] {
         w.hub.store.add_entry(&focus.id,now(),EntryKind::Said,text,"","").unwrap();
     }
-    w.hub.store.add_entry(&focus.id,now(),EntryKind::Notice,"Background status changed","","").unwrap();
+    for _ in 0..150 {w.hub.store.add_entry(&focus.id,now(),EntryKind::Notice,"Background status changed","","").unwrap();}
     w.hub.open_focus().await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==1&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
     let context=w.calls.lock().unwrap().started[0].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();

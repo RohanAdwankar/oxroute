@@ -33,7 +33,7 @@ impl Hub {
     pub(super) fn focus_context(&self, id: &str) -> Result<String> {
         let agents = self.store.unarchived_agents()?.into_iter().filter(|agent| agent.id != id).collect::<Vec<_>>();
         let tags = self.store.all_tags()?;
-        let history=self.store.timeline(id,100)?;
+        let history=self.store.recent_messages(id,100)?;
         let unanswered=history.iter().rev().take_while(|entry|!matches!(entry.kind,EntryKind::You|EntryKind::Received)).filter(|entry|entry.kind==EntryKind::Said&&!entry.text.trim().is_empty()).collect::<Vec<_>>();
         let last_messages=unanswered.iter().take(2).map(|entry|entry.text.chars().take(2000).collect::<String>()).collect::<Vec<_>>();
         let mut tasks = self.store.tasks()?.into_iter().filter(|task| task.status != TaskStatus::Complete && agents.iter().any(|agent| agent.id == task.agent_id)).collect::<Vec<_>>();
