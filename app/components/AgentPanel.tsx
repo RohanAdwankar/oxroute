@@ -38,7 +38,7 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
   notice: { label: "note", tone: "text-faint" },
 };
 
-type TimelineItem = { entry: Entry } | { tools: Entry[] };
+type TimelineItem = { entry: Entry } | { tools: Entry[] } | { checks: Entry[] };
 /** Three ways to tell an agent something: say it, redraw the architecture, or mark up a picture. */
 type Mode = "type" | "diagram" | "draw";
 
@@ -105,6 +105,12 @@ const REACTIONS: { key: string; icon: IconName; label: string }[] = [
 function compactTimeline(entries: Entry[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const entry of entries) {
+    if (entry.kind === "notice" && entry.text === "Focus checked the fleet") {
+      const last = items.at(-1);
+      if (last && "checks" in last) last.checks.push(entry);
+      else items.push({ checks: [entry] });
+      continue;
+    }
     if (entry.kind !== "worked") {
       items.push({ entry });
       continue;
@@ -409,9 +415,9 @@ export function AgentPanel({
   /// dragging the view back down.
   const jumpTo = useCallback((id: number) => {
     following.current = false;
-    timeline.current
-      ?.querySelector<HTMLElement>(`[data-entry="${id}"]`)
-      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const target=timeline.current?.querySelector<HTMLElement>(`[data-entry="${id}"]`);
+    target?.closest("details")?.setAttribute("open", "");
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
 
   const tail = view.timeline.at(-1);
@@ -438,6 +444,7 @@ export function AgentPanel({
     if (target) {
       following.current = false;
       setHighlightedEntry(focusEntry);
+      target.closest("details")?.setAttribute("open", "");
       target.scrollIntoView({ block: "center" });
       onEntryFocused(focusEntry!);
     } else pin();
@@ -889,7 +896,11 @@ export function AgentPanel({
                 return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1} />;
               }
 
-              const { entry } = item;
+              if ("checks" in item && item.checks.length > 1) return <details key={`checks-${item.checks[0].id}`} data-fleet-checks className="border-b border-hair py-2 text-[12px] text-mid">
+                <summary className="cursor-pointer">{item.checks.length} fleet checks · {minute(item.checks[0].at)}–{minute(item.checks.at(-1)!.at)}</summary>
+                {item.checks.map(entry=><Message key={entry.id} entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={onOpenAgent}/>)}
+              </details>;
+              const entry = "checks" in item ? item.checks[0] : item.entry;
               if (entry.kind === "you" && entry.detail.startsWith("review-approval:")) {
                 const approval = JSON.parse(entry.detail.slice("review-approval:".length)) as { id: string; title: string; commit: string; branch: string; base: string };
                 return <div key={entry.id} data-entry={entry.id} role="region" aria-label="Publication approval" className="border-b border-hair py-3">

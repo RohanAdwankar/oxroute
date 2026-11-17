@@ -73,6 +73,7 @@ export function isTyping(target: EventTarget | null): boolean {
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT" ||
+    target.tagName === "SUMMARY" ||
     target.isContentEditable
   );
 }
