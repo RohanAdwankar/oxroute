@@ -616,16 +616,22 @@ export default function Home() {
   },[open,focusOpen,homeAdviceKey,homeRevision,snapshot.nextActionSuggestions,complain]);
 
   useEffect(()=>{
-    if(!focusOpen||(focusAgentId&&open!==null))return;
+    const id=snapshot.focusAgentId;
+    if(!focusOpen||!id||open!==null)return;
+    setFocusAgentId(id);setOpen(id);setPanes([id]);customPanes.current=false;setFocusEntry(null);
+  },[focusOpen,snapshot.focusAgentId,open]);
+
+  useEffect(()=>{
+    if(!focusOpen)return;
     let live=true;setFocusError("");
     api.openFocus().then(agent=>{
       if(!live)return;
       setFocusAgentId(agent.id);
       setSnapshot(current=>({...current,focusAgentId:agent.id,agents:current.agents.some(item=>item.id===agent.id)?current.agents:[...current.agents,agent],archived:current.archived.filter(item=>item.id!==agent.id)}));
-      setOpen(agent.id);setPanes([agent.id]);customPanes.current=false;setFocusEntry(null);
+      setOpen(current=>current??agent.id);setPanes(current=>current.length?current:[agent.id]);
     }).catch(error=>{if(live)setFocusError(error instanceof Error?error.message:String(error));});
     return()=>{live=false;};
-  },[focusOpen,focusRetry,open===null,focusAgentId]);
+  },[focusOpen,focusRetry]);
 
   // Active cards should already have their conversation when opened.
   useEffect(() => {

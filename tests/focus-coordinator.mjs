@@ -34,12 +34,12 @@ const native=`http://127.0.0.1:${port}`,config=join(root,'config.toml');
 await writeFile(config,`owner="fixture"\nlisten="127.0.0.1:${port}"\nworkspace=${JSON.stringify(root)}\n[limits]\nmin_free_bytes=0\n[paths]\ndatabase=${JSON.stringify(join(root,'test.sqlite3'))}\nartifacts=${JSON.stringify(join(root,'artifacts'))}\nattachments=${JSON.stringify(join(root,'attachments'))}\n`);
 const env={PATH:process.env.PATH,HOME:root,LANG:'C.UTF-8',RUST_LOG:'warn',CODEX_HOME:join(root,'codex'),OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:`ws://127.0.0.1:${rpcPort}`,OXROUTE_CODEX_CLI:'/bin/false'};
 const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env});let daemon=start();
-let failRevision=true;
+let failRevision=true,releaseOpen;const openGate=new Promise(done=>{releaseOpen=done;});
 const frontend=process.env.TEST_URL,proxy=createServer((req,res)=>{
  if(req.url==='/paused'){res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><title>Paused fixture</title>');return;}
  if(failRevision&&req.method==='POST'&&req.url.includes('/correction')){failRevision=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Revision temporarily unavailable'}));return;}
  const upstream=new URL(req.url,req.url.startsWith('/api/')&&!req.url.startsWith('/api/version')?native:frontend);
- const call=request(upstream,{method:req.method,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});
+ const call=request(upstream,{method:req.method,headers:req.headers},async reply=>{if(req.url==='/api/focus/agent')await openGate;res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});
  call.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});req.pipe(call);res.on('close',()=>call.destroy());
 });const ui=`http://127.0.0.1:${await listen(proxy)}`;
 const api=async(path,body,method='POST')=>{const response=await fetch(native+path,body===undefined?{}:{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(response.ok,`${path}: ${response.status} ${await response.clone().text()}`);return response.json();};
@@ -53,12 +53,14 @@ try{
   await api(`/api/tasks/${item.id}`,{...item,agentId:worker.id,status:'done',note:'Representative worker result awaiting human review'},'PUT');
  }
  const task={id:taskIds[0]};
+ const existingFocus=await api('/api/focus/agent',{});await until(async()=>turns.length===1&&(await api(`/api/agents/${existingFocus.id}`)).agent.status==='complete');
  browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(String(error)));
  await page.goto(ui);await page.getByRole('tab',{name:'Focus',exact:true}).click();
  await until(async()=>!!(await api('/api/state')).focusAgentId);
  const focusId=(await api('/api/state')).focusAgentId,detail=()=>api(`/api/agents/${focusId}`);
  await page.locator(`[data-agent-pane="${focusId}"]`).waitFor();
+ await page.locator('[data-composer]').waitFor();assert.equal(await page.getByText('Opening Focus…',{exact:true}).count(),0,'Cached Focus opens before the special endpoint responds');releaseOpen();
  await until(async()=>turns.length===1&&(await detail()).agent.status==='complete');
  assert.ok(JSON.stringify(turns[0].input).includes(task.id),'The coordinator receives the current pending approval');
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done','Briefing does not approve work');
