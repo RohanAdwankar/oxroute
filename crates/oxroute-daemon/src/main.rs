@@ -236,6 +236,7 @@ async fn serve() -> Result<()> {
         .route("/api/routing-recommendations/{id}", post(routing_recommendation))
         .route("/api/focus", get(focus_queue))
         .route("/api/focus/agent", post(open_focus))
+        .route("/api/focus/batches", post(focus_batch))
         .route("/api/focus/messages", post(focus_message))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
@@ -601,6 +602,13 @@ struct FocusMessageBody {agent_id:String,target_id:String,text:String,request_id
 async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Result<Json<serde_json::Value>,Failed> {
     hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id).await?;
     Ok(Json(json!({"queued":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct FocusBatchBody { entry_id: i64, agent_ids: Vec<String> }
+async fn focus_batch(State(hub):Hubs,Json(body):Json<FocusBatchBody>)->Result<Json<serde_json::Value>,Failed> {
+    Ok(Json(json!({"queued":hub.finish_focus_batch(body.entry_id,body.agent_ids).await?})))
 }
 
 async fn focus_queue(State(hub): Hubs) -> Result<Json<serde_json::Value>, Failed> {

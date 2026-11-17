@@ -1,5 +1,5 @@
 "use client";
-import {useContext,useEffect,useState} from "react";
+import {useContext,useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
 import type {Agent,AgentView} from "../lib/types";
 import {ConversationCards} from "./FocusContext";
@@ -13,17 +13,32 @@ import {TaskReference} from "./TaskReference";
 export function FocusCards({ids}:{ids:string[]}) {
   const context=useContext(ConversationCards);
   const [selected,setSelected]=useState(ids[0]);
+  const [pending,setPending]=useState(false),[error,setError]=useState("");
+  const visited=useRef({key:"",ids:new Set<string>()});
   if(!context)return null;
   const agents=[...context.state.agents,...context.state.archived];
   const available=[...new Set(ids)].filter(id=>agents.some(agent=>agent.id===id));
   const at=Math.max(0,available.indexOf(selected)),agent=agents.find(agent=>agent.id===available[at]);
   if(!agent)return null;
+  const key=available.join(",");
+  if(visited.current.key!==key)visited.current={key,ids:new Set()};
+  visited.current.ids.add(agent.id);
+  const next=async(button:HTMLButtonElement)=>{
+    const entry=Number(button.closest("[data-entry]")?.getAttribute("data-entry"));
+    setSelected(available[(at+1)%available.length]);
+    if(at!==available.length-1||!available.every(id=>visited.current.ids.has(id))||entry!==context.batchEntry||pending)return;
+    setPending(true);setError("");
+    try{await api.finishFocusBatch(entry,available);context.onSent();}
+    catch(error){setError(error instanceof Error?error.message:String(error));}
+    finally{setPending(false);}
+  };
   return <section data-focus-deck aria-label="Recommended conversations" className="my-4 min-w-0">
     <div className="mb-2 flex items-center justify-end gap-3 text-[12px] text-mid">
       <span role="status">{at+1} / {available.length}</span>
       <button type="button" aria-label="Previous card" title="Previous card" disabled={available.length<2} onClick={()=>setSelected(available[(at+available.length-1)%available.length])} className="cursor-pointer disabled:opacity-30"><Icon name="back"/></button>
-      <button type="button" aria-label="Next card" title="Next card" disabled={available.length<2} onClick={()=>setSelected(available[(at+1)%available.length])} className="rotate-180 cursor-pointer disabled:opacity-30"><Icon name="back"/></button>
+      <button type="button" aria-label="Next card" title="Next card" disabled={pending} aria-busy={pending} onClick={event=>void next(event.currentTarget)} className="rotate-180 cursor-pointer disabled:opacity-30"><Icon name="back"/></button>
     </div>
+    {error&&<p role="alert" className="mb-2 text-[12px] text-mid">{error}</p>}
     <div className="relative mb-5 mr-4">
       {available.length>2&&<span aria-hidden className="pointer-events-none absolute inset-0 translate-x-4 translate-y-4 bg-band ring-1 ring-hair"/>}
       {available.length>1&&<span aria-hidden className="pointer-events-none absolute inset-0 translate-x-2 translate-y-2 bg-paper ring-1 ring-hair"/>}

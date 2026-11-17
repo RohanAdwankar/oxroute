@@ -125,6 +125,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/fleet-affordances.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/home-archive.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-coordinator.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-deck.mjs)
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-continuation.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/pane-windows.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/compact-search.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/arbitrary-merge.mjs"

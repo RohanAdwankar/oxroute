@@ -1921,6 +1921,9 @@ impl Store {
     pub fn has_human_message(&self,agent:&str)->Result<bool> {
         self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE agent_id=?1 AND kind IN ('you','received'))",[agent],|row|row.get(0))?))
     }
+    pub fn last_human_entry(&self, agent: &str) -> Result<i64> {
+        self.read(|c| Ok(c.query_row("SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=?1 AND kind IN ('you','received')", [agent], |row| row.get(0))?))
+    }
     pub fn last_focus_wake(&self) -> Result<Option<f64>> {
         self.read(|c|Ok(c.query_row("SELECT MAX(CAST(substr(key,12) AS REAL)) FROM kv WHERE key GLOB 'focus-wake:*'",[],|row|row.get(0))?))
     }
