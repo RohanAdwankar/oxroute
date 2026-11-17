@@ -8,15 +8,21 @@ const tasks=workers.map((worker,index)=>({id:`task_${String(index+1).repeat(32)}
 const timeline=tasks.map((task,index)=>({id:index+1,agentId:coordinator.id,kind:'notice',text:`Delegated ${task.id} to ${workers[index].id}`,detail:workers[index].id,at:Date.now()/1000}));
 timeline.push({id:3,agentId:coordinator.id,kind:'said',text:`Diagnostic identifier: ${workers[0].id}`,detail:'',at:Date.now()/1000});
 timeline.push({id:4,agentId:coordinator.id,kind:'notice',text:'Other diagnostic information',detail:workers[1].id,at:Date.now()/1000});
+const manual={...coordinator,id:`agent_${'f'.repeat(32)}`,name:'Standalone fork'};
+const fork=(id,worker)=>({id,agentId:coordinator.id,kind:'forked',text:'Session forked',detail:worker,at:Date.now()/1000});
+timeline.unshift(fork(10,workers[0].id));
+timeline.splice(2,0,fork(11,workers[1].id));
+timeline.push(fork(12,manual.id));
 const browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try{
  const page=await browser.newPage({viewport:{width:1280,height:900}}),writes=[],errors=[];
  page.on('pageerror',error=>errors.push(String(error)));
- await page.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents:[coordinator,...workers],archived:[],messages:{},tasks,taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}}));
+ await page.route('**/api/state',r=>r.fulfill({json:{mode:'ask',agents:[coordinator,...workers,manual],archived:[],messages:{},tasks,taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}}));
  await page.route('**/api/events',r=>r.fulfill({contentType:'text/event-stream',body:': fixture\n\n'}));
  await page.route('**/api/client-failures',r=>r.fulfill({json:{}}));
+ await page.route('**/api/focus',r=>r.fulfill({json:{suggestions:[],feedback:{}}}));
  await page.route('**/api/terminals',r=>r.fulfill({json:[]}));
- await page.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:[coordinator,...workers].find(agent=>agent.id===id),timeline:id===coordinator.id?timeline:[],delivery:'start'}});});
+ await page.route('**/api/agents/*',r=>{const id=new URL(r.request().url()).pathname.split('/').at(-1);return r.fulfill({json:{agent:[coordinator,...workers,manual].find(agent=>agent.id===id),timeline:id===coordinator.id?timeline:[],delivery:'start'}});});
  let fail=false;
  await page.route('**/api/tasks/*',async r=>{
   writes.push(r.request().postDataJSON());
@@ -27,6 +33,14 @@ try{
  });
  const root=`${process.env.TEST_URL}/?agent=${coordinator.id}`;
  await page.goto(root);
+ await page.locator('[data-entry="1"]').waitFor();
+ assert.equal(await page.locator('[data-entry="10"],[data-entry="11"]').count(),0,'Delegation forks do not occupy separate rows');
+ await page.locator('[data-entry="12"]').getByRole('button',{name:'open child session',exact:true}).click();
+ await page.locator(`[data-agent-pane="${manual.id}"]`).waitFor();
+ await page.goto(root+'&entry=10');
+ await page.waitForFunction(()=>!new URL(location.href).searchParams.has('entry'));
+ await page.locator('[data-entry="1"]').waitFor();
+ assert.equal(new URL(page.url()).searchParams.get('agent'),coordinator.id,'Fork links reveal their delegation without changing conversations');
  for(let index=0;index<workers.length;index++){
   const notice=page.locator(`[data-entry="${index+1}"]`);
   await notice.getByRole('button',{name:`Task ${tasks[index].text}`,exact:true}).waitFor();
@@ -51,5 +65,5 @@ try{
  assert.equal(writes.length,2,'Approval keeps its existing explicit failure and retry behavior');
  await page.reload();await notice.getByText('Approved',{exact:true}).waitFor();
  assert.deepEqual(errors,[]);
- console.log('Delegation notices omit duplicate worker IDs while task navigation, worker navigation, approvals, retries and unrelated content remain available.');
+ console.log('Delegation notices omit redundant fork rows and duplicate worker IDs while task navigation, worker navigation, approvals, retries and unrelated content remain available.');
 }finally{await browser.close();}

@@ -102,9 +102,19 @@ const REACTIONS: { key: string; icon: IconName; label: string }[] = [
   { key: "down", icon: "thumbDown", label: "Thumbs down" },
 ];
 
+function isDelegation(entry: Entry): boolean {
+  return entry.kind === "notice" && entry.detail.startsWith("agent_") && entry.text.startsWith("Delegated ") && entry.text.endsWith(` to ${entry.detail}`);
+}
+
+function delegatedFork(entry: Entry | undefined, entries: Entry[]): Entry | undefined {
+  return entry?.kind === "forked" ? entries.find(item => isDelegation(item) && item.detail === entry.detail) : undefined;
+}
+
 function compactTimeline(entries: Entry[]): TimelineItem[] {
   const items: TimelineItem[] = [];
+  const delegated = new Set(entries.filter(isDelegation).map(entry => entry.detail));
   for (const entry of entries) {
+    if (entry.kind === "forked" && delegated.has(entry.detail)) continue;
     if (entry.kind === "notice" && entry.text === "Focus checked the fleet") {
       const last = items.at(-1);
       if (last && "checks" in last) last.checks.push(entry);
@@ -415,10 +425,11 @@ export function AgentPanel({
   /// dragging the view back down.
   const jumpTo = useCallback((id: number) => {
     following.current = false;
-    const target=timeline.current?.querySelector<HTMLElement>(`[data-entry="${id}"]`);
+    const targetId = delegatedFork(view.timeline.find(entry => entry.id === id), view.timeline)?.id ?? id;
+    const target=timeline.current?.querySelector<HTMLElement>(`[data-entry="${targetId}"]`);
     target?.closest("details")?.setAttribute("open", "");
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, []);
+  }, [view.timeline]);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
@@ -438,12 +449,13 @@ export function AgentPanel({
       following.current = true;
       setHighlightedEntry(null);
     }
-    const target = focusEntry
-      ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${focusEntry}"]`)
+    const targetId = delegatedFork(view.timeline.find(entry => entry.id === focusEntry), view.timeline)?.id ?? focusEntry;
+    const target = targetId
+      ? timeline.current?.querySelector<HTMLElement>(`[data-entry="${targetId}"]`)
       : null;
     if (target) {
       following.current = false;
-      setHighlightedEntry(focusEntry);
+      setHighlightedEntry(targetId);
       target.closest("details")?.setAttribute("open", "");
       target.scrollIntoView({ block: "center" });
       onEntryFocused(focusEntry!);
@@ -1304,8 +1316,7 @@ const Message = memo(function Message({
   // The daemon stores the delegated worker in both its notice and detail.
   // Keep that ID for navigation instead of repeating it as visible text.
   const workerSuffix = ` to ${entry.detail}`;
-  const delegated = entry.kind === "notice" && entry.detail.startsWith("agent_")
-    && entry.text.startsWith("Delegated ") && entry.text.endsWith(workerSuffix);
+  const delegated = isDelegation(entry);
   return (
         <div
           key={entry.id}
