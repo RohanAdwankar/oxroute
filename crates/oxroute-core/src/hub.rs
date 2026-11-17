@@ -1981,19 +1981,30 @@ impl Hub {
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(
-            "Oxroute tasks represent substantial deliverables, meaningful delegated work, or \
-             dependencies that need durable tracking and human review. Reuse an existing \
-             matching task rather than creating duplicates. Answer quick questions and do \
-             routine investigation, explanation, checking and validation within the existing \
-             work; do not create standalone approval tasks for these steps. Create a task \
-             only when the outcome itself warrants tracking, not for each tool call or step. \
+            "Keep the shared task list small and useful. Create a task only for a substantial \
+             deliverable, independently delegated outcome, or durable dependency that would \
+             otherwise be lost. Reuse a matching task and record progress in its notes. \
+             Keep routine investigation, implementation steps, validation, documentation, \
+             status checks and review preparation inside that task or the conversation. \
+             Do not create a task per feedback row, checklist item, tool call, minor follow-up \
+             or approval request, and do not create tasks merely to show progress. Group related \
+             feedback under one meaningful outcome unless it truly needs independent ownership. \
+             Proceed with work already authorized, including routine reversible local edits \
+             and checks; do not invent approval gates for ordinary engineering choices. \
+             Ask only for missing information or an action that actually needs user consent \
+             under the applicable instructions, and apply existing consent without asking again. \
+             Use waiting_for_human only when a specific unanswered user decision or permission \
+             prevents the next useful action; do not use it for work the agent can continue. \
+             Report completed work concisely without asking for sign-off unless required. \
+             Keep genuine publication, deployment, access and capability-change approval \
+             requirements, but track them in the existing task or review rather than new tasks. \
              Use oxroute-agent --server http://{listen} \
              --agent {id} for task work. Commands: tasks list --filter status=incomplete \
              --fields id,text,status,parentTaskId; tasks create --text TEXT \
              --parent-task-id PARENT; tasks update --id TASK --status STATUS --note REASON; \
              notes list --filter taskId=TASK. CLI help and flags are generated from the API. \
              Omitted update fields are preserved. Group contributing work under an existing \
-             task using parentTaskId; subtasks keep independent status and approval. \
+             task using parentTaskId; create subtasks only for independently managed outcomes. \
              Reference tasks in replies using exact IDs for live cards and approval controls. \
              Your session is {id}. Keep your tasks current: use done when finished, \
              waiting_for_human for a specific human dependency, or blocked with \
