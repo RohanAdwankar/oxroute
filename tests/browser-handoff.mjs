@@ -41,7 +41,9 @@ const reserve = createServer(), port = await listen(reserve);
 await new Promise(done => reserve.close(done));
 const native = `http://127.0.0.1:${port}`, config = join(root, 'config.toml');
 await writeFile(config, `owner = "fixture"\nlisten = "127.0.0.1:${port}"\nworkspace = ${JSON.stringify(root)}\n[limits]\nmin_free_bytes = 0\n[paths]\ndatabase = ${JSON.stringify(join(root, 'test.sqlite3'))}\nartifacts = ${JSON.stringify(join(root, 'artifacts'))}\nattachments = ${JSON.stringify(join(root, 'attachments'))}\n`);
-const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, HOME: root, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: `ws://127.0.0.1:${rpcPort}`, OXROUTE_CODEX_CLI: '/bin/false', OXROUTE_BROWSER_EXECUTABLE: chromium.executablePath(), OXROUTE_BROWSER_SANDBOX: 'false', OXROUTE_NEXT_ACTION_SUGGESTIONS: 'false' } });
+const sandbox = process.env.TEST_BROWSER_SANDBOX ?? 'false';
+assert.ok(['true', 'false'].includes(sandbox));
+const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, HOME: root, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: `ws://127.0.0.1:${rpcPort}`, OXROUTE_CODEX_CLI: '/bin/false', OXROUTE_BROWSER_EXECUTABLE: process.env.TEST_BROWSER_EXECUTABLE ?? chromium.executablePath(), OXROUTE_BROWSER_SANDBOX: sandbox, OXROUTE_NEXT_ACTION_SUGGESTIONS: 'false' } });
 let daemon = start();
 const proxy = createServer((req, res) => {
   const target = new URL(req.url, req.url.startsWith('/api/') && !req.url.startsWith('/api/version') ? native : process.env.TEST_URL);
@@ -85,6 +87,15 @@ try {
   await assert.rejects(() => act({ action: 'navigate', url: 'file:///etc/passwd' }));
   await act({ action: 'navigate', url: site });
   await until(async () => (await text()).includes('Project name'));
+  const isolation = await api(target + '/isolation');
+  assert.equal(isolation.requested, sandbox === 'true');
+  const expectedIsolation = process.env.TEST_EXPECT_ISOLATION ?? (process.platform === 'linux' ? sandbox === 'true' ? 'verified' : 'disabled' : 'unsupported');
+  assert.equal(isolation.status, expectedIsolation);
+  if (process.platform === 'linux') assert.ok(isolation.renderers.length > 0, 'The browser must identify its real renderer processes');
+  if (expectedIsolation === 'verified') {
+    assert.ok(isolation.renderers.every(renderer => renderer.verified), 'Every observed renderer is isolated');
+  }
+  if (process.env.ISOLATION_REPORT) await writeFile(process.env.ISOLATION_REPORT, JSON.stringify(isolation, null, 2) + '\n');
   await act({ action: 'click', x: 160, y: 255 });
   await act({ action: 'key', key: 'Tab' });
   await act({ action: 'key', key: 'Tab', modifiers: 8 });
@@ -122,7 +133,7 @@ try {
   await act({ action: 'selectTab', target: original.id });
   assert.ok((await text()).includes('Saved: Human edit'), 'Switching tabs preserves form and page state');
   await act({ action: 'closeTab', target: tabs.target });
-  assert.equal((await api(target)).tabs.length, 1);
+  await until(async () => (await api(target)).tabs.length === 1);
   daemon.kill('SIGTERM'); if (daemon.exitCode === null) await new Promise(done => daemon.once('exit', done));
   daemon = start();
   await until(async () => { try { return (await fetch(native + '/api/health')).ok; } catch { return false; } });

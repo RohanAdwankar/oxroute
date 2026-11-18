@@ -22,6 +22,8 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
+type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
 const KEY: &str = "browser-panes";
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
@@ -41,10 +43,12 @@ struct Record {
 }
 struct Live {
     _child: Child,
-    socket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    socket: Socket,
+    browser_socket: Option<Socket>,
     sequence: u64,
     port: u16,
     target: String,
+    sandbox_requested: bool,
 }
 struct Session {
     record: Record,
@@ -88,6 +92,7 @@ pub fn routes(hub: Arc<Hub>) -> Result<(Router, Arc<Browsers>)> {
         .route("/api/browsers/{id}", get(info).delete(close))
         .route("/api/browsers/{id}/frame", get(frame))
         .route("/api/browsers/{id}/snapshot", get(snapshot))
+        .route("/api/browsers/{id}/isolation", get(isolation))
         .route("/api/browsers/{id}/action", post(action))
         .route("/api/browsers/{id}/claim", post(claim))
         .route("/api/browsers/{id}/control", post(control))
@@ -187,7 +192,8 @@ impl Live {
         let executable =
             std::env::var("OXROUTE_BROWSER_EXECUTABLE").unwrap_or_else(|_| "chromium".into());
         let mut command = Command::new(&executable);
-        if std::env::var("OXROUTE_BROWSER_SANDBOX").as_deref() == Ok("false") {
+        let sandbox_requested = std::env::var("OXROUTE_BROWSER_SANDBOX").as_deref() != Ok("false");
+        if !sandbox_requested {
             command.arg("--no-sandbox");
         }
         let mut child = command.args(["--headless=new", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "--no-first-run", "--disable-dev-shm-usage", "--window-size=1280,800", "--restore-last-session"])
@@ -223,9 +229,11 @@ impl Live {
         let mut live = Self {
             _child: child,
             socket,
+            browser_socket: None,
             sequence: 0,
             port,
             target: target["id"].as_str().context("Missing page id")?.into(),
+            sandbox_requested,
         };
         live.call(
             "Emulation.setDeviceMetricsOverride",
@@ -233,7 +241,78 @@ impl Live {
         )
         .await?;
         live.call("Page.enable", json!({})).await?;
+        match live.isolation().await {
+            Ok(evidence)
+                if sandbox_requested && !matches!(evidence.status, "verified" | "unsupported") =>
+            {
+                tracing::warn!(
+                    ?evidence,
+                    "Browser started; renderer isolation has not been verified"
+                );
+            }
+            Ok(evidence) => tracing::info!(status = evidence.status, "Browser isolation check"),
+            Err(error) => {
+                tracing::warn!(%error, "Browser started; renderer isolation evidence unavailable")
+            }
+        }
         Ok(live)
+    }
+    async fn isolation(&mut self) -> Result<crate::browser_isolation::Isolation> {
+        if !cfg!(target_os = "linux") {
+            return Ok(crate::browser_isolation::inspect(
+                self._child.id().context("Browser process ended")?,
+                vec![],
+                self.sandbox_requested,
+            ));
+        }
+        if self.browser_socket.is_none() {
+            let version: Value = reqwest::Client::new()
+                .get(format!("http://127.0.0.1:{}/json/version", self.port))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?
+                .json()
+                .await?;
+            let (browser_socket, _) = connect_async(
+                version["webSocketDebuggerUrl"]
+                    .as_str()
+                    .context("Missing browser socket")?,
+            )
+            .await?;
+            self.browser_socket = Some(browser_socket);
+        }
+        // Chromium supplies authoritative process roles. Linux zygotes rewrite
+        // argv, so parsing process command lines cannot reliably identify them.
+        let process_info = cdp(
+            self.browser_socket.as_mut().unwrap(),
+            &mut self.sequence,
+            "SystemInfo.getProcessInfo",
+            json!({}),
+        )
+        .await?;
+        let processes = process_info["processInfo"]
+            .as_array()
+            .context("Missing browser process information")?;
+        let pid = |process: &Value| {
+            process["id"]
+                .as_u64()
+                .and_then(|pid| u32::try_from(pid).ok())
+        };
+        let browser_pid = processes
+            .iter()
+            .find(|process| process["type"] == "browser")
+            .and_then(pid)
+            .context("Missing browser process")?;
+        let renderer_pids: Vec<_> = processes
+            .iter()
+            .filter(|process| process["type"] == "renderer")
+            .map(|process| pid(process).context("Invalid renderer process"))
+            .collect::<Result<_>>()?;
+        let requested = self.sandbox_requested;
+        Ok(tokio::task::spawn_blocking(move || {
+            crate::browser_isolation::inspect(browser_pid, renderer_pids, requested)
+        })
+        .await?)
     }
     async fn select(&mut self, target: &str) -> Result<()> {
         let targets: Vec<Value> = reqwest::Client::new()
@@ -278,35 +357,43 @@ impl Live {
         Ok(json!({"target":self.target,"tabs":tabs}))
     }
     async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
-        self.sequence += 1;
-        let id = self.sequence;
-        tokio::time::timeout(Duration::from_secs(10), async {
-            self.socket
-                .send(Message::Text(
-                    json!({"id":id,"method":method,"params":params}).to_string(),
-                ))
-                .await?;
-            while let Some(message) = self.socket.next().await {
-                let message = message?;
-                if !message.is_text() {
-                    continue;
-                }
-                let response: Value = serde_json::from_str(message.to_text()?)?;
-                if response["id"] != id {
-                    continue;
-                }
-                ensure!(
-                    response.get("error").is_none(),
-                    "Browser: {}",
-                    response["error"]
-                );
-                return Ok(response["result"].clone());
-            }
-            anyhow::bail!("Browser disconnected")
-        })
-        .await
-        .context("Browser operation timed out")?
+        cdp(&mut self.socket, &mut self.sequence, method, params).await
     }
+}
+async fn cdp(
+    socket: &mut Socket,
+    sequence: &mut u64,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
+    *sequence += 1;
+    let id = *sequence;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        socket
+            .send(Message::Text(
+                json!({"id":id,"method":method,"params":params}).to_string(),
+            ))
+            .await?;
+        while let Some(message) = socket.next().await {
+            let message = message?;
+            if !message.is_text() {
+                continue;
+            }
+            let response: Value = serde_json::from_str(message.to_text()?)?;
+            if response["id"] != id {
+                continue;
+            }
+            ensure!(
+                response.get("error").is_none(),
+                "Browser: {}",
+                response["error"]
+            );
+            return Ok(response["result"].clone());
+        }
+        anyhow::bail!("Browser disconnected")
+    })
+    .await
+    .context("Browser operation timed out")?
 }
 
 #[derive(Default, Deserialize)]
@@ -472,6 +559,16 @@ async fn snapshot(
     let tree = live.call("Accessibility.getFullAXTree", json!({})).await?;
     Ok(Json(
         json!({"browser":session.record.info,"page":page["result"]["value"],"nodes":tree["nodes"],"width":WIDTH,"height":HEIGHT}),
+    ))
+}
+async fn isolation(
+    State(state): BrowserState,
+    Path(id): Path<String>,
+) -> Result<Json<crate::browser_isolation::Isolation>, Failed> {
+    let session = state.session(&id).await?;
+    let mut session = session.lock().await;
+    Ok(Json(
+        session.live(state.profile(&id)).await?.isolation().await?,
     ))
 }
 #[derive(Deserialize)]

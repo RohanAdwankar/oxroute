@@ -192,3 +192,38 @@ carry their `agentId`; human controls use a separate UI credential. Agent
 instructions prohibit obtaining that credential or calling the human control
 routes. This follows the terminal pane's single-user consent model, rather
 than providing isolation from an agent with arbitrary access to the host.
+
+### Linux browser sandbox setup
+
+`deploy/install-browser.sh` installs the browser release pinned in
+`deploy/browser-release.json` under `/opt/oxroute-browser/releases`, owned by
+root. It atomically updates `/opt/oxroute-browser/current` after loading the
+tracked AppArmor profile. Administrator access, AppArmor 4.0, curl, jq, unzip,
+and 1 GiB free on `/opt` are required. The installer does not start browsers,
+restart Oxroute, replace another browser, or change global namespace settings.
+Run it from the tracked checkout as an administrator, then configure
+`OXROUTE_BROWSER_EXECUTABLE=/opt/oxroute-browser/current/chrome` in Oxroute's
+service environment. Existing executable overrides and `chromium` on PATH
+remain supported. Updating the pinned release and rerunning the installer
+updates future browser launches; existing browser processes keep their version.
+
+The AppArmor rule grants `userns` only to browser executables beneath the
+root-owned release directory. Its `unconfined` flag does not confine the whole
+agent; Chromium supplies the renderer sandbox. No setuid helper is installed.
+The explicit `OXROUTE_BROWSER_SANDBOX=false` development setting remains available
+and is never enabled automatically.
+
+`GET /api/browsers/<id>/isolation` reads Linux renderer process evidence for that
+browser. Verification requires seccomp filtering beyond the browser process's
+baseline, no-new-privileges, dropped effective capabilities, and a deeper PID
+namespace. User and network namespace links are also reported when readable;
+a readable shared network namespace prevents verification. Missing evidence is
+reported without claiming protection. Other platforms report unsupported.
+Browser startup logs the check; an unverified result does not disable existing
+browser workflows. The route checks the current renderer processes on demand.
+
+Run the existing handoff fixture with `TEST_BROWSER_SANDBOX=true` and
+`TEST_BROWSER_EXECUTABLE` pointing to the installed browser to require verified
+runtime isolation during the navigation, input, takeover, resume, tab and restart
+tests. Its default trusted-local-page fixture retains the explicit development
+opt-out. Tests and inspection stay outside the product CLI.
