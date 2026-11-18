@@ -304,6 +304,7 @@ fn agent_detail(frame: &mut Frame, area: Rect, app: &App) {
             EntryKind::Worked => ("worked", theme::DIM),
             EntryKind::Asked => ("asked", theme::WARN),
             EntryKind::You => ("you", theme::ACCENT),
+            EntryKind::Coordination => ("Agent update", theme::FAINT),
             EntryKind::Forked => ("forked", theme::ACCENT),
             EntryKind::ForkedFrom => ("parent", theme::ACCENT),
             EntryKind::Merged | EntryKind::MergedInto => ("merged", theme::ACCENT),
