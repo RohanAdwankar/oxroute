@@ -27,7 +27,7 @@ export function TaskReference({ id, open }: { id: string; open: () => void }) {
     catch(error){setError(error instanceof Error?error.message:String(error));}
     finally{setPending(false);}
   };
-  return <span data-task-reference={id} data-task-card={actions.embedded?id:undefined} className={actions.embedded?"my-3 flex w-full flex-wrap items-center gap-3 bg-band px-4 py-3 text-[0.95em]":"inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em]"}>
+  return <span onKeyDown={event => { if (["Enter", " ", "Tab"].includes(event.key)) event.stopPropagation(); }} data-task-reference={id} data-task-card={actions.embedded?id:undefined} className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 bg-band px-1.5 py-0.5 align-baseline text-[0.9em]">
     <button type="button" aria-label={`Task ${task.text}`} title="Open task" onClick={event => { event.stopPropagation(); open(); }}
       className="inline-flex min-w-0 cursor-pointer items-center gap-1 text-left text-ink hover:text-mid">
       <Icon name="tasks" size={12} />{task.text}
