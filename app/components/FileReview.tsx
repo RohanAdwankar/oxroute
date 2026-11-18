@@ -9,15 +9,17 @@ export const FileReviews = createContext<((url: string) => void) | null>(null);
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 const extensions = new Set([...imageExtensions, "pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"]);
 export function savedReview(url: string) {return url.startsWith("/api/agents/") && url.split("/").length === 6 && url.split("/")[4] === "file-reviews";}
-export function reviewable(url: string) {
+function fileLocation(url: string, base = "http://localhost") {
   try {
-    const parsed = new URL(url, "http://localhost");
-    if (parsed.pathname !== "/api/artifacts" && !parsed.pathname.startsWith("/api/attachments/")) return false;
+    const parsed = new URL(url, base);
     const file = parsed.pathname === "/api/artifacts" ? parsed.searchParams.get("path") ?? "" : decodeURIComponent(parsed.pathname);
-    return extensions.has(file.split(".").at(-1)?.toLowerCase() ?? "");
-  } catch {
-    return false;
-  }
+    return {parsed, file};
+  } catch { return null; }
+}
+export function reviewable(url: string) {
+  const location = fileLocation(url);
+  return !!location && (location.parsed.pathname === "/api/artifacts" || location.parsed.pathname.startsWith("/api/attachments/")) &&
+    extensions.has(location.file.split(".").at(-1)?.toLowerCase() ?? "");
 }
 export function ReviewFileButton({url}: {url: string}) {
   const open = useContext(FileReviews);
@@ -81,8 +83,10 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
   useEffect(() => {
     if (local) return;
     const controller = new AbortController();
-    const parsed = new URL(url, location.origin), attachment = parsed.pathname.startsWith("/api/attachments/");
-    const path = attachment ? decodeURIComponent(parsed.pathname.slice("/api/attachments/".length)) : parsed.searchParams.get("path");
+    const locationInfo = fileLocation(url, location.origin);
+    if (!locationInfo) { setError("Could not open that file URL."); return; }
+    const {parsed, file} = locationInfo, attachment = parsed.pathname.startsWith("/api/attachments/");
+    const path = attachment ? file.slice("/api/attachments/".length) : parsed.searchParams.get("path");
     response<Review>(savedReview(url) ? fetch(url, {signal: controller.signal}) : fetch(`/api/agents/${encodeURIComponent(agent)}/file-reviews`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({path, attachment}), signal: controller.signal})).then(value => {
       let draft: {notes: Annotation[]; text: string} | null = null;
       try {draft = JSON.parse(sessionStorage.getItem(`oxroute.fileReview.${value.id}`) ?? "null");} catch {}
@@ -100,8 +104,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     document.addEventListener("keydown", escape, true);
     return () => document.removeEventListener("keydown", escape, true);
   }, [menu, typing, close]);
-  const original = new URL(url, "http://localhost");
-  const originalName = (original.searchParams.get("path") ?? decodeURIComponent(original.pathname)).split("/").at(-1) ?? "";
+  const originalName = fileLocation(url)?.file.split("/").at(-1) ?? "";
   const previewImage = reviewable(url) && imageExtensions.includes(originalName.split(".").at(-1)?.toLowerCase() ?? "");
   const isImage = review ? imageExtensions.includes(review.extension) : previewImage;
   const pageNotes = notes.filter(note => note.page === page);

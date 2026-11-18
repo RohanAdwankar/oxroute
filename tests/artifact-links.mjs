@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const base = process.env.TEST_URL ?? 'http://127.0.0.1:3939';
 const native = process.env.TEST_NATIVE_URL ?? base;
 const snapshot = await (await fetch(`${native}/api/state`)).json();
 assert.ok(snapshot.artifactRoot, 'The daemon provides the configured artifact root');
 const directory = await mkdtemp(join(snapshot.artifactRoot, 'artifact-links-'));
-const browser = await chromium.launch();
+const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch(process.env.BROWSER_EXECUTABLE ? {executablePath: process.env.BROWSER_EXECUTABLE} : {});
 try {
   const path = join(directory, 'drawing # λ.svg');
   const notes = join(directory, 'notes.txt');
@@ -16,8 +16,10 @@ try {
   await writeFile(notes, 'Generated notes\n');
   const url = path => path.split('/').map(encodeURIComponent).join('/');
   const agent = { id: 'artifact-links-fixture', name: 'Artifact links', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
-  const text = `![Generated drawing](${url(path)})\n\n[Download notes](${url(notes)})\n\n![Existing site image](/icon.png)\n\n[Malformed link](/invalid%ZZ)\n\n[Ordinary link](https://example.invalid/document)`;
+  const malformed = ['https://[::1', '/api/attachments/%', '/api/attachments/%C3', '/api/attachments/%FE'];
+  const text = malformed.map((href, i) => `[Invalid target ${i}](${href})`).join('\n\n') + '\n\n' + `![Generated drawing](${url(path)})\n\n[Download notes](${url(notes)})\n\n![Existing site image](/icon.png)\n\n[Malformed link](/invalid%ZZ)\n\n[Ordinary link](https://example.invalid/document)\n\n[Unreadable review](/api/agents/${agent.id}/file-reviews/%E2%82)`;
   const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
+  const errors = []; page.on('pageerror', error => errors.push(String(error)));
   if(native !== base) await page.route('**/api/**', async route => {const url = new URL(route.request().url()); await route.fulfill({response: await route.fetch({url: `${native}${url.pathname}${url.search}`})});});
   await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/state', route => route.fulfill({ json: { ...snapshot, agents: [agent], archived: [], tasks: [], taskNotes: [], messages: {}, paneLinks: {}, tags: {}, boards: [] } }));
@@ -38,6 +40,12 @@ try {
   assert.equal(await page.getByRole('link', { name: 'Malformed link', exact: true }).getAttribute('href'), '/invalid%ZZ');
   await page.reload();
   await page.getByAltText('Generated drawing', {exact: true}).evaluate(img => img.decode());
+  for (let i = 0; i < malformed.length; i++) assert.ok(await page.getByRole('link', {name: `Invalid target ${i}`, exact: true}).isVisible());
+  await page.getByRole('button', {name: 'Unreadable review', exact: true}).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('Could not open that file URL.', {exact: true}).waitFor();
+  await page.keyboard.press('Escape'); await dialog.waitFor({state: 'hidden'});
+  assert.deepEqual(errors, [], 'Malformed external text does not escape rendering or preview boundaries');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   console.log('Real artifact images load before and after reload; encoded filenames, downloads, site images, ordinary links and malformed links are preserved.');
 } finally { await browser.close(); await rm(directory, { recursive: true, force: true }); }

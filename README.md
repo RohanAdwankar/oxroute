@@ -227,3 +227,13 @@ Run the existing handoff fixture with `TEST_BROWSER_SANDBOX=true` and
 runtime isolation during the navigation, input, takeover, resume, tab and restart
 tests. Its default trusted-local-page fixture retains the explicit development
 opt-out. Tests and inspection stay outside the product CLI.
+
+## URL boundaries
+
+`npm run lint` checks direct URL construction and URI decoding in frontend
+source. Dynamic input needs a local `try/catch`; the check also rejects invalid
+literals and catches deferred callbacks outside their own error boundary.
+Production builds run this focused check before compiling. Run
+`node tests/url-boundaries.mjs` to validate the rule. This checks exception
+boundaries, not URL safety or full data flow; browser workflow tests remain
+necessary for malformed content and valid previews.
