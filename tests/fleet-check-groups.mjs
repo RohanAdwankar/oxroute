@@ -4,7 +4,8 @@ const agent={id:'focus-fixture',name:'Focus',backend:'codex',model:'fixture',sta
 let serial=0;
 const entry=(kind,text)=>({id:++serial,agentId:agent.id,kind,text,at:serial*1200,detail:'',output:'',origin:''});
 const checks=count=>Array.from({length:count},()=>entry('notice','Focus checked the fleet'));
-const entries=[...checks(12),entry('said','A decision needs your attention.'),...checks(3),entry('notice','Another notice'),entry('notice','Another notice'),...checks(1)];
+const entries=[...checks(5),entry('worked','Context compaction'),...checks(4),entry('worked','Read workspace'),entry('worked','Context compaction'),...checks(3),entry('said','A decision needs your attention.'),...checks(3),entry('notice','Another notice'),entry('notice','Another notice'),...checks(1)];
+const deferred=entries.find(entry=>entry.text==='Read workspace');deferred.outputDeferred=true;let outputReads=0;
 const browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try{
  const page=await browser.newPage({viewport:{width:1100,height:850}}),errors=[];page.on('pageerror',e=>errors.push(String(e)));
@@ -13,6 +14,7 @@ try{
   const path=new URL(route.request().url()).pathname;
   if(path==='/api/version')return route.continue();
   if(path==='/api/state')return route.fulfill({json:{mode:'ask',nextActionSuggestions:false,agents:[agent],archived:[],messages:{},tasks:[],taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}});
+  if(path===`/api/agents/${agent.id}/outputs`){outputReads++;return route.fulfill({json:{[deferred.id]:'Workspace inspected'}});}
   if(path===`/api/agents/${agent.id}`)return route.fulfill({json:{agent,timeline:entries,delivery:'start'}});
   return route.fulfill({json:[]});
  });
@@ -23,17 +25,29 @@ try{
  await page.getByText('A decision needs your attention.',{exact:true}).waitFor();
  assert.equal(await page.getByText('Another notice',{exact:true}).count(),2);
  assert.equal(await page.getByText('Focus checked the fleet',{exact:true}).filter({visible:true}).count(),1);
+ assert.equal(outputReads,0,'Collapsed activity does not load outputs');
  await groups.first().locator('summary').focus();await page.keyboard.press('Enter');
  await groups.first().locator('[data-entry="1"]').waitFor({state:'visible'});
- assert.equal(await groups.first().locator('[data-entry]').count(),12);
+ assert.equal(await groups.first().locator('[data-entry]').count(),15);
+ assert.equal(await groups.first().locator('details').count(),0,'Background activity has one toggle');
+ await groups.first().getByText('Read workspace',{exact:true}).first().waitFor();
+ assert.equal(await groups.first().getByText('Context compaction',{exact:true}).count(),4);
+ assert.match(await groups.first().locator('summary').innerText(),/12 fleet checks · 3 activity items/);
+ await groups.first().getByText('Workspace inspected',{exact:true}).waitFor();
+ assert.equal(outputReads,1);
  await groups.first().locator('summary').click();
  const next=entry('notice','Focus checked the fleet');entries.push(next);
  await page.evaluate(entry=>window.stream.onmessage({data:JSON.stringify({type:'timeline',entry})}),next);
  await groups.nth(2).locator('summary').waitFor();
  assert.equal(await groups.count(),3);assert.equal(await groups.first().getAttribute('open'),null);
- await page.evaluate(()=>{history.pushState(null,'','?agent=focus-fixture&entry=3');dispatchEvent(new PopStateEvent('popstate'));});
- await page.locator('[data-entry="3"]').waitFor({state:'visible'});assert.notEqual(await groups.first().getAttribute('open'),null);
+ const compact=entry('worked','Context compaction');entries.push(compact);
+ await page.evaluate(entry=>window.stream.onmessage({data:JSON.stringify({type:'timeline',entry})}),compact);
+ await groups.nth(2).locator('summary').filter({hasText:'1 activity item'}).waitFor();
+ assert.equal(await groups.count(),3);
+ await page.evaluate(()=>{history.pushState(null,'','?agent=focus-fixture&entry=6');dispatchEvent(new PopStateEvent('popstate'));});
+ await page.locator('[data-entry="6"]').waitFor({state:'visible'});assert.notEqual(await groups.first().getAttribute('open'),null);
  await groups.first().locator('summary').click();
+ await page.locator('[data-composer]').first().click();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
- assert.deepEqual(errors,[]);console.log('Consecutive checks collapse independently, preserve all rows and unrelated notices, append safely, toggle by keyboard and reveal deep-linked checks.');
+ assert.deepEqual(errors,[]);console.log('Checks and interchangeable activity share one toggle, preserve original order and unrelated messages, append safely, toggle by keyboard and reveal deep-linked entries.');
 }finally{await browser.close();}

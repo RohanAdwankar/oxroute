@@ -39,7 +39,7 @@ const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
   notice: { label: "note", tone: "text-faint" },
 };
 
-type TimelineItem = { entry: Entry } | { tools: Entry[] } | { checks: Entry[] };
+type TimelineItem = { entry: Entry } | { tools: Entry[] };
 /** Three ways to tell an agent something: say it, redraw the architecture, or mark up a picture. */
 type Mode = "type" | "diagram" | "draw";
 
@@ -116,13 +116,7 @@ function compactTimeline(entries: Entry[]): TimelineItem[] {
   const delegated = new Set(entries.filter(isDelegation).map(entry => entry.detail));
   for (const entry of entries) {
     if (entry.kind === "forked" && delegated.has(entry.detail)) continue;
-    if (entry.kind === "notice" && entry.text === "Focus checked the fleet") {
-      const last = items.at(-1);
-      if (last && "checks" in last) last.checks.push(entry);
-      else items.push({ checks: [entry] });
-      continue;
-    }
-    if (entry.kind !== "worked") {
+    if (entry.kind !== "worked" && !isFleetCheck(entry)) {
       items.push({ entry });
       continue;
     }
@@ -130,7 +124,11 @@ function compactTimeline(entries: Entry[]): TimelineItem[] {
     if (last && "tools" in last) last.tools.push(entry);
     else items.push({ tools: [entry] });
   }
-  return items;
+  return items.map(item => "tools" in item && item.tools.length === 1 && isFleetCheck(item.tools[0]) ? { entry: item.tools[0] } : item);
+}
+
+function isFleetCheck(entry: Entry) {
+  return entry.kind === "notice" && entry.text === "Focus checked the fleet";
 }
 
 function minute(at: number) {
@@ -433,6 +431,8 @@ export function AgentPanel({
     target?.closest("details")?.setAttribute("open", "");
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
+
+  const renderNotice = useCallback((entry: Entry) => <Message entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={onOpenAgent} />, [highlightedEntry, asked, jumpTo, onOpenAgent]);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
@@ -908,14 +908,11 @@ export function AgentPanel({
           ) : (
             items.map((item, at) => {
               if ("tools" in item) {
-                return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1} />;
+                return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1}
+                  renderNotice={renderNotice} />;
               }
 
-              if ("checks" in item && item.checks.length > 1) return <details key={`checks-${item.checks[0].id}`} data-fleet-checks className="border-b border-hair py-2 text-[12px] text-mid">
-                <summary className="cursor-pointer">{item.checks.length} fleet checks · {minute(item.checks[0].at)}–{minute(item.checks.at(-1)!.at)}</summary>
-                {item.checks.map(entry=><Message key={entry.id} entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={onOpenAgent}/>)}
-              </details>;
-              const entry = "checks" in item ? item.checks[0] : item.entry;
+              const entry = item.entry;
               if (entry.kind === "you" && entry.detail.startsWith("review-approval:")) {
                 const approval = JSON.parse(entry.detail.slice("review-approval:".length)) as { id: string; title: string; commit: string; branch: string; base: string };
                 return <div key={entry.id} data-entry={entry.id} role="region" aria-label="Publication approval" className="border-b border-hair py-3">
@@ -1209,15 +1206,17 @@ export function AgentPanel({
 /// The time carries the news. A group that is still being added to looks
 /// the same from one second to the next unless each call says when it
 /// happened, so this column is darker than the summary above it.
-const ToolGroup = memo(function ToolGroup({ entries, showLatest }: { entries: Entry[]; showLatest: boolean }) {
+const ToolGroup = memo(function ToolGroup({ entries, showLatest, renderNotice }: { entries: Entry[]; showLatest: boolean; renderNotice: (entry: Entry) => ReactNode }) {
   const [open, setOpen] = useState(false);
   const [outputs, setOutputs] = useState<Record<string, string>>({});
   const loaded = useRef(new Map<number, Entry>());
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
-  const latest = showLatest ? entries.at(-1) : null;
-  const folded = showLatest ? entries.slice(0, -1) : entries;
-  const visible = useMemo(() => open ? entries : showLatest ? entries.slice(-1) : [], [entries, open, showLatest]);
+  const checks = entries.filter(isFleetCheck).length;
+  const activities = entries.length - checks;
+  const latest = showLatest && !checks ? entries.at(-1) : null;
+  const folded = latest ? entries.slice(0, -1) : entries;
+  const visible = useMemo(() => open ? entries : latest ? entries.slice(-1) : [], [entries, open, latest]);
   useEffect(() => {
     const wanted = new Set(visible.filter(entry => entry.outputDeferred).map(entry => entry.id));
     for (const id of loaded.current.keys()) if (!wanted.has(id)) loaded.current.delete(id);
@@ -1235,15 +1234,15 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest }: { entries: En
     }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
     return () => controller.abort();
   }, [visible, attempt]);
-  const tool = (entry: Entry) => <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} />;
+  const tool = (entry: Entry) => entry.kind === "worked" ? open || entry === latest ? <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} /> : <div key={entry.id} data-entry={entry.id} /> : <div key={entry.id}>{renderNotice(entry)}</div>;
   return <div className="border-b border-hair py-2">
-    {folded.length > 0 && <details className="group" onToggle={event => setOpen(event.currentTarget.open)}>
+    {folded.length > 0 && <details className="group" data-fleet-checks={checks ? "" : undefined} onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
-        <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(folded.at(-1)!.at)}</span>
+        {!checks && <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(folded.at(-1)!.at)}</span>}
         <span className="w-2 text-center group-open:rotate-90">›</span>
-        <span className="shrink-0">{folded.length} tool {folded.length === 1 ? "call" : "calls"}</span>
+        <span>{checks ? `${checks} fleet ${checks === 1 ? "check" : "checks"}${activities ? ` · ${activities} activity ${activities === 1 ? "item" : "items"}` : ""} · ${minute(entries[0].at)}–${minute(entries.at(-1)!.at)}` : `${folded.length} tool ${folded.length === 1 ? "call" : "calls"}`}</span>
       </summary>
-      {open && <div className="mt-1 flex flex-col">{folded.map(tool)}</div>}
+      {(open || checks > 0) && <div className="mt-1 flex flex-col">{folded.map(tool)}</div>}
     </details>}
     {latest && <div className="flex flex-col">{tool(latest)}</div>}
     {error && <p role="alert" className="text-[12px] text-remove">{error} <button className="cursor-pointer underline" onClick={() => retry(value => value + 1)}>Retry</button></p>}
@@ -1253,7 +1252,7 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest }: { entries: En
 function ToolCall({ entry, output }: { entry: Entry; output?: string }) {
   const printed = entry.outputDeferred ? output : entry.output;
   return (
-    <div className="flex gap-3 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
+    <div data-entry={entry.id} className="flex gap-3 border-t border-hair py-[7px] text-[11.5px] leading-[1.45] text-mid">
       <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
       <div className="min-w-0 flex-1">
         {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
