@@ -86,7 +86,7 @@ rollback() {
   # Restore review bodies stripped by migration, without reverting other data.
   uv run --no-project python "$repository/deploy/database-backup.py" restore-reviews "$database" "$backup/database.sqlite3.gz"
   systemctl --user start oxroute.service oxroute-web.service
-  curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
+  curl --retry 300 --retry-max-time 300 --max-time 5 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
   # A deployment failure must not replace human decisions or task dependencies.
   printf '%s\n' 'Deployment failed; previous release and review records restored. Task states preserved.' >&2
   cleanup
@@ -108,8 +108,8 @@ mv -Tf "$agent_binary.next" "$agent_binary"
 mv -Tf "$tui_binary.next" "$tui_binary"
 mv -Tf "$web.next" "$web"
 systemctl --user start oxroute.service oxroute-web.service
-curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
-test "$(curl --retry 30 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:3939/api/version | jq -er .version)" = "$version"
+curl --retry 300 --retry-max-time 300 --max-time 5 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
+test "$(curl --retry 300 --retry-max-time 300 --max-time 5 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:3939/api/version | jq -er .version)" = "$version"
 cmp -s "$release/bin/oxrouted" "$binary"
 cmp -s "$release/bin/oxroute-agent" "$agent_binary"
 cmp -s "$release/bin/oxroute" "$tui_binary"
