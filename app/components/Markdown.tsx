@@ -145,6 +145,16 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
   const quotes = useContext(QuoteLinks);
   const root = useContext(ArtifactRoot);
   const embedded=useContext(EmbeddedReviews), cards=useContext(ConversationCards);
+  const titles = JSON.stringify([...(reviews?.titles ?? []), ...(tasks?.titles ?? []), ...[...(embedded?.owners ?? [])].map(([id, owner]) => [id, `Review from ${owner.name}`])]);
+  const agents = cards ? JSON.stringify([...cards.state.agents, ...cards.state.archived].map(agent => agent.id).sort()) : null;
+  return <ParsedMarkdown text={children} root={root} titles={titles} agents={agents} threads={quotes?.threads} />;
+});
+
+// Live cards and links consume their own contexts. Fleet activity must not
+// reparse unchanged prose and syntax-highlight every code fence in history.
+const ParsedMarkdown = memo(function ParsedMarkdown({ text, root, titles, agents, threads }: {
+  text: string; root: string; titles: string; agents: string | null; threads?: QuoteThread[];
+}) {
   return (
     <div className="message-markdown min-w-0">
       <ReactMarkdown
@@ -163,13 +173,13 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
         // Tables, task lists and strikethrough are GFM rather than CommonMark,
         // so without this an agent's table arrives as a wall of pipes.
         // A shell's home-directory tildes are literal; deletion needs ~~.
-        remarkPlugins={[[remarkGfm, { singleTilde: false }], ...((reviews || tasks || embedded) ? [referenceLinks(new Map([...(reviews?.titles ?? []), ...(tasks?.titles ?? []), ...[...(embedded?.owners??[])].map(([id,owner])=>[id,`Review from ${owner.name}`] as [string,string])]))] : [])]}
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], referenceLinks(new Map(JSON.parse(titles)))]}
         // A fence that names no language still gets read: most of what an
         // agent pastes is a command or a diff, and guessing beats grey.
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(quotes ? [quoteLinks(quotes.threads)] : []), ...(cards ? [conversationCards(new Set([...cards.state.agents, ...cards.state.archived].map(agent => agent.id)))] : [])]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }], ...(threads ? [quoteLinks(threads)] : []), ...(agents ? [conversationCards(new Set(JSON.parse(agents)))] : [])]}
         components={markdownComponents}
       >
-        {children}
+        {text}
       </ReactMarkdown>
     </div>
   );
