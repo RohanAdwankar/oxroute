@@ -1210,6 +1210,9 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest, renderNotice }:
   const [open, setOpen] = useState(false);
   const [outputs, setOutputs] = useState<Record<string, string>>({});
   const loaded = useRef(new Map<number, Entry>());
+  const pending = useRef(new Set<number>());
+  const controllers = useRef(new Set<AbortController>());
+  useEffect(() => () => { for (const controller of controllers.current) controller.abort(); }, []);
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
   const checks = entries.filter(isFleetCheck).length;
@@ -1222,17 +1225,21 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest, renderNotice }:
     for (const id of loaded.current.keys()) if (!wanted.has(id)) loaded.current.delete(id);
     setOutputs(current => Object.fromEntries(Object.entries(current).filter(([id]) => wanted.has(Number(id)))));
     // A refreshed page replaces entry objects; unrelated live events preserve them.
-    const deferred = visible.filter(entry => entry.outputDeferred && loaded.current.get(entry.id) !== entry);
+    const deferred = visible.filter(entry => entry.outputDeferred && loaded.current.get(entry.id) !== entry && !pending.current.has(entry.id));
     setError("");
     if (!deferred.length) return;
     const controller = new AbortController();
+    controllers.current.add(controller);
+    for (const entry of deferred) pending.current.add(entry.id);
     void api.toolOutputs(deferred[0].agentId, deferred[0].id, deferred.at(-1)!.id, controller.signal).then(saved => {
       if (controller.signal.aborted) return;
       if (deferred.some(entry => !(entry.id in saved))) throw new Error("Tool output is no longer available");
       for (const entry of deferred) loaded.current.set(entry.id, entry);
       setOutputs(current => ({ ...current, ...saved }));
-    }).catch(error => { if (!controller.signal.aborted) setError(String(error)); });
-    return () => controller.abort();
+    }).catch(error => { if (!controller.signal.aborted) setError(String(error)); }).finally(() => {
+      controllers.current.delete(controller);
+      for (const entry of deferred) pending.current.delete(entry.id);
+    });
   }, [visible, attempt]);
   const tool = (entry: Entry) => entry.kind === "worked" ? open || entry === latest ? <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} /> : <div key={entry.id} data-entry={entry.id} /> : <div key={entry.id}>{renderNotice(entry)}</div>;
   return <div className="border-b border-hair py-2">
