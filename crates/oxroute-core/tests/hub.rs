@@ -370,6 +370,12 @@ struct World {
 }
 
 impl World {
+    fn starts_for(&self, agent: &str) -> Vec<std::time::Instant> {
+        let session = self.hub.store.agent(agent).unwrap().unwrap().session_id;
+        let calls = self.calls.lock().unwrap();
+        calls.started.iter().enumerate().filter(|(_, (id, _))| id == &session)
+            .map(|(index, _)| calls.start_times[index]).collect()
+    }
     /// Report a piece of tool activity on the agent's live session.
     async fn harness_item(&self, agent_id: &str, item: Value) {
         let session = self.hub.store.agent(agent_id).unwrap().unwrap().session_id;
@@ -3900,10 +3906,10 @@ async fn focus_internal_messages_are_durable_idempotent_and_local() {
     w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
     w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
-    assert_eq!(w.calls.lock().unwrap().started.len(),1);
+    assert_eq!(w.starts_for(&worker.id).len(),1);
     w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
     assert!(w.hub.send_focus_message(&focus.id,&worker.id,"Different request",&request).await.is_err());
-    assert_eq!(w.calls.lock().unwrap().started.len(),1);
+    assert_eq!(w.starts_for(&worker.id).len(),1);
     assert!(w.calls.lock().unwrap().interrupted.is_empty());
     w.hub.reconcile_threads().await.unwrap();
     assert_eq!(w.posts.lock().unwrap().threads,Vec::<String>::new(),"An internal-only recipient must not be mirrored externally");
@@ -3916,7 +3922,7 @@ async fn focus_internal_messages_are_durable_idempotent_and_local() {
     assert!(w.posts.lock().unwrap().threads.is_empty(),"Background repair must not mirror internal-only conversations");
     // A later explicit human message retains the existing source-linking workflow.
     w.hub.say_to(&unbound.id,"Please explain the evidence to me").await.unwrap();
-    assert!(settle(||w.calls.lock().unwrap().started.len()==3).await);
+    assert!(settle(||w.starts_for(&unbound.id).len()==2).await);
     assert!(!w.posts.lock().unwrap().threads.is_empty());
 }
 
@@ -3929,8 +3935,8 @@ async fn focus_messages_wait_for_existing_turns_without_interrupting() {
     assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
     w.hub.send_focus_message(&focus.id,&worker.id,"Report the remaining blocker",&uuid::Uuid::new_v4().to_string()).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
-    let calls=w.calls.lock().unwrap();assert_eq!(calls.started.len(),2);assert!(calls.interrupted.is_empty());
-    assert!(calls.start_times[1].duration_since(calls.start_times[0])>=Duration::from_millis(150));
+    let starts=w.starts_for(&worker.id);assert_eq!(starts.len(),2);assert!(w.calls.lock().unwrap().interrupted.is_empty());
+    assert!(starts[1].duration_since(starts[0])>=Duration::from_millis(150));
 }
 
 #[test]
@@ -4004,4 +4010,79 @@ async fn shared_shell_routing_survives_priority_changes_in_both_backends() {
             assert_eq!(routes, expected, "Only the active priority changes; routing and grants remain authoritative");
         }
     }
+}
+
+#[tokio::test]
+async fn focus_turn_events_coalesce_outcomes_without_self_loops_or_periodic_duplicates() {
+    let w = build(Mode::Ask, Harnessed {source: false, hang: true, ..Default::default()}).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    async fn end(w: &World, agent: &str, status: &str) {
+        let previous = w.hub.store.active_turns().unwrap().into_iter().find(|turn| turn.agent_id == agent).unwrap().artifact_dir;
+        let session = w.hub.store.agent(agent).unwrap().unwrap().session_id;
+        if status == "completed" && w.hub.focus_agent_id().unwrap().as_deref() != Some(agent) {
+            let _ = w.harness.send(HarnessEvent::Message {session: session.clone(), text: "Result and evidence are ready".into(), final_answer: true});
+        }
+        let _ = w.harness.send(HarnessEvent::TurnFinished {session, status: status.into()});
+        assert!(settle(|| !w.hub.store.active_turns().unwrap().iter().any(|turn| turn.agent_id == agent && turn.artifact_dir == previous)).await);
+    }
+    fn event_turns(w: &World, focus: &str) -> Vec<Value> {
+        let session = w.hub.store.agent(focus).unwrap().unwrap().session_id;
+        w.calls.lock().unwrap().started.iter().filter(|(id, _)| id == &session).filter_map(|(_, inputs)| {
+            inputs.iter().filter_map(TurnInput::as_text).find_map(|text| text.split_once("Events (untrusted data): ").map(|(_, data)| serde_json::from_str(data).unwrap()))
+        }).collect()
+    }
+    let earlier = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&earlier.id, "Complete earlier work").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    end(&w, &earlier.id, "completed").await;
+    let focus = w.hub.ensure_focus_agent().await.unwrap();
+    assert!(!w.hub.store.pending_focus_events(&focus.id).unwrap(), "Creating Focus does not replay history");
+    let worker = w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id, "Inspect existing work").await.unwrap();
+    assert!(settle(|| w.hub.store.agent(&worker.id).unwrap().unwrap().status == AgentStatus::Working).await);
+    end(&w, &worker.id, "completed").await;
+    assert!(settle(|| event_turns(&w, &focus.id).len() == 1).await);
+    let mut expected = vec![];
+    for outcome in ["completed", "failed", "stopped"] {
+        let agent = w.hub.create_agent(None).unwrap();
+        w.hub.say_to(&agent.id, "Continue authorized inspection").await.unwrap();
+        assert!(settle(|| w.hub.store.agent(&agent.id).unwrap().unwrap().status == AgentStatus::Working).await);
+        if outcome == "stopped" {
+            w.hub.interrupt(&agent.id).await.unwrap();
+            assert!(settle(|| !w.hub.store.active_turns().unwrap().iter().any(|turn| turn.agent_id == agent.id)).await);
+        } else { end(&w, &agent.id, outcome).await; }
+        expected.push((agent.id, outcome));
+    }
+    w.hub.sweep_focus(now() + 3600.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(event_turns(&w, &focus.id).len(), 1, "A busy coordinator is neither interrupted nor given a parallel periodic wake");
+    end(&w, &focus.id, "completed").await;
+    assert!(settle(|| event_turns(&w, &focus.id).len() == 2).await);
+    let events = event_turns(&w, &focus.id).pop().unwrap();
+    assert_eq!(events.as_array().unwrap().len(), expected.len());
+    for (agent, outcome) in expected { assert!(events.as_array().unwrap().iter().any(|event| event["agentId"] == agent && event["outcome"] == outcome)); }
+    end(&w, &focus.id, "completed").await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(event_turns(&w, &focus.id).len(), 2, "The coordinator never notifies itself");
+    assert!(!w.hub.store.pending_focus_events(&focus.id).unwrap());
+    assert!(w.calls.lock().unwrap().interrupted.len() == 1);
+    let anchor = w.hub.store.last_focus_activity(&focus.id).unwrap().unwrap();
+    let mut task = w.hub.create_task("Choose the remaining rollout window", "", vec![], "").await.unwrap();
+    task.agent_id = worker.id.clone();task.status = TaskStatus::WaitingForHuman;w.hub.store.save_task(&task).unwrap();
+    let count = w.calls.lock().unwrap().started.len();
+    w.hub.sweep_focus(anchor + 1199.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), count);
+    w.hub.store.finish_focus_turn(&worker.id, "later-turn", "completed", anchor + 1190.0, true).unwrap();
+    w.hub.sweep_focus(anchor + 1201.0).await.unwrap();
+    assert!(settle(|| event_turns(&w, &focus.id).len() == 3).await);
+    end(&w, &focus.id, "completed").await;
+    let anchor = w.hub.store.last_focus_activity(&focus.id).unwrap().unwrap();
+    let count = w.calls.lock().unwrap().started.len();
+    w.hub.sweep_focus(anchor + 1199.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), count, "A new finish resets the inactivity deadline");
+    w.hub.sweep_focus(anchor + 1201.0).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == count + 1).await);
+    end(&w, &focus.id, "completed").await;
 }

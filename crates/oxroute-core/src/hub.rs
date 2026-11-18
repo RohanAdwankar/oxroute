@@ -216,6 +216,7 @@ pub struct Hub {
     follow_ups: AsyncMutex<HashMap<String, Vec<FollowUp>>>,
     naming: AsyncMutex<HashSet<String>>,
     focus_jobs: AsyncMutex<HashSet<String>>,
+    focus_changed: tokio::sync::Notify,
     learning: AsyncMutex<HashSet<String>>,
     /// How far each agent has carried its own task list without being asked.
     chains: AsyncMutex<HashMap<String, Chain>>,
@@ -328,6 +329,7 @@ impl Hub {
             follow_ups: AsyncMutex::new(HashMap::new()),
             naming: AsyncMutex::new(HashSet::new()),
             focus_jobs: AsyncMutex::new(HashSet::new()),
+            focus_changed: tokio::sync::Notify::new(),
             learning: AsyncMutex::new(HashSet::new()),
             chains: AsyncMutex::new(HashMap::new()),
             task_dispatch: AsyncMutex::new(()),
@@ -547,6 +549,7 @@ impl Hub {
         }
         self.clone().consume(rx);
         self.clone().watch_stalls();
+        self.watch_focus_events();
         self.refresh_dashboard().await;
         Ok(())
     }
@@ -567,6 +570,7 @@ impl Hub {
                 saved.target,
                 false,
             ));
+            turn.stopped.store(agent.stall_reason.as_deref() == Some("stopped"), Ordering::SeqCst);
             if !saved.turn_id.is_empty() {
                 turn.mark_ready(saved.turn_id);
             }
@@ -604,7 +608,8 @@ impl Hub {
                 Ok(None) | Err(_) => {
                     self.live.lock().await.remove(&agent.id);
                     self.sessions.lock().await.remove(&saved.session_id);
-                    let _ = self.store.clear_active_turn(&agent.id);
+                    let outcome = if turn.stopped.load(Ordering::SeqCst) { "stopped" } else { "failed" };
+                    let _ = self.finish_focus_turn(&agent.id, &turn, outcome);
                 }
             }
         }
@@ -1396,6 +1401,8 @@ impl Hub {
         }
         // A requested stop changes the visible state without raising a stall alert.
         self.store.stall_agent(agent_id, "stopped", now())?;
+        self.store.finish_focus_turn(agent_id, &turn.artifact_dir.to_string_lossy(), "stopped", now(), false)?;
+        if self.focus_agent_id()?.as_deref() != Some(agent_id) { self.focus_changed.notify_one(); }
         self.emit(Event::Sync);
         self.refresh_dashboard().await;
         Ok(true)
@@ -2227,7 +2234,7 @@ impl Hub {
         match harness.start(&session, inputs).await {
             Ok(turn_id) => {
                 if let Some((key, notice)) = receipt {
-                    self.store.set(key, "delivered")?;
+                    self.store.accept_turn_receipt(key, now())?;
                     if !notice.is_empty() { self.record(&agent.id, EntryKind::Notice, notice, "", ""); }
                 }
                 self.store.clear_context(&context_ids)?;
@@ -2275,15 +2282,13 @@ impl Hub {
         reporter.abort();
         self.clear_progress(&turn).await;
         self.live.lock().await.remove(&agent.id);
-        self.store.clear_active_turn(&agent.id)?;
-
         if !turn.stopped.load(Ordering::SeqCst) {
             self.hand_back_artifacts(&agent.id, &turn, target.as_ref()).await;
         }
         let _ = harness.release(&turn.session).await;
 
         let answer = match outcome {
-            Ok(None) => return Ok(()),
+            Ok(None) => { self.finish_focus_turn(&agent.id, &turn, "stopped")?; return Ok(()); },
             Ok(Some(text)) => text,
             Err(error) => {
                 self.store.stall_agent(&agent.id, "turn failed", now())?;
@@ -2292,6 +2297,7 @@ impl Hub {
                 if let Some(target) = &target {
                     self.say(target, ERROR_REPLY).await;
                 }
+                self.finish_focus_turn(&agent.id, &turn, "failed")?;
                 return Err(error);
             }
         };
@@ -2326,6 +2332,7 @@ impl Hub {
                 }
             }
         }
+        self.finish_focus_turn(&agent.id, &turn, "completed")?;
         self.emit(Event::TurnFinished {
             agent_id: agent.id.clone(),
             status: "completed".into(),

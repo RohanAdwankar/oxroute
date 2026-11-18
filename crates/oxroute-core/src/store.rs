@@ -18,10 +18,18 @@ use crate::model::{
 };
 use crate::tags::Board;
 
+mod focus;
+pub use focus::{FocusEventBatch, FocusTurnEvent};
+
 #[derive(Debug, Clone)]
 pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String}
 
 const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS focus_turn_events (
+ id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+ outcome TEXT NOT NULL, at REAL NOT NULL, receipt TEXT
+);
+CREATE INDEX IF NOT EXISTS focus_turn_events_queue ON focus_turn_events(focus_id,receipt,at);
 CREATE TABLE IF NOT EXISTS focus_messages (
  id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0
 );
