@@ -2,7 +2,7 @@
 import {useContext,useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
 import type {Agent,AgentView} from "../lib/types";
-import {ConversationCards} from "./FocusContext";
+import {ConversationCards,ConversationReferences} from "./FocusContext";
 import {ConversationChoices} from "./ConversationChoices";
 import {FocusReview} from "./FocusReview";
 import {Icon} from "./Icon";
@@ -59,10 +59,10 @@ function ConversationCard({agent}:{agent:Agent}) {
   const sent=()=>{setRevision(value=>value+1);context.onSent();};
   return <article data-focus-conversation={agent.id} aria-label={`Conversation ${agent.name}`} className="quiet-scroll relative max-h-[min(70vh,42rem)] min-w-0 overflow-y-auto bg-paper p-3 ring-1 ring-hair">
     <header className="mb-2 flex items-baseline justify-between gap-3"><h3 className="font-semibold">{agent.name}</h3><span className="text-[11px] text-mid">{agent.status}</span></header>
-    <div><ConversationCards.Provider value={null}>
+    <div><ConversationCards.Provider value={null}><ConversationReferences.Provider value={null}>
       {text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{agent.activity||"No reply yet."}</p>}
       {review&&!text.includes(review.detail)&&<FocusReview id={review.detail} initiallyExpanded={false}/>}
-    </ConversationCards.Provider></div>
+    </ConversationReferences.Provider></ConversationCards.Provider></div>
     {error&&<p role="alert" className="mt-2 flex items-center gap-2 text-[12px]">{error}<button type="button" aria-label="Retry card" title="Retry card" onClick={()=>setRevision(value=>value+1)}><Icon name="refresh"/></button></p>}
     {agent.status==="complete"&&context.state.nextActionSuggestions&&view?.nextActions&&<ConversationChoices key={view.nextActions.entryId} agent={agent} nextActions={view.nextActions} onSent={sent}/>}
     {!!tasks.length&&<section aria-label={`Tasks for ${agent.name}`}>

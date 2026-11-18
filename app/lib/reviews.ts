@@ -71,11 +71,12 @@ function requestReview(endpoint: string, refresh: boolean, priority: RequestPrio
 export const loadReview = (endpoint: string, refresh = false) => requestReview(endpoint, refresh, "high");
 
 // Leave connection capacity for a clicked review, live events and histories.
+const warmed = new Set<string>();
 const warming = new Set<string>();
 const recent = new Set<string>();
 let draining = false;
 export function preloadReview(endpoint: string, created = false) {
-  if (ready.has(endpoint) || pending.has(endpoint)) return;
+  if (ready.has(endpoint) || pending.has(endpoint) || (!created && warmed.has(endpoint))) return;
   if (created) warming.delete(endpoint);
   (created ? recent : warming).add(endpoint);
   if (draining) return;
@@ -88,6 +89,7 @@ export function preloadReview(endpoint: string, created = false) {
         queue.delete(next);
         try {
           const review = await requestReview(next, false, "low");
+          warmed.add(next);
           if (review.snapshot.reviewBaseCommit && !next.includes("?full=true")) preloadReview(`${next}?full=true`);
           for (const file of review.snapshot.files) for (const side of ["before", "after"] as const) {
             if (file.image?.[side]) await loadReviewImage(`${next.split("?")[0]}/image?${new URLSearchParams({ path: file.path, side, ...(review.full ? { full: "true" } : {}) })}`, "low").catch(() => {});

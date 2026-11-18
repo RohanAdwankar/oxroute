@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 
 const agent = { id: 'review-test', name: 'Review test', cwd: '/workspace/review', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
@@ -14,7 +14,7 @@ const timeline = [{ id: 1, agentId: agent.id, at: Date.now()/1000, kind: 'review
   { id: 2, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: authorization, detail: approvalDetail }];
 const demo = process.env.DEMO_DIR;
 if (demo) await mkdir(demo, { recursive: true });
-const browser = await chromium.launch({ slowMo: demo ? 250 : 0 });
+const browser = await (process.env.BROWSER==='webkit'?webkit:chromium).launch({ slowMo: demo ? 250 : 0, ...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{}) });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, ...(demo ? { recordVideo: { dir: demo, size: { width: 1280, height: 800 } } } : {}) });
   const stage = async text => {
@@ -70,17 +70,20 @@ try {
   assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
   await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
+  await page.locator('pre[data-diff][aria-busy="false"]').first().waitFor();
   assert.ok(await context.locator('.hljs-attr').count(), 'File syntax is highlighted');
   assert.equal((await added.locator('[data-diff-change]').allTextContents()).join(''), 'after', 'Only changed words are emphasized');
   assert.equal((await removed.locator('[data-diff-change]').allTextContents()).join(''), 'before');
   assert.ok((await added.innerText()).includes('+value: after'), 'Syntax and change spans preserve source text');
   for (const [endpoint, expected, backward] of [['text', 1, false], ['row', 1, false], ['gutter', 1, false], ['gutter', 1, true], ['partial', 2, false]]) {
+    await page.locator('pre[data-diff][aria-busy="false"]').first().waitFor();
     await page.evaluate(({ endpoint, backward }) => {
       const rows = [...document.querySelectorAll('[data-diff-line]')];
       const before = rows.find(row => row.textContent.includes('-value: before')).lastElementChild;
       const after = rows.find(row => row.textContent.includes('+value: after'));
-      const node = endpoint === 'row' ? after : endpoint === 'gutter' ? after.children[1].firstChild : after.lastElementChild;
-      const offset = endpoint === 'row' ? 1 : endpoint === 'gutter' ? node.length : endpoint === 'partial' ? 2 : 0;
+      let node = endpoint === 'row' ? after : endpoint === 'gutter' ? after.children[1].firstChild : after.lastElementChild;
+      let offset = endpoint === 'row' ? 1 : endpoint === 'gutter' ? node.length : 0;
+      if(endpoint==='partial'){const walker=document.createTreeWalker(after.lastElementChild,NodeFilter.SHOW_TEXT);let remaining=2;while(walker.nextNode()){node=walker.currentNode;if(remaining<=node.length){offset=remaining;break;}remaining-=node.length;}}
       window.getSelection().setBaseAndExtent(backward ? node : before, backward ? offset : 0, backward ? before : node, backward ? 0 : offset);
     }, { endpoint, backward });
     await removed.click({ button: 'right' });

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const agent = { id: 'syntax-test', name: 'Syntax test', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const cases = [
@@ -17,7 +17,7 @@ const cases = [
 ];
 const files = cases.map(item => ({ path: item.path, patch: '@@ -1 +1 @@\n' + item.before.split('\n').map(line => '-' + line).join('\n') + '\n' + item.after.split('\n').map(line => '+' + line).join('\n') }));
 const review = { agentId: agent.id, id: 'syntax-review', title: 'Syntax and changed words', description: '', status: 'pending', snapshot: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: '', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
-const browser = await chromium.launch();
+const browser = await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 960 } });
   await page.route('**/api/state', r => r.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
@@ -31,6 +31,7 @@ try {
   for (const item of cases) {
     const section = page.getByRole('region', { name: 'Diff ' + item.path, exact: true });
     await section.waitFor();
+    await section.locator('pre[aria-busy="false"]').waitFor();
     const rows = section.locator('[data-diff-line]');
     assert.deepEqual(await rows.evaluateAll(nodes => nodes.slice(1).map(node => node.lastElementChild.textContent)), [
       ...item.before.split('\n').map(line => '-' + line), ...item.after.split('\n').map(line => '+' + line),

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReviewEditor } from "./ReviewEditor";
-import { diffCode } from "./DiffCode";
+import { DiffCode } from "./DiffCode";
 import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
@@ -80,6 +80,24 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number; wholeFile?: boolean } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
+  const selectedRange = useRef<Range|null>(null);
+  useEffect(() => {
+    const remember = () => {
+      if (selectedRange.current) return;
+      const selection=window.getSelection();
+      if (!selection || selection.isCollapsed || !selection.rangeCount || !scroll.current) return;
+      const range=selection.getRangeAt(0);
+      if(scroll.current.contains(range.commonAncestorContainer)) selectedRange.current=range.cloneRange();
+    };
+    const pointer = (event:PointerEvent) => {if(event.button===0&&!event.ctrlKey)selectedRange.current=null;};
+    const finish = () => {selectedRange.current=null;remember();};
+    const release = (event:PointerEvent) => {if(event.button===0&&!event.ctrlKey)finish();};
+    document.addEventListener("selectionchange",remember);
+    document.addEventListener("pointerdown",pointer,true);
+    document.addEventListener("pointerup",release);
+    document.addEventListener("keyup",finish);
+    return()=>{document.removeEventListener("selectionchange",remember);document.removeEventListener("pointerdown",pointer,true);document.removeEventListener("pointerup",release);document.removeEventListener("keyup",finish);};
+  }, []);
   const snapshot = review?.snapshot;
   const expanding = useRef(new Set<string>());
   const [expanded, setExpanded] = useState<Record<string, Expansion>>({});
@@ -110,7 +128,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
       rows.push(...(saved?.lines ?? []).map((text, at) => ({ text: ` ${text}`, old: old + at, next: next + at })));
       if (limit > (saved?.lines.length ?? 0) && saved?.more !== false) controls.set(rows.length - 1, { key: down, gap: down, old, next, limit, direction: "down", side });
     }
-    return { ...item, rows, controls, code: diffCode(rows, item.path) };
+    return { ...item, rows, controls };
   }) ?? [], [snapshot, expanded, endpoint, review?.full]);
 
   const expand = async (path: string, context: Context) => {
@@ -230,13 +248,14 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
             <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} full={!!review?.full} />
           </div>}
           <div className="overflow-x-auto px-3 py-1">
-          <pre data-diff className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
+          <DiffCode rows={item.rows} path={item.path}>{(code,ready) => <pre data-diff aria-busy={!ready} className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
             if (!clicked) return;
             event.preventDefault();
             const selection = window.getSelection();
-            const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-            const selected = range && !selection?.isCollapsed ? Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-diff-line]")).filter(row => {
+            const range = selectedRange.current ?? (selection&&!selection.isCollapsed&&selection.rangeCount ? selection.getRangeAt(0) : null);
+            selectedRange.current=null;
+            const selected = range ? Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-diff-line]")).filter(row => {
               const code = row.lastElementChild!;
               if (!range.intersectsNode(code)) return false;
               const content = document.createRange(), overlap = range.cloneRange();
@@ -251,14 +270,14 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
           }}>
             {item.rows.map((row, index) => {
               const context = item.controls.get(index), status = context ? expanded[context.key] : undefined;
-              return <Fragment key={`${row.old}:${row.next}:${row.text}`}><div data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{item.code[index]}</span></div>
+              return <Fragment key={`${row.old}:${row.next}:${row.text}`}><div data-diff-line={index} className={row.old === null && row.next === null ? "text-faint" : row.old === null ? "bg-ok/10 text-ok" : row.next === null ? "bg-remove/10 text-remove" : ""}><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.old}</span><span className="mr-3 inline-block w-9 select-none text-right text-faint">{row.next}</span><span>{code[index]}</span></div>
               {context && <div className="sticky left-0 w-fit py-1 font-sans text-[11px] text-mid">
                 <button type="button" aria-label={status?.error ? "Retry expansion" : `Expand ${context.direction}`} title={status?.error ? "Retry expansion" : `Expand ${context.direction}`} aria-busy={!!status?.busy} disabled={Object.values(expanded).some(value => value.gap === context.gap && value.busy)} className="cursor-pointer px-2 py-1 hover:bg-band disabled:opacity-40"
                   onClick={() => void expand(item.path, context)}><span className={status?.busy ? "inline-block animate-spin" : context.direction === "up" ? "inline-block rotate-180" : "inline-block"}><Icon name={status?.busy ? "refresh" : "chevronDown"} size={14} /></span></button>
                 {status?.error && <span role="alert">{status?.error}</span>}
               </div>}
             </Fragment>; })}
-          </pre>
+          </pre>}</DiffCode>
           </div>
         </section>)}
       </div>

@@ -36,6 +36,7 @@ const env={PATH:process.env.PATH,HOME:root,LANG:'C.UTF-8',RUST_LOG:'warn',CODEX_
 const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env});let daemon=start();
 let failRevision=true,releaseOpen;const openGate=new Promise(done=>{releaseOpen=done;});
 const frontend=process.env.TEST_URL,proxy=createServer((req,res)=>{
+ if(req.url==='/api/client-failures'){req.resume();res.writeHead(200,{'content-type':'application/json'});res.end('{}');return;}
  if(req.url==='/paused'){res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><title>Paused fixture</title>');return;}
  if(failRevision&&req.method==='POST'&&req.url.includes('/correction')){failRevision=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Revision temporarily unavailable'}));return;}
  const upstream=new URL(req.url,req.url.startsWith('/api/')&&!req.url.startsWith('/api/version')?native:frontend);

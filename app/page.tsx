@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
-import { EmbeddedReviews, ConversationCards } from "./components/FocusContext";
-import { receiveDraft } from "./lib/drafts";
+import { EmbeddedReviews, ConversationCards, ConversationReferences } from "./components/FocusContext";
+import { receiveDraft, type DiffQuote } from "./lib/drafts";
 import { TaskActions } from "./components/TaskReference";
 
 import { ArchiveAgent } from "./components/ArchiveAgent";
@@ -190,13 +190,14 @@ export default function Home() {
         if (entry) timeline.set(id, { ...entry, reaction });
       }
       const reconciled = { ...view, timeline: [...timeline.values()].sort((a, b) => a.id - b.id) };
-      setDetails((current) => {
+      const save = () => setDetails((current) => {
         const previous = current[id];
         if (!previous) return { ...current, [id]: reconciled };
         const entries = new Map(previous.timeline.map(entry => [entry.id, entry]));
         for (const entry of reconciled.timeline) entries.set(entry.id, entry);
         return { ...current, [id]: { ...reconciled, hasEarlier: previous.hasEarlier, timeline: [...entries.values()].sort((a, b) => a.id - b.id) } };
       });
+      if (priority === "low") startTransition(save); else save();
       return reconciled;
     }).finally(() => requests.current.delete(id));
     requests.current.set(id, { promise: request, updates, reactions });
@@ -285,17 +286,20 @@ export default function Home() {
     window.localStorage.setItem("oxroute.tasks", String(open));
   }, []);
 
+  const currentTasks = useRef(snapshot.tasks);
+  currentTasks.current = snapshot.tasks;
+  const taskTitleKey = JSON.stringify(snapshot.tasks.map(task => [task.id, task.text]));
   const taskLinks = useMemo(() => ({
-    titles: new Map((snapshot?.tasks ?? []).map(task => [task.id, task.text])),
+    titles: new Map<string,string>(JSON.parse(taskTitleKey)),
     open: (id: string) => {
       showTasks(true);
       setWindowTasks(false);
       setTaskQuery("");
       setShownTask(id);
-      setTaskAt(taskRows(snapshot?.tasks ?? []).findIndex(row => row.task.id === id));
+      setTaskAt(taskRows(currentTasks.current).findIndex(row => row.task.id === id));
       setFocus("tasks");
     },
-  }), [snapshot?.tasks, showTasks, setWindowTasks]);
+  }), [taskTitleKey, showTasks, setWindowTasks]);
 
   const setInboxVisible = useCallback((open: boolean) => {
     setInboxOpen(open);
@@ -457,7 +461,7 @@ export default function Home() {
   // The stream never reads; it only says that something changed.
   useEffect(
     () =>
-      follow((event) => {
+      follow((event) => startTransition(() => {
         if (event.type === "progress") snapshotUpdates.current?.set(`progress:${event.agentId}`, event);
         if (event.type === "timeline" && MESSAGE_KINDS.has(event.entry.kind)) snapshotUpdates.current?.set(`message:${event.entry.agentId}`, event);
         switch (event.type) {
@@ -509,7 +513,7 @@ export default function Home() {
           default:
             reload();
         }
-      }),
+      })),
     [reload, say, setDetails],
   );
 
@@ -970,6 +974,12 @@ export default function Home() {
   const taskAgents = useTaskAgents(snapshot.agents);
   const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
   const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
+  const conversationReferences = useMemo(() => focusOpen ? JSON.stringify(namedTasks.map(agent => agent.id).sort()) : null, [focusOpen, namedTasks]);
+  const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
+  const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
+    owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
+    quote: (quote: DiffQuote) => receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]}),
+  } : null, [focusOpen, focusAgentId, reviewOwnerKey]);
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowTasks ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
@@ -1346,7 +1356,8 @@ export default function Home() {
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={taskActions}>
     <ConversationCards.Provider value={focusOpen?{state:{...snapshot,tasks:taskItems},batchEntry:focusAgentId?details[focusAgentId]?.timeline.findLast(entry=>entry.kind==="said"&&entry.text.includes("#agent/"))?.id:undefined,onTask:taskLinks.open,onSent:reload}:null}>
-    <EmbeddedReviews.Provider value={focusOpen&&focusAgentId?{owners:new Map(Object.entries(snapshot.reviews??{}).flatMap(([id,reviews])=>reviews.map(review=>[review,{id,name:[...snapshot.agents,...snapshot.archived].find(agent=>agent.id===id)?.name??"Conversation"}]))),quote:quote=>receiveDraft(focusAgentId,{text:"",files:[],diffs:[quote]})}:null}>
+    <ConversationReferences.Provider value={conversationReferences}>
+    <EmbeddedReviews.Provider value={embeddedReviews}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} error={archiveError} onCancel={() => setArchiving(null)} onArchive={completeTasks => archiveAgent(archiving, true, completeTasks)} />}
@@ -1754,6 +1765,7 @@ export default function Home() {
       </div>
     </main>
     </EmbeddedReviews.Provider>
+    </ConversationReferences.Provider>
     </ConversationCards.Provider>
     </TaskActions.Provider>
     </TaskLinks.Provider>

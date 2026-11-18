@@ -1,4 +1,4 @@
-import { createContext, memo, useContext } from "react";
+import { createContext, memo, useContext, useMemo } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 
@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
 import { encodePrFormLink } from "../lib/pr-links";
 import { FocusReview } from "./FocusReview";
-import { EmbeddedReviews, ConversationCards } from "./FocusContext";
+import { EmbeddedReviews, ConversationReferences } from "./FocusContext";
 import { FocusCards } from "./FocusCards";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
@@ -90,9 +90,10 @@ function conversationCards(known: Set<string>) {
 // Stable renderer identities preserve native selections when Markdown updates.
 const markdownComponents: Components = {
   p: function Paragraph({node,children}) {
-    const reviews=useContext(EmbeddedReviews),cards=useContext(ConversationCards);
+    const reviews=useContext(EmbeddedReviews),references=useContext(ConversationReferences);
+    const known=useMemo(()=>references?new Set<string>(JSON.parse(references)):null,[references]);
     const nodes=node?.children??[];
-    const agentLink=(child:typeof nodes[number])=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#agent/")&&cards&&[...cards.state.agents,...cards.state.archived].some(agent=>agent.id===(child.properties.href as string).slice(7));
+    const agentLink=(child:typeof nodes[number])=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#agent/")&&known?.has((child.properties.href as string).slice(7));
     const ids=nodes.filter(agentLink).map(child=>child.type==="element"?String(child.properties.href).slice(7):"");
     if(ids.length&&nodes.every(child=>agentLink(child)||child.type==="text"&&!child.value.trim()))return <FocusCards ids={ids}/>;
     const embedded=node?.children.some(child=>child.type==="element"&&child.tagName==="a"&&typeof child.properties.href==="string"&&child.properties.href.startsWith("#review/")&&reviews?.owners.has(child.properties.href.slice(8)));
@@ -144,9 +145,8 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
   const tasks = useContext(TaskLinks);
   const quotes = useContext(QuoteLinks);
   const root = useContext(ArtifactRoot);
-  const embedded=useContext(EmbeddedReviews), cards=useContext(ConversationCards);
+  const embedded=useContext(EmbeddedReviews), agents=useContext(ConversationReferences);
   const titles = JSON.stringify([...(reviews?.titles ?? []), ...(tasks?.titles ?? []), ...[...(embedded?.owners ?? [])].map(([id, owner]) => [id, `Review from ${owner.name}`])]);
-  const agents = cards ? JSON.stringify([...cards.state.agents, ...cards.state.archived].map(agent => agent.id).sort()) : null;
   return <ParsedMarkdown text={children} root={root} titles={titles} agents={agents} threads={quotes?.threads} />;
 });
 

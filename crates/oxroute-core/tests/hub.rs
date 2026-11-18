@@ -1815,7 +1815,7 @@ async fn typing_at_an_agent_from_another_surface_answers_in_its_thread() {
     // This is what the TUI and the web UI do.
     w.hub.say_to(&agent, "one more thing").await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
-    assert!(settle(|| w.posts.lock().unwrap().replies.len() >= 2).await);
+    assert!(settle(|| w.posts.lock().unwrap().replies.iter().any(|(_, text)| text == "> one more thing\n\ndone")).await);
 
     // It lands in the Slack thread, not into nowhere.
     assert!(w

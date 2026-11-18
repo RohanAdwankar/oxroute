@@ -1,90 +1,37 @@
-import { common, createLowlight } from "lowlight";
-import { diffWordsWithSpace } from "diff";
-import { newMatcherFn } from "diff2html/lib/rematch";
-import { distance } from "fastest-levenshtein";
-import type { RootContent } from "hast";
+import {startTransition, useEffect, useMemo, useRef, useState, type ReactNode} from "react";
+import type {Line, Token} from "../lib/diff-highlighting";
 
-type Line = { text: string; old: number | null; next: number | null };
-type Token = { text: string; className: string };
-const syntax = createLowlight(common);
-
-function tokens(source: string, path: string): Token[][] {
-  const language = path.split(".").at(-1)!.toLowerCase();
-  const tree = syntax.registered(language) ? syntax.highlight(language, source) : syntax.highlightAuto(source);
-  const rows: Token[][] = [[]];
-  const walk = (nodes: RootContent[], className = "") => {
-    for (const node of nodes) {
-      if (node.type === "element") {
-        walk(node.children, [className, ...(node.properties.className as string[] ?? [])].join(" "));
-      } else if (node.type === "text") {
-        node.value.split("\n").forEach((text, index) => {
-          if (index) rows.push([]);
-          if (text) rows.at(-1)!.push({ text, className });
-        });
-      }
-    }
-  };
-  walk(tree.children);
-  return rows;
+type Code = Token[][];
+let worker: Worker | undefined, serial=0;
+const pending=new Map<number,{resolve:(code:Code)=>void;reject:(error:Error)=>void}>();
+function highlight(rows:Line[], path:string):Promise<Code> {
+  if(!worker) {
+    worker=new Worker(new URL("../lib/diff-worker.ts",import.meta.url),{type:"module"});
+    worker.onmessage=({data})=>{
+      const request=pending.get(data.id);pending.delete(data.id);
+      if(data.error)request?.reject(new Error(data.error));else request?.resolve(data.code);
+    };
+    worker.onerror=event=>{for(const request of pending.values())request.reject(new Error(event.message));pending.clear();worker?.terminate();worker=undefined;};
+  }
+  const id=++serial;
+  return new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});worker!.postMessage({id,rows,path});});
 }
 
-export function diffCode(rows: Line[], path: string) {
-  const spans: [number, number][][] = rows.map(() => []);
-  const source = rows.map(row => row.text.slice(1).trim());
-  const match = newMatcherFn((a: number, b: number) =>
-    distance(source[a], source[b]) / Math.max(1, source[a].length + source[b].length));
-  for (let start = 0; start < rows.length;) {
-    if (rows[start].next !== null || rows[start].old === null) { start++; continue; }
-    let end = start;
-    while (end < rows.length && rows[end].old !== null && rows[end].next === null) end++;
-    const addedStart = end;
-    while (end < rows.length && rows[end].old === null && rows[end].next !== null) end++;
-    const indices = (from: number, to: number) => Array.from({ length: to - from }, (_, at) => from + at);
-    for (const [before, after] of match(indices(start, addedStart), indices(addedStart, end))) {
-      for (let at = 0; at < Math.min(before.length, after.length); at++) {
-        const offsets = [0, 0], pair = [before[at], after[at]];
-        for (const index of pair) spans[index] = [];
-        const parts = diffWordsWithSpace(rows[pair[0]].text.slice(1), rows[pair[1]].text.slice(1));
-        const shared = parts.filter(part => !part.added && !part.removed).reduce((length, part) => length + (part.value.trim() ? part.value.length : 0), 0);
-        if (shared < Math.max(...pair.map(index => source[index].length)) / 2) continue;
-        for (const part of parts) {
-          for (const side of [0, 1]) {
-            if ((side === 0 && part.added) || (side === 1 && part.removed)) continue;
-            if (part.added || part.removed) spans[pair[side]].push([offsets[side], offsets[side] + part.value.length]);
-            offsets[side] += part.value.length;
-          }
-        }
-      }
-    }
-    start = end;
-  }
-  for (const [index, ranges] of spans.entries()) {
-    const merged: [number, number][] = [];
-    for (const range of ranges) {
-      const previous = merged.at(-1);
-      if (previous && !rows[index].text.slice(1 + previous[1], 1 + range[0]).trim()) previous[1] = range[1];
-      else merged.push(range);
-    }
-    spans[index] = merged;
-  }
-  const oldTokens = tokens(rows.filter(row => row.old !== null).map(row => row.text.slice(1)).join("\n"), path);
-  const nextTokens = tokens(rows.filter(row => row.next !== null).map(row => row.text.slice(1)).join("\n"), path);
-  let before = 0, after = 0;
-  return rows.map((row, index) => {
-    const old = row.old !== null ? oldTokens[before++] : undefined;
-    const next = row.next !== null ? nextTokens[after++] : undefined;
-    if (!old && !next) return row.text;
-    let offset = 0;
-    const content = (next ?? old ?? []).flatMap((token, tokenIndex) => {
-      const start = offset;
-      offset += token.text.length;
-      const cuts = [start, offset, ...spans[index].flat().filter(at => at > start && at < offset)].sort((a, b) => a - b);
-      return cuts.slice(1).map((end, at) => {
-        const begin = cuts[at], changed = spans[index].some(([a, b]) => begin >= a && end <= b);
-        return <span key={`${tokenIndex}-${at}`} className={token.className} data-diff-change={changed || undefined}
-          style={changed ? { backgroundColor: row.next === null ? "color-mix(in srgb, var(--color-remove) 24%, transparent)" : "color-mix(in srgb, var(--color-ok) 24%, transparent)" } : undefined}>{token.text.slice(begin - start, end - start)}</span>;
-      });
-    });
-    return <>{row.text[0]}{content}</>;
-  });
+// Text stays readable and quotable while the worker computes exact highlighting.
+export function DiffCode({rows,path,children}:{rows:Line[];path:string;children:(code:ReactNode[],ready:boolean)=>ReactNode}) {
+  const [result,setResult]=useState<{rows:Line[];code:Code}|null>(null),[error,setError]=useState("");
+  const element=useRef<HTMLDivElement>(null);
+  useEffect(()=>{let live=true,ready:Code|undefined;setError("");
+    const apply=()=>{
+      if(!live||!ready)return;
+      const selection=window.getSelection();
+      if(element.current&&selection&&!selection.isCollapsed&&selection.rangeCount&&selection.getRangeAt(0).intersectsNode(element.current))return;
+      const code=ready;ready=undefined;startTransition(()=>setResult({rows,code}));
+    };
+    document.addEventListener("selectionchange",apply);
+    highlight(rows,path).then(code=>{ready=code;apply();}).catch(error=>{if(live)setError(String(error));});
+    return()=>{live=false;document.removeEventListener("selectionchange",apply);};
+  },[rows,path]);
+  const code=useMemo(()=>result?.rows===rows?result.code.map((tokens,index)=><>{tokens.map((token,at)=>at===0?token.text:<span key={at} className={token.className} data-diff-change={token.changed||undefined} style={token.changed?{backgroundColor:rows[index].next===null?"color-mix(in srgb, var(--color-remove) 24%, transparent)":"color-mix(in srgb, var(--color-ok) 24%, transparent)"}:undefined}>{token.text}</span>)}</>):rows.map(row=>row.text),[result,rows]);
+  return <div ref={element} className="contents">{error&&<p role="alert" className="text-[12px] text-faint">{error}</p>}{children(code,result?.rows===rows)}</div>;
 }
