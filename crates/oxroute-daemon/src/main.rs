@@ -241,6 +241,7 @@ async fn serve() -> Result<()> {
         .route("/api/focus/agent", post(open_focus))
         .route("/api/focus/batches", post(focus_batch))
         .route("/api/focus/messages", post(focus_message))
+        .route("/api/focus/inbox", get(focus_inbox).put(update_focus_inbox))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -607,6 +608,20 @@ struct FocusMessageBody {agent_id:String,target_id:String,text:String,request_id
 async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Result<Json<serde_json::Value>,Failed> {
     hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id).await?;
     Ok(Json(json!({"queued":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct FocusInboxQuery { source: Option<String>, item_id: Option<String> }
+async fn focus_inbox(State(hub):Hubs, axum::extract::Query(query):axum::extract::Query<FocusInboxQuery>) -> Result<Json<oxroute_core::store::FocusInboxSnapshot>,Failed> {
+    Ok(Json(hub.store.focus_inbox(query.source.as_deref(),query.item_id.as_deref())?))
+}
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct FocusInboxBody { agent_id:String, #[serde(flatten)] update:oxroute_core::store::FocusInboxUpdate }
+async fn update_focus_inbox(State(hub):Hubs,Json(body):Json<FocusInboxBody>) -> Result<Json<serde_json::Value>,Failed> {
+    hub.update_focus_inbox(&body.agent_id,&body.update)?;
+    Ok(Json(json!({"saved":true})))
 }
 
 #[derive(Deserialize)]

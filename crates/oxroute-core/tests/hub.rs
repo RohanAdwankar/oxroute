@@ -3875,20 +3875,20 @@ async fn focus_identity_and_periodic_wakes_preserve_human_dependencies() {
     let at=now();
     w.hub.sweep_focus(at).await.unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;
-    assert!(w.calls.lock().unwrap().started.is_empty(),"No model calls while the fleet has no work");
+    assert!(w.calls.lock().unwrap().started.is_empty(),"The first idle check establishes a deadline without replaying history");
     let worker=w.hub.create_agent(None).unwrap();
     let mut task=TaskItem{id:new_id("task"),text:"Choose a deployment window".into(),agent_id:worker.id.clone(),status:TaskStatus::WaitingForHuman,blocked_by_task_id:String::new(),parent_task_id:String::new(),images:vec![],created_at:at,updated_at:at,position:0.0};
     w.hub.store.save_task(&task).unwrap();
-    w.hub.sweep_focus(at).await.unwrap();
+    w.hub.sweep_focus(at+1201.0).await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==1&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
     assert_eq!(w.hub.store.tasks().unwrap()[0].status,TaskStatus::WaitingForHuman);
-    w.hub.sweep_focus(at+1199.0).await.unwrap();
+    w.hub.sweep_focus(at+2400.0).await.unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;assert_eq!(w.calls.lock().unwrap().started.len(),1);
-    w.hub.sweep_focus(at+1201.0).await.unwrap();
+    w.hub.sweep_focus(at+2402.0).await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==2&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
     task.status=TaskStatus::Complete;w.hub.store.save_task(&task).unwrap();
-    w.hub.sweep_focus(at+2405.0).await.unwrap();tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(w.calls.lock().unwrap().started.len(),2);
+    w.hub.sweep_focus(at+3605.0).await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().started.len()==3).await, "Inbox checks continue when fleet tasks finish");
     w.hub.reconcile_threads().await.unwrap();
     assert!(w.posts.lock().unwrap().threads.is_empty(),"Focus must remain a local conversation");
     assert!(w.posts.lock().unwrap().replies.is_empty());
@@ -3954,7 +3954,7 @@ async fn focus_timer_never_overlaps_an_active_coordinator_turn() {
     let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
     let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();let at=now();
     w.hub.store.save_task(&TaskItem{id:new_id("task"),text:"Choose an available window".into(),agent_id:worker.id,status:TaskStatus::WaitingForHuman,blocked_by_task_id:String::new(),parent_task_id:String::new(),images:vec![],created_at:at,updated_at:at,position:0.0}).unwrap();
-    w.hub.sweep_focus(at).await.unwrap();assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
+    w.hub.open_focus().await.unwrap();assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
     w.hub.sweep_focus(at+1300.0).await.unwrap();tokio::time::sleep(Duration::from_millis(40)).await;
     assert_eq!(w.calls.lock().unwrap().started.len(),1);assert!(w.calls.lock().unwrap().interrupted.is_empty());
     w.hub.interrupt(&focus.id).await.unwrap();
@@ -4085,4 +4085,23 @@ async fn focus_turn_events_coalesce_outcomes_without_self_loops_or_periodic_dupl
     w.hub.sweep_focus(anchor + 1201.0).await.unwrap();
     assert!(settle(|| w.calls.lock().unwrap().started.len() == count + 1).await);
     end(&w, &focus.id, "completed").await;
+}
+
+#[tokio::test]
+async fn focus_inbox_updates_are_local_scoped_and_ground_future_checks() {
+    let w=world(Mode::Ask,false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();
+    let worker=w.hub.create_agent(None).unwrap();
+    let update=serde_json::from_value(serde_json::json!({"items":[{"source":"outlook","itemId":"message-42","revision":"latest-reply","state":"drafted","summary":"Latest context still needs a decision","conversationId":worker.id,"draft":"Proposed answer for human review"}],"checkpoints":{"outlook":"inspected-position"}})).unwrap();
+    assert!(w.hub.update_focus_inbox(&worker.id,&update).is_err());
+    w.hub.update_focus_inbox(&focus.id,&update).unwrap();
+    w.hub.open_focus().await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==1).await);
+    let calls=w.calls.lock().unwrap();
+    let context=calls.started.last().unwrap().1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
+    assert!(context.contains("message-42") && context.contains("Proposed answer for human review") && context.contains("inspected-position"));
+    drop(calls);
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+    assert!(w.posts.lock().unwrap().threads.is_empty());
 }

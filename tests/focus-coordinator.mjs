@@ -77,12 +77,12 @@ try{
  await page.reload();await composer.waitFor();assert.equal(await composer.inputValue(),'Keep this coordinator draft.');
  assert.equal(await page.getByRole('tab',{name:'Focus',exact:true}).count(),1);
  const requestId=crypto.randomUUID();await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});
- await until(async()=>turns.length===3&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete');
- await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,3);assert.equal(interrupts,0);
+ await until(async()=>turns.length===4&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete'&&(await detail()).agent.status==='complete');
+ await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
  await page.goto(ui+'/paused');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();
  await until(async()=>{try{return(await fetch(native+'/api/health')).ok;}catch{return false;}});
- assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,3,'Accepted wake receipt survives restart');
+ assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,4,'Accepted worker and event receipts survive restart');
  const restored=page;await restored.goto(`${ui}/?view=focus`);
  await restored.locator(`[data-agent-pane="${focusId}"]`).waitFor();assert.equal(await restored.locator('[data-composer]').inputValue(),'Keep this coordinator draft.');
  const reference=restored.locator(`[data-task-reference="${task.id}"]`).first();await reference.getByRole('button',{name:'Approve',exact:true}).waitFor();

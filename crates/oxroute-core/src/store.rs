@@ -19,12 +19,16 @@ use crate::model::{
 use crate::tags::Board;
 
 mod focus;
-pub use focus::{FocusEventBatch, FocusTurnEvent};
+pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 
 #[derive(Debug, Clone)]
 pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String}
 
 const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS focus_inbox (
+ source TEXT NOT NULL, item_id TEXT NOT NULL, data TEXT NOT NULL, updated_at REAL NOT NULL,
+ PRIMARY KEY(source,item_id)
+);
 CREATE TABLE IF NOT EXISTS focus_turn_events (
  id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, agent_id TEXT NOT NULL,
  outcome TEXT NOT NULL, at REAL NOT NULL, receipt TEXT
