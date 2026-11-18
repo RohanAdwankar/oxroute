@@ -30,6 +30,7 @@ import { SplitAction } from "./SplitAction";
 const MINE: EntryKind[] = ["you", "received"];
 
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
+  coordination: { label: "Internal update", tone: "text-faint" },
   asked: { label: "asked", tone: "text-hold border-hold" },
   forked: { label: "forked", tone: "text-merge border-merge" },
   forkedFrom: { label: "parent", tone: "text-merge border-merge" },
@@ -1353,7 +1354,7 @@ const Message = memo(function Message({
                 <Icon name={entry.reaction === "down" ? "thumbDown" : "thumbUp"} size={12} />
               </span>
             )}
-            {entry.origin && <span className="text-[11px] text-ok">← {entry.origin}</span>}
+            {entry.origin && (entry.kind === "coordination" ? <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={() => onOpenAgent(entry.origin)} className="w-fit cursor-pointer text-[11px] text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button> : <span className="text-[11px] text-ok">← {entry.origin}</span>)}
             {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
               <button
                 type="button"

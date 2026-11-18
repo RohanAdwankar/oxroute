@@ -307,7 +307,12 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
-    conn.execute("CREATE INDEX IF NOT EXISTS entries_messages ON entries (agent_id, id DESC) WHERE kind IN ('received', 'said', 'asked', 'you') AND text != ''", [])?;
+    let message_index="CREATE INDEX entries_messages ON entries (agent_id, id DESC) WHERE kind IN ('received', 'said', 'asked', 'you', 'coordination') AND text != ''";
+    let existing:Option<String>=conn.query_row("SELECT sql FROM sqlite_master WHERE type='index' AND name='entries_messages'",[],|row|row.get(0)).optional()?;
+    if existing.as_deref()!=Some(message_index) {
+        conn.execute("DROP INDEX IF EXISTS entries_messages",[])?;
+        conn.execute(message_index,[])?;
+    }
     conn.execute("CREATE INDEX IF NOT EXISTS entries_forks ON entries (agent_id, detail) WHERE kind = 'forked-from'", [])?;
     if !conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'entries_search')", [], |row| row.get::<_, bool>(0))? {
         let transaction = conn.unchecked_transaction()?;
@@ -1383,7 +1388,7 @@ impl Store {
                 params![agent_id, at, kind.as_str(), text, detail, output, item_id, origin],
             )?;
             Ok(Entry {
-                request_id: if kind == EntryKind::You { item_id.to_string() } else { String::new() },
+                request_id: if matches!(kind, EntryKind::You | EntryKind::Coordination) { item_id.to_string() } else { String::new() },
                 id: c.last_insert_rowid(),
                 agent_id: agent_id.to_string(),
                 at,
@@ -1545,7 +1550,7 @@ impl Store {
                  FROM (SELECT DISTINCT agent_id FROM entries) owners
                  JOIN entries e ON e.id = (
                      SELECT id FROM entries WHERE agent_id = owners.agent_id
-                     AND kind IN ('received', 'said', 'asked', 'you') AND text != ''
+                     AND kind IN ('received', 'said', 'asked', 'you', 'coordination') AND text != ''
                      ORDER BY id DESC LIMIT 1
                  )",
             )?;
@@ -1577,7 +1582,7 @@ impl Store {
         };
         let spoken = matches!(
             group.kind,
-            EntryKind::You | EntryKind::Said | EntryKind::Asked | EntryKind::Received
+            EntryKind::You | EntryKind::Said | EntryKind::Asked | EntryKind::Received | EntryKind::Coordination
         );
         4 * whole(&group.text) + 2 * has(&group.text)
             + whole(&group.detail)
@@ -1939,12 +1944,14 @@ impl Store {
     pub fn last_focus_wake(&self) -> Result<Option<f64>> {
         self.read(|c|Ok(c.query_row("SELECT MAX(CAST(substr(key,12) AS REAL)) FROM kv WHERE key GLOB 'focus-wake:*'",[],|row|row.get(0))?))
     }
-    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str)->Result<()> {
+    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str)->Result<Option<Entry>> {
         self.with(|c|{
             let tx=c.unchecked_transaction()?;
-            tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text) VALUES (?1,?2,?3,?4)",params![id,sender,target,text])?;
+            let inserted=tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text) VALUES (?1,?2,?3,?4)",params![id,sender,target,text])? > 0;
             let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 FROM focus_messages WHERE id=?1",params![id,sender,target,text],|row|row.get::<_,bool>(0))?;
-            anyhow::ensure!(same,"requestId was already used for another message");tx.commit()?;Ok(())
+            anyhow::ensure!(same,"requestId was already used for another message");
+            let entry=if inserted {Some(tx.query_row("INSERT INTO entries(agent_id,at,kind,text,item_id,origin) VALUES(?1,?2,'coordination',?3,?4,?5) RETURNING id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id",params![target,crate::model::now(),text,id,sender],read_entry)?)} else {None};
+            tx.commit()?;Ok(entry)
         })
     }
     pub fn pending_focus_messages(&self)->Result<Vec<FocusMessage>> {
@@ -2074,7 +2081,7 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
 
 fn read_entry(row: &Row<'_>) -> rusqlite::Result<Entry> {
     Ok(Entry {
-        request_id: if row.get::<_, String>(3)? == "you" { row.get(10)? } else { String::new() },
+        request_id: if matches!(row.get::<_, String>(3)?.as_str(), "you" | "coordination") { row.get(10)? } else { String::new() },
         id: row.get(0)?,
         agent_id: row.get(1)?,
         at: row.get(2)?,

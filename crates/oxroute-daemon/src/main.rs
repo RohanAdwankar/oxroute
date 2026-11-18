@@ -655,6 +655,8 @@ async fn route(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SayBody {
+    #[serde(default)]
+    agent_id: Option<String>,
     agent: String,
     text: String,
     /// Wait for the running turn rather than stopping it.
@@ -884,6 +886,11 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
     if body.text.trim().is_empty() {
         return Err(Failed(anyhow::anyhow!("nothing to say")));
+    }
+    if let Some(sender)=body.agent_id.as_deref() {
+        if !body.diffs.is_empty() {return Err(Failed(anyhow::anyhow!("send internal report text through the coordination endpoint")));}
+        hub.send_focus_message(sender,&body.agent,&body.text,&body.request_id).await?;
+        return Ok(Json(json!({"ok":true})));
     }
     let detail = diff_detail(&body.text, &body.diffs)?;
     hub.say_to_annotated(&body.agent, &body.text, vec![], body.queued, &detail, &body.request_id).await?;

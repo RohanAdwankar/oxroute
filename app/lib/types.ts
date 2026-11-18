@@ -8,6 +8,7 @@ export type Delivery = "start" | "restart";
 export type AgentStatus = "working" | "stalled" | "complete";
 export type InboxState = "waiting" | "done";
 export type EntryKind =
+  | "coordination"
   | "received"
   | "said"
   | "worked"

@@ -480,6 +480,8 @@ pub enum EntryKind {
     Worked,
     /// The agent is blocked on an answer.
     Asked,
+    /// An internal update with a persisted originating agent.
+    Coordination,
     /// You said something directly.
     You,
     /// This session branched into another agent.
@@ -504,6 +506,7 @@ impl EntryKind {
             EntryKind::Worked => "worked",
             EntryKind::Asked => "asked",
             EntryKind::You => "you",
+            EntryKind::Coordination => "coordination",
             EntryKind::Forked => "forked",
             EntryKind::ForkedFrom => "forked-from",
             EntryKind::Merged => "merged",
@@ -520,6 +523,7 @@ impl EntryKind {
             "worked" => EntryKind::Worked,
             "asked" => EntryKind::Asked,
             "you" => EntryKind::You,
+            "coordination" => EntryKind::Coordination,
             "forked" => EntryKind::Forked,
             "forked-from" => EntryKind::ForkedFrom,
             "merged" => EntryKind::Merged,

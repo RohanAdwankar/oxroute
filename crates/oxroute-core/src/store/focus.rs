@@ -149,6 +149,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn coordination_origin_survives_retries_and_restart() {
+        let root=std::env::temp_dir().join(crate::model::new_id("coordination"));
+        std::fs::create_dir_all(&root).unwrap();let path=root.join("state.sqlite3");
+        {
+            let store=Store::open(&path).unwrap();
+            let entry=store.enqueue_focus_message("request","source","recipient","Evidence ready").unwrap().unwrap();
+            assert_eq!(entry.kind,EntryKind::Coordination);assert_eq!(entry.origin,"source");
+            assert_eq!(store.last_human_entry("recipient").unwrap(),0);
+        }
+        let store=Store::open(&path).unwrap();
+        assert!(store.enqueue_focus_message("request","source","recipient","Evidence ready").unwrap().is_none());
+        assert!(store.enqueue_focus_message("request","another-source","recipient","Evidence ready").is_err());
+        let entries=store.timeline("recipient",100).unwrap();assert_eq!(entries.len(),1);
+        assert_eq!(entries[0].kind,EntryKind::Coordination);assert_eq!(entries[0].origin,"source");assert_eq!(entries[0].request_id,"request");
+        assert!(!store.has_human_message("recipient").unwrap());
+        drop(store);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn inbox_observations_and_local_drafts_survive_restart_and_revisions() {
         let root = std::env::temp_dir().join(crate::model::new_id("focus-inbox"));
         std::fs::create_dir_all(&root).unwrap();

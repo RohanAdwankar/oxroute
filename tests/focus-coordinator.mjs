@@ -80,9 +80,20 @@ try{
  await until(async()=>turns.length===4&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete'&&(await detail()).agent.status==='complete');
  await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
+ const reportRequest=crypto.randomUUID(),report={agentId:worker.id,targetId:focusId,text:'Independent evidence is ready for coordination.',requestId:reportRequest};
+ await api('/api/focus/messages',report);
+ await until(async()=>turns.length===5&&(await detail()).agent.status==='complete');
+ await api('/api/focus/messages',report);
+ const reports=(await detail()).timeline.filter(entry=>entry.kind==='coordination'&&entry.requestId===reportRequest);
+ assert.equal(reports.length,1,'Coordination retries retain one visible entry');assert.equal(reports[0].origin,worker.id);
+ const reportRow=page.locator(`[data-entry="${reports[0].id}"]`);await reportRow.getByText('Internal update',{exact:true}).waitFor();
+ assert.ok(!(await reportRow.getAttribute('class')).includes('bg-mine'),'Agent reports never use human styling');
+ await reportRow.getByRole('button',{name:`Open originating agent ${worker.id}`,exact:true}).waitFor();
+ assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done','Reports never approve tasks');
+ if(process.env.COORDINATION_SCREENSHOT){await reportRow.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.COORDINATION_SCREENSHOT});}
  await page.goto(ui+'/paused');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();
  await until(async()=>{try{return(await fetch(native+'/api/health')).ok;}catch{return false;}});
- assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,4,'Accepted worker and event receipts survive restart');
+ assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,5,'Accepted coordination and event receipts survive restart');
  const restored=page;await restored.goto(`${ui}/?view=focus`);
  await restored.locator(`[data-agent-pane="${focusId}"]`).waitFor();assert.equal(await restored.locator('[data-composer]').inputValue(),'Keep this coordinator draft.');
  const reference=restored.locator(`[data-task-reference="${task.id}"]`).first();await reference.getByRole('button',{name:'Approve',exact:true}).waitFor();

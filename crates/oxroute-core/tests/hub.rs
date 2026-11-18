@@ -3902,7 +3902,8 @@ async fn focus_internal_messages_are_durable_idempotent_and_local() {
     let worker=w.hub.create_agent(None).unwrap();
     w.hub.store.bind("slack","D1","existing-thread",&worker.id).unwrap();
     let request=uuid::Uuid::new_v4().to_string();
-    assert!(w.hub.send_focus_message(&worker.id,&focus.id,"Review existing evidence",&request).await.is_err());
+    let other=w.hub.create_agent(None).unwrap();
+    assert!(w.hub.send_focus_message(&worker.id,&other.id,"Review existing evidence",&request).await.is_err());
     w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
     w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
@@ -4101,6 +4102,36 @@ async fn focus_inbox_updates_are_local_scoped_and_ground_future_checks() {
     let calls=w.calls.lock().unwrap();
     let context=calls.started.last().unwrap().1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
     assert!(context.contains("message-42") && context.contains("Proposed answer for human review") && context.contains("inspected-position"));
+    drop(calls);
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+    assert!(w.posts.lock().unwrap().threads.is_empty());
+}
+
+#[tokio::test]
+async fn focus_reports_keep_agent_origin_without_becoming_human_replies() {
+    let w=world(Mode::Ask,false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();
+    let worker=w.hub.create_agent(None).unwrap();
+    let text="Investigation evidence is ready";
+    let human=w.hub.store.add_entry(&focus.id,now(),EntryKind::You,text,"","").unwrap();
+    for answer in ["Choose the preparation window","The evidence is available"] {
+        w.hub.store.add_entry(&focus.id,now(),EntryKind::Said,answer,"","").unwrap();
+    }
+    let request=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&worker.id,&focus.id,text,&request).await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==1).await);
+    w.hub.send_focus_message(&worker.id,&focus.id,text,&request).await.unwrap();
+    let timeline=w.hub.store.timeline(&focus.id,100).unwrap();
+    let reports=timeline.iter().filter(|entry|entry.kind==EntryKind::Coordination).collect::<Vec<_>>();
+    assert_eq!(reports.len(),1);
+    assert_eq!(reports[0].origin,worker.id);
+    assert_eq!(reports[0].request_id,request);
+    assert_eq!(w.hub.store.last_human_entry(&focus.id).unwrap(),human.id);
+    let calls=w.calls.lock().unwrap();
+    let input=calls.started.last().unwrap().1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
+    assert!(input.contains("\"unansweredMessages\":2"));
+    assert!(input.contains(&worker.id));
     drop(calls);
     assert!(w.posts.lock().unwrap().replies.is_empty());
     assert!(w.posts.lock().unwrap().threads.is_empty());

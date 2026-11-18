@@ -88,7 +88,7 @@ const EMPTY: Snapshot = {
   backends: [],
 };
 
-const MESSAGE_KINDS = new Set<Entry["kind"]>(["received", "said", "asked", "you"]);
+const MESSAGE_KINDS = new Set<Entry["kind"]>(["received", "said", "asked", "you", "coordination"]);
 
 function streamedSnapshot(snapshot: Snapshot, event: DaemonEvent): Snapshot {
   if (event.type === "progress") return {
