@@ -10,10 +10,14 @@ const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 const extensions = new Set([...imageExtensions, "pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"]);
 export function savedReview(url: string) {return url.startsWith("/api/agents/") && url.split("/").length === 6 && url.split("/")[4] === "file-reviews";}
 export function reviewable(url: string) {
-  const parsed = new URL(url, "http://localhost");
-  if (parsed.pathname !== "/api/artifacts" && !parsed.pathname.startsWith("/api/attachments/")) return false;
-  const file = parsed.pathname === "/api/artifacts" ? parsed.searchParams.get("path") ?? "" : decodeURIComponent(parsed.pathname);
-  return (parsed.pathname === "/api/artifacts" || parsed.pathname.startsWith("/api/attachments/")) && extensions.has(file.split(".").at(-1)?.toLowerCase() ?? "");
+  try {
+    const parsed = new URL(url, "http://localhost");
+    if (parsed.pathname !== "/api/artifacts" && !parsed.pathname.startsWith("/api/attachments/")) return false;
+    const file = parsed.pathname === "/api/artifacts" ? parsed.searchParams.get("path") ?? "" : decodeURIComponent(parsed.pathname);
+    return extensions.has(file.split(".").at(-1)?.toLowerCase() ?? "");
+  } catch {
+    return false;
+  }
 }
 export function ReviewFileButton({url}: {url: string}) {
   const open = useContext(FileReviews);
