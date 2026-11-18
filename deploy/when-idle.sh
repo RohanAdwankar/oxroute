@@ -20,9 +20,11 @@ test "$(git -C "$repository" rev-parse HEAD)" = "$commit"
 test -z "$(git -C "$repository" status --porcelain --untracked-files=no)"
 test -x "$release/bin/oxrouted"
 test -x "$release/bin/oxroute-agent"
+test -x "$release/bin/oxroute"
 test "$(cat "$release/web/.next/BUILD_ID")" = "$version"
 test "$(sha256sum "$release/bin/oxrouted" | cut -d ' ' -f1)" = "$(jq -er '.binarySha256' "$request")"
 test "$(sha256sum "$release/bin/oxroute-agent" | cut -d ' ' -f1)" = "$(jq -er '.agentBinarySha256' "$request")"
+test "$(sha256sum "$release/bin/oxroute" | cut -d ' ' -f1)" = "$(jq -er '.tuiBinarySha256' "$request")"
 # Validate from the release snapshot; checkout caches may be reclaimed while idle.
 validation=$release/validation
 test "$(cat "$validation/REVISION")" = "$commit"
@@ -30,6 +32,7 @@ test "$(cat "$validation/REVISION")" = "$commit"
 repository=$validation
 binary=$HOME/.local/bin/oxrouted
 agent_binary=$HOME/.local/bin/oxroute-agent
+tui_binary=$HOME/.local/bin/oxroute
 web=$HOME/.local/share/oxroute/web
 database=$HOME/.local/state/oxroute/oxroute.sqlite3
 backup_root=$(uv run --no-project python -c '
@@ -43,11 +46,12 @@ print(root)
 ' /tmp "$state")
 backup=$(mktemp -d "$backup_root/oxroute-deploy.XXXXXX")
 export TMPDIR=$backup
-cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$web.next"; }
+cleanup() { rm -rf -- "$backup"; rm -f -- "$binary.next" "$agent_binary.next" "$tui_binary.next" "$web.next"; }
 trap cleanup EXIT
 uv run --no-project python "$repository/deploy/database-backup.py" backup "$database" "$backup/database.sqlite3.gz"
 cp -a "$binary" "$backup/oxrouted"
 if test -e "$agent_binary"; then cp -a "$agent_binary" "$backup/oxroute-agent"; fi
+if test -e "$tui_binary"; then cp -a "$tui_binary" "$backup/oxroute"; fi
 cp -a "$web" "$backup/web"
 task_status() {
   jq -c --arg status "$1" --arg note "$2" --arg group "${3:-tasks}" '. as $r | .[$group][]? | {id, text, agentId:$r.agentId, status:$status, note:$note}' "$request" |
@@ -62,7 +66,7 @@ rollback() {
   systemctl --user stop oxroute-web.service oxroute.service
   mv "$request" "$state/failed-deployment.json"
   request=$state/failed-deployment.json
-  rm -f -- "$binary.next" "$agent_binary.next" "$web.next"
+  rm -f -- "$binary.next" "$agent_binary.next" "$tui_binary.next" "$web.next"
   cp -a "$backup/web" "$web.next"
   mv -Tf "$web.next" "$web"
   cp -a "$backup/oxrouted" "$binary.next"
@@ -72,6 +76,12 @@ rollback() {
     mv -Tf "$agent_binary.next" "$agent_binary"
   else
     rm -f "$agent_binary"
+  fi
+  if test -e "$backup/oxroute"; then
+    cp -a "$backup/oxroute" "$tui_binary.next"
+    mv -Tf "$tui_binary.next" "$tui_binary"
+  else
+    rm -f "$tui_binary"
   fi
   # Restore review bodies stripped by migration, without reverting other data.
   uv run --no-project python "$repository/deploy/database-backup.py" restore-reviews "$database" "$backup/database.sqlite3.gz"
@@ -88,18 +98,22 @@ fi
 # A full destination filesystem must fail before either service is stopped.
 ln -s "$release/bin/oxrouted" "$binary.next"
 ln -s "$release/bin/oxroute-agent" "$agent_binary.next"
+ln -s "$release/bin/oxroute" "$tui_binary.next"
 ln -s "$release/web" "$web.next"
 if ! idle; then exit 0; fi
 trap rollback ERR
 systemctl --user stop oxroute-web.service oxroute.service
 mv -Tf "$binary.next" "$binary"
 mv -Tf "$agent_binary.next" "$agent_binary"
+mv -Tf "$tui_binary.next" "$tui_binary"
 mv -Tf "$web.next" "$web"
 systemctl --user start oxroute.service oxroute-web.service
 curl --retry 30 --retry-delay 1 --retry-connrefused -fsS "$api/api/health" >/dev/null
 test "$(curl --retry 30 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:3939/api/version | jq -er .version)" = "$version"
 cmp -s "$release/bin/oxrouted" "$binary"
 cmp -s "$release/bin/oxroute-agent" "$agent_binary"
+cmp -s "$release/bin/oxroute" "$tui_binary"
+"$tui_binary" --help >/dev/null
 OXROUTE_URL="$api" node "$repository/tests/agent-cli.mjs"
 curl -fsS --max-time 10 "$api/api/state" | jq -e '(.agents | type == "array") and (.messages | type == "object")' >/dev/null
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/queued-corrections.mjs"
