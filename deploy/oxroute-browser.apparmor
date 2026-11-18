@@ -1,0 +1,9 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Only the root-owned Oxroute browser releases receive user namespace permission.
+# Chromium supplies renderer isolation; this profile does not confine the daemon.
+profile oxroute-browser /opt/oxroute-browser/releases/*/chrome flags=(unconfined) {
+  userns,
+  include if exists <local/oxroute-browser>
+}
