@@ -2027,6 +2027,24 @@ impl Hub {
              show, create, update and delete; use their generated --help for fields. \
              Tag this session when asked and keep its stage tag current.",
         )));
+        inputs.push(TurnInput::text(format!(
+            "Shared browser panes are available at http://{listen}/api/browsers. \
+             When the user requests browser interaction, GET that list first and reuse your conversation's \
+             browser, or POST {{\"agentId\":\"{id}\"}} to create it. It opens beside this conversation. \
+             GET /api/browsers/<id> returns control state and tabs. GET /api/browsers/<id>/snapshot \
+             returns the current URL, accessibility tree and 1280 by 800 viewport; \
+             GET /api/browsers/<id>/frame returns a JPEG screenshot. Save images in this turn's \
+             artifact directory before inspecting them. POST /api/browsers/<id>/action with \
+             your agentId plus one action: navigate (url), click or move (x,y), type (text), \
+             key (key and optional modifiers: Alt=1, Control=2, Meta=4, Shift=8), \
+             scroll (x,y,deltaX,deltaY), back, forward, reload, newTab, selectTab or closeTab (target). \
+             Coordinates use the screenshot's unscaled viewport. Check the current page after actions. \
+             When human=true or an action reports human control, stop browser input and hand the \
+             session to the user. Resume agent returns control and wakes this conversation. \
+             Never call browser claim, control or delete endpoints or obtain controller credentials. \
+             Browser access grants no permission to contact people or perform unrelated actions.",
+            listen = self.config.listen, id = agent.id,
+        )));
         let terminals: Vec<serde_json::Value> = self.store.get("terminal-panes")?
             .map(|data| serde_json::from_str(&data)).transpose()?.unwrap_or_default();
         let shared_routes: Vec<_> = terminals.iter().filter_map(|record| {

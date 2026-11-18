@@ -63,7 +63,8 @@ export function isTyping(target: EventTarget | null): boolean {
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT" ||
     target.tagName === "SUMMARY" ||
-    target.isContentEditable
+    target.isContentEditable ||
+    target.closest('[role="application"]') !== null
   );
 }
 

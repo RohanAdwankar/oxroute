@@ -39,6 +39,7 @@ use oxroute_core::{Config, Hub, Store};
 
 mod diagram;
 mod terminal;
+mod browser;
 mod terminal_shell;
 
 const UPLOAD_BODY_LIMIT: usize = 256 * 1024 * 1024;
@@ -213,6 +214,7 @@ async fn serve() -> Result<()> {
     merge_watch::start(hub.clone());
 
     let (agent_routes, _) = agent_api();
+    let (browser_routes, browsers) = browser::routes(hub.clone())?;
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
@@ -281,7 +283,8 @@ async fn serve() -> Result<()> {
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(hub.clone())
-        .merge(terminal::routes(hub.clone())?);
+        .merge(terminal::routes(hub.clone())?)
+        .merge(browser_routes);
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
@@ -303,6 +306,7 @@ async fn serve() -> Result<()> {
             if abandoned > 0 {
                 tracing::warn!("stopping with {abandoned} turn(s) still running");
             }
+            browsers.shutdown().await;
             tracing::info!("shutting down");
             // Open event streams would otherwise hold the door: the turns
             // are done and every write is already committed.

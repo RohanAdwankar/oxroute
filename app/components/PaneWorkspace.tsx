@@ -9,7 +9,7 @@ import { Icon } from "./Icon";
 
 type Split = { path: string; axis: "row" | "column"; side: "first" | "second" };
 
-export function AgentPicker({ agents, selected, onSelect, onTerminal, onFollowTerminal }: { agents: Pick<Agent, "id" | "name">[]; selected: string[]; onSelect: (ids: string[]) => void; onTerminal?: () => void; onFollowTerminal?: () => void }) {
+export function AgentPicker({ agents, selected, onSelect, onTerminal, onFollowTerminal, onBrowser }: { agents: Pick<Agent, "id" | "name">[]; selected: string[]; onSelect: (ids: string[]) => void; onTerminal?: () => void; onFollowTerminal?: () => void; onBrowser?: () => void }) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
   const picker = useRef<HTMLDetailsElement>(null);
@@ -27,6 +27,7 @@ export function AgentPicker({ agents, selected, onSelect, onTerminal, onFollowTe
         <input type="checkbox" checked={selected.includes(agent.id)} onChange={event => onSelect(event.target.checked ? [...selected, agent.id] : selected.filter(id => id !== agent.id))} />
         <span className="truncate">{agent.name}</span>
       </label>)}</div>
+      {onBrowser && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onBrowser(); }}>New browser</button>}
       {onTerminal && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onTerminal(); }}><Icon name="terminal" size={13} />New terminal</button>}
       {onFollowTerminal && <button className="flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-[12px] hover:bg-band" onClick={() => { picker.current!.open = false; onFollowTerminal(); }}><Icon name="thread" size={13} />New follow terminal</button>}
     </div>}
@@ -183,7 +184,7 @@ export function PaneWorkspace({ workspace, ids, revision, keyboard, onActivate, 
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { setFocused(menu.id); setZoomed(value => !value); setMenu(null); }}>{zoomed ? "Restore panes" : "Full screen"}</button>
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onClose(menu.id); setMenu(null); }}>Close pane</button>
         <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => { onDetach(menu.id); setMenu(null); }}>Move to new window</button>
-        {onMerge && !menu.id.startsWith("terminal_") && <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => setMenu({ ...menu, merge: true })}>Merge into…</button>}
+        {onMerge && !menu.id.startsWith("terminal_") && !menu.id.startsWith("browser_") && <button role="menuitem" className="block w-full cursor-pointer px-2 py-1 text-left text-[12px] hover:bg-band" onClick={() => setMenu({ ...menu, merge: true })}>Merge into…</button>}
       </>}
     </div>}
   </div>;

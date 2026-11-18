@@ -166,3 +166,29 @@ publication or deployment permission.
 Set `outlook_token_file` to a protected file containing a rotating delegated Microsoft Graph `Mail.Read` access token. Set `slack_token_file` and `slack_app_token_file` to protected user-token and Socket Mode app-token files for a **separate** app installed from `deploy/slack-inbox-manifest.json`; its app token needs `connections:write`. Keep the existing bot app unchanged. Environment equivalents are `OXROUTE_OUTLOOK_TOKEN_FILE`, `OXROUTE_SLACK_INBOX_TOKEN_FILE` and `OXROUTE_SLACK_INBOX_APP_TOKEN_FILE`. Authentication renewal owns those files; Oxroute rereads them and never prints token values.
 
 Imports and routing predictions never start work, including when an existing thread binding or global automatic mode is set. Route, create an agent or dismiss explicitly. Source links open the original conversation; attachments remain in the source application. The Inbox footer reports sync state and errors. The adapters never send messages, mark mail read or modify Slack or Outlook. Turn off the input-routing and Play automation controls to keep other input and next-action execution manual too.
+
+## Shared browser
+
+Open a conversation, then choose **New browser** from the pane picker. The agent
+and human share a dedicated Chromium profile, tabs and page state. **Take
+control** blocks agent browser input and enables clicking, typing, pasting,
+scrolling and navigation in the pane. **Resume agent** returns browser control
+and wakes the conversation to inspect the changed page and continue its task.
+Closing the pane hides it; **End browser** ends the browser session.
+
+Install Chromium and set `OXROUTE_BROWSER_EXECUTABLE` when it is not available
+as `chromium` on PATH. Chromium's sandbox is enabled by default. An explicitly
+isolated development environment can opt out with
+`OXROUTE_BROWSER_SANDBOX=false`; there is no automatic sandbox bypass.
+Profiles are private directories beside the daemon database and are separate
+from the user's normal browser. A daemon restart pauses restored browsers for
+human control; an uninterrupted page session lasts for the browser process's
+lifetime. Profile files remain after ending a session.
+
+Agents use `/api/browsers` to create or reuse their conversation's browser,
+`/<id>/snapshot` for the current page and accessibility tree, `/<id>/frame` for
+a JPEG, and `/<id>/action` for navigation, input and tab actions. Agent requests
+carry their `agentId`; human controls use a separate UI credential. Agent
+instructions prohibit obtaining that credential or calling the human control
+routes. This follows the terminal pane's single-user consent model, rather
+than providing isolation from an agent with arbitrary access to the host.

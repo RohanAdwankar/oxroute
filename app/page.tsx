@@ -8,6 +8,7 @@ import { TaskActions } from "./components/TaskReference";
 
 import { ArchiveAgent } from "./components/ArchiveAgent";
 import { AgentPanel } from "./components/AgentPanel";
+import { BrowserPane, browserApi, type BrowserInfo } from "./components/BrowserPane";
 import { TerminalPane, terminalApi, type TerminalInfo } from "./components/TerminalPane";
 import { AgentPicker, PaneWorkspace } from "./components/PaneWorkspace";
 import { dockPanes, paneIds, readPanes, removePane, syncPanes, writePanes, type PaneLayout } from "./lib/panes";
@@ -218,6 +219,7 @@ export default function Home() {
   const [jump, setJump] = useState(false);
   const [settings, setSettings] = useState(false);
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
+  const [browsers, setBrowsers] = useState<BrowserInfo[]>([]);
   // Which board the main column shows when no agent is open. Null is the fleet.
   const [boardId, setBoardId] = useState<string | null>(null);
   // Which column the keyboard drives, and where it is in each.
@@ -417,15 +419,17 @@ export default function Home() {
   }, [reload, complain]);
   useEffect(() => { void terminalApi<TerminalInfo[]>("").then(setTerminals).catch(complain); }, [revision, complain]);
 
-  const revealedTerminals = useRef(new Set<string>());
+  useEffect(() => { void browserApi<BrowserInfo[]>("").then(setBrowsers).catch(complain); }, [revision, complain]);
+
+  const revealedTools = useRef(new Set<string>());
   useEffect(() => {
     if (!open) return;
-    const added = terminals.filter(terminal => terminal.agentId && panes.includes(terminal.agentId) && !revealedTerminals.current.has(terminal.id));
+    const added = [...terminals, ...browsers].filter(pane => pane.agentId && panes.includes(pane.agentId) && !revealedTools.current.has(pane.id));
     if (!added.length) return;
-    for (const terminal of added) revealedTerminals.current.add(terminal.id);
+    for (const pane of added) revealedTools.current.add(pane.id);
     customPanes.current = true;
-    setPanes(current => [...current, ...added.map(terminal => terminal.id).filter(id => !current.includes(id))]);
-  }, [open, terminals, panes]);
+    setPanes(current => [...current, ...added.map(pane => pane.id).filter(id => !current.includes(id))]);
+  }, [open, terminals, browsers, panes]);
 
   useEffect(() => {
     const restore = () => {
@@ -661,7 +665,7 @@ export default function Home() {
     // asked again may never come: a dropped event stream leaves the pane
     // saying "Loading session…" for as long as you look at it.
     const fetchPanes = async () => {
-      const chats = panes.filter(id => !id.startsWith("terminal_"));
+      const chats = panes.filter(id => !id.startsWith("terminal_") && !id.startsWith("browser_"));
       for (let wait = 500; live; wait = Math.min(wait * 2, 8000)) {
         const answers = await Promise.allSettled(chats.map(id => loadAgent(id)));
         if (!live) return;
@@ -922,7 +926,7 @@ export default function Home() {
   };
   const transfer = usePaneTransfer({
     ready,
-    known: [...snapshot.agents, ...snapshot.archived, ...terminals].map(session => session.id),
+    known: [...snapshot.agents, ...snapshot.archived, ...terminals, ...browsers].map(session => session.id),
     error: say,
     depart: offer => removeTransferred(offer, true),
     receive: (offer, destination, local) => {
@@ -971,7 +975,7 @@ export default function Home() {
     if (id === open) return panes;
     const saved = readPanes(id);
     return saved ? paneIds(saved) : linkedPanes(id, snapshot.paneLinks);
-  }), ...panes].flatMap(id => id.startsWith("terminal_") ? terminals.flatMap(terminal => terminal.id === id && terminal.agentId ? [terminal.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
+  }), ...panes].flatMap(id => (id.startsWith("terminal_") || id.startsWith("browser_")) ? [...terminals, ...browsers].flatMap(pane => pane.id === id && pane.agentId ? [pane.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
   const taskScopeKey = JSON.stringify(scopeIds ?? null);
   const taskScope = useMemo(() => JSON.parse(taskScopeKey) as string[] | null, [taskScopeKey]) ?? undefined;
   useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
@@ -1380,7 +1384,7 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
-        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals]} ids={tabIds} active={open} focusOpen={focusOpen} onFocus={showFocus} onSelect={showAgent}
+        tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals, ...browsers]} ids={tabIds} active={open} focusOpen={focusOpen} onFocus={showFocus} onSelect={showAgent}
           onReorder={(id, target, after) => setTabIds(current => {
             if (id === target || !current.includes(id)) return current;
             const next = current.filter(tab => tab !== id);
@@ -1390,13 +1394,18 @@ export default function Home() {
             return next;
           })}
           onClose={id => {
-            const known = new Set([...snapshot.agents, ...snapshot.archived, ...terminals].map(session => session.id));
+            const known = new Set([...snapshot.agents, ...snapshot.archived, ...terminals, ...browsers].map(session => session.id));
             const visible = tabIds.filter(tab => known.has(tab));
             const index = visible.indexOf(id); setTabIds(current => current.filter(tab => tab !== id));
             if (open === id) showAgent(visible[index + 1] ?? visible[index - 1] ?? null);
           }} onDragStart={(event, id) => transfer.start(event, id, tabLayout(id))} onDragEnd={transfer.end}
           onDrop={event => transfer.drop(event, { kind: "tab" })} onDetach={id => transfer.detach(id, tabLayout(id))} />}
-        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals]} selected={panes} onSelect={choosePanes} onFollowTerminal={snapshot.agents.some(agent => agent.id === open) ? () => {
+        panes={<AgentPicker agents={[...snapshot.agents, ...snapshot.archived, ...terminals, ...browsers]} selected={panes} onSelect={choosePanes} onBrowser={snapshot.agents.some(agent => agent.id === open) ? () => {
+          void browserApi<BrowserInfo>("", { agentId: open }).then(browser => {
+            setBrowsers(current => [...current.filter(item => item.id !== browser.id), browser]);
+            choosePanes([...new Set([...panes, browser.id])]);
+          }).catch(complain);
+        } : undefined} onFollowTerminal={snapshot.agents.some(agent => agent.id === open) ? () => {
           void terminalApi<{ terminal: TerminalInfo }>("", { agentId: open, follow: true }).then(({ terminal }) => {
             setTerminals(current => [...current, terminal]);
             choosePanes([...panes, terminal.id]);
@@ -1515,6 +1524,7 @@ export default function Home() {
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}
             mergeTargets={[...snapshot.agents, ...snapshot.archived]} onMerge={(source, target, archive) => void mergeInto(source, target, archive)} keyboard={vim && focus === "fleet" && !selected} onActivate={() => setFocus("fleet")} onCustomize={() => { customPanes.current = true; }} onClose={id => focusOpen?showAgent(null):choosePanes(panes.filter(pane => pane !== id))}>
             {(id, index, paneHandle) => {
+              if (id.startsWith("browser_")) return <BrowserPane id={id} handle={paneHandle} onEnd={() => { setBrowsers(current => current.filter(browser => browser.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               if (id.startsWith("terminal_")) return <TerminalPane id={id} handle={paneHandle} agents={[...snapshot.agents, ...snapshot.archived]} onEnd={() => { setTerminals(current => current.filter(terminal => terminal.id !== id)); choosePanes(panes.filter(pane => pane !== id)); }} />;
               const agent = [...snapshot.agents, ...snapshot.archived].find((agent) => agent.id === id);
               const view = details[id] ?? (agent ? {
