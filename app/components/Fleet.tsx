@@ -40,8 +40,6 @@ export function Fleet({
   onSpawn,
   onDiscard,
   busy,
-  cursor,
-  active,
   renderActions,
   onArchive,
 }: {
@@ -63,10 +61,6 @@ export function Fleet({
   onSpawn: (model: string) => void;
   onDiscard: () => void;
   busy: boolean;
-  /// Which card the keyboard is on.
-  cursor: number;
-  /// True when the keyboard is driving this column.
-  active: boolean;
   renderActions?: (agent: Agent) => ReactNode;
   onArchive?: (agent: Agent, archived: boolean) => void;
 }) {
@@ -138,7 +132,7 @@ export function Fleet({
               gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 334px), 1fr))",
             }}
           >
-            {shown.map((agent, index) => (
+            {shown.map((agent) => (
               <Card
                 key={agent.id}
                 agent={agent}
@@ -147,7 +141,6 @@ export function Fleet({
                 routing={routing !== null}
                 ticked={ticked.has(agent.id)}
                 suggested={routing?.suggested === agent.id || !!routing?.recommendation?.agentIds.includes(agent.id)}
-                focused={active && index === cursor}
                 onToggle={() => onToggle(agent.id)}
                 onOpen={() => onOpen(agent.id)}
                 onPin={() => onPin(agent.id, !agent.pinned)}
@@ -220,7 +213,6 @@ function Card({
   routing,
   ticked,
   suggested,
-  focused,
   onToggle,
   onOpen,
   onPin,
@@ -234,7 +226,6 @@ function Card({
   routing: boolean;
   ticked: boolean;
   suggested: boolean;
-  focused: boolean;
   onToggle: () => void;
   onOpen: () => void;
   onPin: () => void;
@@ -252,8 +243,6 @@ function Card({
       className={[
         "group relative flex max-h-[min(60vh,32rem)] min-h-[140px] w-full flex-col bg-card px-[19px] py-[17px] transition-opacity",
         ticked ? "outline outline-1 outline-ink" : "",
-        // Keep keyboard focus distinct from the selection outline.
-        focused ? "shadow-[inset_2px_0_0_var(--color-mid)]" : "",
         dimmed ? "opacity-[0.42]" : "opacity-100",
       ].join(" ")}
     >

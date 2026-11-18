@@ -1686,8 +1686,6 @@ export default function Home() {
                 routing={selected}
                 ticked={ticked}
                 busy={busy}
-                cursor={fleetAt}
-                active={focus === "fleet"}
                 onToggle={toggle}
                 onOpen={chooseAgent}
                 onPin={(id, pinned) => void run(() => api.pin(id, pinned))}
