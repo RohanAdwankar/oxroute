@@ -176,6 +176,8 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/app-links.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/workstream-cards.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/client-failures.mjs"
 node "$repository/tests/shared-events.mjs"
+(cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/native-coordination.mjs)
+TEST_URL=http://127.0.0.1:3939 node "$repository/tests/tool-output-streaming.mjs"
 node "$repository/tests/large-uploads.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/entry-jump.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/inline-review-links.mjs"

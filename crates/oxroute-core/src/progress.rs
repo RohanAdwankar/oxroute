@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Slack's own ceiling. Other surfaces are more generous but the same
 //  budget keeps one renderer for all of them.
@@ -108,9 +108,18 @@ pub fn summarize(item: &Value) -> Option<Summary> {
             .unwrap_or_else(|| label_for(kind)),
         _ => label_for(kind),
     };
+    let native = item.get("server").and_then(Value::as_str)==Some("oxroute_internal");
+    let tool = item.get("tool").and_then(Value::as_str).unwrap_or("");
+    let native_name = if native {Some(tool)} else {tool.strip_prefix("mcp__oxroute_internal__")};
+    let native_label = native_name.and_then(|name| match name {
+        "list_conversations"=>Some("List conversations"),
+        "read_conversation"=>Some("Read conversation"),
+        "send_agent_message"=>Some("Send agent message"),
+        _=>None,
+    });
     Some(Summary {
-        label,
-        detail: one_line(&detail, 200),
+        label: native_label.unwrap_or(&label).to_string(),
+        detail: if native_label.is_some() {pretty(&json!({"tool":tool,"arguments":item.get("arguments")}))} else {one_line(&detail, 200)},
         output: item_output(item),
         item_id: item.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
     })

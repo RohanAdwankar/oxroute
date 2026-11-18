@@ -42,6 +42,7 @@ mod terminal;
 mod browser;
 mod browser_isolation;
 mod terminal_shell;
+mod agent_tools;
 
 const UPLOAD_BODY_LIMIT: usize = 256 * 1024 * 1024;
 const INBOX_LIMIT: usize = 200;
@@ -242,6 +243,7 @@ async fn serve() -> Result<()> {
         .route("/api/focus/agent", post(open_focus))
         .route("/api/focus/batches", post(focus_batch))
         .route("/api/focus/messages", post(focus_message))
+        .route("/api/agent-tools/{id}", post(agent_tools::call))
         .route("/api/focus/inbox", get(focus_inbox).put(update_focus_inbox))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))

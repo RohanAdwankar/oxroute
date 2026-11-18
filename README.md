@@ -237,3 +237,11 @@ Production builds run this focused check before compiling. Run
 `node tests/url-boundaries.mjs` to validate the rule. This checks exception
 boundaries, not URL safety or full data flow; browser workflow tests remain
 necessary for malformed content and valid previews.
+
+## Native coordination
+
+Agent runtimes register `oxroute_internal` tools for bounded conversation lists,
+history reads and internal messages. Credentials bind each runtime to its agent;
+messages retain source provenance and the existing Focus delivery policy. Reuse
+`requestId` on retries. A completed receipt confirms delivery acceptance only.
+These tools cannot approve work or send external communications.

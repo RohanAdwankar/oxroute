@@ -42,6 +42,17 @@ pub struct SessionSpec {
     pub resume: Option<String>,
     /// Vanishes when the turn ends; used for side questions.
     pub ephemeral: bool,
+    pub native_tools: Option<NativeTools>,
+}
+
+#[derive(Clone)]
+pub struct NativeTools {
+    pub url: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for NativeTools {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {f.debug_struct("NativeTools").field("url", &self.url).finish_non_exhaustive()}
 }
 
 #[derive(Debug, Clone)]

@@ -1263,7 +1263,10 @@ function ToolCall({ entry, output }: { entry: Entry; output?: string }) {
       <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(entry.at)}</span>
       <div className="min-w-0 flex-1">
         {entry.text !== "Command" && <span className="mr-2 text-faint">{entry.text}</span>}
-        <div className="break-words whitespace-pre-wrap">
+        {(["List conversations", "Read conversation", "Send agent message"].includes(entry.text)) ? <details>
+          <summary className="cursor-pointer text-faint">Details</summary>
+          <pre className="quiet-scroll max-h-64 overflow-auto whitespace-pre-wrap">{entry.detail}{printed ? `\n${printed}` : ""}</pre>
+        </details> : <><div className="break-words whitespace-pre-wrap">
           <Code text={entry.detail || entry.text} />
         </div>
         {entry.outputDeferred && printed === undefined && <p className="mt-2 text-faint">Loading output…</p>}
@@ -1273,7 +1276,7 @@ function ToolCall({ entry, output }: { entry: Entry; output?: string }) {
               {printed}
             </pre>
           </Copyable>
-        )}
+        )}</>}
       </div>
     </div>
   );

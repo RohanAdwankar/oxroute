@@ -1960,6 +1960,14 @@ impl Store {
     }
     pub fn finish_focus_message(&self,id:&str)->Result<()> {self.with(|c|{c.execute("UPDATE focus_messages SET accepted=1 WHERE id=?1",[id])?;Ok(())})}
 
+    pub fn agent_tool_token(&self, agent: &str) -> Result<String> {
+        self.with(|c| {
+            let key=format!("agent-tool-token:{agent}");
+            c.execute("INSERT OR IGNORE INTO kv(key,value) VALUES(?1,?2)", params![key,uuid::Uuid::new_v4().to_string()])?;
+            Ok(c.query_row("SELECT value FROM kv WHERE key=?1",[key],|row|row.get(0))?)
+        })
+    }
+
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         self.read(|c| {
             Ok(c.query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| r.get(0))

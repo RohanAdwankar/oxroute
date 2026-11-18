@@ -4136,3 +4136,38 @@ async fn focus_reports_keep_agent_origin_without_becoming_human_replies() {
     assert!(w.posts.lock().unwrap().replies.is_empty());
     assert!(w.posts.lock().unwrap().threads.is_empty());
 }
+
+#[tokio::test]
+async fn native_coordination_bounds_reads_and_preserves_authority() {
+    let w=world(Mode::Ask,false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();
+    let worker=w.hub.create_agent(None).unwrap();
+    let token=w.hub.native_tools(&worker.id).unwrap();
+    assert_eq!(token.token,w.hub.native_tools(&worker.id).unwrap().token);
+    assert!(w.hub.authorize_agent_tool(&focus.id,&token.token).is_err());
+    assert!(w.hub.authorize_agent_tool(&worker.id,&token.token).is_ok());
+    let request=uuid::Uuid::new_v4().to_string();
+    let args=serde_json::json!({"targetId":focus.id,"text":"Inspect existing evidence","requestId":request});
+    for _ in 0..2 {
+        let receipt=w.hub.call_agent_tool(&worker.id,"send_agent_message",args.clone()).await.unwrap();
+        assert_eq!(receipt["senderId"],worker.id);
+        assert!(["queued","completed"].contains(&receipt["status"].as_str().unwrap()));
+    }
+    assert_eq!(w.hub.store.timeline(&focus.id,100).unwrap().iter().filter(|e|e.request_id==request).count(),1);
+    assert!(!w.hub.store.has_human_message(&focus.id).unwrap());
+    assert!(w.hub.call_agent_tool(&worker.id,"send_agent_message",serde_json::json!({"targetId":worker.id,"text":"Other","requestId":request})).await.is_err());
+    let page=w.hub.call_agent_tool(&worker.id,"read_conversation",serde_json::json!({"agentId":focus.id,"limit":1})).await.unwrap();
+    assert_eq!(page["entries"].as_array().unwrap().len(),1);
+    assert_eq!(page["entries"][0]["kind"],"coordination");
+    assert_eq!(page["entries"][0]["origin"],worker.id);
+    w.hub.store.add_work_entry(&focus.id,now(),"Inspect state","",&"λΔ".repeat(10000),"native-boundary").unwrap();
+    let bounded=w.hub.call_agent_tool(&worker.id,"read_conversation",serde_json::json!({"agentId":focus.id,"limit":50})).await.unwrap();
+    assert_eq!(bounded["truncated"],true);
+    assert!(bounded.to_string().len()<45000);
+    assert!(bounded["entries"].as_array().unwrap().last().unwrap()["output"].as_str().unwrap().len()<=8000);
+    let list=w.hub.call_agent_tool(&worker.id,"list_conversations",serde_json::json!({"limit":1})).await.unwrap();
+    assert_eq!(list["conversations"].as_array().unwrap().len(),1);
+    assert!(list["nextOffset"].is_number());
+    assert!(w.posts.lock().unwrap().replies.is_empty());
+}

@@ -202,12 +202,16 @@ impl CodexHarness {
 
     /// The shared half of `thread/start` and `thread/resume`.
     fn thread_options(&self, spec: &SessionSpec) -> Value {
+        let mut config=json!({"model_reasoning_effort": self.reasoning_effort});
+        if let Some(tools)=&spec.native_tools {
+            config["mcp_servers.oxroute_internal"]=json!({"url":tools.url,"http_headers":{"Authorization":format!("Bearer {}",tools.token)}});
+        }
         json!({
             "cwd": if spec.cwd.is_empty() { &self.default_cwd } else { &spec.cwd },
             "approvalPolicy": APPROVAL_POLICY,
             "sandbox": SANDBOX,
             "model": spec.model,
-            "config": { "model_reasoning_effort": self.reasoning_effort },
+            "config": config,
         })
     }
 
@@ -974,6 +978,18 @@ fn content_text(content: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_tools_extend_runtime_configuration() {
+        let config=crate::config::Config::load_from(std::path::Path::new("/nonexistent-fixture-config")).unwrap();
+        let harness=super::CodexHarness::new(&config);
+        let spec=super::SessionSpec {model:"fixture".into(),cwd:"/work".into(),resume:None,ephemeral:false,native_tools:Some(crate::agent::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()})};
+        let options=harness.thread_options(&spec);
+        assert_eq!(options["config"]["mcp_servers.oxroute_internal"]["http_headers"]["Authorization"],"Bearer fixture-token");
+        assert_eq!(options["sandbox"],super::SANDBOX);
+        assert!(options["config"]["model_reasoning_effort"].is_string());
+        assert!(!format!("{:?}",spec).contains("fixture-token"));
+    }
+
     #[test]
     fn structured_turn_failures_reach_the_caller() {
         for error in ["model unavailable", "quota exhausted"] {

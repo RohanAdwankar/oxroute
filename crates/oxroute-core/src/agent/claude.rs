@@ -116,6 +116,9 @@ impl ClaudeHarness {
             argv.push("--model".into());
             argv.push(spec.model.clone());
         }
+        if let Some(tools)=&spec.native_tools {
+            argv.extend(["--mcp-config".into(), json!({"mcpServers":{"oxroute_internal":{"type":"http","url":tools.url,"headers":{"Authorization":format!("Bearer {}",tools.token)}}}}).to_string()]);
+        }
         argv
     }
 
@@ -588,12 +591,25 @@ printf '%s' '{"structured_output":{"decision":"finished"}}'
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn native_tools_preserve_existing_runtime_permissions() {
+        let harness=ClaudeHarness::bare("claude","/work","bypassPermissions");
+        let mut spec=spec("fixture",None);
+        spec.native_tools=Some(crate::agent::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()});
+        let args=harness.argv("fixture-session",&spec,Opening::Fresh);
+        let config:serde_json::Value=serde_json::from_str(&args[args.iter().position(|a|a=="--mcp-config").unwrap()+1]).unwrap();
+        assert_eq!(config["mcpServers"]["oxroute_internal"]["headers"]["Authorization"],"Bearer fixture-token");
+        assert!(!args.iter().any(|a|a=="--strict-mcp-config"));
+        assert!(args.iter().any(|a|a=="bypassPermissions"));
+    }
+
     fn spec(model: &str, resume: Option<&str>) -> SessionSpec {
         SessionSpec {
             model: model.into(),
             cwd: String::new(),
             resume: resume.map(str::to_string),
             ephemeral: false,
+            native_tools: None,
         }
     }
 
