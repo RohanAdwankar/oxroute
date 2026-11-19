@@ -1556,6 +1556,7 @@ export default function Home() {
                 >
                   {view ? (
                     <AgentPanel
+                      quietCoordination={id === snapshot.focusAgentId}
                       paneHandle={paneHandle}
                       view={view}
                       globalAutorun={snapshot.nextActionMode === "auto"}

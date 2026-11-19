@@ -89,6 +89,14 @@ try{
  assert.equal(reports.length,1,'Coordination retries retain one visible entry');assert.equal(reports[0].origin,worker.id);
  const reportRow=page.locator(`[data-entry="${reports[0].id}"]`);await reportRow.getByText('Internal update',{exact:true}).waitFor();
  assert.ok(!(await reportRow.getAttribute('class')).includes('bg-mine'),'Agent reports never use human styling');
+ assert.equal(await reportRow.evaluate(node=>node.tagName),'DETAILS','Only Focus coordination uses a disclosure');
+ assert.equal(await reportRow.getAttribute('open'),null);
+ assert.equal(await reportRow.getByText(report.text,{exact:true}).isVisible(),false);
+ if(process.env.COORDINATION_SCREENSHOT)await page.screenshot({path:process.env.COORDINATION_SCREENSHOT.replace('.png','-collapsed.png')});
+ await reportRow.locator('summary').focus();await page.keyboard.press('Enter');
+ await reportRow.getByText(report.text,{exact:true}).waitFor();
+ assert.notEqual(await reportRow.getByText(report.text,{exact:true}).evaluate(node=>getComputedStyle(node).color),await page.getByText('Validation evidence is ready. Review this result and approve it or request a revision.',{exact:true}).first().evaluate(node=>getComputedStyle(node).color),'Expanded coordination is muted');
+
  const sourceLink=reportRow.getByRole('button',{name:`Open originating agent ${worker.id}`,exact:true});await sourceLink.waitFor();
  for(const width of [1280,390]) {
   await page.setViewportSize({width,height:900});await reportRow.scrollIntoViewIfNeeded();
@@ -101,6 +109,11 @@ try{
  await page.setViewportSize({width:1280,height:900});
  await sourceLink.focus();await page.keyboard.press('Enter');
  await page.locator(`[data-agent-pane="${worker.id}"]`).first().waitFor();
+ const ordinaryReport=(await api(`/api/agents/${worker.id}`)).timeline.find(entry=>entry.kind==='coordination'&&entry.requestId===requestId);
+ const ordinaryRow=page.locator(`[data-entry="${ordinaryReport.id}"]`);
+ await ordinaryRow.getByText('Check the existing validation evidence without changing approval state.',{exact:true}).waitFor();
+ assert.notEqual(await ordinaryRow.evaluate(node=>node.tagName),'DETAILS','Other conversation coordination stays expanded');
+
  await page.goto(`${ui}/?view=focus`);await composer.waitFor();
 
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done','Reports never approve tasks');

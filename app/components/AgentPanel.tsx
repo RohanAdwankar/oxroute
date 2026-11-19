@@ -145,6 +145,7 @@ function minute(at: number) {
  * in both places.
  */
 export function AgentPanel({
+  quietCoordination = false,
   view,
   onEarlier,
   can,
@@ -182,6 +183,7 @@ export function AgentPanel({
   quoteThreads,
   onThreadsChanged,
 }: {
+  quietCoordination?: boolean;
   view: AgentView;
   onEarlier: () => Promise<void>;
   /** The card's latest message while the full history arrives. */
@@ -436,7 +438,7 @@ export function AgentPanel({
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
 
-  const renderNotice = useCallback((entry: Entry) => <Message entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={openAgent} />, [highlightedEntry, asked, jumpTo, openAgent]);
+  const renderNotice = useCallback((entry: Entry) => <Message quietCoordination={quietCoordination} entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={openAgent} />, [quietCoordination, highlightedEntry, asked, jumpTo, openAgent]);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
@@ -679,13 +681,14 @@ export function AgentPanel({
                 <QuoteLinks.Provider key={entry.id} value={quoteLinkValues.get(entry.id) ?? null}><Message
                   key={entry.id}
                   entry={entry}
+                  quietCoordination={quietCoordination}
                   focused={entry.id === (focusEntry ?? highlightedEntry)}
                   asked={asked}
                   onJump={jumpTo}
                   onOpenAgent={openAgent}
                 /></QuoteLinks.Provider>
               );
-            }), [items,verbose,renderNotice,focusEntry,highlightedEntry,asked,jumpTo,openAgent,quoteLinkValues]);
+            }), [items,verbose,renderNotice,focusEntry,highlightedEntry,asked,jumpTo,openAgent,quoteLinkValues,quietCoordination]);
 
   return (
     <FileReviewProvider agent={agent.id}><ReviewLinks.Provider value={reviewLinks}>
@@ -1317,12 +1320,14 @@ function Said({ text, detail }: { text: string; detail: string }) {
 /// in. The entry objects are stable between renders, so memo holds.
 const Message = memo(function Message({
   entry,
+  quietCoordination = false,
   focused,
   asked,
   onJump,
   onOpenAgent,
 }: {
   entry: Entry;
+  quietCoordination?: boolean;
   focused: boolean;
   /// The ids of every question asked, so a question can point at its
   /// neighbours.
@@ -1336,24 +1341,25 @@ const Message = memo(function Message({
   // Keep that ID for navigation instead of repeating it as visible text.
   const workerSuffix = ` to ${entry.detail}`;
   const delegated = isDelegation(entry);
-  return (
+  const fold = quietCoordination && entry.kind === "coordination";
+  const content = (
         <div
           key={entry.id}
-          data-entry={entry.id}
+          data-entry={fold ? undefined : entry.id}
           className={[
-            "flex items-start gap-3 border-b border-hair py-[var(--row-y)] last:border-b-0",
+            fold ? "flex min-w-0 pt-2 text-mid [&_*]:text-mid" : "flex items-start gap-3 border-b border-hair py-[var(--row-y)] last:border-b-0",
             // The whole row, so what you said is found by running
             // your eye down the column rather than reading it.
             mine ? "group -mx-[var(--pane-x)] bg-mine px-[var(--pane-x)]" : "",
             focused ? "bg-band" : "",
           ].join(" ")}
         >
-          <span data-message-time className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-mid">
+          {!fold && <span data-message-time className="tnum w-[34px] shrink-0 pt-[3px] text-[10.5px] text-mid">
             {minute(entry.at)}
-          </span>
+          </span>}
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
             <div className="flex min-w-0 items-start gap-2 text-[var(--said)] leading-[1.55] break-words">
-              {tag && (
+              {tag && !fold && (
                 <span className={`flex max-w-[45%] shrink-0 flex-wrap items-baseline gap-x-2 pt-[2px] text-[10.5px] ${tag.tone}`}>
                   <span>{tag.label}</span>
                   {entry.kind === "coordination" && entry.origin && <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={() => onOpenAgent(entry.origin)} className="max-w-full cursor-pointer truncate text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button>}
@@ -1410,6 +1416,14 @@ const Message = memo(function Message({
           )}
         </div>
       );
+  return fold ? <details data-entry={entry.id} data-internal-update className={`border-b border-hair py-[var(--row-y)] ${focused ? "bg-band" : ""}`}>
+    <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 text-[10.5px] text-faint marker:content-none">
+      <span data-message-time className="tnum mr-1 w-[34px] shrink-0 text-mid">{minute(entry.at)}</span>
+      <span aria-hidden="true">›</span><span>Internal update</span>
+      {entry.origin && <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={event => {event.stopPropagation(); onOpenAgent(entry.origin);}} className="cursor-pointer text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button>}
+    </summary>
+    <div className="min-w-0 pl-[46px]">{content}</div>
+  </details> : content;
 });
 
 /// Preview media inline; offer other artifacts as downloads.
