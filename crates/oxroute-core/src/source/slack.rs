@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::oneshot;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{Inbox, Posted, Source, SourceEvent};
+use super::{Inbox, Posted, Reply, Source, SourceEvent};
 use crate::model::{now, new_id, Attachment, Signal, Target, TurnInput};
 
 pub const SOURCE: &str = "slack";
@@ -28,6 +28,7 @@ const API: &str = "https://slack.com/api";
 const MAX_MESSAGE: usize = 3_500;
 
 pub struct SlackSource {
+    api: String,
     app_token: String,
     bot_token: String,
     /// The one person allowed to start work. Everything else is ignored in
@@ -43,6 +44,7 @@ impl SlackSource {
         allowed_user: impl Into<String>,
     ) -> Self {
         SlackSource {
+            api: API.into(),
             app_token: app_token.into(),
             bot_token: bot_token.into(),
             allowed_user: allowed_user.into(),
@@ -57,14 +59,17 @@ impl SlackSource {
         &self.allowed_user
     }
 
-    async fn call(&self, method: &str, body: Value) -> Result<Value> {
+    async fn call(&self, method: &str, mut body: Value) -> Result<Value> {
+        if body.get("thread_ts").and_then(Value::as_str) == Some("") {
+            body.as_object_mut().unwrap().remove("thread_ts");
+        }
         self.call_with(&self.bot_token, method, body).await
     }
 
     async fn call_with(&self, token: &str, method: &str, body: Value) -> Result<Value> {
         let response = self
             .http
-            .post(format!("{API}/{method}"))
+            .post(format!("{}/{method}", self.api))
             .bearer_auth(token)
             .json(&body)
             .send()
@@ -152,7 +157,7 @@ impl SlackSource {
                 .get("text")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .trim()
+                .trim_start()
                 .to_string(),
             attachments,
             at: now(),
@@ -276,8 +281,9 @@ impl Source for SlackSource {
         }
     }
 
-    async fn reply(&self, target: &Target, text: &str) -> Result<String> {
+    async fn reply(&self, target: &Target, text: &str) -> Result<Reply> {
         let mut last = target.thread_key.clone();
+        let mut messages = Vec::new();
         for chunk in split_message(text) {
             let response = self
                 .call(
@@ -289,14 +295,13 @@ impl Source for SlackSource {
                     }),
                 )
                 .await?;
-            if let Some(ts) = response.get("ts").and_then(Value::as_str) {
-                last = ts.to_string();
-            }
+            last = response.get("ts").and_then(Value::as_str).context("Slack posted without a timestamp")?.into();
+            messages.push(Posted { conversation: target.conversation.clone(), id: last.clone() });
         }
-        Ok(self
-            .permalink(&target.conversation, &last)
-            .await
-            .unwrap_or_default())
+        Ok(Reply {
+            permalink: self.permalink(&target.conversation, &last).await.unwrap_or_default(),
+            messages,
+        })
     }
 
     async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
@@ -406,7 +411,8 @@ impl Source for SlackSource {
         Ok(inputs)
     }
 
-    async fn upload(&self, target: &Target, paths: &[String]) -> Result<()> {
+    async fn upload(&self, target: &Target, paths: &[String]) -> Result<Vec<Posted>> {
+        let mut messages = Vec::new();
         for path in paths {
             let bytes = tokio::fs::read(path).await?;
             let name = std::path::Path::new(path)
@@ -418,7 +424,7 @@ impl Source for SlackSource {
             // somewhere that is not the API, then tell Slack where to put it.
             let ticket = self
                 .http
-                .post(format!("{API}/files.getUploadURLExternal"))
+                .post(format!("{}/files.getUploadURLExternal", self.api))
                 .bearer_auth(&self.bot_token)
                 .form(&[("filename", name.as_str()), ("length", &bytes.len().to_string())])
                 .send()
@@ -440,7 +446,7 @@ impl Source for SlackSource {
                 .and_then(Value::as_str)
                 .context("slack gave no file id")?;
             self.http.post(upload_url).body(bytes).send().await?;
-            self.call(
+            let response = self.call(
                 "files.completeUploadExternal",
                 json!({
                     "files": [{ "id": file_id, "title": name }],
@@ -449,8 +455,19 @@ impl Source for SlackSource {
                 }),
             )
             .await?;
+            if let Some(files) = response["files"].as_array() {
+                for file in files {
+                    for visibility in ["private", "public"] {
+                        if let Some(shares) = file["shares"][visibility][&target.conversation].as_array() {
+                            messages.extend(shares.iter().filter_map(|share| share["ts"].as_str()).map(|ts| Posted {
+                                conversation: target.conversation.clone(), id: ts.into(),
+                            }));
+                        }
+                    }
+                }
+            }
         }
-        Ok(())
+        Ok(messages)
     }
 
     async fn open_thread(&self, conversation: &str, title: &str) -> Result<(String, String)> {
@@ -543,7 +560,7 @@ impl Source for SlackSource {
     }
 
     async fn permalink(&self, conversation: &str, external_id: &str) -> Result<String> {
-        let response = permalink_request(&self.http, &self.bot_token, conversation, external_id)
+        let response = permalink_request(&self.http, &self.api, &self.bot_token, conversation, external_id)
             .send()
             .await?
             .error_for_status()?
@@ -561,8 +578,8 @@ impl Source for SlackSource {
     }
 }
 
-fn permalink_request(http: &reqwest::Client, token: &str, channel: &str, ts: &str) -> reqwest::RequestBuilder {
-    http.get(format!("{API}/chat.getPermalink"))
+fn permalink_request(http: &reqwest::Client, api: &str, token: &str, channel: &str, ts: &str) -> reqwest::RequestBuilder {
+    http.get(format!("{api}/chat.getPermalink"))
         .bearer_auth(token)
         .query(&[("channel", channel), ("message_ts", ts)])
 }
@@ -607,7 +624,7 @@ mod tests {
 
     #[test]
     fn permalink_parameters_are_sent_in_the_url() {
-        let request = permalink_request(&reqwest::Client::new(), "test", "D123", "123.456")
+        let request = permalink_request(&reqwest::Client::new(), API, "test", "D123", "123.456")
             .build().unwrap();
         assert_eq!(request.method(), reqwest::Method::GET);
         let params: std::collections::HashMap<_, _> = request.url().query_pairs().collect();
@@ -670,6 +687,66 @@ mod tests {
             .unwrap();
         assert_eq!(opener.thread_key, "1.0");
         assert!(opener.root);
+    }
+
+    #[tokio::test]
+    async fn main_chat_transport_preserves_chunks_files_and_thread_targets() {
+        use axum::{routing::{get, post}, Json, Router};
+        use std::sync::{Arc, Mutex};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::<(String,Value)>::new()));
+        let seen = requests.clone();
+        let api = endpoint.clone();
+        let router = Router::new().route("/chat.postMessage", post(move |Json(body): Json<Value>| {
+            let seen = seen.clone();
+            async move {
+                let mut seen = seen.lock().unwrap();
+                let ts = format!("{}.0", seen.len()+10);
+                seen.push(("message".into(),body));
+                Json(json!({"ok":true,"ts":ts}))
+            }
+        })).route("/chat.getPermalink", get(|| async {Json(json!({"ok":true,"permalink":"https://example.invalid/message"}))}))
+        .route("/files.getUploadURLExternal", post(move || {let api=api.clone(); async move {Json(json!({"ok":true,"file_id":"F1","upload_url":format!("{api}/bytes")}))}}))
+        .route("/bytes", post(|| async {"ok"}))
+        .route("/files.completeUploadExternal", post({let seen=requests.clone(); move |Json(body):Json<Value>| {let seen=seen.clone(); async move {seen.lock().unwrap().push(("file".into(),body)); Json(json!({"ok":true,"files":[{"shares":{"private":{"D1":[{"ts":"file-message"}]}}}]}))}}}));
+        let server = tokio::spawn(async move {axum::serve(listener,router).await.unwrap()});
+        let mut slack = source();
+        slack.api = endpoint;
+        let target = Target::new(SOURCE,"D1","");
+        let reply = slack.reply(&target,&"x".repeat(MAX_MESSAGE+10)).await.unwrap();
+        assert_eq!(reply.messages.len(),2);
+        assert_ne!(reply.messages[0].id,reply.messages[1].id);
+        assert_eq!(reply.permalink,"https://example.invalid/message");
+        slack.post_status(&target,"Working").await.unwrap();
+        slack.reply(&Target::new(SOURCE,"D1","existing"),"Thread reply").await.unwrap();
+        let path=std::env::temp_dir().join(format!("{}.txt",new_id("slack-file")));
+        tokio::fs::write(&path,"retained attachment").await.unwrap();
+        let files = slack.upload(&target,&[path.to_string_lossy().into_owned()]).await.unwrap();
+        assert_eq!(files[0].id,"file-message");
+        tokio::fs::remove_file(path).await.unwrap();
+        let requests=requests.lock().unwrap();
+        assert_eq!(requests.len(),5);
+        for (_,body) in requests.iter().filter(|(_,body)| body["text"] != "Thread reply" && body["markdown_text"] != "Thread reply") {
+            assert!(body.get("thread_ts").is_none(),"main-chat posts must omit thread_ts");
+        }
+        assert_eq!(requests[3].1["thread_ts"],"existing");
+        assert_eq!(requests[4].1["channel_id"],"D1");
+        server.abort();
+    }
+
+    #[test]
+    fn routing_marker_survives_file_only_input() {
+        let slack = source();
+        let event=json!({"user":"U_ME","channel_type":"im","channel":"D1","ts":"1.0","text":"- ","files":[{"id":"F1","name":"source.txt"}]});
+        assert!(slack.accepted(&event));
+        let signal=slack.to_signal(&event).unwrap();
+        assert_eq!(signal.text,"- ");
+        assert_eq!(signal.attachments.len(),1);
+        for text in ["• A formatted list", "− A different character", "-without space"] {
+            let mut event=event.clone();event["text"]=json!(text);
+            assert_eq!(slack.to_signal(&event).unwrap().text,text);
+        }
     }
 
     #[test]

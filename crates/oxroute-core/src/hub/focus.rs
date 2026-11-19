@@ -52,9 +52,17 @@ impl Hub {
         anyhow::ensure!(live.get(sender).is_some_and(|turn|!turn.stopped.load(Ordering::SeqCst)&&!turn.done()),"Focus must have an active, unstopped turn to publish a new update");
         anyhow::ensure!(!self.store.agent_archived(sender)?,"Focus is archived");
         let (receipt,entry)=self.store.publish_focus_update(sender,update,now())?;
-        if let Some(entry)=entry {
-            if let Some(turn)=live.get(sender) {turn.narrated.lock().unwrap().insert(entry.text.clone());}
+        let target = live.get(sender).and_then(|turn| turn.target.clone())
+            .filter(|target| target.source == crate::source::slack::SOURCE);
+        if let (Some(entry), Some(turn)) = (&entry, live.get(sender)) {
+            turn.narrated.lock().unwrap().insert(entry.text.clone());
+            if target.is_some() { turn.sent.lock().unwrap().insert(entry.text.clone()); }
+        }
+        drop(live);
+        if let Some(entry) = entry {
+            let text = entry.text.clone();
             self.emit(Event::Timeline{entry:Box::new(entry)});
+            if let Some(target) = target { self.say(&target, &text).await; }
         }
         Ok(receipt)
     }

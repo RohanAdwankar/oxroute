@@ -17,7 +17,7 @@ use oxroute_core::agent::{Capabilities, Harness, HarnessEvent, RecoveredTurn, Se
 use oxroute_core::config::{Choice, Config, Mode};
 use oxroute_core::hub::Routing;
 use oxroute_core::model::*;
-use oxroute_core::source::{Inbox, Posted, Source};
+use oxroute_core::source::{Inbox, Posted, Reply, Source};
 use oxroute_core::store::ActiveTurn;
 use oxroute_core::{Hub, Store};
 use serde_json::Value;
@@ -300,7 +300,7 @@ impl Source for FakeSource {
         Ok(())
     }
 
-    async fn reply(&self, target: &Target, text: &str) -> Result<String> {
+    async fn reply(&self, target: &Target, text: &str) -> Result<Reply> {
         if let Some(endpoint) = &self.reply_endpoint {
             reqwest::Client::new().post(endpoint).json(&serde_json::json!({
                 "channel": target.conversation, "thread_ts": target.thread_key, "markdown_text": text,
@@ -311,7 +311,7 @@ impl Source for FakeSource {
             .unwrap()
             .replies
             .push((target.thread_key.clone(), text.to_string()));
-        Ok(format!("https://example/{}", target.thread_key))
+        Ok(Reply { permalink: format!("https://example/{}", target.thread_key), messages: vec![Posted { conversation: target.conversation.clone(), id: format!("reply-{}", new_id("post")) }] })
     }
 
     async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
@@ -331,9 +331,9 @@ impl Source for FakeSource {
         Ok(())
     }
 
-    async fn upload(&self, _target: &Target, paths: &[String]) -> Result<()> {
+    async fn upload(&self, _target: &Target, paths: &[String]) -> Result<Vec<Posted>> {
         self.posts.lock().unwrap().uploads.push(paths.to_vec());
-        Ok(())
+        Ok(Vec::new())
     }
 
     async fn open_thread(&self, _conversation: &str, title: &str) -> Result<(String, String)> {
@@ -562,7 +562,7 @@ fn signal_from(source: &str, thread: &str, ts: &str, text: &str) -> Signal {
         external_id: ts.into(),
         author: "U_ME".into(),
         label: "dm".into(),
-        text: text.into(),
+        text: if source == "slack" && thread == ts { format!("- {text}") } else { text.into() },
         attachments: vec![],
         at: now(),
         root: thread == ts,
@@ -4223,4 +4223,66 @@ async fn structured_focus_updates_obey_stop_and_keep_direct_replies() {
     assert!(settle(||w.starts_for(&focus.id).len()==2).await);
     w.hub.interrupt(&focus.id).await.unwrap();
     assert!(w.hub.store.tasks().unwrap().is_empty());
+}
+
+
+#[tokio::test]
+async fn slack_main_messages_share_focus_and_keep_thread_ownership() {
+    let w = world(Mode::Auto, false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let mut first = signal("501", "501", "");
+    first.text = "Summarize current outcomes".into();
+    w.hub.accept(first.clone()).await.unwrap();
+    let focus = w.hub.focus_agent_id().unwrap().unwrap();
+    assert!(settle(|| w.posts.lock().unwrap().replies.iter().any(|(thread,text)| thread.is_empty() && text == "done")).await);
+    first.id = new_id("sig");
+    w.hub.accept(first).await.unwrap();
+    assert_eq!(w.starts_for(&focus).len(), 1, "redelivery cannot start another turn");
+    assert_eq!(w.hub.store.bound_agent("slack", "D1", "501").unwrap().as_deref(), Some(focus.as_str()));
+    let mut next = signal("502", "502", "");
+    next.text = "Continue that summary".into();
+    w.hub.accept(next).await.unwrap();
+    assert!(settle(|| w.starts_for(&focus).len() == 2).await);
+    w.hub.accept(signal("503", "503", "Prepare a separate result")).await.unwrap();
+    let separate = w.hub.store.bound_agent("slack", "D1", "503").unwrap().unwrap();
+    assert_ne!(separate, focus);
+    assert!(settle(|| w.posts.lock().unwrap().replies.iter().any(|(thread,text)| thread == "503" && text == "done")).await);
+    w.hub.accept(signal("503", "504", "- Keep this with its owner")).await.unwrap();
+    assert!(settle(|| w.starts_for(&separate).len() == 2).await);
+    let session = w.hub.store.agent(&separate).unwrap().unwrap().session_id;
+    let calls = w.calls.lock().unwrap();
+    let prompts: Vec<_> = calls.started.iter().filter(|(id,_)| id == &session).flat_map(|(_,inputs)| inputs.iter().filter_map(TurnInput::as_text)).collect();
+    assert!(prompts.contains(&"Prepare a separate result"));
+    assert!(prompts.contains(&"- Keep this with its owner"));
+    drop(calls);
+    let replies = w.hub.store.bindings_for(&focus).unwrap();
+    assert!(replies.iter().any(|binding| binding.thread_key.starts_with("reply-")), "transport response IDs retain Focus ownership");
+    let before = w.posts.lock().unwrap().replies.len();
+    w.hub.say_to(&focus, "Local follow-up").await.unwrap();
+    assert!(settle(|| w.hub.store.agent(&focus).unwrap().unwrap().status == AgentStatus::Complete).await);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(w.posts.lock().unwrap().replies.len(), before, "local Focus turns stay local");
+}
+
+#[tokio::test]
+async fn slack_focus_publication_retries_and_final_echo_send_once() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let worker = w.hub.create_agent(None).unwrap();
+    let request = w.hub.store.add_entry(&worker.id,now(),EntryKind::You,"Prepare the requested outcome","","").unwrap();
+    let mut input = signal("601", "601", "");
+    input.text = "Show the current outcome".into();
+    w.hub.accept(input).await.unwrap();
+    let focus = w.hub.focus_agent_id().unwrap().unwrap();
+    assert!(settle(|| !w.starts_for(&focus).is_empty()).await);
+    let args = serde_json::json!({"requestId":uuid::Uuid::new_v4().to_string(),"kind":"progress","outcomeId":"requested-result","sourceAgentId":worker.id,"sourceRequestEntryId":request.id,"sourceContextEntryId":request.id,"revisionEntryId":request.id,"focusCycle":w.hub.store.last_human_entry(&focus).unwrap(),"text":"Preparation is advancing."});
+    let receipt = w.hub.call_agent_tool(&focus,"publish_focus_update",args.clone()).await.unwrap();
+    assert_eq!(w.hub.call_agent_tool(&focus,"publish_focus_update",args.clone()).await.unwrap(),receipt);
+    assert_eq!(w.posts.lock().unwrap().replies,vec![(String::new(),"Preparation is advancing.".into())]);
+    let session = w.hub.store.agent(&focus).unwrap().unwrap().session_id;
+    w.harness.send(HarnessEvent::Message {session:session.clone(),text:"Preparation is advancing.".into(),final_answer:true}).unwrap();
+    w.harness.send(HarnessEvent::TurnFinished {session,status:"completed".into()}).unwrap();
+    assert!(settle(|| w.hub.store.agent(&focus).unwrap().unwrap().status == AgentStatus::Complete).await);
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(w.posts.lock().unwrap().replies.len(),1,"a final echo cannot repeat a published response");
 }

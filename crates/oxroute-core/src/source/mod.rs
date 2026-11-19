@@ -26,6 +26,12 @@ pub struct Posted {
     pub id: String,
 }
 
+/// A delivered response and the transport-assigned messages carrying it.
+pub struct Reply {
+    pub permalink: String,
+    pub messages: Vec<Posted>,
+}
+
 /// What a source hands to the hub.
 pub enum SourceEvent {
     Arrived(Box<Signal>),
@@ -47,9 +53,8 @@ pub trait Source: Send + Sync {
     /// Run until the process ends, pushing everything that arrives.
     async fn run(&self, inbox: Inbox) -> Result<()>;
 
-    /// Say something in a thread. Returns a permalink when the source has
-    /// such a thing.
-    async fn reply(&self, target: &Target, text: &str) -> Result<String>;
+    /// Reply at the destination, returning its link and transport message IDs.
+    async fn reply(&self, target: &Target, text: &str) -> Result<Reply>;
 
     /// Present a structured link without granting approval or publishing work.
     async fn link_button(&self, target: &Target, title: &str, url: &str) -> Result<String> {
@@ -77,7 +82,7 @@ pub trait Source: Send + Sync {
     }
 
     /// Hand files back to the human.
-    async fn upload(&self, target: &Target, paths: &[String]) -> Result<()> {
+    async fn upload(&self, target: &Target, paths: &[String]) -> Result<Vec<Posted>> {
         let _ = (target, paths);
         anyhow::bail!("{} cannot take files back", self.name())
     }

@@ -92,6 +92,7 @@ struct Live {
     /// between -- an attachment, a notice -- would hide that from a check
     /// that only looked at the entry before it.
     narrated: Mutex<HashSet<String>>,
+    sent: Mutex<HashSet<String>>,
     progress: Mutex<Progress>,
     artifacts: Mutex<HashSet<String>>,
     artifact_dir: PathBuf,
@@ -118,6 +119,7 @@ impl Live {
             status: Mutex::new(None),
             answer: Mutex::new(None),
             narrated: Mutex::new(HashSet::new()),
+            sent: Mutex::new(HashSet::new()),
             progress: Mutex::new(Progress::new()),
             artifacts: Mutex::new(HashSet::new()),
             artifact_dir,
@@ -921,14 +923,14 @@ impl Hub {
     // -- signals ---------------------------------------------------------
 
     /// A signal arrived. Decide where it goes and get it there.
-    pub async fn accept(self: &Arc<Self>, signal: Signal) -> Result<()> {
+    pub async fn accept(self: &Arc<Self>, mut signal: Signal) -> Result<()> {
         if crate::inbox::imported(&signal.source) {self.import_inbox(signal, "").await?;self.emit(Event::Sync);return Ok(());}
         if !self.store.put_signal(&signal)? {
             // Sources redeliver. That is normal, not an error.
             return Ok(());
         }
-        // Slack messages never need a routing decision: a root starts an
-        // agent and a reply follows its binding. Mark them settled before
+        // Slack destinations are deterministic: Focus by default, explicit
+        // new conversations, or existing reply bindings. Settle them before
         // surfaces hear about them so they never flash under "Waiting".
         if signal.source == crate::source::slack::SOURCE {
             self.store.resolve_signal(&signal.id, "routing", &[])?;
@@ -937,7 +939,20 @@ impl Hub {
             signal: Box::new(signal.clone()),
         });
 
-        let target = signal.target();
+        // Only the authenticated owner's direct-message roots select a destination.
+        // Existing thread bindings remain authoritative for every reply.
+        if signal.source == crate::source::slack::SOURCE && signal.root
+            && signal.author == self.config.owner && signal.label == "dm"
+        {
+            if let Some(prompt) = signal.text.strip_prefix("- ") {
+                signal.text = prompt.to_owned();
+            } else {
+                let focus = self.ensure_focus_agent().await?;
+                self.store.bind(&signal.source, &signal.conversation, &signal.thread_key, &focus.id)?;
+            }
+        }
+
+        let target = self.signal_target(&signal);
         let bound = self
             .store
             .bound_agent(&signal.source, &signal.conversation, &signal.thread_key)?;
@@ -991,7 +1006,7 @@ impl Hub {
         } else {
             self.record_signal(&agent.id, &signal).await;
             self.chains.lock().await.remove(&agent.id);
-            self.preempt_to(agent, inputs, Some(signal.target()), None)
+            self.preempt_to(agent, inputs, Some(self.signal_target(&signal)), None)
                 .await;
         }
         Ok(())
@@ -1008,7 +1023,7 @@ impl Hub {
                     item: Box::new(item),
                 });
             }
-            self.say(&signal.target(), "Waiting in the oxroute inbox.").await;
+            self.say(&self.signal_target(&signal), "Waiting in the oxroute inbox.").await;
             return Ok(());
         }
         let agent = self.spawn(&signal, None, None, None).await?;
@@ -1290,7 +1305,7 @@ impl Hub {
         bound: Option<&str>,
         directive: Directive,
     ) -> Result<()> {
-        let target = signal.target();
+        let target = self.signal_target(&signal);
         let reply = match directive {
             Directive::Model(alias) => match self.config.resolve_model(&alias) {
                 None => format!("I don't know a model called {alias}."),
@@ -1805,7 +1820,7 @@ impl Hub {
             {
                 Ok(fetched) => inputs.extend(fetched),
                 Err(error) => {
-                    self.say(&signal.target(), &error.to_string()).await;
+                    self.say(&self.signal_target(&signal), &error.to_string()).await;
                     return Ok(Vec::new());
                 }
             }
@@ -1821,7 +1836,7 @@ impl Hub {
         signal: Option<Signal>,
     ) {
         let target = match &signal {
-            Some(s) if self.source(&s.source).is_some() => Some(s.target()),
+            Some(s) if self.source(&s.source).is_some() => Some(self.signal_target(s)),
             _ => self.home_target(&agent.id).await,
         };
         self.deliver_to(agent, inputs, signal, target, None, None).await;
@@ -2335,7 +2350,7 @@ impl Hub {
         }
         self.store.set_agent_status(&agent.id, AgentStatus::Complete, now())?;
 
-        if let Some(target) = &target {
+        if let Some(target) = target.as_ref().filter(|_| !answer.is_empty() && !turn.sent.lock().unwrap().contains(&answer)) {
             let reply = if target.source == crate::source::slack::SOURCE {
                 reply_with_context(&turn.reply_context.lock().unwrap(), &answer)
             } else {
@@ -2679,7 +2694,7 @@ impl Hub {
         let harness = self.harness(agent.backend);
         if !harness.capabilities().fork || agent.session_id.is_empty() {
             self.say(
-                &signal.target(),
+                &self.signal_target(&signal),
                 "This agent cannot answer a side question. Ask it directly instead.",
             )
             .await;
@@ -2711,7 +2726,7 @@ impl Hub {
         let turn = Arc::new(Live::new(
             session.clone(),
             self.config.artifacts.join(&scratch.id),
-            Some(signal.target()),
+            Some(self.signal_target(&signal)),
             true,
         ));
         self.live.lock().await.insert(scratch.id.clone(), turn.clone());
@@ -2732,7 +2747,7 @@ impl Hub {
             Ok(answer) => answer,
             Err(error) => {
                 tracing::warn!(%error, "side question failed");
-                self.say(&signal.target(), ERROR_REPLY).await;
+                self.say(&self.signal_target(&signal), ERROR_REPLY).await;
                 return Ok(());
             }
         };
@@ -2740,7 +2755,7 @@ impl Hub {
         self.store
             .queue_context(&agent.id, &signal.external_id, &question, &answer)?;
         self.resolve(signal, "answered on the side", &[agent.id.clone()]).await;
-        self.say(&signal.target(), &answer).await;
+        self.say(&self.signal_target(&signal), &answer).await;
         Ok(())
     }
 
@@ -2771,7 +2786,12 @@ impl Hub {
 
             let text = turn.progress.lock().unwrap().render(MAX_BYTES);
             match source.post_status(&target, &text).await {
-                Ok(posted) => *turn.posted.lock().unwrap() = Some(posted),
+                Ok(posted) => {
+                    if let Err(error) = self.bind_focus_reply(&target, &posted) {
+                        tracing::error!(%error, "could not bind Focus progress");
+                    }
+                    *turn.posted.lock().unwrap() = Some(posted);
+                },
                 Err(error) => {
                     tracing::warn!(%error, "could not post progress");
                     return;
@@ -2870,8 +2890,13 @@ impl Hub {
         let Some(source) = self.source(&target.source) else {
             return;
         };
-        if let Err(error) = source.upload(target, &paths).await {
-            tracing::warn!(%error, "could not hand back artifacts");
+        match source.upload(target, &paths).await {
+            Ok(messages) => for posted in messages {
+                if let Err(error) = self.bind_focus_reply(target, &posted) {
+                    tracing::error!(%error, "could not bind Focus attachment");
+                }
+            },
+            Err(error) => tracing::warn!(%error, "could not hand back artifacts"),
         }
     }
 
@@ -2982,13 +3007,13 @@ impl Hub {
             )?;
             self.share_conversation(&target, &agent.id).await;
         } else if signal.source == crate::source::slack::SOURCE {
-            self.share_conversation(&signal.target(), &agent.id).await;
+            self.share_conversation(&self.signal_target(&signal), &agent.id).await;
         }
         self.emit(Event::AgentChanged {
             agent: Box::new(agent.clone()),
         });
         self.clone()
-            .name_agent(agent.id.clone(), Some(signal.target()), false);
+            .name_agent(agent.id.clone(), Some(self.signal_target(&signal)), false);
         Ok(agent)
     }
 
@@ -3146,13 +3171,42 @@ impl Hub {
         }
     }
 
-    /// Say something in a thread, and return the permalink if there is one.
+    fn signal_target(&self, signal: &Signal) -> Target {
+        let mut target = signal.target();
+        if target.source == crate::source::slack::SOURCE {
+            if let (Ok(Some(owner)), Ok(Some(focus))) = (
+                self.store.bound_agent(&target.source, &target.conversation, &target.thread_key),
+                self.focus_agent_id(),
+            ) {
+                if owner == focus { target.thread_key.clear(); }
+            }
+        }
+        target
+    }
+
+    fn bind_focus_reply(&self, target: &Target, posted: &crate::source::Posted) -> Result<()> {
+        if target.source == crate::source::slack::SOURCE && target.thread_key.is_empty() {
+            if let Some(focus) = self.focus_agent_id()? {
+                self.store.bind(&target.source, &posted.conversation, &posted.id, &focus)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reply at the destination and retain its transport ownership.
     pub async fn say(&self, target: &Target, text: &str) -> String {
         let Some(source) = self.source(&target.source) else {
             return String::new();
         };
         match source.reply(target, text).await {
-            Ok(permalink) => permalink,
+            Ok(reply) => {
+                for posted in reply.messages {
+                    if let Err(error) = self.bind_focus_reply(target, &posted) {
+                        tracing::error!(%error, "could not bind Focus response");
+                    }
+                }
+                reply.permalink
+            },
             Err(error) => {
                 tracing::error!(source = target.source, %error, "could not reply");
                 String::new()
