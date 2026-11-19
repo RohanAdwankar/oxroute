@@ -89,7 +89,20 @@ try{
  assert.equal(reports.length,1,'Coordination retries retain one visible entry');assert.equal(reports[0].origin,worker.id);
  const reportRow=page.locator(`[data-entry="${reports[0].id}"]`);await reportRow.getByText('Internal update',{exact:true}).waitFor();
  assert.ok(!(await reportRow.getAttribute('class')).includes('bg-mine'),'Agent reports never use human styling');
- await reportRow.getByRole('button',{name:`Open originating agent ${worker.id}`,exact:true}).waitFor();
+ const sourceLink=reportRow.getByRole('button',{name:`Open originating agent ${worker.id}`,exact:true});await sourceLink.waitFor();
+ for(const width of [1280,390]) {
+  await page.setViewportSize({width,height:900});await reportRow.scrollIntoViewIfNeeded();
+  const source=await sourceLink.boundingBox(),label=await reportRow.getByText('Internal update',{exact:true}).boundingBox();
+  if(width===1280)assert.ok(Math.abs(source.y-label.y)<3,'Source attribution shares update metadata');
+  assert.ok(source.x>=0&&source.x+source.width<=width,'Source remains visible at narrow widths');
+  assert.ok(await sourceLink.isVisible());
+  if(process.env.COORDINATION_SCREENSHOT)await page.screenshot({path:process.env.COORDINATION_SCREENSHOT.replace('.png',`-${width}.png`)});
+ }
+ await page.setViewportSize({width:1280,height:900});
+ await sourceLink.focus();await page.keyboard.press('Enter');
+ await page.locator(`[data-agent-pane="${worker.id}"]`).first().waitFor();
+ await page.goto(`${ui}/?view=focus`);await composer.waitFor();
+
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done','Reports never approve tasks');
  if(process.env.COORDINATION_SCREENSHOT){await reportRow.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.COORDINATION_SCREENSHOT});}
  await page.goto(ui+'/paused');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();

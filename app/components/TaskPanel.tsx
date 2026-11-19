@@ -78,18 +78,18 @@ function Row({
 function TaskDetails({ notes, children }: { notes: TaskNote[]; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return <>
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-      {children}
-      {notes.length > 0 && <button type="button" aria-label="Task history" aria-expanded={open} title={`Task history · ${notes.length}`} onClick={() => setOpen(!open)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }} className={`ml-auto cursor-pointer text-faint hover:text-ink ${open ? "rotate-180" : ""}`}>
+    <div className="mt-2 -mr-10 grid grid-cols-[minmax(0,1fr)_28px] items-start gap-x-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">{children}</div>
+      {notes.length > 0 && <button type="button" aria-label="Task history" aria-expanded={open} title={`Task history · ${notes.length}`} onClick={() => setOpen(!open)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }} className={`flex h-7 w-7 cursor-pointer items-center justify-center text-faint hover:text-ink ${open ? "rotate-180" : ""}`}>
         <Icon name="chevronDown" size={14} />
       </button>}
-    </div>
-    {open && <ul className="mt-2 flex flex-col gap-1">
+    {open && <ul className="col-span-2 mt-2 flex flex-col gap-1 pr-10">
       {[...notes].reverse().map(note => <li key={note.id} className="break-words text-[11px] leading-[1.45] text-faint">
         <span className="tnum mr-2 text-[10px]">{clock(note.at)}</span>
         {note.text}
       </li>)}
     </ul>}
+    </div>
   </>;
 }
 
@@ -308,7 +308,7 @@ export const TaskPanel = memo(function TaskPanel({
             }
             setPending({ task, status });
           }}
-          className={`cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
+          className={`h-7 cursor-pointer bg-transparent text-[10.5px] outline-none ${STATE_COLOR[task.status]}`}
         >
           {STATES.map((state) => (
             <option key={state.value} value={state.value} disabled={state.value === "blocked" && tasks.length < 2}>

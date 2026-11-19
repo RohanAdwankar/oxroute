@@ -30,6 +30,9 @@ try {
   for (let i = 0; i < 100; i++) { try { ready = (await fetch(native + '/api/health')).ok; } catch {} if (ready) break; await new Promise(done => setTimeout(done, 100)); }
   assert.ok(ready); assert.ok((await api('/api/state')).artifactRoot.includes('/.tmp/'));
   const agent = await api('/api/agents', {});
+  await api('/api/rename', { agent: agent.id, name: 'Background workflow validation session' });
+  const waiting = await api('/api/tasks', { text: 'Check queued delivery and retained workflow details', agentId: agent.id });
+  await api(`/api/tasks/${waiting.id}`, { ...waiting, status: 'waiting_for_human', note: 'Choose the remaining delivery window.' }, 'PUT');
   const task = await api('/api/tasks', { text: 'Review retry settings', agentId: agent.id });
   const history = Array.from({ length: 4 }, (_, i) => `Update ${i}: ${'Runtime evidence retained for inspection. '.repeat(60)}`.trim());
   for (const text of history) await api(`/api/tasks/${task.id}/notes`, { text, agentId: agent.id });
@@ -41,6 +44,7 @@ try {
   page.on('pageerror', error => errors.push(String(error)));
   await page.addInitScript(() => {
     localStorage.setItem('oxroute.tasks', 'true');
+    localStorage.setItem('oxroute.taskWidth', '320');
     sessionStorage.setItem('oxroute.windowTasks', 'false');
   });
   await page.goto(`${base}/?agent=${agent.id}`);
@@ -49,11 +53,22 @@ try {
   const disclosure = row.getByLabel('Task history', { exact: true });
   await disclosure.waitFor();
   assert.equal(await panel.getByText(completed.text, { exact: true }).count(), 0);
-  assert.ok((await row.boundingBox()).height < 120, 'Long progress notes do not determine the default row height');
+  assert.ok((await row.boundingBox()).height < 170, 'Long progress notes do not determine the default row height');
   for (const text of history) assert.equal(await row.locator('li').filter({ hasText: text }).isVisible(), false);
-  const statusBounds = await row.getByRole('combobox', { name: `status for ${task.text}`, exact: true }).boundingBox();
-  const historyBounds = await disclosure.boundingBox();
-  assert.ok(Math.abs(historyBounds.y + historyBounds.height / 2 - statusBounds.y - statusBounds.height / 2) < 8, 'History shares the status line');
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const text of [task.text, waiting.text]) {
+      const item = panel.locator('[data-task-row]').filter({ has: page.locator('[data-task-open]', { hasText: text }) });
+      const status = await item.getByRole('combobox', { name: `status for ${text}`, exact: true }).boundingBox();
+      const history = await item.getByLabel('Task history', { exact: true }).boundingBox();
+      const remove = await item.getByRole('button', { name: `delete ${text}`, exact: true }).boundingBox();
+      assert.ok(Math.abs(history.y + history.height / 2 - status.y - status.height / 2) < 2, 'History shares the status center at every width');
+      assert.ok(Math.abs(history.x + history.width / 2 - remove.x - remove.width / 2) < 2, 'History aligns beneath delete');
+      assert.ok(history.x >= 0 && history.x + history.width <= width, `Controls stay inside the viewport: ${JSON.stringify({width,history,remove})}`);
+    }
+    if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', `-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 1280, height: 850 });
   await disclosure.focus(); await page.keyboard.press('Enter');
   for (const text of history) await row.locator('li').filter({ hasText: text }).waitFor({ state: 'visible' });
   await disclosure.click();

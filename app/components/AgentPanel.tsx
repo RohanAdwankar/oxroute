@@ -1352,8 +1352,9 @@ const Message = memo(function Message({
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
             <div className="flex min-w-0 items-start gap-2 text-[var(--said)] leading-[1.55] break-words">
               {tag && (
-                <span className={`shrink-0 pt-[2px] text-[10.5px] ${tag.tone}`}>
-                  {tag.label}
+                <span className={`flex max-w-[45%] shrink-0 flex-wrap items-baseline gap-x-2 pt-[2px] text-[10.5px] ${tag.tone}`}>
+                  <span>{tag.label}</span>
+                  {entry.kind === "coordination" && entry.origin && <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={() => onOpenAgent(entry.origin)} className="max-w-full cursor-pointer truncate text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button>}
                 </span>
               )}
               <Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} />
@@ -1368,7 +1369,7 @@ const Message = memo(function Message({
                 <Icon name={entry.reaction === "down" ? "thumbDown" : "thumbUp"} size={12} />
               </span>
             )}
-            {entry.origin && (entry.kind === "coordination" ? <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={() => onOpenAgent(entry.origin)} className="w-fit cursor-pointer text-[11px] text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button> : <span className="text-[11px] text-ok">← {entry.origin}</span>)}
+            {entry.origin && entry.kind !== "coordination" && <span className="text-[11px] text-ok">← {entry.origin}</span>}
             {(["forked", "forkedFrom", "merged", "mergedInto"] as EntryKind[]).includes(entry.kind) && entry.detail ? (
               <button
                 type="button"
