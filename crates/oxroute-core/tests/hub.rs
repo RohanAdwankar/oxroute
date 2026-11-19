@@ -3986,7 +3986,7 @@ async fn focus_timer_never_overlaps_an_active_coordinator_turn() {
 }
 
 #[tokio::test]
-async fn focus_sees_unanswered_messages_and_a_user_response_resets_them() {
+async fn focus_keeps_unclassified_updates_without_asserting_pending_decisions() {
     let w=world(Mode::Ask,false).await;w.hub.set_next_action_suggestions(false).unwrap();
     let focus=w.hub.ensure_focus_agent().await.unwrap();
     for text in ["Choose an available rollout window", "The review evidence is ready"] {
@@ -3996,7 +3996,7 @@ async fn focus_sees_unanswered_messages_and_a_user_response_resets_them() {
     w.hub.open_focus().await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==1&&w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
     let context=w.calls.lock().unwrap().started[0].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();
-    assert!(context.contains("\"unansweredMessages\":2")&&context.contains("Choose an available rollout window")&&context.contains("The review evidence is ready"));
+    assert!(context.contains("\"unansweredMessages\":0")&&context.contains("\"unclassifiedUpdates\"")&&context.contains("Choose an available rollout window")&&context.contains("The review evidence is ready"));
     w.hub.say_to(&focus.id,"Use the later window").await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==2).await);
     let context=w.calls.lock().unwrap().started[1].1.iter().filter_map(TurnInput::as_text).find(|text|text.contains("unansweredMessages")).unwrap().to_string();
@@ -4154,7 +4154,7 @@ async fn focus_reports_keep_agent_origin_without_becoming_human_replies() {
     assert_eq!(w.hub.store.last_human_entry(&focus.id).unwrap(),human.id);
     let calls=w.calls.lock().unwrap();
     let input=calls.started.last().unwrap().1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
-    assert!(input.contains("\"unansweredMessages\":2"));
+    assert!(input.contains("\"unansweredMessages\":0") && input.contains("\"unclassifiedUpdates\""));
     assert!(input.contains(&worker.id));
     assert!(input.contains("Queue context (recorded entry references, not authorization)"));
     assert!(input.contains("humanEntryAtQueue") && input.contains("queuedEntryId"));
@@ -4190,6 +4190,7 @@ async fn native_coordination_bounds_reads_and_preserves_authority() {
     assert_eq!(page["entries"].as_array().unwrap().len(),1);
     assert_eq!(page["entries"][0]["kind"],"coordination");
     assert_eq!(page["entries"][0]["origin"],worker.id);
+    assert_eq!(page["sourceContextEntryId"],w.hub.store.last_human_entry(&focus.id).unwrap(),"Bounded reads expose the inspection stamp without requiring an unbounded history scan");
     w.hub.store.add_work_entry(&focus.id,now(),"Inspect state","",&"λΔ".repeat(10000),"native-boundary").unwrap();
     let bounded=w.hub.call_agent_tool(&worker.id,"read_conversation",serde_json::json!({"agentId":focus.id,"limit":50})).await.unwrap();
     assert_eq!(bounded["truncated"],true);
@@ -4199,4 +4200,27 @@ async fn native_coordination_bounds_reads_and_preserves_authority() {
     assert_eq!(list["conversations"].as_array().unwrap().len(),1);
     assert!(list["nextOffset"].is_number());
     assert!(w.posts.lock().unwrap().replies.is_empty());
+}
+
+#[tokio::test]
+async fn structured_focus_updates_obey_stop_and_keep_direct_replies() {
+    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.open_focus().await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==1).await);
+    assert!(!w.hub.autorun_enabled(&focus.id).unwrap(),"Focus default chain autorun is separate from notification eligibility");
+    let source=w.hub.create_agent(None).unwrap();
+    let request=w.hub.store.add_entry(&source.id,now(),EntryKind::You,"Prepare the requested result","","").unwrap();
+    let result=w.hub.store.add_entry(&source.id,now(),EntryKind::Said,"The requested artifact and its scoped validation evidence are available.","","").unwrap();
+    let args=serde_json::json!({"requestId":uuid::Uuid::new_v4().to_string(),"kind":"completion","outcomeId":"artifact-result","sourceAgentId":source.id,"sourceRequestEntryId":request.id,"sourceContextEntryId":request.id,"revisionEntryId":request.id,"focusCycle":0,"qualification":"prepared","evidenceEntryIds":[result.id],"text":"The result is prepared; review remains required."});
+    assert!(w.hub.call_agent_tool(&source.id,"publish_focus_update",args.clone()).await.is_err());
+    let receipt=w.hub.call_agent_tool(&focus.id,"publish_focus_update",args.clone()).await.unwrap();
+    assert_eq!(receipt["kind"],"completion");
+    assert!(w.hub.interrupt(&focus.id).await.unwrap());
+    assert_eq!(w.hub.call_agent_tool(&focus.id,"publish_focus_update",args.clone()).await.unwrap(),receipt,"Retrying a delivered update after stop sends nothing new");
+    let mut fresh=args.clone();fresh["requestId"]=serde_json::json!(uuid::Uuid::new_v4().to_string());fresh["outcomeId"]=serde_json::json!("another-result");
+    assert!(w.hub.call_agent_tool(&focus.id,"publish_focus_update",fresh).await.is_err(),"Stopped Focus cannot autonomously publish");
+    w.hub.say_to(&focus.id,"Answer this new direct request").await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==2).await);
+    w.hub.interrupt(&focus.id).await.unwrap();
+    assert!(w.hub.store.tasks().unwrap().is_empty());
 }

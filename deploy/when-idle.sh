@@ -140,6 +140,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/fleet-affordances.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/home-archive.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/composer-latency.mjs"
 (cd "$repository" && TEST_DAEMON="$release/bin/oxrouted" node tests/focus-events.mjs)
+(cd "$repository" && TEST_DAEMON="$release/bin/oxrouted" TEST_URL=http://127.0.0.1:3939 node tests/completion-notifications.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-coordinator.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-deck.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/focus-continuation.mjs)

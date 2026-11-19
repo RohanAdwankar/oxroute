@@ -82,7 +82,7 @@ try {
  const item={id:'native-result',type:'mcpToolCall',status:'completed',server:'oxroute_internal',tool:'read_conversation',arguments:{agentId:focus.id},result:page};
  send(sessions.get(current.thread).socket,'item/completed',{threadId:current.thread,item});
  await until(async()=>(await api(`/api/agents/${current.agent.id}`)).timeline.some(entry=>entry.text==='Read conversation'),'Native activity did not persist');
- await stop();daemon=start();await healthy();assert.ok((await mcp('tools/list')).tools.length===3,'Sender credential survives restart');
+ await stop();daemon=start();await healthy();const available=(await mcp('tools/list')).tools;assert.ok(['list_conversations','read_conversation','send_agent_message','publish_focus_update'].every(name=>available.some(tool=>tool.name===name)),'Sender credential and required native tools survive restart');
  await call('send_agent_message',message);assert.equal((await api(`/api/agents/${focus.id}`)).timeline.filter(entry=>entry.requestId===requestId).length,1,'Retry after restart preserves one visible report');
  if(process.env.TEST_CODEX){
   const {createInterface}=await import('node:readline');

@@ -19,12 +19,22 @@ use crate::model::{
 use crate::tags::Board;
 
 mod focus;
+mod focus_updates;
+pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 
 #[derive(Debug, Clone)]
 pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String}
 
 const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS focus_updates (
+ request_id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, source_agent TEXT NOT NULL, outcome_id TEXT NOT NULL,
+ source_request INTEGER NOT NULL, focus_cycle INTEGER NOT NULL, kind TEXT NOT NULL, qualification TEXT NOT NULL,
+ entry_id INTEGER NOT NULL UNIQUE, payload TEXT NOT NULL, receipt TEXT NOT NULL, revision TEXT NOT NULL, superseded_by TEXT
+);
+CREATE INDEX IF NOT EXISTS focus_updates_entries ON focus_updates(focus_id,entry_id);
+CREATE INDEX IF NOT EXISTS focus_updates_outcomes ON focus_updates(focus_id,source_agent,outcome_id,revision,kind,qualification);
+CREATE TABLE IF NOT EXISTS focus_update_receipts (request_id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS focus_inbox (
  source TEXT NOT NULL, item_id TEXT NOT NULL, data TEXT NOT NULL, updated_at REAL NOT NULL,
  PRIMARY KEY(source,item_id)
@@ -172,6 +182,13 @@ CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TRIGGER IF NOT EXISTS task_completion_reopened AFTER UPDATE OF status ON tasks
+WHEN NEW.status='incomplete' AND OLD.status!='incomplete'
+BEGIN
+ INSERT INTO kv(key,value) VALUES('task-reopened-entry:' || NEW.id,(SELECT CAST(COALESCE(MAX(id),0) AS TEXT) FROM entries))
+ ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+END;
+
 
 CREATE TABLE IF NOT EXISTS tags (
     agent_id TEXT NOT NULL,

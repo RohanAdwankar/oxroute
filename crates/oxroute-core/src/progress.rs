@@ -115,6 +115,7 @@ pub fn summarize(item: &Value) -> Option<Summary> {
         "list_conversations"=>Some("List conversations"),
         "read_conversation"=>Some("Read conversation"),
         "send_agent_message"=>Some("Send agent message"),
+        "publish_focus_update"=>Some("Publish Focus update"),
         _=>None,
     });
     Some(Summary {
