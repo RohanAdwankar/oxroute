@@ -22,7 +22,7 @@ try {
     const json = value => route.fulfill({ json: value });
     if (path === '/api/version') return json({ version });
     if (path === '/api/state') return json({ mode: 'ask', agents, archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] });
-    if (path === '/api/terminals') return json([]);
+    if (path === '/api/terminals' || path === '/api/browsers') return json([]);
     if (path === '/api/focus') return json({suggestions: [], feedback: {}});
     if (path.startsWith('/api/agents/')) { const agent = agents.find(a => path.endsWith(a.id)); if (agent.id === 'beta') await historyReady; return json({ agent, timeline: agent.id === 'beta' ? entries : [], delivery: 'start' }); }
     if (path === '/api/say') {

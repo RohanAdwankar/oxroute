@@ -28,7 +28,7 @@ try {
     if (path === '/api/client-failures') return route.continue();
     if (path === '/api/version') return json({ version });
     if (path === '/api/state') return json({ mode: 'ask', agents: [parent, ...[...children.values()].filter(child => !child.archived).map(child => child.agent)], archived: [...children.values()].filter(child => child.archived).map(child => child.agent), messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: threads, tags: {}, boards: [], sources: [], models: [], backends: [{ backend: 'codex', fork: true, merge: true }] });
-    if (path === '/api/terminals') return json([]);
+    if (path === '/api/terminals' || path === '/api/browsers') return json([]);
     if (path === '/api/focus') return json({suggestions: [], feedback: {}});
     if (path.startsWith('/api/agents/')) {
       const id = path.split('/')[3];

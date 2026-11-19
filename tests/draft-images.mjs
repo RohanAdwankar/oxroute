@@ -21,7 +21,7 @@ try{
    return r.fulfill({json:{ok:true}});
   }
   if(path==='/api/state')return r.fulfill({json:{mode:'ask',agents:[agent],archived:[],messages:{},tasks:[],taskNotes:[],inbox:[],paneLinks:{},tags:{},boards:[],sources:[],models:[],backends:[]}});
-  if(path==='/api/terminals')return r.fulfill({json:[]});
+  if(path==='/api/terminals'||path==='/api/browsers')return r.fulfill({json:[]});
   return r.fulfill({json:{agent,timeline:[],delivery:'start'}});
  });
  await page.goto(`${process.env.TEST_URL}/?agent=${agent.id}`);

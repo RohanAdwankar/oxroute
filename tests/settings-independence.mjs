@@ -13,7 +13,7 @@ try{
   const path=new URL(r.request().url()).pathname;
   if(path==='/api/version')return r.continue();
   if(path==='/api/state')return r.fulfill({json:state});
-  if(path==='/api/terminals')return r.fulfill({json:[]});
+  if(path==='/api/terminals'||path==='/api/browsers')return r.fulfill({json:[]});
   if(path===`/api/agents/${agent.id}`)return r.fulfill({json:{agent,timeline:[],delivery:'start'}});
   if(path==='/api/mode'){
    writes++;arrived();await held;

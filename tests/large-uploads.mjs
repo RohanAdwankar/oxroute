@@ -67,6 +67,8 @@ try {
   await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents: [agent], archived: [], messages: {}, tasks: [], taskNotes: [], inbox: [], paneLinks: {}, quoteThreads: [], tags: {}, boards: [], sources: [], models: [], backends: [] } }));
   await page.route('**/api/terminals', route => route.fulfill({ json: [] }));
+  await page.route('**/api/browsers', route => route.fulfill({ json: [] }));
+  await page.route('**/api/focus', route => route.fulfill({ json: { suggestions: [], feedback: {} } }));
   await page.route('**/api/agents/*', route => route.fulfill({ json: { agent, timeline: [], delivery: 'start' } }));
   await page.goto(`${base}/?agent=${agent.id}`);
   await page.locator('input[type=file]').first().setInputFiles(file);
