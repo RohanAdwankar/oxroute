@@ -177,6 +177,10 @@ and unconfirmed delivery; acceptance never means implementation or human approva
 An uncertain steering attempt survives restart and is not automatically replayed;
 inspect current runtime and source evidence before any new delivery attempt.
 
+Focus may include an optional `title` in the same message call to name the recipient.
+Human-selected titles are preserved; omission leaves the name alone, and retries
+never reapply a stale title over newer edits. Naming adds no separate inference call.
+
 ## Personal inbox
 
 `[inbox]` in `config.toml` connects Outlook Inbox mail and Slack DMs, group DMs and mentions to the existing Inbox. Extra Slack channel IDs are opt-in through `slack_channels`. The first sync imports the last seven days; Graph delta cursors, Slack recovery checkpoints and message IDs survive restarts. Slack events provide live updates. Each email conversation, Slack thread or DM conversation stays in one row; new context reopens it. Known Slack threads recover replies through rotating, durable page checkpoints even without new roots or mentions. Routing advice uses recent bounded context while full conversations remain available for viewing and manual delivery. Dismissal only changes Oxroute.

@@ -254,7 +254,7 @@ impl Hub {
         Ok(())
     }
 
-    pub async fn send_focus_message(self: &Arc<Self>, sender: &str, target: &str, text: &str, request: &str, urgent: bool) -> Result<()> {
+    pub async fn send_focus_message(self: &Arc<Self>, sender: &str, target: &str, text: &str, request: &str, urgent: bool, title: Option<&str>) -> Result<()> {
         let focus=self.focus_agent_id()?.context("open Focus before internal coordination")?;
         anyhow::ensure!(sender==focus || target==focus,"internal coordination must involve Focus");
         anyhow::ensure!(self.store.agent(sender)?.is_some()&&!self.store.agent_archived(sender)?,"choose an existing unarchived sender");
@@ -262,7 +262,13 @@ impl Hub {
         anyhow::ensure!(!text.trim().is_empty()&&text.len()<=16000,"message must contain 1–16000 bytes");
         uuid::Uuid::parse_str(request).context("requestId must be a UUID")?;
         anyhow::ensure!(self.store.agent(target)?.is_some()&&!self.store.agent_archived(target)?,"choose an existing unarchived agent");
-        if let Some(entry)=self.store.enqueue_focus_message(request,sender,target,text,urgent)? {self.emit(Event::Timeline{entry:Box::new(entry)});}
+        let title=title.map(str::trim);
+        anyhow::ensure!(title.is_none()||sender==focus,"only Focus may supply a recipient title");
+        anyhow::ensure!(title.is_none_or(|title|!title.is_empty()&&title.len()<=160),"title must contain 1–160 bytes");
+        if let Some(entry)=self.store.enqueue_focus_message(request,sender,target,text,urgent,title)? {
+            self.emit(Event::Timeline{entry:Box::new(entry)});
+            if title.is_some() {self.emit(Event::Sync);}
+        }
         self.dispatch_focus_messages().await
     }
 
@@ -277,6 +283,7 @@ impl Hub {
         let agent=self.store.agent(target)?.context("recipient missing")?;
         let supported=self.harness(agent.backend).capabilities().steer;
         delivery["steeringSupported"]=serde_json::json!(supported);
+        delivery["recipientTitle"]=serde_json::json!(agent.name);
         if delivery["state"]=="queued"&&delivery["urgent"]==true {
             delivery["reason"]=serde_json::json!(if agent.stall_reason.as_deref()==Some("stopped") {"Recipient was explicitly stopped; waiting for authorized resumption"}else if !supported {"Runtime does not support active-turn steering; delivery remains queued"}else{"Waiting for runtime turn readiness or idle delivery"});
         }

@@ -48,7 +48,7 @@ let browser;
 try{
  await until(async()=>{try{return(await fetch(native+'/api/health')).ok;}catch{return false;}});
  for(const path of ['automatic-titles','automatic-tags','recommendation-learning','next-action-suggestions'])await api(`/api/${path}`,{enabled:false});
- const worker=await api('/api/agents',{});await api('/api/rename',{agent:worker.id,name:'Storage validation'});
+ const worker=await api('/api/agents',{});
  for(const text of ['Review storage validation','Review network rollout','Review startup behavior']){
   const item=await api('/api/tasks',{text});taskIds.push(item.id);
   await api(`/api/tasks/${item.id}`,{...item,agentId:worker.id,status:'done',note:'Representative worker result awaiting human review'},'PUT');
@@ -77,10 +77,11 @@ try{
  assert.equal(turns.length,2,'Reopening Focus does not run a duplicate briefing');
  await page.reload();await composer.waitFor();assert.equal(await composer.inputValue(),'Keep this coordinator draft.');
  assert.equal(await page.getByRole('tab',{name:'Focus',exact:true}).count(),1);
- const requestId=crypto.randomUUID();await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});
+ const requestId=crypto.randomUUID();await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId,title:'Storage validation'});
  await until(async()=>turns.length===4&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete'&&(await detail()).agent.status==='complete');
- await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
+ await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId,title:'Storage validation'});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
+ assert.equal((await api(`/api/agents/${worker.id}`)).agent.name,'Storage validation','Optional coordination title persists without a separate rename call');
  const reportRequest=crypto.randomUUID(),report={agentId:worker.id,targetId:focusId,text:'Independent evidence is ready for coordination.',requestId:reportRequest};
  await api('/api/focus/messages',report);
  await until(async()=>turns.length===5&&(await detail()).agent.status==='complete');
@@ -111,6 +112,8 @@ try{
  await api('/api/rename',{agent:worker.id,name:longTitle});
  const renamedSource=reportRow.getByRole('button',{name:`Open ${longTitle}`,exact:true});await renamedSource.waitFor();
  assert.equal(await renamedSource.getAttribute('title'),`Open ${longTitle}`);
+ await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId,title:'Storage validation'});
+ assert.equal((await api(`/api/agents/${worker.id}`)).agent.name,longTitle,'Message retry preserves a newer human rename');
  assert.ok(await renamedSource.evaluate(node=>node.scrollWidth>node.clientWidth),'Long titles truncate visually while retaining the full accessible title');
  assert.ok((await renamedSource.boundingBox()).width<200,'Long titles remain compact on mobile');
  await api('/api/rename',{agent:worker.id,name:'Storage validation'});await sourceLink.waitFor();
@@ -139,6 +142,7 @@ try{
  if(process.env.COORDINATION_SCREENSHOT){await reportRow.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.COORDINATION_SCREENSHOT});}
  await page.goto(ui+'/paused');daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));daemon=start();
  await until(async()=>{try{return(await fetch(native+'/api/health')).ok;}catch{return false;}});
+ assert.equal((await api(`/api/agents/${worker.id}`)).agent.name,'Storage validation','Coordination title persists across restart');
  assert.equal((await api('/api/focus/agent',{})).id,focusId);await pause(100);assert.equal(turns.length,5,'Accepted coordination and event receipts survive restart');
  const restored=page;await restored.goto(`${ui}/?view=focus`);
  await restored.locator(`[data-agent-pane="${focusId}"]`).waitFor();assert.equal(await restored.locator('[data-composer]').inputValue(),'Keep this coordinator draft.');

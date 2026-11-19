@@ -66,9 +66,12 @@ try{
  const workers=[];for(let i=0;i<3;i++)workers.push(await worker());
 
  const workerHuman=(await api(`/api/agents/${workers[0].agent.id}`)).timeline.filter(entry=>entry.kind==='you').at(-1).id;
- const urgent={agentId:focus.id,targetId:workers[0].agent.id,text:'Retain the revised acceptance constraint while continuing the existing work.',requestId:crypto.randomUUID(),urgent:true};
+ const urgent={agentId:focus.id,targetId:workers[0].agent.id,text:'Retain the revised acceptance constraint while continuing the existing work.',requestId:crypto.randomUUID(),urgent:true,title:'Artifact preparation'};
  const delivery=await api('/api/focus/messages',urgent);assert.equal(delivery.delivery.state,'steered');assert.equal(delivery.queued,false);assert.equal(steers.length,1);assert.equal(interrupts,0);
+ assert.equal(delivery.delivery.recipientTitle,'Artifact preparation');
+ await api('/api/rename',{agent:workers[0].agent.id,name:'Human selected title'});
  await api('/api/focus/messages',urgent);assert.equal(steers.length,1,'Steering retries do not inject another input');
+ assert.equal((await api(`/api/agents/${workers[0].agent.id}`)).agent.name,'Human selected title','Urgent retries preserve newer title edits');
  const workerHistory=(await api(`/api/agents/${workers[0].agent.id}`)).timeline;
  assert.equal(workerHistory.filter(entry=>entry.kind==='you').at(-1).id,workerHuman,'Urgent internal context cannot impersonate a human reply');
  assert.equal(workerHistory.filter(entry=>entry.kind==='coordination'&&entry.origin===focus.id).length,1);
@@ -92,6 +95,7 @@ try{
  await stop();finish(focusThread,'completed',false);daemon=start();await healthy();
  await until(()=>focusTurns().length===2,'Pending events did not survive restart');
  await api('/api/focus/messages',urgent);await api('/api/focus/messages',uncertain);assert.equal(steers.length,2,'Accepted and unconfirmed steering receipts survive daemon restart');
+ assert.equal((await api(`/api/agents/${workers[0].agent.id}`)).agent.name,'Human selected title','Title protection and retry identity survive restart');
  const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Other conversation turns ended.')).text;
  const events=JSON.parse(eventText.slice(eventText.indexOf('[{"')));
  assert.deepEqual(events.map(event=>event.outcome).sort(),['completed','failed','stopped']);

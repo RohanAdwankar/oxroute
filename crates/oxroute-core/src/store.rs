@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS focus_turn_events (
 );
 CREATE INDEX IF NOT EXISTS focus_turn_events_queue ON focus_turn_events(focus_id,receipt,at);
 CREATE TABLE IF NOT EXISTS focus_messages (
- id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0, urgent INTEGER NOT NULL DEFAULT 0
+ id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0, urgent INTEGER NOT NULL DEFAULT 0, title TEXT
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -260,6 +260,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         AND json_type(value, '$.snapshot.files') IS NOT NULL", [])?;
     let focus_columns=conn.prepare("PRAGMA table_info(focus_messages)")?.query_map([],|r|r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !focus_columns.iter().any(|column|column=="urgent") {conn.execute("ALTER TABLE focus_messages ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0",[])?;}
+    if !focus_columns.iter().any(|column|column=="title") {conn.execute("ALTER TABLE focus_messages ADD COLUMN title TEXT",[])?;}
     let mut statement = conn.prepare("PRAGMA table_info(agents)")?;
     let agent_columns = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -1978,12 +1979,13 @@ impl Store {
     pub fn last_focus_wake(&self) -> Result<Option<f64>> {
         self.read(|c|Ok(c.query_row("SELECT MAX(CAST(substr(key,12) AS REAL)) FROM kv WHERE key GLOB 'focus-wake:*'",[],|row|row.get(0))?))
     }
-    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str,urgent:bool)->Result<Option<Entry>> {
+    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str,urgent:bool,title:Option<&str>)->Result<Option<Entry>> {
         self.with(|c|{
             let tx=c.unchecked_transaction()?;
-            let inserted=tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text,urgent) VALUES (?1,?2,?3,?4,?5)",params![id,sender,target,text,urgent])? > 0;
-            let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 AND urgent=?5 FROM focus_messages WHERE id=?1",params![id,sender,target,text,urgent],|row|row.get::<_,bool>(0))?;
+            let inserted=tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text,urgent,title) VALUES (?1,?2,?3,?4,?5,?6)",params![id,sender,target,text,urgent,title])? > 0;
+            let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 AND urgent=?5 AND title IS ?6 FROM focus_messages WHERE id=?1",params![id,sender,target,text,urgent,title],|row|row.get::<_,bool>(0))?;
             anyhow::ensure!(same,"requestId was already used for another message");
+            if inserted {if let Some(title)=title {tx.execute("UPDATE agents SET name=?2 WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM kv WHERE key='manual-title:'||?1)",params![target,title])?;}}
             let entry=if inserted {Some(tx.query_row("INSERT INTO entries(agent_id,at,kind,text,item_id,origin) VALUES(?1,?2,'coordination',?3,?4,?5) RETURNING id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id",params![target,crate::model::now(),text,id,sender],read_entry)?)} else {None};
             tx.commit()?;Ok(entry)
         })

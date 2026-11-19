@@ -111,5 +111,13 @@ try {
    assert.equal(await ui.locator(`[data-entry="${entry[0].id}"]`).evaluate(node=>node.className.includes('bg-mine')),false);
   }finally{await browser.close();}
  }
+ const focusConnection=opened.find(value=>value.thread===focusThread).config['mcp_servers.oxroute_internal'];
+ const named=await api('/api/agents',{}),naming={targetId:named.id,text:'Inspect existing artifact evidence.',requestId:crypto.randomUUID(),title:'Artifact evidence'};
+ const focusSend=async()=>{const response=await fetch(focusConnection.url,{method:'POST',headers:{'content-type':'application/json',authorization:focusConnection.http_headers.Authorization},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method:'tools/call',params:{name:'send_agent_message',arguments:naming}})});assert.ok(response.ok);return(await response.json()).result;};
+ assert.equal((await focusSend()).structuredContent.delivery.recipientTitle,'Artifact evidence','Authenticated native coordination can set a title without another call');
+ await api('/api/rename',{agent:named.id,name:'Preferred artifact title'});await focusSend();
+ assert.equal((await api(`/api/agents/${named.id}`)).agent.name,'Preferred artifact title');
+ await stop();daemon=start();await healthy();await focusSend();
+ assert.equal((await api(`/api/agents/${named.id}`)).agent.name,'Preferred artifact title','Persisted request identity prevents stale naming after restart');
  console.log('Native runtime registration, authenticated MCP reads/send receipts, bounds, policy, provenance, retries, restart and UI details passed.');
 } finally {await stop();for(const socket of rpc.clients)socket.terminate();await new Promise(done=>rpc.close(done));await new Promise(done=>transport.close(done));await rm(root,{recursive:true,force:true});}
