@@ -81,6 +81,7 @@ try{
  await until(async()=>turns.length===4&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete'&&(await detail()).agent.status==='complete');
  await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
+ await api(`/api/agents/${worker.id}/tags`,{set:['role:review-agent']});
  const reportRequest=crypto.randomUUID(),report={agentId:worker.id,targetId:focusId,text:'Independent evidence is ready for coordination.',requestId:reportRequest};
  await api('/api/focus/messages',report);
  await until(async()=>turns.length===5&&(await detail()).agent.status==='complete');
@@ -97,7 +98,8 @@ try{
  await reportRow.getByText(report.text,{exact:true}).waitFor();
  assert.notEqual(await reportRow.getByText(report.text,{exact:true}).evaluate(node=>getComputedStyle(node).color),await page.getByText('Validation evidence is ready. Review this result and approve it or request a revision.',{exact:true}).first().evaluate(node=>getComputedStyle(node).color),'Expanded coordination is muted');
 
- const sourceLink=reportRow.getByRole('button',{name:`Open originating agent ${worker.id}`,exact:true});await sourceLink.waitFor();
+ const sourceLink=reportRow.getByRole('button',{name:'Open Review agent',exact:true});await sourceLink.waitFor();
+ assert.equal(await sourceLink.innerText(),'Review agent');assert.ok(!(await sourceLink.innerText()).includes(worker.id.slice(-6)),'Visible sender labels omit IDs');
  for(const width of [1280,390]) {
   await page.setViewportSize({width,height:900});await reportRow.scrollIntoViewIfNeeded();
   const source=await sourceLink.boundingBox(),label=await reportRow.getByText('Internal update',{exact:true}).boundingBox();
@@ -113,6 +115,10 @@ try{
  const ordinaryRow=page.locator(`[data-entry="${ordinaryReport.id}"]`);
  await ordinaryRow.getByText('Check the existing validation evidence without changing approval state.',{exact:true}).waitFor();
  assert.notEqual(await ordinaryRow.evaluate(node=>node.tagName),'DETAILS','Other conversation coordination stays expanded');
+ assert.equal(await ordinaryRow.getByRole('button',{name:'Open Source agent',exact:true}).innerText(),'Source agent','Missing role metadata never exposes an ID');
+ await api(`/api/agents/${focusId}/tags`,{set:['role:runtime-agent']});
+ await until(async()=>await ordinaryRow.getByRole('button',{name:'Open Runtime agent',exact:true}).count()===1);
+
 
  await page.goto(`${ui}/?view=focus`);await composer.waitFor();
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import { api } from "../lib/api";
@@ -24,6 +24,7 @@ import { Icon, type IconName } from "./Icon";
 import { Markdown, ReviewLinks, QuoteLinks } from "./Markdown";
 import { QuoteDiscussion } from "./QuoteDiscussion";
 import { SplitAction } from "./SplitAction";
+import { CoordinationRoles } from "./FocusContext";
 
 /// What the person said needs no label: it is the one that sits on the
 /// right, in its own tint.
@@ -1312,6 +1313,13 @@ function Said({ text, detail }: { text: string; detail: string }) {
   );
 }
 
+function CoordinationSource({origin, onOpen}: {origin: string; onOpen: (id: string) => void}) {
+  const label = useContext(CoordinationRoles).get(origin) ?? "Source agent";
+  return <button type="button" data-coordination-source={origin} title={`Open ${label}`} aria-label={`Open ${label}`}
+    onClick={event => {event.stopPropagation(); onOpen(origin);}}
+    className="max-w-full cursor-pointer truncate text-mid hover:text-ink">{label}</button>;
+}
+
 /// One message, drawn once.
 ///
 /// Typing in the composer changes state on the panel, and without this
@@ -1362,7 +1370,7 @@ const Message = memo(function Message({
               {tag && !fold && (
                 <span className={`flex max-w-[45%] shrink-0 flex-wrap items-baseline gap-x-2 pt-[2px] text-[10.5px] ${tag.tone}`}>
                   <span>{tag.label}</span>
-                  {entry.kind === "coordination" && entry.origin && <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={() => onOpenAgent(entry.origin)} className="max-w-full cursor-pointer truncate text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button>}
+                  {entry.kind === "coordination" && entry.origin && <CoordinationSource origin={entry.origin} onOpen={onOpenAgent} />}
                 </span>
               )}
               <Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} />
@@ -1420,7 +1428,7 @@ const Message = memo(function Message({
     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 text-[10.5px] text-faint marker:content-none">
       <span data-message-time className="tnum mr-1 w-[34px] shrink-0 text-mid">{minute(entry.at)}</span>
       <span aria-hidden="true">›</span><span>Internal update</span>
-      {entry.origin && <button type="button" title={entry.origin} aria-label={`Open originating agent ${entry.origin}`} onClick={event => {event.stopPropagation(); onOpenAgent(entry.origin);}} className="cursor-pointer text-mid hover:text-ink">Source agent · {entry.origin.slice(-6)}</button>}
+      {entry.origin && <CoordinationSource origin={entry.origin} onOpen={onOpenAgent} />}
     </summary>
     <div className="min-w-0 pl-[46px]">{content}</div>
   </details> : content;
