@@ -10,7 +10,7 @@ const text='A completed investigation with **evidence**, [source](https://exampl
 const timeline=Array.from({length:180},(_,n)=>({id:n+1,agentId:focus.id,kind:'said',text:`Result ${n}\n\n${text}`,at:1,detail:'',output:'',origin:''}));
 const patch='@@ -1,120 +1,120 @@\n'+Array.from({length:120},(_,n)=>`-const option${n} = "previous setting ${n}";`).join('\n')+'\n'+Array.from({length:120},(_,n)=>`+const option${n} = "revised setting ${n}";`).join('\n');
 const review={agentId:archived[0].id,id:'review-0',title:'Prepared code review',description:'',snapshot:{repository:'/workspace',branch:'proposal',baseRef:'main',remote:'origin',remoteUrl:'',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files:Array.from({length:3},(_,n)=>({path:`settings-${n}.ts`,patch}))}};
-timeline.at(-1).text+='\n\n[Prepared code review](#review/review-0)';
+for(let n=0;n<20;n++)timeline[160+n].text+=`\n\n[Prepared code review](#review/review-${n})`;
 const browser=await chromium.launch();
 try{
  const page=await browser.newPage({viewport:{width:1200,height:900}}),errors=[];page.on('pageerror',error=>errors.push(String(error)));
@@ -26,7 +26,7 @@ try{
   if(path==='/api/version')return route.continue();
   if(path==='/api/state')return route.fulfill({json:{mode:'ask',focusAgentId:focus.id,agents:[focus,...fleet],archived,reviews,messages:{},tasks,taskNotes:[],inbox:[],paneLinks:{},quoteThreads:[],tags:{},boards:[],sources:[],models:[],backends:[]}});
   if(path==='/api/focus/agent')return route.fulfill({json:focus});
-  if(path.includes('/reviews/'))return route.fulfill({json:review});
+  if(path.includes('/reviews/'))return route.fulfill({json:{...review,id:path.split('/').at(-1),agentId:path.split('/')[3]}});
   if(path.startsWith('/api/agents/')){const agent=[focus,...fleet].find(agent=>agent.id===path.split('/')[3]);return route.fulfill({json:{agent,timeline:agent?.id===focus.id?timeline:[],delivery:'start'}});}
   return route.fulfill({json:path==='/api/version'?{version:'fixture'}:[]});
  });
@@ -43,7 +43,15 @@ try{
  await page.evaluate(entry=>window.stream.onmessage({data:JSON.stringify({type:'timeline',entry})}),entry);
  await page.locator('[data-entry="181"] strong').getByText('live',{exact:true}).waitFor();
  assert.equal(await composer.inputValue(),typed,'Live transcript updates preserve the draft');
- await page.locator('pre[data-diff][aria-busy="false"]').nth(2).waitFor();
+ const diffs=page.locator('pre[data-diff]');
+ const count=await diffs.count();
+ for(let at=0;at<count;at++)assert.ok((await diffs.nth(at).textContent()).includes('previous setting'),'All source remains readable before styling');
+ for(const at of [count-1,0]) {
+  const diff=diffs.nth(at);
+  await diff.evaluate(node=>node.closest('[data-focus-review]').scrollIntoView({block:'center'}));
+  await diff.scrollIntoViewIfNeeded();
+  await page.waitForFunction(at=>document.querySelectorAll('pre[data-diff]')[at].getAttribute('aria-busy')==='false',at);
+ }
  assert.ok(await page.locator('[data-diff-change]').count(),'Background formatting preserves changed-word emphasis');
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
  assert.ok(metrics.p95<100 && metrics.max<250 && elapsed/typed.length<100,`Typing exceeded the responsiveness budget: ${JSON.stringify(metrics)}, elapsed ${elapsed}ms`);

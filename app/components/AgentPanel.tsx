@@ -231,6 +231,9 @@ export function AgentPanel({
   /// toggle with the rest.
   verbose: boolean;
 }) {
+  const openAgentHandler=useRef(onOpenAgent);
+  useLayoutEffect(()=>{openAgentHandler.current=onOpenAgent;},[onOpenAgent]);
+  const openAgent=useCallback((id:string)=>openAgentHandler.current(id),[]);
   const recommendationElement = useRef<HTMLElement>(null);
   const [changingAutorun, setChangingAutorun] = useState(false);
   const changeAutorun = async (enabled: boolean | null) => {
@@ -432,7 +435,7 @@ export function AgentPanel({
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, []);
 
-  const renderNotice = useCallback((entry: Entry) => <Message entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={onOpenAgent} />, [highlightedEntry, asked, jumpTo, onOpenAgent]);
+  const renderNotice = useCallback((entry: Entry) => <Message entry={entry} focused={entry.id === highlightedEntry} asked={asked} onJump={jumpTo} onOpenAgent={openAgent} />, [highlightedEntry, asked, jumpTo, openAgent]);
 
   const tail = view.timeline.at(-1);
   const tailRevision = `${tail?.id ?? ""}:${tail?.text ?? ""}:${tail?.detail ?? ""}:${tail?.output ?? ""}`;
@@ -645,6 +648,43 @@ export function AgentPanel({
     setQuoteMenu(null);
     window.requestAnimationFrame(() => composer.current?.focus());
   };
+
+  const renderedTimeline=useMemo(()=>items.map((item, at) => {
+              if ("tools" in item) {
+                return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1}
+                  renderNotice={renderNotice} />;
+              }
+
+              const entry = item.entry;
+              if (entry.kind === "you" && entry.detail.startsWith("review-approval:")) {
+                const approval = JSON.parse(entry.detail.slice("review-approval:".length)) as { id: string; title: string; commit: string; branch: string; base: string };
+                return <div key={entry.id} data-entry={entry.id} role="region" aria-label="Publication approval" className="border-b border-hair py-3">
+                  <button aria-label={`Review approved change ${approval.title}`} onClick={() => { setReviewId(approval.id); setReviewingGit(true); setMode("type"); }} className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
+                    <Icon name="tick" />
+                    <span className="min-w-0 flex-1 font-semibold">PR approved: {approval.title}</span>
+                    <Icon name="external" size={14} />
+                  </button>
+                </div>;
+              }
+              if (entry.kind === "review") return <div key={entry.id} data-entry={entry.id} className="border-b border-hair py-3">
+                <button aria-label={`Review ${entry.text}`} onClick={() => { setReviewId(entry.detail); setReviewingGit(true); setMode("type"); }}
+                  className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
+                  <Icon name="diff" />
+                  <span className="min-w-0 flex-1"><span className="block font-semibold">{entry.text}</span><span className="text-[12px] text-faint">Local change · Review before publication</span></span>
+                  <Icon name="external" size={14} />
+                </button>
+              </div>;
+              return (
+                <QuoteLinks.Provider key={entry.id} value={quoteLinkValues.get(entry.id) ?? null}><Message
+                  key={entry.id}
+                  entry={entry}
+                  focused={entry.id === (focusEntry ?? highlightedEntry)}
+                  asked={asked}
+                  onJump={jumpTo}
+                  onOpenAgent={openAgent}
+                /></QuoteLinks.Provider>
+              );
+            }), [items,verbose,renderNotice,focusEntry,highlightedEntry,asked,jumpTo,openAgent,quoteLinkValues]);
 
   return (
     <FileReviewProvider agent={agent.id}><ReviewLinks.Provider value={reviewLinks}>
@@ -906,42 +946,7 @@ export function AgentPanel({
           ) : items.length === 0 ? (
             <p className="text-[13px] text-faint">Nothing on the timeline yet.</p>
           ) : (
-            items.map((item, at) => {
-              if ("tools" in item) {
-                return <ToolGroup key={`tools-${item.tools[0].id}`} entries={item.tools} showLatest={verbose && at === items.length - 1}
-                  renderNotice={renderNotice} />;
-              }
-
-              const entry = item.entry;
-              if (entry.kind === "you" && entry.detail.startsWith("review-approval:")) {
-                const approval = JSON.parse(entry.detail.slice("review-approval:".length)) as { id: string; title: string; commit: string; branch: string; base: string };
-                return <div key={entry.id} data-entry={entry.id} role="region" aria-label="Publication approval" className="border-b border-hair py-3">
-                  <button aria-label={`Review approved change ${approval.title}`} onClick={() => { setReviewId(approval.id); setReviewingGit(true); setMode("type"); }} className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
-                    <Icon name="tick" />
-                    <span className="min-w-0 flex-1 font-semibold">PR approved: {approval.title}</span>
-                    <Icon name="external" size={14} />
-                  </button>
-                </div>;
-              }
-              if (entry.kind === "review") return <div key={entry.id} data-entry={entry.id} className="border-b border-hair py-3">
-                <button aria-label={`Review ${entry.text}`} onClick={() => { setReviewId(entry.detail); setReviewingGit(true); setMode("type"); }}
-                  className="flex w-full cursor-pointer items-center gap-3 text-left hover:bg-band">
-                  <Icon name="diff" />
-                  <span className="min-w-0 flex-1"><span className="block font-semibold">{entry.text}</span><span className="text-[12px] text-faint">Local change · Review before publication</span></span>
-                  <Icon name="external" size={14} />
-                </button>
-              </div>;
-              return (
-                <QuoteLinks.Provider key={entry.id} value={quoteLinkValues.get(entry.id) ?? null}><Message
-                  key={entry.id}
-                  entry={entry}
-                  focused={entry.id === (focusEntry ?? highlightedEntry)}
-                  asked={asked}
-                  onJump={jumpTo}
-                  onOpenAgent={onOpenAgent}
-                /></QuoteLinks.Provider>
-              );
-            })
+            renderedTimeline
           )}
           {agent.status === "complete" && optimistic.length === 0 && view.nextActions && (
             <section ref={recommendationElement} aria-label="Suggested next steps" role="group" className="next-choices">

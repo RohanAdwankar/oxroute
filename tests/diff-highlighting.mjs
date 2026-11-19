@@ -30,7 +30,7 @@ try {
   await page.getByRole('button', { name: 'Review ' + review.title, exact: true }).click();
   for (const item of cases) {
     const section = page.getByRole('region', { name: 'Diff ' + item.path, exact: true });
-    await section.waitFor();
+    await section.scrollIntoViewIfNeeded();
     await section.locator('pre[aria-busy="false"]').waitFor();
     const rows = section.locator('[data-diff-line]');
     assert.deepEqual(await rows.evaluateAll(nodes => nodes.slice(1).map(node => node.lastElementChild.textContent)), [

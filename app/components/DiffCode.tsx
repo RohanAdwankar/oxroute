@@ -17,6 +17,20 @@ function highlight(rows:Line[], path:string):Promise<Code> {
   return new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});worker!.postMessage({id,rows,path});});
 }
 
+// Keep complete source in the document; style it as the reader approaches.
+const waiting=new Map<Element,()=>void>();
+let visibility:IntersectionObserver|undefined;
+function approaching(element:Element, run:()=>void) {
+  visibility??=new IntersectionObserver(entries=>{
+    for(const entry of entries) if(entry.isIntersecting) {
+      const next=waiting.get(entry.target);waiting.delete(entry.target);
+      visibility!.unobserve(entry.target);next?.();
+    }
+  },{rootMargin:"240px"});
+  waiting.set(element,run);visibility.observe(element);
+  return()=>{waiting.delete(element);visibility!.unobserve(element);};
+}
+
 // Text stays readable and quotable while the worker computes exact highlighting.
 export function DiffCode({rows,path,children}:{rows:Line[];path:string;children:(code:ReactNode[],ready:boolean)=>ReactNode}) {
   const [result,setResult]=useState<{rows:Line[];code:Code}|null>(null),[error,setError]=useState("");
@@ -29,8 +43,11 @@ export function DiffCode({rows,path,children}:{rows:Line[];path:string;children:
       const code=ready;ready=undefined;startTransition(()=>setResult({rows,code}));
     };
     document.addEventListener("selectionchange",apply);
-    highlight(rows,path).then(code=>{ready=code;apply();}).catch(error=>{if(live)setError(String(error));});
-    return()=>{live=false;document.removeEventListener("selectionchange",apply);};
+    const target=element.current?.querySelector("pre");
+    const stop=target&&approaching(target,()=>{
+      highlight(rows,path).then(code=>{ready=code;apply();}).catch(error=>{if(live)setError(String(error));});
+    });
+    return()=>{live=false;stop?.();document.removeEventListener("selectionchange",apply);};
   },[rows,path]);
   const code=useMemo(()=>result?.rows===rows?result.code.map((tokens,index)=><>{tokens.map((token,at)=>at===0?token.text:<span key={at} className={token.className} data-diff-change={token.changed||undefined} style={token.changed?{backgroundColor:rows[index].next===null?"color-mix(in srgb, var(--color-remove) 24%, transparent)":"color-mix(in srgb, var(--color-ok) 24%, transparent)"}:undefined}>{token.text}</span>)}</>):rows.map(row=>row.text),[result,rows]);
   return <div ref={element} className="contents">{error&&<p role="alert" className="text-[12px] text-faint">{error}</p>}{children(code,result?.rows===rows)}</div>;
