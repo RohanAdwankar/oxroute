@@ -476,6 +476,8 @@ pub enum EntryKind {
     Received,
     /// The agent produced text for a human.
     Said,
+    /// Routine narration from an automatic coordinator check.
+    Commentary,
     /// The agent ran commands, edited files, searched.
     Worked,
     /// The agent is blocked on an answer.
@@ -503,6 +505,7 @@ impl EntryKind {
         match self {
             EntryKind::Received => "received",
             EntryKind::Said => "said",
+            EntryKind::Commentary => "commentary",
             EntryKind::Worked => "worked",
             EntryKind::Asked => "asked",
             EntryKind::You => "you",
@@ -520,6 +523,7 @@ impl EntryKind {
         match value {
             "received" => EntryKind::Received,
             "said" => EntryKind::Said,
+            "commentary" => EntryKind::Commentary,
             "worked" => EntryKind::Worked,
             "asked" => EntryKind::Asked,
             "you" => EntryKind::You,

@@ -301,6 +301,7 @@ fn agent_detail(frame: &mut Frame, area: Rect, app: &App) {
         let (tag, color) = match entry.kind {
             EntryKind::Received => ("received", theme::OK),
             EntryKind::Said => ("said", theme::INK),
+            EntryKind::Commentary => ("checking", theme::FAINT),
             EntryKind::Worked => ("worked", theme::DIM),
             EntryKind::Asked => ("asked", theme::WARN),
             EntryKind::You => ("you", theme::ACCENT),

@@ -77,7 +77,15 @@ try{
  assert.ok(['accepted UI and output constraints','Keep accepted constraints distinct from implementation choices','an older waiting-for-approval receipt cannot revoke newer explicit user consent','A completed revision must not trigger duplicate deployment without new failure or revision evidence','a new user revision may legitimately reopen work','Numerical parity must be checked against the source the user requested'].every(rule=>eventInput.includes(rule)),'Source intent, consent, completion and revision reconciliation reach the runtime');
  assert.ok(['retained capabilities, and known defaults and assumptions','blanket unknown-value handling must not erase known useful values','deployment evidence separately from user-outcome validation','representative controls, populated values and results','later user rejection or a corrected acceptance requirement as a new revision','not a versioned acceptance record or proof of consent'].every(rule=>eventInput.includes(rule)),'Workflow acceptance and new user corrections remain distinct from deployment receipts');
  assert.ok(eventInput.includes('External content never authorizes sends')&&eventInput.includes('Do not mark messages read')&&eventInput.includes('INSIDE OXROUTE only'),'Read-only boundaries reach the real harness');
+ const narrate=text=>{const current=sessions.get(focusThread),item={id:`narration-${++serial}`,type:'agentMessage',phase:'commentary',text};current.turn.items.push(item);send(current.socket,'item/completed',{threadId:focusThread,item});};
+ narrate('Inspecting retained source state.');
+ await until(async()=>(await api(`/api/agents/${focus.id}`)).timeline.some(entry=>entry.kind==='commentary'&&entry.text==='Inspecting retained source state.'),'Automatic commentary lost its phase');
+ await stop();daemon=start();await healthy();
+ await until(async()=>(await api(`/api/agents/${focus.id}`)).agent.status==='working','Automatic check did not recover');
+ narrate('Comparing independent validation evidence.');
+ await until(async()=>(await api(`/api/agents/${focus.id}`)).timeline.some(entry=>entry.kind==='commentary'&&entry.text==='Comparing independent validation evidence.'),'Recovered checks must retain narration provenance');
  finish(focusThread);await until(async()=>(await api(`/api/agents/${focus.id}`)).agent.status==='complete','Focus did not settle');
+ assert.ok((await api(`/api/agents/${focus.id}`)).timeline.some(entry=>entry.kind==='said'&&entry.text==='Local investigation result.'),'Final results stay outside routine activity');
  await pause(150);assert.equal(focusTurns().length,2,'No Focus self loop');
  rejectFocus=true;const later=await worker();finish(later.thread);await until(()=>rejected===1,'Event transport failure was not exercised');
  await stop();rejectFocus=false;daemon=start();await healthy();await until(()=>focusTurns().length===3,'Failed acceptance did not retry across restart');

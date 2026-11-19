@@ -30,6 +30,7 @@ import { SplitAction } from "./SplitAction";
 const MINE: EntryKind[] = ["you", "received"];
 
 const TAG: Partial<Record<EntryKind, { label: string; tone: string }>> = {
+  commentary: { label: "checking", tone: "text-faint" },
   coordination: { label: "Internal update", tone: "text-faint" },
   asked: { label: "asked", tone: "text-hold border-hold" },
   forked: { label: "forked", tone: "text-merge border-merge" },
@@ -116,7 +117,7 @@ function compactTimeline(entries: Entry[]): TimelineItem[] {
   const delegated = new Set(entries.filter(isDelegation).map(entry => entry.detail));
   for (const entry of entries) {
     if (entry.kind === "forked" && delegated.has(entry.detail)) continue;
-    if (entry.kind !== "worked" && !isFleetCheck(entry)) {
+    if (entry.kind !== "worked" && entry.kind !== "commentary" && !isFleetCheck(entry)) {
       items.push({ entry });
       continue;
     }
@@ -1221,8 +1222,9 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest, renderNotice }:
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
   const checks = entries.filter(isFleetCheck).length;
+  const background = checks > 0 || entries.some(entry => entry.kind === "commentary");
   const activities = entries.length - checks;
-  const latest = showLatest && !checks ? entries.at(-1) : null;
+  const latest = showLatest && !background ? entries.at(-1) : null;
   const folded = latest ? entries.slice(0, -1) : entries;
   const visible = useMemo(() => open ? entries : latest ? entries.slice(-1) : [], [entries, open, latest]);
   useEffect(() => {
@@ -1246,15 +1248,15 @@ const ToolGroup = memo(function ToolGroup({ entries, showLatest, renderNotice }:
       for (const entry of deferred) pending.current.delete(entry.id);
     });
   }, [visible, attempt]);
-  const tool = (entry: Entry) => entry.kind === "worked" ? open || entry === latest ? <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} /> : <div key={entry.id} data-entry={entry.id} /> : <div key={entry.id}>{renderNotice(entry)}</div>;
+  const tool = (entry: Entry) => !open && entry !== latest ? <div key={entry.id} data-entry={entry.id} /> : entry.kind === "worked" ? <ToolCall key={entry.id} entry={entry} output={outputs[entry.id]} /> : <div key={entry.id}>{renderNotice(entry)}</div>;
   return <div className="border-b border-hair py-2">
-    {folded.length > 0 && <details className="group" data-fleet-checks={checks ? "" : undefined} onToggle={event => setOpen(event.currentTarget.open)}>
+    {folded.length > 0 && <details className="group" data-fleet-checks={background ? "" : undefined} onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-3 text-[11.5px] text-faint marker:content-none hover:text-mid">
-        {!checks && <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(folded.at(-1)!.at)}</span>}
+        {!background && <span data-message-time className="tnum w-[34px] shrink-0 text-[10.5px] text-mid">{minute(folded.at(-1)!.at)}</span>}
         <span className="w-2 text-center group-open:rotate-90">›</span>
-        <span>{checks ? `${checks} fleet ${checks === 1 ? "check" : "checks"}${activities ? ` · ${activities} activity ${activities === 1 ? "item" : "items"}` : ""} · ${minute(entries[0].at)}–${minute(entries.at(-1)!.at)}` : `${folded.length} tool ${folded.length === 1 ? "call" : "calls"}`}</span>
+        <span>{background ? `${checks ? `${checks} fleet ${checks === 1 ? "check" : "checks"}` : "Fleet activity"}${activities ? ` · ${activities} activity ${activities === 1 ? "item" : "items"}` : ""} · ${minute(entries[0].at)}–${minute(entries.at(-1)!.at)}` : `${folded.length} tool ${folded.length === 1 ? "call" : "calls"}`}</span>
       </summary>
-      {(open || checks > 0) && <div className="mt-1 flex flex-col">{folded.map(tool)}</div>}
+      {(open || background) && <div className="mt-1 flex flex-col">{folded.map(tool)}</div>}
     </details>}
     {latest && <div className="flex flex-col">{tool(latest)}</div>}
     {error && <p role="alert" className="text-[12px] text-remove">{error} <button className="cursor-pointer underline" onClick={() => retry(value => value + 1)}>Retry</button></p>}

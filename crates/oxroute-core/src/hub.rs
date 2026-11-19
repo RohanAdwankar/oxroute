@@ -105,6 +105,8 @@ struct Live {
     reply_context: Mutex<Vec<String>>,
     /// A side turn's output belongs to the caller, not the timeline.
     quiet: bool,
+    automatic_check: AtomicBool,
+    final_answer: AtomicBool,
 }
 
 impl Live {
@@ -128,6 +130,8 @@ impl Live {
             posted: Mutex::new(None),
             reply_context: Mutex::new(Vec::new()),
             quiet,
+            automatic_check: AtomicBool::new(false),
+            final_answer: AtomicBool::new(false),
         }
     }
 
@@ -573,6 +577,7 @@ impl Hub {
                 saved.target,
                 false,
             ));
+            turn.automatic_check.store(self.store.get(&format!("check-turn:{}", turn.artifact_dir.display())).ok().flatten().is_some(), Ordering::SeqCst);
             turn.stopped.store(agent.stall_reason.as_deref() == Some("stopped"), Ordering::SeqCst);
             if !saved.turn_id.is_empty() {
                 turn.mark_ready(saved.turn_id);
@@ -631,6 +636,7 @@ impl Hub {
                     if let Some(text) = item.get("text").and_then(serde_json::Value::as_str) {
                         let final_answer = item.get("phase").and_then(serde_json::Value::as_str)
                             == Some("final_answer");
+                        if final_answer { turn.final_answer.store(true, Ordering::SeqCst); }
                         let mut answer = turn.answer.lock().unwrap();
                         if final_answer || answer.is_none() {
                             *answer = Some(text.to_string());
@@ -795,6 +801,7 @@ impl Hub {
                     let Some(turn) = live.get(&agent_id) else {
                         return;
                     };
+                    if final_answer { turn.final_answer.store(true, Ordering::SeqCst); }
                     let mut answer = turn.answer.lock().unwrap();
                     // The phase-marked final answer wins; otherwise the first
                     // thing it said stands in, which is all Claude Code gives.
@@ -805,9 +812,11 @@ impl Hub {
                 // Narration as it happens. The final answer is recorded when
                 // the turn ends, so recording it here too would double it.
                 if !final_answer {
-                    self.record(&agent_id, EntryKind::Said, &text, "", "");
-                    if let Some(turn) = self.live.lock().await.get(&agent_id) {
-                        turn.narrated.lock().unwrap().insert(text);
+                    let live = self.live.lock().await;
+                    if let Some(turn) = live.get(&agent_id) {
+                        let kind = if turn.automatic_check.load(Ordering::SeqCst) { EntryKind::Commentary } else { EntryKind::Said };
+                        self.record(&agent_id, kind, &text, "", "");
+                        if kind == EntryKind::Said { turn.narrated.lock().unwrap().insert(text); }
                     }
                 }
             }
@@ -1642,7 +1651,7 @@ impl Hub {
         for entry in &timeline[fork_at + 1..] {
             match entry.kind {
                 EntryKind::Received | EntryKind::You => pending = Some(entry.text.clone()),
-                EntryKind::Said => {
+                EntryKind::Said | EntryKind::Commentary => {
                     if let Some(question) = pending.take() {
                         exchanges.push((self.with_quote_context(agent_id, &question)?, entry.text.clone()));
                     }
@@ -1696,7 +1705,7 @@ impl Hub {
         for entry in self.store.timeline(agent_id, usize::MAX)? {
             let role = match entry.kind {
                 EntryKind::You | EntryKind::Received | EntryKind::Asked => "User",
-                EntryKind::Said => "Assistant",
+                EntryKind::Said | EntryKind::Commentary => "Assistant",
                 EntryKind::Coordination => "Internal agent context (no human authority)",
                 _ => continue,
             };
@@ -1967,7 +1976,7 @@ impl Hub {
         if self.store.get(receipt)?.is_some() { return Ok(()); }
         let agent = self.store.agent(agent_id)?.context("no such agent")?;
         let target = self.home_target(agent_id).await;
-        self.run_turn(&agent, vec![TurnInput::text(prompt)], None, target, None, Some((receipt, notice))).await
+        self.run_turn(&agent, vec![TurnInput::text(prompt)], None, target, None, Some((receipt, notice, false))).await
     }
 
     async fn run_turn(
@@ -1977,7 +1986,7 @@ impl Hub {
         signal: Option<Signal>,
         mut target: Option<Target>,
         mut reply_context: Option<String>,
-        receipt: Option<(&str, &str)>,
+        receipt: Option<(&str, &str, bool)>,
     ) -> Result<()> {
         let harness = self.harness(agent.backend);
         let spec = SessionSpec {
@@ -2253,6 +2262,10 @@ impl Hub {
             target.clone(),
             false,
         ));
+        if receipt.is_some_and(|(_, _, automatic)| automatic) {
+            turn.automatic_check.store(true, Ordering::SeqCst);
+            self.store.set(&format!("check-turn:{}", turn.artifact_dir.display()), "true")?;
+        }
         if let Some(text) = reply_context {
             turn.reply_context.lock().unwrap().push(text);
         }
@@ -2271,8 +2284,9 @@ impl Hub {
 
         match harness.start(&session, inputs).await {
             Ok(turn_id) => {
-                if let Some((key, notice)) = receipt {
+                if let Some((key, notice, automatic)) = receipt {
                     self.store.accept_turn_receipt(key, now())?;
+                    let notice = if automatic && notice.is_empty() { "Focus checked the fleet" } else { notice };
                     if !notice.is_empty() { self.record(&agent.id, EntryKind::Notice, notice, "", ""); }
                 }
                 self.store.clear_context(&context_ids)?;
@@ -2307,6 +2321,7 @@ impl Hub {
             let status = turn.status();
             let answer = turn.answer.lock().unwrap().clone();
             match (status.as_str(), answer) {
+                ("completed", _) if turn.automatic_check.load(Ordering::SeqCst) && !turn.final_answer.load(Ordering::SeqCst) => Ok(Some(String::new())),
                 ("completed", Some(text)) if !text.is_empty() => Ok(Some(text)),
                 ("completed", _) if self.focus_agent_id()?.as_deref()==Some(&agent.id) => Ok(Some(String::new())),
                 (other, _) => Err(anyhow::anyhow!("the turn ended with {other}")),
@@ -3059,7 +3074,7 @@ impl Hub {
                         EntryKind::Received | EntryKind::You => {
                             Some(("user".to_string(), e.text.clone()))
                         }
-                        EntryKind::Said => Some(("assistant".to_string(), e.text.clone())),
+                        EntryKind::Said | EntryKind::Commentary => Some(("assistant".to_string(), e.text.clone())),
                         _ => None,
                     })
                     .collect();
@@ -3092,7 +3107,7 @@ impl Hub {
         let entries = self.store.recent_messages(agent_id, 8)?;
         let messages: Vec<_> = entries.iter().filter_map(|entry| match entry.kind {
             EntryKind::Received | EntryKind::You => Some(("user".into(), entry.text.clone())),
-            EntryKind::Said => Some(("assistant".into(), entry.text.clone())),
+            EntryKind::Said | EntryKind::Commentary => Some(("assistant".into(), entry.text.clone())),
             _ => None,
         }).collect();
         if messages.is_empty() { return Ok(()); }

@@ -4286,3 +4286,32 @@ async fn slack_focus_publication_retries_and_final_echo_send_once() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(w.posts.lock().unwrap().replies.len(),1,"a final echo cannot repeat a published response");
 }
+
+#[tokio::test]
+async fn automatic_commentary_keeps_final_results_and_direct_messages_visible() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus = w.hub.ensure_focus_agent().await.unwrap();
+    let source = w.hub.create_agent(None).unwrap();
+    w.hub.store.finish_focus_turn(&source.id, "source-outcome", "completed", now(), true).unwrap();
+    w.hub.sweep_focus(now()).await.unwrap();
+    assert!(settle(|| !w.starts_for(&focus.id).is_empty()).await);
+    let session = w.hub.store.agent(&focus.id).unwrap().unwrap().session_id;
+    let active = w.hub.store.active_turns().unwrap().into_iter().find(|turn| turn.agent_id == focus.id).unwrap();
+    assert_eq!(w.hub.store.get(&format!("check-turn:{}", active.artifact_dir.display())).unwrap().as_deref(), Some("true"));
+    for (text, final_answer) in [("Inspecting retained source state.", false), ("A verified outcome is available.", false), ("A verified outcome is available.", true)] {
+        w.harness.send(HarnessEvent::Message { session: session.clone(), text: text.into(), final_answer }).unwrap();
+    }
+    w.harness.send(HarnessEvent::TurnFinished {session:session.clone(),status:"completed".into()}).unwrap();
+    assert!(settle(|| w.hub.store.agent(&focus.id).unwrap().unwrap().status == AgentStatus::Complete).await);
+    let history = w.hub.store.timeline(&focus.id,100).unwrap();
+    assert_eq!(history.iter().filter(|entry| entry.kind == EntryKind::Commentary).count(),2);
+    assert!(history.iter().any(|entry| entry.kind == EntryKind::Said && entry.text == "A verified outcome is available."), "Final phase remains visible even when it repeats commentary");
+    assert!(!history.iter().any(|entry| entry.kind == EntryKind::Said && entry.text == "Inspecting retained source state."));
+    w.hub.say_to(&focus.id,"Explain the result").await.unwrap();
+    assert!(settle(|| w.starts_for(&focus.id).len() == 2).await);
+    let session = w.hub.store.agent(&focus.id).unwrap().unwrap().session_id;
+    w.harness.send(HarnessEvent::Message {session,text:"Inspecting retained source state.".into(),final_answer:false}).unwrap();
+    assert!(settle(|| w.hub.store.timeline(&focus.id,100).unwrap().iter().any(|entry| entry.kind == EntryKind::Said && entry.text == "Inspecting retained source state.")).await,"Direct conversation commentary stays visible");
+    w.hub.interrupt(&focus.id).await.unwrap();
+}

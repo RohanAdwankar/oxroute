@@ -11,6 +11,7 @@ export type EntryKind =
   | "coordination"
   | "received"
   | "said"
+  | "commentary"
   | "worked"
   | "asked"
   | "you"
