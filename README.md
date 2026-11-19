@@ -178,7 +178,8 @@ never proves complete conversation enumeration. Missing scopes or failed pages
 remain explicit gaps, and failed conversations retain their watermarks.
 
 Incoming human DMs remain `response_needed`, `investigating` or `drafted` until
-fresh conversation evidence shows a reply or resolution,
+fresh conversation evidence shows a reply or resolution (including a decision
+retained across conversations through `resolutionEntries`),
 or the user explicitly dismisses the item. A local draft never counts as sent.
 An explicit dismissal records its human timeline entry in `dismissedBy`;
 coordination entries cannot authorize dismissal. Edited requests reopen when

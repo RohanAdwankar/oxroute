@@ -52,6 +52,8 @@ impl Store {
             );
         self.with(|c| {
             let tx=c.unchecked_transaction()?;
+            let previous_text:Option<String>=tx.query_row("SELECT text FROM slack_inbox_messages WHERE conversation=?1 AND ts=?2",params![conversation,ts],|r|r.get(0)).optional()?;
+            let content_same=previous_text.as_deref()==Some(message["text"].as_str().unwrap_or(""));
             let changed=tx.execute("INSERT INTO slack_inbox_messages(conversation,ts,at,revision,activity,thread,sender,human,text,channel,owner) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(conversation,ts) DO UPDATE SET revision=excluded.revision,activity=excluded.activity,thread=excluded.thread,sender=excluded.sender,human=excluded.human,text=excluded.text WHERE excluded.activity>=slack_inbox_messages.activity AND (excluded.revision!=slack_inbox_messages.revision OR excluded.thread!=slack_inbox_messages.thread OR excluded.sender!=slack_inbox_messages.sender OR excluded.human!=slack_inbox_messages.human OR excluded.text!=slack_inbox_messages.text)",params![conversation,ts,at,revision,activity,thread,sender,human,message["text"].as_str().unwrap_or(""),channel,owner])?;
             if changed==0 {
                 let current:f64=tx.query_row("SELECT activity FROM slack_inbox_messages WHERE conversation=?1 AND ts=?2",params![conversation,ts],|r|r.get(0))?;
@@ -65,13 +67,16 @@ impl Store {
                 let id=format!("{channel}:{ts}");
                 let previous:Option<String>=tx.query_row("SELECT data FROM focus_inbox WHERE source='slack' AND item_id=?1",[&id],|r|r.get(0)).optional()?;
                 let previous=previous.map(|s|serde_json::from_str::<FocusInboxItem>(&s)).transpose()?;
-                let dismissed=previous.as_ref().and_then(|i|i.dismissed_by).is_some_and(|entry|tx.query_row("SELECT kind='you' AND at>=?2 FROM entries WHERE id=?1",params![entry,activity],|r|r.get::<_,bool>(0)).unwrap_or(false));
-                let mut item=previous.clone().unwrap_or_else(||FocusInboxItem {source:"slack".into(),item_id:id.clone(),revision:revision.clone(),state:"response_needed".into(),summary:String::new(),conversation_id:None,draft:None,dismissed_by:None});
-                let same=item.revision==revision;
-                let reviewed_reply=same&&matches!(item.state.as_str(),"resolved"|"no_response_needed")&&Self::dm_obligation(&tx,&id)?.is_some_and(|(_,_,needed)|!needed);
+                let disposition_at=if content_same {previous.as_ref().and_then(|item|item.revision.parse::<f64>().ok()).unwrap_or(activity)}else{activity};
+                let dismissed=previous.as_ref().and_then(|i|i.dismissed_by).is_some_and(|entry|tx.query_row("SELECT kind='you' AND at>=?2 FROM entries WHERE id=?1",params![entry,disposition_at],|r|r.get::<_,bool>(0)).unwrap_or(false));
+                let mut item=previous.clone().unwrap_or_else(||FocusInboxItem {source:"slack".into(),item_id:id.clone(),revision:revision.clone(),state:"response_needed".into(),summary:String::new(),conversation_id:None,draft:None,dismissed_by:None,resolution_entries:vec![]});
+                let same=item.revision==revision||content_same;
+                let reviewed_reply=same&&matches!(item.state.as_str(),"resolved"|"no_response_needed")&&(Self::inbox_resolution(&tx,&item)?||Self::dm_obligation(&tx,&id)?.is_some_and(|(_,_,needed)|!needed));
                 item.revision=revision;
+                if !same {item.resolution_entries.clear();}
+                if dismissed&&content_same {if let Some(entry)=item.dismissed_by {if !item.resolution_entries.contains(&entry) {item.resolution_entries.push(entry);}item.dismissed_by=None;}}
                 if !dismissed {item.dismissed_by=None;}
-                item.state=if dismissed {"no_response_needed".into()}else if replied||reviewed_reply {"resolved".into()}else if same&&matches!(item.state.as_str(),"drafted"|"investigating") {item.state}else{"response_needed".into()};
+                item.state=if dismissed {"no_response_needed".into()}else if reviewed_reply {item.state}else if replied {"resolved".into()}else if same&&matches!(item.state.as_str(),"drafted"|"investigating") {item.state}else{"response_needed".into()};
                 if item.summary.is_empty()||!same {item.summary=format!("Incoming direct message: {}",text.chars().take(500).collect::<String>());}
                 let data=serde_json::to_string(&item)?;
                 if previous.as_ref()!=Some(&item) {tx.execute("INSERT INTO focus_inbox(source,item_id,data,updated_at) VALUES('slack',?1,?2,?3) ON CONFLICT(source,item_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",params![id,data,checked])?;}
@@ -231,9 +236,42 @@ mod tests {
                 .state,
             "no_response_needed"
         );
+        let mut unchanged=edited.clone();unchanged["edited"]=json!({"ts":"221"});
+        store.observe_slack_dm(conv,&unchanged,222.0)?;
+        assert_eq!(store.focus_inbox(Some("slack"),Some("direct:100.1"))?.items[0].state,"no_response_needed","Timestamp-only edits preserve human dismissal");
         drop(store);
         std::fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    #[test]
+    fn retained_resolution_survives_collection_until_request_changes() -> Result<()> {
+        let root=std::env::temp_dir().join(crate::model::new_id("inbox-resolution"));
+        std::fs::create_dir_all(&root)?;
+        let store=Store::open(&root.join("state.sqlite3"))?;
+        for (index,state) in ["resolved","no_response_needed"].into_iter().enumerate() {
+            let conversation=format!("workspace:owner:direct-{index}");
+            let original=serde_json::json!({"ts":"100","user":"sender","text":"Conditional request"});
+            store.observe_slack_dm(&conversation,&original,200.0)?;
+            let id=format!("direct-{index}:100");
+            let mut item=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);
+            let entry=store.with(|c| {c.execute("INSERT INTO entries(agent_id,at,kind,text) VALUES('other-conversation',150,'you','The condition no longer applies')",[])?;Ok(c.last_insert_rowid())})?;
+            item.state=state.into();item.resolution_entries=vec![entry];
+            store.update_focus_inbox(&FocusInboxUpdate {items:vec![item],..Default::default()},201.0)?;
+            store.observe_slack_dm(&conversation,&original,202.0)?;
+            let mut revised=original.clone();revised["edited"]=serde_json::json!({"ts":"203"});
+            store.observe_slack_dm(&conversation,&revised,204.0)?;
+            let retained=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);
+            assert_eq!(retained.state,state);assert_eq!(retained.resolution_entries,vec![entry]);
+            revised["text"]=serde_json::json!("New requested outcome");revised["edited"]=serde_json::json!({"ts":"205"});
+            store.observe_slack_dm(&conversation,&revised,206.0)?;
+            let reopened=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);
+            assert_eq!(reopened.state,"response_needed");assert!(reopened.resolution_entries.is_empty());
+            let coordination=store.with(|c| {c.execute("INSERT INTO entries(agent_id,at,kind,text) VALUES('coordinator',207,'coordination','Delivery accepted')",[])?;Ok(c.last_insert_rowid())})?;
+            let mut invalid=reopened;invalid.state=state.into();invalid.resolution_entries=vec![coordination];
+            assert!(store.update_focus_inbox(&FocusInboxUpdate {items:vec![invalid],..Default::default()},208.0).is_err());
+        }
+        drop(store);std::fs::remove_dir_all(root)?;Ok(())
     }
 
     #[test]
@@ -328,6 +366,7 @@ mod tests {
                         conversation_id: None,
                         draft: None,
                         dismissed_by: None,
+            resolution_entries: vec![],
                     })
                     .collect(),
                 ..Default::default()

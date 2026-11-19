@@ -28,6 +28,8 @@ pub struct FocusInboxItem {
     pub draft: Option<String>,
     #[serde(default, skip_serializing_if="Option::is_none")]
     pub dismissed_by: Option<i64>,
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub resolution_entries: Vec<i64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -52,6 +54,15 @@ pub struct FocusInboxSnapshot {
 }
 
 impl Store {
+    pub(super) fn inbox_resolution(c:&Connection,item:&FocusInboxItem)->Result<bool> {
+        anyhow::ensure!(item.resolution_entries.len()<=20,"too many inbox evidence entries");
+        for entry in &item.resolution_entries {
+            let valid=c.query_row("SELECT kind IN ('you','said') AND length(text)>0 FROM entries WHERE id=?1",[entry],|r|r.get::<_,bool>(0)).optional()?.unwrap_or(false);
+            anyhow::ensure!(valid,"resolution requires retained human or result evidence; internal receipts are not authority");
+        }
+        Ok(!item.resolution_entries.is_empty())
+    }
+
     pub fn focus_inbox(&self, source: Option<&str>, item: Option<&str>) -> Result<FocusInboxSnapshot> {
         self.focus_inbox_page(source,item,0)
     }
@@ -92,6 +103,7 @@ impl Store {
             let tx = c.unchecked_transaction()?;
             for item in &update.items {
                 let obligation=if item.source=="slack" {Self::dm_obligation(&tx,&item.item_id)?}else{None};
+                let reviewed=Self::inbox_resolution(&tx,item)?;
                 let mut dismissed=false;
                 if let Some(entry)=item.dismissed_by {
                     dismissed=tx.query_row("SELECT kind='you' AND at>=?2 FROM entries WHERE id=?1",params![entry,obligation.as_ref().map(|v|v.1).unwrap_or(0.0)],|r|r.get::<_,bool>(0)).optional()?.unwrap_or(false);
@@ -99,7 +111,7 @@ impl Store {
                 }
                 if let Some((revision,_,needed))=obligation {
                     anyhow::ensure!(item.revision==revision,"DM observation is stale; reread current source state");
-                    anyhow::ensure!(!needed||dismissed||!matches!(item.state.as_str(),"resolved"|"no_response_needed"),"incoming human DM needs fresh source reply/resolution evidence or explicit human dismissal; drafts do not resolve it");
+                    anyhow::ensure!(!needed||dismissed||reviewed||!matches!(item.state.as_str(),"resolved"|"no_response_needed"),"incoming human DM needs fresh source reply/resolution evidence or explicit human dismissal; drafts do not resolve it");
                 }
                 tx.execute("INSERT INTO focus_inbox(source,item_id,data,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(source,item_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at WHERE data!=excluded.data", params![item.source,item.item_id,serde_json::to_string(item)?,at])?;
             }
@@ -232,7 +244,7 @@ mod tests {
         let root = std::env::temp_dir().join(crate::model::new_id("focus-inbox"));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("state.sqlite3");
-        let mut item = FocusInboxItem { source:"slack".into(), item_id:"thread-one".into(), revision:"reply-one".into(), state:"drafted".into(), summary:"Response requested after context inspection".into(), conversation_id:None, dismissed_by:None, draft:Some("Proposed response, not sent".into()) };
+        let mut item = FocusInboxItem { source:"slack".into(), item_id:"thread-one".into(), revision:"reply-one".into(), state:"drafted".into(), summary:"Response requested after context inspection".into(), conversation_id:None, dismissed_by:None, resolution_entries:vec![], draft:Some("Proposed response, not sent".into()) };
         let mut update = FocusInboxUpdate {items:vec![item.clone()],checkpoints: [("slack".into(),"position-one".into())].into()};
         {
             let store = Store::open(&path).unwrap();
