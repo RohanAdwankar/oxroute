@@ -166,7 +166,10 @@ publication or deployment permission.
 ## Internal coordination
 
 Internal coordination stays queued by default. `send_agent_message` and
-`POST /api/focus/messages` accept `urgent: true` for time-sensitive corrections.
+`POST /api/focus/messages` accept `urgent: true`. Focus judges urgency against the
+recipient’s fresh task and current operation, delay impact, deadline and interruption
+cost. Material active-work corrections, authorized stop requests and time-critical
+changes warrant prompt steering; routine or unrelated information can wait.
 Codex steers the expected active turn without interrupting tools; unsupported
 runtimes retain queued delivery and report that capability. Explicitly stopped
 recipients wait for authorized resumption. Receipts distinguish queued, accepted, steered
