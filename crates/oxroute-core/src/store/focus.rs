@@ -168,6 +168,38 @@ mod tests {
     }
 
     #[test]
+    fn queued_context_preserves_user_versions_across_delays_and_restart() {
+        let root=std::env::temp_dir().join(crate::model::new_id("queue-context"));
+        std::fs::create_dir_all(&root).unwrap();let path=root.join("state.sqlite3");
+        let (source,target,queued,new_target,new_source);
+        {
+            let store=Store::open(&path).unwrap();
+            source=store.add_entry("source",1.0,EntryKind::You,"Prepare the requested outcome","","").unwrap().id;
+            target=store.add_entry("recipient",2.0,EntryKind::Received,"Use the accepted scope","","").unwrap().id;
+            queued=store.enqueue_focus_message("receipt","source","recipient","Recorded evidence").unwrap().unwrap().id;
+            new_target=store.add_entry("recipient",3.0,EntryKind::You,"Revise the requested outcome","","").unwrap().id;
+            new_source=store.add_entry("source",4.0,EntryKind::You,"Apply the current authorization","","").unwrap().id;
+        }
+        let store=Store::open(&path).unwrap();
+        let context=store.focus_message_context("receipt").unwrap().unwrap();
+        assert_eq!(context["queuedEntryId"],queued);
+        assert_eq!(context["source"]["humanEntryAtQueue"],source);
+        assert_eq!(context["source"]["humanEntryNow"],new_source);
+        assert_eq!(context["recipient"]["humanEntryAtQueue"],target);
+        assert_eq!(context["recipient"]["humanEntryNow"],new_target);
+        assert_eq!(context["source"]["humanContextAdvanced"],true);
+        assert_eq!(context["recipient"]["humanContextAdvanced"],true);
+        assert_eq!(context["authority"],"internal_context_only");
+        assert!(store.enqueue_focus_message("receipt","source","recipient","Recorded evidence").unwrap().is_none());
+        store.finish_focus_message("receipt").unwrap();
+        assert_eq!(store.focus_message_context("receipt").unwrap().unwrap(),context);
+        assert_eq!(store.last_human_entry("recipient").unwrap(),new_target);
+        assert_eq!(store.timeline("recipient",100).unwrap().len(),3);
+        assert!(store.focus_message_context("unrecorded").unwrap().is_none());
+        drop(store);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn inbox_observations_and_local_drafts_survive_restart_and_revisions() {
         let root = std::env::temp_dir().join(crate::model::new_id("focus-inbox"));
         std::fs::create_dir_all(&root).unwrap();

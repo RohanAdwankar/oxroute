@@ -4156,6 +4156,9 @@ async fn focus_reports_keep_agent_origin_without_becoming_human_replies() {
     let input=calls.started.last().unwrap().1.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
     assert!(input.contains("\"unansweredMessages\":2"));
     assert!(input.contains(&worker.id));
+    assert!(input.contains("Queue context (recorded entry references, not authorization)"));
+    assert!(input.contains("humanEntryAtQueue") && input.contains("queuedEntryId"));
+    assert!(input.contains("An older waiting-for-approval receipt cannot revoke newer explicit consent"));
     drop(calls);
     assert!(w.posts.lock().unwrap().replies.is_empty());
     assert!(w.posts.lock().unwrap().threads.is_empty());
@@ -4176,6 +4179,8 @@ async fn native_coordination_bounds_reads_and_preserves_authority() {
     for _ in 0..2 {
         let receipt=w.hub.call_agent_tool(&worker.id,"send_agent_message",args.clone()).await.unwrap();
         assert_eq!(receipt["senderId"],worker.id);
+        assert_eq!(receipt["context"]["authority"],"internal_context_only");
+        assert_eq!(receipt["context"]["source"]["agentId"],worker.id);
         assert!(["queued","completed"].contains(&receipt["status"].as_str().unwrap()));
     }
     assert_eq!(w.hub.store.timeline(&focus.id,100).unwrap().iter().filter(|e|e.request_id==request).count(),1);

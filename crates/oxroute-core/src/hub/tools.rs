@@ -70,7 +70,7 @@ impl Hub {
                 let target=string("targetId")?;let text=string("text")?;let request=string("requestId")?;
                 self.send_focus_message(sender,target,text,request).await?;
                 let queued=self.store.pending_focus_messages()?.iter().any(|m|m.id==request);
-                Ok(json!({"status":if queued {"queued"} else {"completed"},"requestId":request,"senderId":sender,"targetId":target,"meaning":"Internal delivery acceptance only; no human authority or external send."}))
+                Ok(json!({"status":if queued {"queued"} else {"completed"},"requestId":request,"senderId":sender,"targetId":target,"context":self.store.focus_message_context(request)?,"meaning":"Internal delivery acceptance only; no human authority or external send."}))
             }
             _ => anyhow::bail!("unknown coordination tool"),
         }

@@ -1958,6 +1958,20 @@ impl Store {
         self.read(|c|{let mut q=c.prepare("SELECT id,sender,target,text FROM focus_messages WHERE accepted=0 ORDER BY rowid")?;
             let rows=q.query_map([],|row|Ok(FocusMessage{id:row.get(0)?,sender:row.get(1)?,target:row.get(2)?,text:row.get(3)?}))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
+    /// Queue-time versions come from immutable entry order, not message claims.
+    pub fn focus_message_context(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.read(|c| {
+            let queued = c.query_row("SELECT e.id,e.at,m.sender,m.target FROM focus_messages m JOIN entries e ON e.item_id=m.id AND e.agent_id=m.target AND e.origin=m.sender AND e.kind='coordination' WHERE m.id=?1", [id], |row| Ok((row.get::<_,i64>(0)?,row.get::<_,f64>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).optional()?;
+            let Some((entry,at,sender,target)) = queued else {return Ok(None)};
+            let version = |agent: &str| -> Result<serde_json::Value> {
+                let human = |before: i64| -> Result<i64> {Ok(c.query_row("SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=?1 AND id<?2 AND kind IN ('you','received')",params![agent,before],|row|row.get(0))?)};
+                let prior = human(entry)?;
+                let current = human(i64::MAX)?;
+                Ok(serde_json::json!({"agentId":agent,"humanEntryAtQueue":prior,"humanEntryNow":current,"humanContextAdvanced":current>prior}))
+            };
+            Ok(Some(serde_json::json!({"requestId":id,"queuedEntryId":entry,"queuedAt":at,"source":version(&sender)?,"recipient":version(&target)?,"authority":"internal_context_only"})))
+        })
+    }
     pub fn finish_focus_message(&self,id:&str)->Result<()> {self.with(|c|{c.execute("UPDATE focus_messages SET accepted=1 WHERE id=?1",[id])?;Ok(())})}
 
     pub fn agent_tool_token(&self, agent: &str) -> Result<String> {
