@@ -26,6 +26,8 @@ pub struct FocusInboxItem {
     pub summary: String,
     pub conversation_id: Option<String>,
     pub draft: Option<String>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub dismissed_by: Option<i64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -42,19 +44,35 @@ pub struct FocusInboxUpdate {
 pub struct FocusInboxSnapshot {
     pub items: Vec<FocusInboxItem>,
     pub checkpoints: std::collections::BTreeMap<String, String>,
+    pub coverage: std::collections::BTreeMap<String, serde_json::Value>,
+    pub checkpoint_meaning: &'static str,
+    pub total: usize,
+    pub pending_count:usize,
+    pub next_offset: Option<usize>,
 }
 
 impl Store {
     pub fn focus_inbox(&self, source: Option<&str>, item: Option<&str>) -> Result<FocusInboxSnapshot> {
+        self.focus_inbox_page(source,item,0)
+    }
+
+    pub fn focus_inbox_page(&self, source:Option<&str>, item:Option<&str>, offset:usize)->Result<FocusInboxSnapshot> {
+        anyhow::ensure!(offset<=i64::MAX as usize,"inbox offset too large");
         self.read(|c| {
-            let mut statement = c.prepare("SELECT data FROM focus_inbox WHERE (?1 IS NULL OR source=?1) AND (?2 IS NULL OR item_id=?2) ORDER BY updated_at DESC,source,item_id LIMIT 100")?;
-            let data = statement.query_map(params![source,item], |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let total:usize=c.query_row("SELECT count(*) FROM focus_inbox WHERE (?1 IS NULL OR source=?1) AND (?2 IS NULL OR item_id=?2)",params![source,item],|r|r.get(0))?;
+            let pending_count:usize=c.query_row("SELECT count(*) FROM focus_inbox WHERE (?1 IS NULL OR source=?1) AND (?2 IS NULL OR item_id=?2) AND json_extract(data,'$.state') IN ('observed','response_needed','investigating','drafted')",params![source,item],|r|r.get(0))?;
+            let mut statement = c.prepare("SELECT data FROM focus_inbox WHERE (?1 IS NULL OR source=?1) AND (?2 IS NULL OR item_id=?2) ORDER BY (json_extract(data,'$.state') IN ('observed','response_needed','investigating','drafted')) DESC,updated_at DESC,source,item_id LIMIT 100 OFFSET ?3")?;
+            let data = statement.query_map(params![source,item,offset as i64], |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let items = data.iter().map(|value| serde_json::from_str(value)).collect::<serde_json::Result<_>>()?;
             let mut checkpoints = std::collections::BTreeMap::new();
             for source in ["slack", "outlook"] {
                 if let Some(value) = c.query_row("SELECT value FROM kv WHERE key=?1", [format!("focus-inbox-checkpoint:{source}")], |row| row.get::<_,String>(0)).optional()? { checkpoints.insert(source.into(),value); }
             }
-            Ok(FocusInboxSnapshot {items,checkpoints})
+            let mut coverage=std::collections::BTreeMap::new();
+            for name in ["slack","outlook"] {
+                if let Some(value)=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("inbox-coverage:{name}")],|r|r.get::<_,String>(0)).optional()? {coverage.insert(name.into(),serde_json::from_str(&value)?);}
+            }
+            Ok(FocusInboxSnapshot {items,checkpoints,coverage,total,pending_count,next_offset:(offset.saturating_add(100)<total).then_some(offset.saturating_add(100)),checkpoint_meaning:"Manual observations only; not proof of source collection coverage"})
         })
     }
 
@@ -66,13 +84,23 @@ impl Store {
         }
         for item in &update.items {
             anyhow::ensure!(valid_source(&item.source) && !item.item_id.is_empty() && item.item_id.len() <= 2000 && !item.revision.is_empty() && item.revision.len() <= 2000, "inbox source, stable itemId and revision are required");
-            anyhow::ensure!(matches!(item.state.as_str(),"observed"|"investigating"|"drafted"|"resolved"|"no_response_needed"), "invalid inbox state");
+            anyhow::ensure!(matches!(item.state.as_str(),"observed"|"response_needed"|"investigating"|"drafted"|"resolved"|"no_response_needed"), "invalid inbox state");
             anyhow::ensure!(item.summary.len() <= 4000 && item.draft.as_ref().is_none_or(|draft| draft.len() <= 16000), "inbox text too large");
             if let Some(id) = &item.conversation_id { anyhow::ensure!(self.agent(id)?.is_some(),"inbox conversation must exist in Oxroute"); }
         }
         self.with(|c| {
             let tx = c.unchecked_transaction()?;
             for item in &update.items {
+                let obligation=if item.source=="slack" {Self::dm_obligation(&tx,&item.item_id)?}else{None};
+                let mut dismissed=false;
+                if let Some(entry)=item.dismissed_by {
+                    dismissed=tx.query_row("SELECT kind='you' AND at>=?2 FROM entries WHERE id=?1",params![entry,obligation.as_ref().map(|v|v.1).unwrap_or(0.0)],|r|r.get::<_,bool>(0)).optional()?.unwrap_or(false);
+                    anyhow::ensure!(dismissed,"dismissal requires an actual human entry after this message revision");
+                }
+                if let Some((revision,_,needed))=obligation {
+                    anyhow::ensure!(item.revision==revision,"DM observation is stale; reread current source state");
+                    anyhow::ensure!(!needed||dismissed||!matches!(item.state.as_str(),"resolved"|"no_response_needed"),"incoming human DM needs fresh source reply/resolution evidence or explicit human dismissal; drafts do not resolve it");
+                }
                 tx.execute("INSERT INTO focus_inbox(source,item_id,data,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(source,item_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at WHERE data!=excluded.data", params![item.source,item.item_id,serde_json::to_string(item)?,at])?;
             }
             for (source, checkpoint) in &update.checkpoints {
@@ -204,7 +232,7 @@ mod tests {
         let root = std::env::temp_dir().join(crate::model::new_id("focus-inbox"));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("state.sqlite3");
-        let mut item = FocusInboxItem { source:"slack".into(), item_id:"thread-one".into(), revision:"reply-one".into(), state:"drafted".into(), summary:"Response requested after context inspection".into(), conversation_id:None, draft:Some("Proposed response, not sent".into()) };
+        let mut item = FocusInboxItem { source:"slack".into(), item_id:"thread-one".into(), revision:"reply-one".into(), state:"drafted".into(), summary:"Response requested after context inspection".into(), conversation_id:None, dismissed_by:None, draft:Some("Proposed response, not sent".into()) };
         let mut update = FocusInboxUpdate {items:vec![item.clone()],checkpoints: [("slack".into(),"position-one".into())].into()};
         {
             let store = Store::open(&path).unwrap();

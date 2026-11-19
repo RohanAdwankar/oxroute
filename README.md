@@ -167,6 +167,24 @@ publication or deployment permission.
 
 `[inbox]` in `config.toml` connects Outlook Inbox mail and Slack DMs, group DMs and mentions to the existing Inbox. Extra Slack channel IDs are opt-in through `slack_channels`. The first sync imports the last seven days; Graph delta cursors, Slack recovery checkpoints and message IDs survive restarts. Slack events provide live updates. Each email conversation, Slack thread or DM conversation stays in one row; new context reopens it. Known Slack threads recover replies through rotating, durable page checkpoints even without new roots or mentions. Routing advice uses recent bounded context while full conversations remain available for viewing and manual delivery. Dismissal only changes Oxroute.
 
+Slack history collection has per-conversation watermarks, a one-day overlap,
+complete pagination, and rotating older-history/thread reconciliation for late
+messages and edits. Reconciliation retains old context without replaying it as
+new work before the initial collection baseline; newer edits/replies still open
+response obligations. `GET /api/focus/inbox` reports collection `coverage` separately
+from manual observation `checkpoints`; follow `nextOffset` with `offset` to read
+all triage records. Search discovery retains a rolling seven-day lookback and
+never proves complete conversation enumeration. Missing scopes or failed pages
+remain explicit gaps, and failed conversations retain their watermarks.
+
+Incoming human DMs remain `response_needed`, `investigating` or `drafted` until
+fresh conversation evidence shows a reply or resolution,
+or the user explicitly dismisses the item. A local draft never counts as sent.
+An explicit dismissal records its human timeline entry in `dismissedBy`;
+coordination entries cannot authorize dismissal. Edited requests reopen when
+newer than the reply or dismissal. Polling is read-only; it never sends, marks
+read, adds reactions, or creates external drafts.
+
 Set `outlook_token_file` to a protected file containing a rotating delegated Microsoft Graph `Mail.Read` access token. Set `slack_token_file` and `slack_app_token_file` to protected user-token and Socket Mode app-token files for a **separate** app installed from `deploy/slack-inbox-manifest.json`; its app token needs `connections:write`. Keep the existing bot app unchanged. Environment equivalents are `OXROUTE_OUTLOOK_TOKEN_FILE`, `OXROUTE_SLACK_INBOX_TOKEN_FILE` and `OXROUTE_SLACK_INBOX_APP_TOKEN_FILE`. Authentication renewal owns those files; Oxroute rereads them and never prints token values.
 
 Imports and routing predictions never start work, including when an existing thread binding or global automatic mode is set. Route, create an agent or dismiss explicitly. Source links open the original conversation; attachments remain in the source application. The Inbox footer reports sync state and errors. The adapters never send messages, mark mail read or modify Slack or Outlook. Turn off the input-routing and Play automation controls to keep other input and next-action execution manual too.

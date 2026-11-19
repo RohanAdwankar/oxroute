@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+mod collection;
+
 pub const OUTLOOK: &str = "outlook-inbox";
 pub const SLACK: &str = "slack-inbox";
 pub fn imported(source: &str) -> bool {
@@ -78,10 +80,10 @@ impl std::fmt::Display for HttpError {
 }
 impl std::error::Error for HttpError {}
 #[derive(Debug)]
-struct SlackError(String);
+struct SlackError(String, Option<String>);
 impl std::fmt::Display for SlackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Slack read failed: {}", self.0)
+        write!(f, "Slack read failed: {}{}", self.0, self.1.as_ref().map(|s|format!(" (required scope: {s})")).unwrap_or_default())
     }
 }
 impl std::error::Error for SlackError {}
@@ -138,7 +140,7 @@ impl Reader {
                 .await
                 .context("read connector JSON")?;
             if value.get("ok") == Some(&Value::Bool(false)) {
-                return Err(SlackError(value["error"].as_str().unwrap_or("unknown").into()).into());
+                return Err(SlackError(value["error"].as_str().unwrap_or("unknown").into(),value["needed"].as_str().map(str::to_owned)).into());
             }
             return Ok(value);
         }
@@ -309,94 +311,7 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
 }
 
 async fn slack(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
-    let profile = reader.get("auth.test", &[]).await?;
-    let account = profile["team_id"]
-        .as_str()
-        .context("Slack profile has no team")?;
-    let user = profile["user_id"]
-        .as_str()
-        .context("Slack profile has no user")?;
-    let mut cursor = String::new();
-    loop {
-        let page = reader
-            .get(
-                "users.conversations",
-                &[("types", "im,mpim"), ("limit", "200"), ("cursor", &cursor)],
-            )
-            .await?;
-        let mut channels = page["channels"]
-            .as_array()
-            .context("Slack page has no channels")?
-            .clone();
-        if cursor.is_empty() {
-            channels.extend(
-                hub.config
-                    .inbox
-                    .slack_channels
-                    .iter()
-                    .map(|id| serde_json::json!({"id":id,"name":id})),
-            );
-        }
-        for channel in &channels {
-            let id = channel["id"].as_str().context("Slack channel has no id")?;
-            let conversation = format!("{account}:{user}:{id}");
-            if channel["is_im"] == true || channel["is_mpim"] == true {
-                hub.store.set(&format!("inbox-dm:{account}:{id}"), "true")?;
-            }
-            let label = channel["name"]
-                .as_str()
-                .unwrap_or(if channel["is_im"] == true {
-                    "Direct message"
-                } else {
-                    "Group message"
-                });
-            let key = format!("inbox-cursor:{SLACK}:{conversation}");
-            let oldest = hub
-                .store
-                .get(&key)?
-                .unwrap_or_else(|| format!("{:.6}", now() - 7.0 * 86400.0));
-            let upper = format!("{:.6}", now());
-            let mut next = String::new();
-            loop {
-                let history = reader
-                    .get(
-                        "conversations.history",
-                        &[
-                            ("channel", id),
-                            ("oldest", &oldest),
-                            ("latest", &upper),
-                            ("limit", "100"),
-                            ("cursor", &next),
-                        ],
-                    )
-                    .await?;
-                for message in history["messages"]
-                    .as_array()
-                    .context("Slack history has no messages")?
-                {
-                    slack_message(hub, message, &conversation, label, id).await?;
-                }
-                hub.emit(Event::Sync);
-                next = history["response_metadata"]["next_cursor"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .into();
-                if next.is_empty() {
-                    break;
-                }
-            }
-            hub.store.set(&key, &upper)?;
-        }
-        cursor = page["response_metadata"]["next_cursor"]
-            .as_str()
-            .unwrap_or_default()
-            .into();
-        if cursor.is_empty() {
-            break;
-        }
-    }
-    slack_mentions(hub, reader, account, user).await?;
-    recover_slack_threads(hub, reader, &format!("{account}:{user}:")).await
+    collection::poll(hub, reader).await
 }
 
 /// Rotate through a bounded set of known roots, independent of channel history.
@@ -414,7 +329,7 @@ async fn recover_slack_threads(
             .inbox_label(SLACK, &conversation)?
             .unwrap_or_else(|| channel.into());
         if state.latest.is_empty() {
-            state.oldest = state.checkpoint.clone();
+            state.oldest = state.thread.clone();
             state.latest = format!("{:.6}", now());
         }
         // Save a continuation after each page, so an interrupted sweep resumes exactly.
@@ -452,10 +367,9 @@ async fn recover_slack_threads(
             {
                 slack_message(hub, message, &conversation, &label, channel).await?;
             }
-            state.cursor = page["response_metadata"]["next_cursor"]
-                .as_str()
-                .unwrap_or_default()
-                .into();
+            let next=collection::continuation(&page)?;
+            ensure!(next.is_empty()||next!=state.cursor,"Slack repeated a thread cursor; checkpoint retained");
+            state.cursor=next;
             if state.cursor.is_empty() {
                 state.checkpoint = state.latest.clone();
                 state.oldest.clear();
@@ -477,9 +391,7 @@ async fn slack_message(
     label: &str,
     channel: &str,
 ) -> Result<()> {
-    let Some(ts) = message["ts"].as_str() else {
-        return Ok(());
-    };
+    let ts=message["ts"].as_str().context("Slack message has no timestamp")?;
     hub.store
         .remember_slack_thread(conversation, message["thread_ts"].as_str().unwrap_or(ts))?;
     let mut text = message["text"].as_str().unwrap_or_default().to_string();
@@ -491,9 +403,6 @@ async fn slack_message(
             ));
         }
     }
-    if text.is_empty() {
-        return Ok(());
-    }
     let dm = hub
         .store
         .get(&format!(
@@ -501,6 +410,10 @@ async fn slack_message(
             conversation.split(':').next().unwrap_or_default()
         ))?
         .is_some();
+    if dm && !hub.store.observe_slack_dm(conversation,message,now())? {return Ok(());}
+    let baseline=hub.store.get(&format!("inbox-baseline:{SLACK}:{conversation}"))?.map(|s|s.parse::<f64>()).transpose()?.unwrap_or(now()-collection::INITIAL);
+    let activity=message["edited"]["ts"].as_str().unwrap_or(ts).parse::<f64>().context("invalid Slack message timestamp")?;
+    if text.is_empty() {return Ok(());}
     let thread = if dm {
         "conversation"
     } else {
@@ -523,6 +436,7 @@ async fn slack_message(
         at: ts.parse().unwrap_or_else(|_| now()),
         root: message["thread_ts"].is_null(),
     };
+    if activity<baseline {hub.store.cache_inbox_context(&signal)?;return Ok(());}
     hub.import_inbox(
         signal,
         &format!(
@@ -549,6 +463,7 @@ mod tests {
         base: String,
         socket: String,
         round: usize,
+        slack_at:f64,
         fail: bool,
         reads: Vec<String>,
     }
@@ -592,10 +507,10 @@ mod tests {
                 json!({"ok":true,"messages":{"matches":[],"pagination":{"page_count":1,"total_count":0}}})
             }
             "/conversations.history" => {
-                json!({"ok":true,"messages":if remote.round==0{vec![json!({"ts":"1700000000.000001","user":"sender","text":"Current observations","reply_count":1})]}else{vec![]}})
+                json!({"ok":true,"messages":if remote.round==0{vec![json!({"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"Current observations","reply_count":1})]}else{vec![]}})
             }
             "/conversations.replies" => {
-                json!({"ok":true,"messages":[{"ts":"1700000000.000001","user":"sender","text":"Current observations"},{"ts":"1700000001.000002","thread_ts":"1700000000.000001","user":"owner","text":"Context from the owner"}]})
+                json!({"ok":true,"messages":[{"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"Current observations"},{"ts":format!("{:.6}",remote.slack_at+1.0),"thread_ts":format!("{:.6}",remote.slack_at),"user":"owner","text":"Context from the owner"}]})
             }
             _ => panic!("unexpected slack request"),
         };
@@ -611,6 +526,7 @@ mod tests {
         let base = format!("http://{}/", listener.local_addr()?);
         let remote = Arc::new(Mutex::new(Remote {
             base: base.clone(),
+            slack_at:now()-3600.0,
             ..Default::default()
         }));
         let app = Router::new()
@@ -698,6 +614,7 @@ mod tests {
         use tokio_tungstenite::tungstenite::Message;
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         remote.lock().unwrap().socket = format!("ws://{}", socket.local_addr()?);
+        let persisted=hub.clone();
         let event_server = tokio::spawn(async move {
             let (stream, _) = socket.accept().await.unwrap();
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -706,6 +623,7 @@ mod tests {
                 socket.send(Message::Text(json!({"envelope_id":id,"payload":{"event":event}}).to_string())).await.unwrap();
                 let ack=socket.next().await.unwrap().unwrap();
                 assert_eq!(serde_json::from_str::<Value>(ack.to_text().unwrap()).unwrap()["envelope_id"],id);
+                if number<2 {assert!(persisted.store.inbox(10).unwrap().iter().any(|item|item.signal.text.contains(if number==0 {"A new direct conversation"}else{"Additional context"})),"Acknowledged source data must already be durable");}
             }
             socket.close(None).await.unwrap();
         });
@@ -1035,13 +953,14 @@ async fn slack_events(hub: Arc<Hub>, reader: Reader, app_token_file: PathBuf) ->
     while let Some(frame) = stream.next().await {
         let Message::Text(raw) = frame? else { continue };
         let envelope: Value = serde_json::from_str(&raw)?;
+        // A failed local write must remain eligible for source redelivery.
+        handle_slack_event(&hub, team, user, &envelope["payload"]["event"]).await?;
         if let Some(id) = envelope["envelope_id"].as_str() {
             sink.send(Message::Text(
                 serde_json::json!({"envelope_id":id}).to_string(),
             ))
             .await?;
         }
-        handle_slack_event(&hub, team, user, &envelope["payload"]["event"]).await?;
     }
     anyhow::bail!("Slack event socket closed")
 }

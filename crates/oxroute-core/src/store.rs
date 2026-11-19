@@ -19,6 +19,7 @@ use crate::model::{
 use crate::tags::Board;
 
 mod focus;
+mod dm_inbox;
 mod focus_updates;
 pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
@@ -35,6 +36,12 @@ CREATE TABLE IF NOT EXISTS focus_updates (
 CREATE INDEX IF NOT EXISTS focus_updates_entries ON focus_updates(focus_id,entry_id);
 CREATE INDEX IF NOT EXISTS focus_updates_outcomes ON focus_updates(focus_id,source_agent,outcome_id,revision,kind,qualification);
 CREATE TABLE IF NOT EXISTS focus_update_receipts (request_id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS slack_inbox_messages (
+ conversation TEXT NOT NULL, channel TEXT NOT NULL, owner TEXT NOT NULL, ts TEXT NOT NULL, at REAL NOT NULL, revision TEXT NOT NULL,
+ activity REAL NOT NULL, thread TEXT NOT NULL, sender TEXT NOT NULL, human INTEGER NOT NULL, text TEXT NOT NULL,
+ PRIMARY KEY(conversation,ts)
+);
+CREATE INDEX IF NOT EXISTS slack_inbox_replies ON slack_inbox_messages(conversation,sender,at);
 CREATE TABLE IF NOT EXISTS focus_inbox (
  source TEXT NOT NULL, item_id TEXT NOT NULL, data TEXT NOT NULL, updated_at REAL NOT NULL,
  PRIMARY KEY(source,item_id)
@@ -1214,11 +1221,19 @@ impl Store {
         self.with(|c| Ok(c.query_row("SELECT label FROM signals WHERE source=?1 AND conversation=?2 ORDER BY at DESC LIMIT 1",params![source,conversation],|row|row.get(0)).optional()?))
     }
 
+    fn put_inbox_context(c:&Connection,signal:&Signal)->Result<usize> {
+        Ok(c.execute("INSERT INTO inbox_messages VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source,conversation,external_id) DO UPDATE SET text=excluded.text,author=excluded.author WHERE text!=excluded.text OR author!=excluded.author",params![signal.source,signal.conversation,signal.external_id,signal.thread_key,signal.author,signal.text,signal.at])?)
+    }
+
+    pub fn cache_inbox_context(&self,signal:&Signal)->Result<()> {
+        self.with(|c|Self::put_inbox_context(c,signal).map(|_|()))
+    }
+
     /// Persist source messages and refresh one waiting row per thread atomically.
     pub fn import_inbox(&self, signal: &Signal, url: &str) -> Result<Option<String>> {
         self.with(|c| {
             let tx=c.unchecked_transaction()?;
-            let changed=tx.execute("INSERT INTO inbox_messages VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source,conversation,external_id) DO UPDATE SET text=excluded.text,author=excluded.author WHERE text!=excluded.text OR author!=excluded.author",params![signal.source,signal.conversation,signal.external_id,signal.thread_key,signal.author,signal.text,signal.at])?;
+            let changed=Self::put_inbox_context(&tx,signal)?;
             if changed==0 {return Ok(None);}
             let id:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![signal.source,signal.conversation,signal.thread_key],|r|r.get(0)).optional()?;
             let id=id.unwrap_or_else(||signal.id.clone());

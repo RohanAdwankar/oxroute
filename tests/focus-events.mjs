@@ -65,6 +65,8 @@ try{
  await api('/api/focus/inbox',update,'PUT');await api('/api/focus/inbox',update,'PUT');
  const wrong=await fetch(base+'/api/focus/inbox',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...update,agentId:workers[0].agent.id})});assert.ok(!wrong.ok,'Only Focus writes triage state');
  assert.deepEqual((await api('/api/focus/inbox')).items,[record],'Retries retain one local draft');
+ const inbox=await api('/api/focus/inbox');assert.equal(inbox.total,1);assert.equal(inbox.pendingCount,1);assert.equal(inbox.nextOffset,null);assert.deepEqual(inbox.coverage,{},'Manual observation checkpoints cannot certify collection coverage');
+ assert.deepEqual((await api('/api/focus/inbox?offset=100')).items,[],'Inbox pagination is available through the daemon API');
  await stop();finish(focusThread,'completed',false);daemon=start();await healthy();
  await until(()=>focusTurns().length===2,'Pending events did not survive restart');
  const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Other conversation turns ended.')).text;

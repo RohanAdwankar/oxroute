@@ -1,6 +1,7 @@
 use super::*;
 
 const AGENT_KEY: &str = "focus.agent";
+const INBOX_POLICY: &str = "Follow inbox nextOffset through all pages before declaring triage exhaustive. Inbox collection coverage is distinct from triage observations. Legacy inbox checkpoints record manual review times, never complete source enumeration or an ingestion watermark. Use collected inbox items as durable intake. Absent coverage is unverified, not an empty or complete inbox. Read inbox coverage and its gaps; never advance a search lower bound merely because a search returned no hits. Use numeric UTC windows for history, complete pagination, overlap and persisted reconciliation; date-only filters must cover the entire local interval across midnight and timezone offsets. Search is indexed discovery, not proof that every DM was collected. Every incoming human DM requires a response until fresh source conversation evidence shows the user replied or the user explicitly dismisses it; a bot mirror, draft, acknowledgment by someone else, an old summary or a completed agent turn cannot resolve it. For explicit dismissal, record dismissedBy as the originating human entry, not an internal update. Keep drafts inside Oxroute and preserve group DM, mention and email handling. Missing collection access must remain an explicit coverage gap, never silently become an empty inbox.";
 const INTERVAL: f64 = 20.0 * 60.0;
 
 #[derive(Serialize, Deserialize)]
@@ -136,6 +137,10 @@ impl Hub {
     }
 
     pub(super) fn focus_context(&self, id: &str) -> Result<String> {
+        Ok(format!("{INBOX_POLICY}\n\n{}",self.focus_base_context(id)?))
+    }
+
+    fn focus_base_context(&self, id: &str) -> Result<String> {
         let reviewed = self.reviewed_focus_agents(id)?;
         let agents = self.store.unarchived_agents()?.into_iter().filter(|agent| agent.id != id && !reviewed.contains(&agent.id)).collect::<Vec<_>>();
         let tags = self.store.all_tags()?;

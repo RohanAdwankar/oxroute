@@ -615,9 +615,9 @@ async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Resul
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-struct FocusInboxQuery { source: Option<String>, item_id: Option<String> }
+struct FocusInboxQuery { source: Option<String>, item_id: Option<String>, #[serde(default)] offset:usize }
 async fn focus_inbox(State(hub):Hubs, axum::extract::Query(query):axum::extract::Query<FocusInboxQuery>) -> Result<Json<oxroute_core::store::FocusInboxSnapshot>,Failed> {
-    Ok(Json(hub.store.focus_inbox(query.source.as_deref(),query.item_id.as_deref())?))
+    Ok(Json(hub.store.focus_inbox_page(query.source.as_deref(),query.item_id.as_deref(),query.offset)?))
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
