@@ -755,26 +755,10 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
 struct ReviewQuery { #[serde(default)] full: bool }
 
 #[utoipa::path(get, path = "/api/agents/{id}/reviews/{review}", operation_id = "reviews.show", params(("id" = String, Path), ("review" = String, Path), ("full" = Option<bool>, Query)), responses((status = 200, body = serde_json::Value)))]
-async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>, headers: HeaderMap) -> Result<Response, Failed> {
+async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
     let review = review_record(&hub, &agent_id, &id, true)?.0;
-    let mut body = match review_response(review.clone(), query.full).await {
-        Ok(body) => body,
-        Err(error) => {
-            if !headers.contains_key("x-oxroute-prefetch") && !git::current(&review.snapshot).await.unwrap_or(false) {
-                if let Err(notification) = notify_stale_review(&hub, &agent_id, &id).await {
-                    tracing::warn!(review = id, %notification, "could not request updated review");
-                }
-            }
-            return Err(error.into());
-        }
-    };
-    if body["status"] == "stale" && !headers.contains_key("x-oxroute-prefetch") {
-        match notify_stale_review(&hub, &agent_id, &id).await {
-            Ok(notified) => body["staleNotified"] = json!(notified),
-            Err(error) => tracing::warn!(review = id, %error, "could not request updated review"),
-        }
-    }
+    let body = review_response(review, query.full).await?;
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
 }
 
@@ -2117,8 +2101,7 @@ mod tests {
         assert_eq!(client.get(format!("http://{address}/api/agents/{}/reviews/{id}/image", fork.id)).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
 
-        // Warming old snapshots never wakes an agent. Interactive stale reads
-        // request repair once, to the owner even when read through a fork.
+        // Reading saved snapshots never schedules work, including inherited cards.
         tokio::fs::write(root.join("settings.txt"), "unreviewed work\n").await.unwrap();
         let warmed: serde_json::Value = client.get(&endpoint).header("x-oxroute-prefetch", "1").send().await.unwrap().json().await.unwrap();
         assert_eq!(warmed["status"], "stale");
@@ -2129,21 +2112,14 @@ mod tests {
         for response in [first, second] {
             let response: serde_json::Value = response.unwrap().json().await.unwrap();
             assert_eq!(response["status"], "stale");
-            assert_eq!(response["staleNotified"], true);
+            assert_eq!(response["staleNotified"], false);
             assert_eq!(response["snapshot"], review["snapshot"]);
         }
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while harness.inputs.lock().unwrap().is_empty() { tokio::task::yield_now().await; }
-        }).await.unwrap();
-        let inputs = harness.inputs.lock().unwrap();
-        assert_eq!(inputs.len(), 1, "Concurrent views queue a single repair request");
-        assert!(inputs[0].iter().filter_map(|input| input.as_text()).any(|text| text.contains(id) && text.contains("prepare an updated review")));
-        drop(inputs);
-        let notices = hub.store.timeline(agent_id, 20).unwrap();
-        assert_eq!(notices.iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::Notice && entry.text.starts_with("Update requested")).count(), 1);
-        let notified: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
-        assert!(notified.stale_notified, "Notification deduplication survives a database reopen");
-        assert!(!hub.store.timeline(&fork.id, 20).unwrap().iter().any(|entry| entry.text.starts_with("Update requested")));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(harness.inputs.lock().unwrap().is_empty(), "Reading stale cards never starts an agent");
+        assert_eq!(hub.store.timeline(agent_id, 20).unwrap().len(), card.len());
+        let saved: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        assert!(!saved.stale_notified, "Reads do not mutate notification state");
         tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
 
         for _ in 0..2 {
@@ -2169,6 +2145,8 @@ mod tests {
         assert_eq!(stale["snapshot"], review["snapshot"]);
         assert_eq!(client.get(format!("{endpoint}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        let requested: serde_json::Value = client.get(&endpoint).send().await.unwrap().json().await.unwrap();
+        assert_eq!(requested["staleNotified"], true, "Explicit stale approval still requests an updated review");
         let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(revision["snapshot"]["reviewBaseCommit"], review["snapshot"]["headCommit"]);
@@ -2208,9 +2186,14 @@ mod tests {
             assert_eq!(serde_json::from_str::<serde_json::Value>(entry.detail.strip_prefix("diff-attachments:").unwrap()).unwrap(), diffs);
         }
         tokio::fs::remove_dir_all(&root).await.unwrap();
+        let starts_before_missing = harness.inputs.lock().unwrap().len();
+        let saved_before_missing = reopened.get(&format!("review:{id}")).unwrap();
         let missing = client.get(&endpoint).send().await.unwrap();
         assert!(!missing.status().is_success());
         assert!(missing.text().await.unwrap().contains("worktree was removed"));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(harness.inputs.lock().unwrap().len(), starts_before_missing, "Failed reads never schedule work");
+        assert_eq!(reopened.get(&format!("review:{id}")).unwrap(), saved_before_missing);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
         server.abort();
     }

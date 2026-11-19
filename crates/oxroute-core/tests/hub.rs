@@ -930,6 +930,30 @@ async fn kill_stops_the_turn_and_keeps_the_session() {
 }
 
 #[tokio::test]
+async fn stopping_discards_queued_interface_work_and_preserves_user_messages() {
+    let w = world(Mode::Auto, true).await;
+    w.hub.accept(signal("100.0", "100.0", "ongoing work")).await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 1).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    for text in ["prepare current evidence", "check current state"] {
+        w.hub.ask_quietly(&agent, text, "").await.unwrap();
+    }
+    w.hub.say_to_with_attachments(&agent, "preserve this queued user message", vec![], true).await.unwrap();
+    assert!(w.hub.interrupt(&agent).await.unwrap());
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 2).await);
+    let starts = w.calls.lock().unwrap().started.clone();
+    let inputs: Vec<_> = starts[1].1.iter().filter_map(TurnInput::as_text).collect();
+    assert!(inputs.iter().any(|text| text.contains("preserve this queued user message")));
+    assert!(!inputs.iter().any(|text| text.contains("prepare current evidence") || text.contains("check current state")));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), 2);
+    w.hub.interrupt(&agent).await.unwrap();
+    w.hub.ask_quietly(&agent, "new explicit request", "").await.unwrap();
+    assert!(settle(|| w.calls.lock().unwrap().started.len() == 3).await);
+    w.hub.interrupt(&agent).await.unwrap();
+}
+
+#[tokio::test]
 async fn clean_detaches_the_thread_so_the_next_reply_starts_fresh() {
     let w = world(Mode::Auto, false).await;
     w.hub.accept(signal("100.0", "100.0", "first task")).await.unwrap();

@@ -122,6 +122,7 @@ TEST_URL=http://127.0.0.1:3939 node "$repository/tests/wrap.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/git-review.mjs"
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/review-edit.mjs)
 (cd "$repository" && TEST_URL=http://127.0.0.1:3939 TEST_DAEMON="$release/bin/oxrouted" node tests/review-context.mjs)
+(cd "$repository" && TEST_DAEMON="$release/bin/oxrouted" node tests/review-readonly.mjs)
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-revisions.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-images.mjs"
 TEST_URL=http://127.0.0.1:3939 node "$repository/tests/review-file-jump.mjs"

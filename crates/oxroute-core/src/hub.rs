@@ -1247,7 +1247,7 @@ impl Hub {
             }
             if queued {
                 hub.clone()
-                    .deliver_to(agent, inputs, None, target, reply_context)
+                    .deliver_to(agent, inputs, None, target, reply_context, None)
                     .await;
             } else {
                 hub.preempt_to(agent, inputs, target, reply_context).await;
@@ -1274,9 +1274,10 @@ impl Hub {
         if !said.is_empty() {
             self.record(&agent.id, EntryKind::Notice, said, "", "");
         }
+        let epoch = self.store.get(&format!("quiet-stop:{}", agent.id))?.unwrap_or_default();
         let target = self.home_target(&agent.id).await;
         self.clone()
-            .deliver_to(agent, vec![TurnInput::text(text)], None, target, None)
+            .deliver_to(agent, vec![TurnInput::text(text)], None, target, None, Some(epoch))
             .await;
         Ok(())
     }
@@ -1383,6 +1384,7 @@ impl Hub {
     }
 
     pub async fn interrupt(self: &Arc<Self>, agent_id: &str) -> Result<bool> {
+        self.store.set(&format!("quiet-stop:{agent_id}"), &new_id("stop"))?;
         let turn = self.live.lock().await.get(agent_id).cloned();
         let Some(turn) = turn else { return Ok(false) };
         turn.wait_ready().await;
@@ -1822,7 +1824,7 @@ impl Hub {
             Some(s) if self.source(&s.source).is_some() => Some(s.target()),
             _ => self.home_target(&agent.id).await,
         };
-        self.deliver_to(agent, inputs, signal, target, None).await;
+        self.deliver_to(agent, inputs, signal, target, None, None).await;
     }
 
     async fn deliver_to(
@@ -1832,11 +1834,19 @@ impl Hub {
         signal: Option<Signal>,
         target: Option<Target>,
         reply_context: Option<String>,
+        quiet_epoch: Option<String>,
     ) {
         let hub = self.clone();
         tokio::spawn(async move {
             let lock = hub.lock_for(&agent.id).await;
             let _held = lock.lock().await;
+            if let Some(epoch) = quiet_epoch {
+                match hub.store.get(&format!("quiet-stop:{}", agent.id)) {
+                    Ok(current) if current.as_deref().unwrap_or_default() == epoch => {},
+                    Ok(_) => return,
+                    Err(error) => { tracing::error!(agent = agent.id, %error, "could not check queued request cancellation"); return; }
+                }
+            }
             if let Err(error) = hub
                 .run_turn(&agent, inputs, signal, target.clone(), reply_context, None)
                 .await
@@ -2653,7 +2663,7 @@ impl Hub {
             "",
             "",
         );
-        self.deliver_to(agent, inputs, None, target, None).await;
+        self.deliver_to(agent, inputs, None, target, None, None).await;
         })
     }
 
@@ -3705,6 +3715,7 @@ impl Hub {
                 .deliver_to(
                     agent.clone(),
                     vec![TurnInput::text(&task.text)],
+                    None,
                     None,
                     None,
                     None,
