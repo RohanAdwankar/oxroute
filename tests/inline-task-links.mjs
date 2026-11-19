@@ -58,11 +58,12 @@ try {
     if(process.env.ARTIFACT_DIR)await page.screenshot({path:`${process.env.ARTIFACT_DIR}/inline-tasks-${width}.png`});
   }
   await page.setViewportSize({width:1100,height:900});
-  for (const task of tasks.filter(task=>task.status!=='complete')) {
+  for (const task of [...tasks.filter(task=>task.status!=='complete'),tasks[2]]) {
     const trigger=message.getByRole('button', { name: `Task ${task.text}`, exact: true }).first();
     await trigger.focus();await page.keyboard.press('Enter');
     await page.locator('[data-task-row]').filter({ hasText: task.text }).waitFor();
     await page.locator('[data-task-row][aria-current="true"]').filter({ hasText: task.text }).waitFor();
+    assert.equal(await page.locator('[data-task-row][aria-current="true"] [data-task-open]').evaluate(node=>node===document.activeElement),true,'Opening a reference transfers native focus to its selected task');
   }
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   assert.deepEqual(writes, []);

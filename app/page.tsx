@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
 import { EmbeddedReviews, ConversationCards, ConversationReferences } from "./components/FocusContext";
 import { receiveDraft, type DiffQuote } from "./lib/drafts";
@@ -240,6 +240,7 @@ export default function Home() {
     sessionStorage.setItem("oxroute.windowTasks", String(enabled));
   }, []);
   const [shownTask, setShownTask] = useState<string | null>(null);
+  const [taskFocusRequest, setTaskFocusRequest] = useState(0);
   /// Finished work you have said "not yet" to, answered in its composer.
   const [correcting, setCorrecting] = useState<TaskItem | null>(null);
   const [taskWidth, setTaskWidth] = useState(430);
@@ -298,8 +299,12 @@ export default function Home() {
       setShownTask(id);
       setTaskAt(taskRows(currentTasks.current).findIndex(row => row.task.id === id));
       setFocus("tasks");
+      setTaskFocusRequest(request => request + 1);
     },
   }), [taskTitleKey, showTasks, setWindowTasks]);
+  useLayoutEffect(() => {
+    if (taskFocusRequest) document.querySelector<HTMLElement>('[data-task-panel] [data-task-row][aria-current="true"] [data-task-open]')?.focus({ preventScroll: true });
+  }, [taskFocusRequest]);
 
   const setInboxVisible = useCallback((open: boolean) => {
     setInboxOpen(open);
