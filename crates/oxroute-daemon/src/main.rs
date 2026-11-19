@@ -1962,7 +1962,7 @@ mod tests {
     #[async_trait::async_trait]
     impl oxroute_core::agent::Harness for ReviewHarness {
         fn backend(&self) -> Backend { Backend::Codex }
-        fn capabilities(&self) -> oxroute_core::agent::Capabilities { oxroute_core::agent::Capabilities { fork: false, inject: false, resume: true } }
+        fn capabilities(&self) -> oxroute_core::agent::Capabilities { oxroute_core::agent::Capabilities { fork: false, inject: false, steer: false, resume: true } }
         fn events(&self) -> tokio::sync::broadcast::Receiver<oxroute_core::agent::HarnessEvent> { tokio::sync::broadcast::channel(16).1 }
         async fn open(&self, _: &oxroute_core::agent::SessionSpec) -> Result<String> { Ok("fixture-session".into()) }
         async fn start(&self, _: &str, inputs: Vec<oxroute_core::model::TurnInput>) -> Result<String> {

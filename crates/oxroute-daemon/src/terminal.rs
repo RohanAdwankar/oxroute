@@ -935,6 +935,7 @@ mod tests {
             oxroute_core::agent::Capabilities {
                 fork: false,
                 inject: false,
+                steer: false,
                 resume: true,
             }
         }
