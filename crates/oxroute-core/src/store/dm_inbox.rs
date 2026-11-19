@@ -89,7 +89,7 @@ impl Store {
         let Some((channel, ts)) = id.split_once(':') else {
             return Ok(None);
         };
-        Ok(c.query_row("SELECT m.revision,m.activity,NOT EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.at>m.activity) FROM slack_inbox_messages m WHERE m.channel=?1 AND m.ts=?2 AND m.human=1 AND m.sender!=m.owner",params![channel,ts],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?)
+        Ok(c.query_row("SELECT m.revision,m.activity,NOT EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.sender=m.owner AND r.at>m.activity) FROM slack_inbox_messages m WHERE m.channel=?1 AND m.ts=?2 AND m.human=1 AND m.sender!=m.owner",params![channel,ts],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?)
     }
 }
 
@@ -133,6 +133,7 @@ mod tests {
                 .state,
             "drafted"
         );
+        assert!(store.update_focus_inbox(&update,214.5).is_err(),"Another participant's acknowledgment cannot authorize closure");
         store.observe_slack_dm(
             conv,
             &message("103.0", "owner", "Response delivered"),
