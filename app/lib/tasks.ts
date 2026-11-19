@@ -57,6 +57,10 @@ export function taskRows(tasks: TaskItem[]): TaskRow[] {
     siblings.push(task);
     children.set(parent?.id ?? "", siblings);
   }
+  // A prioritized child brings its branch forward without breaking ancestry.
+  const rank = new Map(tasks.map((task, index) => [task.id, index]));
+  const branchRank = (task: TaskItem): number => Math.min(rank.get(task.id)!, ...(children.get(task.id) ?? []).map(branchRank));
+  for (const siblings of children.values()) siblings.sort((a, b) => branchRank(a) - branchRank(b));
   const branch = (task: TaskItem, depth = 0): TaskRow[] => [
     { task, depth }, ...(children.get(task.id) ?? []).flatMap(child => branch(child, depth + 1)),
   ];

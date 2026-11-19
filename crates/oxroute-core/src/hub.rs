@@ -3448,6 +3448,7 @@ impl Hub {
             tasks: self.store.tasks()?,
             task_notes: if notes { self.store.task_notes()? } else { vec![] },
             task_notes_deferred: !notes,
+            task_priorities: self.store.task_priority_advice()?,
             tags: self.store.all_tags()?,
             boards: self.store.boards()?,
             sources: self.sources.keys().cloned().collect(),
@@ -3654,6 +3655,7 @@ impl Hub {
             None => 0,
         };
         tasks.insert(to, moving);
+        self.store.clear_stale_task_priorities()?;
         // Renumbering the whole list keeps the positions plain integers, and
         // the list is short enough that saving it is not worth avoiding.
         for (at, task) in tasks.iter_mut().enumerate() {
@@ -4299,6 +4301,8 @@ pub struct Snapshot {
     pub task_notes: Vec<TaskNote>,
     #[serde(default)]
     pub task_notes_deferred: bool,
+    #[serde(default)]
+    pub task_priorities: std::collections::HashMap<String, crate::store::TaskPriorityState>,
     /// Agent id -> its tags. Defaulted, like `boards`, so a client talking
     /// to an older daemon still reads a snapshot.
     #[serde(default)]

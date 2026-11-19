@@ -21,6 +21,8 @@ use crate::tags::Board;
 mod focus;
 mod dm_inbox;
 mod focus_updates;
+mod task_priorities;
+pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState};
 pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 
@@ -28,6 +30,9 @@ pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdat
 pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String,pub urgent:bool}
 
 const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS task_priorities (
+ task_id TEXT PRIMARY KEY, basis TEXT NOT NULL, details TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS focus_updates (
  request_id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, source_agent TEXT NOT NULL, outcome_id TEXT NOT NULL,
  source_request INTEGER NOT NULL, focus_cycle INTEGER NOT NULL, kind TEXT NOT NULL, qualification TEXT NOT NULL,
@@ -747,7 +752,7 @@ impl Store {
                         created_at, updated_at, parent_task_id
                  FROM tasks ORDER BY position, created_at",
             )?;
-            let tasks = statement
+            let mut tasks = statement
                 .query_map([], |row| {
                     let status: String = row.get(2)?;
                     Ok(TaskItem {
@@ -771,6 +776,8 @@ impl Store {
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
+            let priorities = task_priorities::states(c,false)?;
+            tasks.sort_by_key(|task| priorities.get(&task.id).is_some_and(|state| state.stale));
             Ok(tasks)
         })
     }

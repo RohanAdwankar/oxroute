@@ -976,6 +976,8 @@ export default function Home() {
     return [...snapshot.tasks.map(task => savingTasks[task.id] ?? task), ...pending];
   }, [snapshot.tasks, savingTasks, creatingTasks]);
   // Task controls use identity and names, never high-frequency progress fields.
+  const priorityData = JSON.stringify(Object.fromEntries(Object.entries(snapshot.taskPriorities ?? {}).sort(([a], [b]) => a.localeCompare(b))));
+  const taskPriorities = useMemo(() => JSON.parse(priorityData) as Snapshot["taskPriorities"], [priorityData]);
   const taskAgents = useTaskAgents(snapshot.agents);
   const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
   const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
@@ -1743,7 +1745,7 @@ export default function Home() {
             <div data-task-pane className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: taskWidth }}>
           <TaskPanel
             tasks={taskItems}
-            rows={tasks}
+            rows={tasks} priorities={taskPriorities}
             query={taskQuery}
             scope={taskScope}
             onScope={scopeTasks}

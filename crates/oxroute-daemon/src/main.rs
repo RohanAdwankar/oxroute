@@ -243,6 +243,7 @@ async fn serve() -> Result<()> {
         .route("/api/focus/agent", post(open_focus))
         .route("/api/focus/batches", post(focus_batch))
         .route("/api/focus/messages", post(focus_message))
+        .route("/api/focus/task-priorities", get(task_priorities).put(prioritize_tasks))
         .route("/api/agent-tools/{id}", post(agent_tools::call))
         .route("/api/focus/inbox", get(focus_inbox).put(update_focus_inbox))
         .route("/api/say", post(say))
@@ -608,6 +609,22 @@ async fn open_focus(State(hub):Hubs)->Result<Json<oxroute_core::Agent>,Failed> {
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
 struct FocusMessageBody {agent_id:String,target_id:String,text:String,request_id:String,#[serde(default)] urgent:bool,title:Option<String>}
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+struct TaskPriorityQuery {task_id:Option<String>}
+async fn task_priorities(State(hub): Hubs, axum::extract::Query(query):axum::extract::Query<TaskPriorityQuery>) -> Result<Json<serde_json::Value>, Failed> {
+    let tasks:Vec<_>=hub.tasks()?.into_iter().filter(|task|task.status!=oxroute_core::TaskStatus::Complete && query.task_id.as_ref().is_none_or(|id|*id==task.id)).collect();
+    let ids:std::collections::HashSet<_>=tasks.iter().map(|task|task.id.as_str()).collect();
+    let priorities:std::collections::HashMap<_,_>=hub.store.task_priority_states()?.into_iter().filter(|(id,_)|ids.contains(id.as_str())).collect();
+    let notes:Vec<_>=hub.task_notes()?.into_iter().filter(|note|ids.contains(note.task_id.as_str())).collect();
+    Ok(Json(serde_json::json!({"tasks":tasks,"priorities":priorities,"notes":notes,"review":hub.store.task_priority_review()?})))
+}
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct TaskPriorityBody {agent_id:String, #[serde(flatten)] order:oxroute_core::store::TaskPriorityOrder}
+async fn prioritize_tasks(State(hub):Hubs,Json(body):Json<TaskPriorityBody>)->Result<Json<serde_json::Value>,Failed> {
+    Ok(Json(hub.prioritize_tasks(&body.agent_id,&body.order)?))
+}
 async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Result<Json<serde_json::Value>,Failed> {
     hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id,body.urgent,body.title.as_deref()).await?;
     let delivery=hub.focus_message_delivery(&body.request_id,&body.target_id)?;

@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 
 import { canParent } from "../lib/tasks";
 import type { TaskRow } from "../lib/tasks";
-import type { Agent, TaskItem, TaskNote, TaskStatus } from "../lib/types";
+import type { Agent, TaskItem, TaskNote, TaskStatus, Snapshot } from "../lib/types";
 import { clock } from "../lib/format";
 import { Icon } from "./Icon";
 import { TaskApproval } from "./TaskApproval";
@@ -129,6 +129,7 @@ function SubtaskEditor({ create }: { create: (text: string) => Promise<boolean> 
 export const TaskPanel = memo(function TaskPanel({
   tasks,
   rows,
+  priorities,
   query,
   scope,
   onScope,
@@ -155,6 +156,7 @@ export const TaskPanel = memo(function TaskPanel({
   query: string;
   scope?: string[];
   onScope: () => void;
+  priorities?: Snapshot["taskPriorities"];
   onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
   notes: TaskNote[];
@@ -219,6 +221,7 @@ export const TaskPanel = memo(function TaskPanel({
   );
 
   const row = (task: TaskItem, at: number, depth: number) => {
+    const advice = priorities?.[task.id]?.recommendation;
     const mine = notesByTask.get(task.id) ?? [];
     const asking = pending?.task.id === task.id ? pending : null;
     return <Row key={task.id} depth={depth} onContextMenu={event => {
@@ -254,6 +257,9 @@ export const TaskPanel = memo(function TaskPanel({
           {task.text}
         </button>
       )}
+      {advice && <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={advice.reason}>
+        <span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}
+      </p>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {task.images.map((image) => (

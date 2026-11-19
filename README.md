@@ -20,7 +20,7 @@ The original inbox take can be recorded again with [demo/record-inbox.sh](demo/r
 | **Fleet** | Every session on one screen, with what it is doing now and what it just said |
 | **Panes** | Arrange conversations and terminals, resize shared edges, or collapse a pane to its handle. Drag handles and tabs between Oxroute windows, onto pane edges, or onto the tab bar; drag outside to detach, or right-click **Move to new window**. Drafts and attachments move with the pane |
 | **Terminals** | Agents can open two panes per conversation; access to another terminal requires your consent. **New follow terminal** opens a shared Bash for the active conversation, preserving directory, variables, jobs and unfinished input. Its header toggle switches between agent priority and user priority |
-| **Tasks** | A shared list the agents work through: they mark a task done, you approve it or send it back |
+| **Tasks** | Focus prioritizes concrete next actions using urgency, impact and current evidence; manual ordering remains available. Agents mark work done, and you approve it or send it back |
 | **Corrections** | "Not yet" puts the task above the composer, so what is wrong is said with room and pictures |
 | **Diagram** | Draw a change to the architecture diagram and the agent makes the code match it |
 | **Drawing** | Mark up a screenshot and hand that to the agent, or file it as work |
