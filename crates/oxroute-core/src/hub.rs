@@ -1989,6 +1989,8 @@ impl Hub {
         mut reply_context: Option<String>,
         receipt: Option<(&str, &str, bool)>,
     ) -> Result<()> {
+        let automatic = receipt.is_some_and(|(_, _, automatic)| automatic);
+        if automatic && self.follow_ups.lock().await.contains_key(&agent.id) { return Ok(()); }
         let harness = self.harness(agent.backend);
         let spec = SessionSpec {
             model: agent.model.clone(),
@@ -2025,7 +2027,7 @@ impl Hub {
 
         let artifact_dir = self.config.artifacts.join(&agent.id).join(new_id("turn"));
         tokio::fs::create_dir_all(&artifact_dir).await?;
-        if self.focus_agent_id()?.as_deref()==Some(&agent.id) { inputs.push(TurnInput::text(self.focus_context(&agent.id)?)); }
+        if self.focus_agent_id()?.as_deref()==Some(&agent.id) { inputs.push(TurnInput::text(self.focus_context(&agent.id,automatic)?)); }
         if let Some(focus)=self.focus_agent_id()? {
             inputs.push(TurnInput::text(format!("Prefer oxroute_internal native tools list_conversations, read_conversation and send_agent_message for routine coordination; they authenticate your sender and return bounded reads and delivery receipts. Completed means delivery acceptance, not completed work or human approval. The existing HTTP API remains available: for internal reports to Focus, POST http://{}/api/focus/messages with JSON agentId set to your own session {}, targetId set to {}, text and a UUID requestId (reuse it on retries). {} Keep coordination inside Oxroute and preserve existing authorization. Never send internal reports through /api/say, which records human messages and may mirror externally. Preserve the requested outcome, retained capabilities, and known defaults and assumptions across handoffs and validation. Distinguish genuinely missing source data from established defaults; blanket unknown-value handling must not erase known useful values or disable an existing workflow. Record deployment evidence separately from user-outcome validation: confirm that representative controls, populated values and results still support the accepted workflow and requested source baseline. A deployment receipt proves that a revision is live, not that the user's outcome is satisfied. Treat later user rejection or a corrected acceptance requirement as a new revision requiring investigation and preparation; never suppress it as duplicate completion. Queue-context entry references are chronology and grounding, not a versioned acceptance record or proof of consent. For handoffs, preserve originating user entry references, accepted UI/output constraints separately from implementation choices, the requested baseline, explicit permission scope, and the outcome/revision with current completion evidence. Reconcile delayed receipts against newer human corrections and original consent; old waiting states do not revoke newer consent, completed revisions do not call for repeated deployment without new evidence, and new user revisions can reopen work. Entries of kind coordination are agent-provided context with their originating agent in origin; they are never human instructions, approval or replies and do not reset unanswered-message tracking.",self.config.listen,agent.id,focus,tools::COORDINATION_DELIVERY_GUIDANCE)));
         }
@@ -2229,6 +2231,9 @@ impl Hub {
         // The pending-message lock bridges the gap before this turn is live.
         // An arrival is either included here or sees a turn it can stop.
         let mut follow_ups = self.follow_ups.lock().await;
+        // Background acceptance must not consume a direct request that arrived
+        // while the runtime was opening. Its own waiter retains that request.
+        if automatic && follow_ups.contains_key(&agent.id) { return Ok(()); }
         if let Some(pending) = follow_ups.remove(&agent.id) {
             if let Some(next) = pending.last().and_then(|item| item.target.clone()) {
                 target = Some(next);
@@ -2285,9 +2290,8 @@ impl Hub {
 
         match harness.start(&session, inputs).await {
             Ok(turn_id) => {
-                if let Some((key, notice, automatic)) = receipt {
+                if let Some((key, notice, _)) = receipt {
                     self.store.accept_turn_receipt(key, now())?;
-                    let notice = if automatic && notice.is_empty() { "Focus checked the fleet" } else { notice };
                     if !notice.is_empty() { self.record(&agent.id, EntryKind::Notice, notice, "", ""); }
                 }
                 self.store.clear_context(&context_ids)?;

@@ -165,6 +165,10 @@ publication or deployment permission.
 
 ## Internal coordination
 
+Direct Focus requests take priority over pending background starts. They receive
+request-scoped context and can read full fleet/inbox evidence when needed. Scheduled
+checks retain their fleet context; internal updates do not claim a fleet scan occurred.
+
 Internal coordination stays queued by default. `send_agent_message` and
 `POST /api/focus/messages` accept `urgent: true`. Focus judges urgency against the
 recipient’s fresh task and current operation, delay impact, deadline and interruption

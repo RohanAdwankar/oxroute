@@ -4443,3 +4443,31 @@ async fn focus_titles_share_message_identity_and_preserve_human_choices() {
     assert!(w.hub.call_agent_tool(&worker.id,"send_agent_message",unauthorized).await.is_err());
     assert!(w.calls.lock().unwrap().interrupted.is_empty());assert!(w.posts.lock().unwrap().replies.is_empty());
 }
+
+#[tokio::test]
+async fn direct_focus_request_keeps_its_turn_when_background_start_is_pending() {
+    let w=build(Mode::Ask,Harnessed {hang:true,open_delay:Duration::from_millis(150),..Default::default()}).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let source=w.hub.create_agent(None).unwrap();
+    w.hub.store.finish_focus_turn(&source.id,"completed-artifact","completed",now(),true).unwrap();
+    w.hub.sweep_focus(now()).await.unwrap();
+    assert!(settle(||{let calls=w.calls.lock().unwrap();calls.opening==1&&calls.started.is_empty()}).await);
+    w.hub.say_to(&focus.id,"Explain the requested artifact status").await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==1).await);
+    let active=w.hub.store.active_turns().unwrap().into_iter().find(|turn|turn.agent_id==focus.id).unwrap();
+    assert!(w.hub.store.get(&format!("check-turn:{}",active.artifact_dir.display())).unwrap().is_none(),"A direct request must not inherit automatic-check provenance");
+    assert!(w.hub.store.pending_focus_events(&focus.id).unwrap(),"Background events must remain durable while the direct request takes priority");
+    let inputs=w.calls.lock().unwrap().started[0].1.clone();
+    assert_eq!(inputs[0].as_text(),Some("Explain the requested artifact status"));
+    assert!(!inputs.iter().filter_map(TurnInput::as_text).any(|text|text.starts_with("Other conversation turns ended.")));
+    let session=active.session_id;
+    w.harness.send(HarnessEvent::Message {session:session.clone(),text:"The requested artifact is ready.".into(),final_answer:false}).unwrap();
+    assert!(settle(||w.hub.store.timeline(&focus.id,100).unwrap().iter().any(|entry|entry.kind==EntryKind::Said&&entry.text=="The requested artifact is ready.")).await);
+    w.harness.send(HarnessEvent::Message {session:session.clone(),text:"The requested artifact is ready.".into(),final_answer:true}).unwrap();
+    w.harness.send(HarnessEvent::TurnFinished {session,status:"completed".into()}).unwrap();
+    assert!(settle(||w.hub.store.agent(&focus.id).unwrap().unwrap().status==AgentStatus::Complete).await);
+    w.hub.sweep_focus(now()).await.unwrap();
+    assert!(settle(||w.starts_for(&focus.id).len()==2).await);
+    assert!(!w.hub.store.pending_focus_events(&focus.id).unwrap(),"Deferred background evidence is accepted after the direct response");
+    assert!(!w.hub.store.timeline(&focus.id,100).unwrap().iter().any(|entry|entry.text=="Focus checked the fleet"),"Event intake is not a scheduled fleet scan");
+}

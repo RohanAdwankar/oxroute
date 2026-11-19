@@ -70,6 +70,8 @@ try{
  const composer=page.locator('[data-composer]');await composer.fill('Which evidence should I inspect before deciding?');
  await page.getByRole('button',{name:'Send message',exact:true}).click();
  await until(async()=>turns.length===2&&(await detail()).agent.status==='complete');
+ const directEntries=(await detail()).timeline,lastQuestion=directEntries.findLast(entry=>entry.kind==='you');
+ assert.ok(!directEntries.some(entry=>entry.id>lastQuestion.id&&entry.text==='Focus checked the fleet'),'Direct answers do not acquire automatic-check notices');
  await composer.fill('Keep this coordinator draft.');
  await page.getByRole('button',{name:'Show the fleet',exact:true}).click();
  assert.equal(await page.locator(`[data-home-card="${focusId}"]`).count(),0,'The coordinator has one dedicated tab');

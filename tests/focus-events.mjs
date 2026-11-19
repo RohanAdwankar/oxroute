@@ -13,7 +13,7 @@ const pause=ms=>new Promise(done=>setTimeout(done,ms));
 const until=async(check,label)=>{for(let n=0;n<200;n++){if(await check())return;await pause(50);}assert.fail(label);};
 const transport=createServer(),rpc=new WebSocketServer({server:transport}),rpcPort=await listen(transport);
 let serial=0,focusThread='',rejectFocus=false,rejected=0,interrupts=0;
-const turns=[],steers=[],sessions=new Map();let rejectSteer=false;
+const turns=[],steers=[],sessions=new Map();let rejectSteer=false,holdFocusResume=false,resumeGate;
 const send=(socket,method,params)=>{if(socket.readyState===1)socket.send(JSON.stringify({method,params}));};
 const finish=(threadId,status='completed',notify=true)=>{
  const current=sessions.get(threadId);current.turn.status=status;
@@ -27,6 +27,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  if(method==='thread/resume'){
   const saved=sessions.get(params.threadId);if(saved)saved.socket=socket;
   result={thread:{id:params.threadId,turns:saved?[saved.turn]:[]}};
+  if(params.threadId===focusThread&&holdFocusResume){holdFocusResume=false;resumeGate=()=>socket.send(JSON.stringify({id,result}));return;}
  }
  if(method==='turn/interrupt'){interrupts++;finish(params.threadId,'interrupted');}
  if(method==='turn/steer'){
@@ -124,6 +125,22 @@ try{
  assert.deepEqual((await api('/api/focus/inbox?source=outlook&itemId=stable-message')).items,[record]);
  assert.deepEqual((await api('/api/focus/inbox?itemId=conditional-request')).items,[conditional],'Cross-conversation disposition, conditional prerequisite and waiting ownership survive restart');
  assert.equal(interrupts,1,'Coordination never interrupts active turns');
+ const fleetNotices=async()=>(await api(`/api/agents/${focus.id}`)).timeline.filter(entry=>entry.text==='Focus checked the fleet').length;
+ const priorNotices=await fleetNotices(),priorTurns=focusTurns().length;
+ holdFocusResume=true;const pendingWorker=await worker();finish(pendingWorker.thread);
+ await until(()=>!!resumeGate,'Background resume did not reach its gate');
+ await api('/api/say',{agent:focus.id,text:'Explain the prepared artifact status.'});resumeGate();resumeGate=undefined;
+ await until(()=>focusTurns().length===priorTurns+1,'Direct request did not start');
+ const directInput=JSON.stringify(focusTurns().at(-1).input);
+ assert.equal(focusTurns().at(-1).input[0].text,'Explain the prepared artifact status.');
+ assert.ok(!directInput.includes(record.draft),'Direct requests do not preload unrelated inbox bodies; they remain readable through the API');
+ assert.equal(await fleetNotices(),priorNotices,'Direct requests cannot inherit a fleet-check notice');
+ narrate('The requested artifact is ready.');
+ await until(async()=>(await api(`/api/agents/${focus.id}`)).timeline.some(entry=>entry.kind==='said'&&entry.text==='The requested artifact is ready.'),'Direct response must stay visible');
+ finish(focusThread);await until(()=>focusTurns().length===priorTurns+2,'Deferred background work was lost');
+ assert.ok(JSON.stringify(focusTurns().at(-1).input).includes(pendingWorker.agent.id));
+ assert.equal(await fleetNotices(),priorNotices,'Conversation events are not labeled scheduled fleet scans');finish(focusThread);
+ console.log('Direct requests take priority across a gated runtime resume, retain visible responses and scoped input, then resume durable background events without false fleet labels.');
  console.log('Urgent steering arrives once within the active turn, keeps internal provenance, and lost acknowledgements survive restart without replay.');
  console.log('Real daemon passed completion/failure/stop coalescing, busy queuing, restart and failed-acceptance recovery, dedup/self-loop checks, durable local drafts and read-only prompt boundaries.');
 }finally{
