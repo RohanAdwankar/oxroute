@@ -4277,6 +4277,16 @@ async fn slack_main_messages_share_focus_and_keep_thread_ownership() {
     assert!(settle(|| w.hub.store.agent(&focus).unwrap().unwrap().status == AgentStatus::Complete).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(w.posts.lock().unwrap().replies.len(), before, "local Focus turns stay local");
+    let list="• Inspect <https://example.invalid/storage|storage evidence>\n• Preserve the next item";
+    let mut converted=signal("505","505","");converted.text=format!("- {list}");
+    w.hub.accept(converted.clone()).await.unwrap();
+    let list_owner=w.hub.store.bound_agent("slack","D1","505").unwrap().unwrap();assert_ne!(list_owner,focus);
+    assert!(settle(||!w.starts_for(&list_owner).is_empty()).await);
+    assert!(w.hub.store.timeline(&list_owner,100).unwrap().iter().any(|entry|entry.kind==EntryKind::Received&&entry.text==list),"Normalized routing preserves the full list and links");
+    converted.id=new_id("sig");w.hub.accept(converted).await.unwrap();assert_eq!(w.starts_for(&list_owner).len(),1);
+    let mut reply=signal("505","506","");reply.text=list.into();w.hub.accept(reply).await.unwrap();
+    assert!(settle(||w.starts_for(&list_owner).len()==2).await);
+
 }
 
 #[tokio::test]

@@ -141,6 +141,14 @@ impl SlackSource {
             })
             .unwrap_or_default();
 
+        let text=event.get("text").and_then(Value::as_str).unwrap_or_default().trim_start();
+        let first=event.pointer("/blocks/0/elements/0");
+        let leading_list=event.pointer("/blocks/0/type").and_then(Value::as_str)==Some("rich_text")
+            && first.is_some_and(|element|element["type"]=="rich_text_list"&&element["style"]=="bullet");
+        // Slack turns a leading dash into a rich-text list. Preserve its routing
+        // intent using the existing marker; the complete list body stays intact.
+        let text=if thread_ts.is_none()&&leading_list&&!text.starts_with("- ") {format!("- {text}")}else{text.to_owned()};
+
         Some(Signal {
             id: new_id("sig"),
             source: SOURCE.into(),
@@ -153,12 +161,7 @@ impl SlackSource {
                 .unwrap_or_default()
                 .into(),
             label: "dm".into(),
-            text: event
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim_start()
-                .to_string(),
+            text,
             attachments,
             at: now(),
             root: thread_ts.is_none(),
@@ -747,6 +750,46 @@ mod tests {
             let mut event=event.clone();event["text"]=json!(text);
             assert_eq!(slack.to_signal(&event).unwrap().text,text);
         }
+    }
+
+    #[test]
+    fn leading_unordered_list_retains_separate_thread_intent_and_contents() {
+        let slack=source();
+        for text in ["• Inspect storage evidence", "Inspect unordered evidence", "• Compare <https://example.invalid/a|source>\n• Retain the second item\n    ◦ Nested evidence"] {
+            let event=json!({"user":"U_ME","channel_type":"im","channel":"D1","ts":"1.0","text":text,
+                "blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","indent":0,"elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Interchangeable list content"}]}]}]}]});
+            assert!(slack.accepted(&event));
+            let signal=slack.to_signal(&event).unwrap();
+            assert_eq!(signal.text.strip_prefix("- "),Some(text),"Normalization preserves the complete source body for routing");
+            for altered in [json!({"thread_ts":"0.9"}),json!({"blocks":[]}),json!({"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"ordered"}]}]}),json!({"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Introduction"}]},{"type":"rich_text_list","style":"bullet"}]}]})] {
+                let mut other=event.clone();for (key,value) in altered.as_object().unwrap(){other[key]=value.clone();}
+                assert_eq!(slack.to_signal(&other).unwrap().text,text,"Replies and nonleading or unstructured lists keep their source text");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn socket_list_intake_preserves_routing_and_payload() {
+        let event=if let Some(path)=std::env::var_os("OXROUTE_SLACK_EVENT_FIXTURE") {
+            serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()
+        }else{json!({"type":"message","user":"U_ME","channel_type":"im","channel":"D1","ts":"1.0","text":"• Inspect <https://example.invalid/evidence|source>\n• Keep the second item",
+            "blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","indent":0}]}]})};
+        let socket_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let socket_url=format!("ws://{}",socket_listener.local_addr().unwrap());
+        let api_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api=format!("http://{}",api_listener.local_addr().unwrap());
+        let router=axum::Router::new().route("/apps.connections.open",axum::routing::post(move||{let url=socket_url.clone();async move{axum::Json(json!({"ok":true,"url":url}))}}));
+        let server=tokio::spawn(async move{axum::serve(api_listener,router).await.unwrap()});
+        let mut slack=SlackSource::new("fixture-app","fixture-bot",event["user"].as_str().unwrap());slack.api=api;
+        let (inbox,mut received)=tokio::sync::mpsc::unbounded_channel();
+        let intake=tokio::spawn(async move{slack.pump(&inbox).await});
+        let (stream,_)=socket_listener.accept().await.unwrap();let mut socket=tokio_tungstenite::accept_async(stream).await.unwrap();
+        socket.send(Message::Text(json!({"type":"events_api","envelope_id":"local-delivery","payload":{"event":event}}).to_string())).await.unwrap();
+        let ack=socket.next().await.unwrap().unwrap();let ack:Value=serde_json::from_str(ack.to_text().unwrap()).unwrap();assert_eq!(ack["envelope_id"],"local-delivery");
+        let SourceEvent::Arrived(signal)=tokio::time::timeout(Duration::from_secs(2),received.recv()).await.unwrap().unwrap() else{panic!("expected a message")};
+        assert_eq!(signal.text.strip_prefix("- "),event["text"].as_str());assert!(signal.root);
+        assert_eq!(signal.external_id,event["ts"].as_str().unwrap());assert_eq!(signal.conversation,event["channel"].as_str().unwrap());
+        intake.abort();server.abort();
     }
 
     #[test]

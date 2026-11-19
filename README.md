@@ -40,7 +40,7 @@ publication approvals are unchanged.
 
 ## Slack routing
 
-Ordinary top-level messages in the configured owner's bot DM continue persistent Focus, with answers posted in the main chat. Start a top-level message with literal `- ` to create a separate conversation and thread; the routing prefix is removed from its prompt. Existing thread replies retain their owner. Inbox imports, other users and channels are unaffected; Focus activity initiated locally stays local.
+Ordinary top-level messages in the configured owner's bot DM continue persistent Focus, with answers posted in the main chat. Start a top-level message with `- ` to create a separate conversation and thread; the routing prefix is removed from its prompt. Slack’s conversion to a leading rich-text bulleted list preserves that intent, with the full list text and links retained. Existing thread replies retain their owner. Inbox imports, other users and channels are unaffected; Focus activity initiated locally stays local.
 
 ## Card automation
 
