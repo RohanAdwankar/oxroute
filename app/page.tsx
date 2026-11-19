@@ -1400,6 +1400,7 @@ export default function Home() {
       )}
       {jump && <Jump onDone={() => setJump(false)} />}
       <Chrome
+        scaleKey={[open, paneRevision, ...panes.map(id => `${id}:${!!details[id]}`)].join(",")}
         tabs={<SessionTabs sessions={[...snapshot.agents, ...snapshot.archived, ...terminals, ...browsers]} ids={tabIds} active={open} focusOpen={focusOpen} onFocus={showFocus} onSelect={showAgent}
           onReorder={(id, target, after) => setTabIds(current => {
             if (id === target || !current.includes(id)) return current;

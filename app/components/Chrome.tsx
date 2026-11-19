@@ -25,6 +25,7 @@ export function Chrome({
   onSearchOpen,
   onSearchContinue,
   panes,
+  scaleKey,
   tabs,
 }: {
   snapshot: Snapshot;
@@ -43,6 +44,7 @@ export function Chrome({
   onSearchVisibility: (open: boolean) => void;
   onSearchOpen: (agent: string, entry: number) => void;
   onSearchContinue: (agent: string) => void;
+  scaleKey: string;
   panes?: ReactNode;
   tabs?: ReactNode;
 }) {
@@ -59,7 +61,7 @@ export function Chrome({
     settings.observe(document.documentElement, { attributes: true, attributeFilter: ["data-scale-panes", "style"] });
     update();
     return () => { resize.disconnect(); settings.disconnect(); };
-  }, [panes]);
+  }, [scaleKey]);
   return (
     <header data-app-header style={{ zoom: scale }} className="flex min-h-[var(--bar)] shrink-0 flex-wrap items-stretch border-b border-rule bg-card">
       <div className="flex items-stretch" role="group" aria-label="Input routing">
