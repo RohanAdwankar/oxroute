@@ -66,8 +66,9 @@ try {
  await selection.fill('Align this selection.');
  await dialog.getByRole('button',{name:'Pen',exact:true}).click();
  await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*.6);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.7,bounds.y+bounds.height*.65,{steps:8});await page.mouse.up();
- for(let i=0;i<2;i++){await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*(.7+i*.05));await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.6,bounds.y+bounds.height*(.72+i*.05),{steps:4});await page.mouse.up();}
+ for(let i=0;i<2;i++){await dialog.getByLabel('Marker color',{exact:true}).fill(i ? '#d23c2e' : '#2468c7');await dialog.getByLabel('Marker thickness',{exact:true}).selectOption(i ? '1' : '4');await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*(.7+i*.05));await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.6,bounds.y+bounds.height*(.72+i*.05),{steps:4});await page.mouse.up();}
  assert.equal(await dialog.getByText('Page 1: Drawing',{exact:true}).count(),0,'Strokes do not create separate reply inputs');
+ assert.deepEqual(await svg.locator('polyline').evaluateAll(lines=>lines.map(line=>[line.getAttribute('stroke'),Number(line.getAttribute('stroke-width'))])),[['#d23c2e',.002],['#2468c7',.008],['#d23c2e',.002]],'Changing styles preserves both stroke style and paint order');
  await dialog.getByRole('button',{name:'Box',exact:true}).click();await page.mouse.move(bounds.x+bounds.width*.1,bounds.y+bounds.height*.1);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.3,bounds.y+bounds.height*.3,{steps:3});await page.mouse.up();assert.equal(await svg.locator('rect').count(),2);
  await dialog.getByRole('button',{name:'Undo',exact:true}).click();assert.equal(await svg.locator('rect').count(),1);
  await dialog.getByRole('button',{name:'Arrow',exact:true}).click();await page.mouse.move(bounds.x+bounds.width*.8,bounds.y+bounds.height*.4);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.99,bounds.y+bounds.height*.01,{steps:3});await page.mouse.up();assert.equal(await svg.locator('polyline').count(),5);
@@ -78,7 +79,12 @@ try {
  await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Please align these two components.');
  if(process.env.IMAGE_SCREENSHOT)await page.screenshot({path:process.env.IMAGE_SCREENSHOT});
  const beforeReply=(await api(`/api/agents/${agent.id}`)).timeline.map(entry=>entry.id);
+ const decisionResponse=page.waitForResponse(response=>response.url().endsWith('/decision')&&response.request().method()==='POST');
  await dialog.getByRole('button',{name:'Send image reply'}).click();await dialog.getByText('Reply sent',{exact:true}).waitFor();
+ const saved=await (await decisionResponse).json();
+ const styles=saved.annotations.filter(note=>note.quote==='Drawing').flatMap(note=>note.strokes.map(()=>note.style));
+ assert.deepEqual(styles,[{color:'#d23c2e',width:1},{color:'#2468c7',width:4},{color:'#d23c2e',width:1}]);
+ assert.deepEqual((await api(`/api/agents/${agent.id}/file-reviews/${saved.id}`)).annotations,saved.annotations,'Saved review retains chosen marker styles');
  const result=await api(`/api/agents/${agent.id}`), reply=result.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Please align'));
  const delivered=result.timeline.filter(entry=>!beforeReply.includes(entry.id));
  assert.equal(delivered.filter(entry=>entry.kind==='you').length,1,'One submission creates one user reply');
@@ -87,8 +93,8 @@ try {
  const filename=reply.text.split('Attached: ')[1].split(', ')[0];
  const bytes=Buffer.from(await (await fetch(`${native}/api/attachments/${encodeURIComponent(filename)}`)).arrayBuffer());
  assert.ok(bytes.length>1000, `Image reply bytes=${bytes.length}, signature=${bytes.subarray(0,40).toString('hex')}, file=${filename}`);assert.notDeepEqual(bytes,await readFile(source),'Reply contains painted image');
- const painted=await page.evaluate(async filename=>{const image=new Image();image.src=`/api/attachments/${encodeURIComponent(filename)}`;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;let red=0;for(let i=0;i<data.length;i+=4)if(data[i]>170&&data[i+1]<100&&data[i+2]<100)red++;return red;},filename);
- assert.ok(painted>100,'Delivered pixels contain the red area and drawing markup');
+ const painted=await page.evaluate(async filename=>{const image=new Image();image.src=`/api/attachments/${encodeURIComponent(filename)}`;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;let red=0,blue=0;for(let i=0;i<data.length;i+=4){if(data[i]>170&&data[i+1]<100&&data[i+2]<100)red++;if(data[i]<100&&data[i+1]<160&&data[i+2]>150)blue++;}return {red,blue};},filename);
+ assert.ok(painted.red>100&&painted.blue>100,'Delivered pixels retain each marker color');
  assert.equal(await svg.locator('polyline').count(),3);assert.equal(await svg.locator('text').count(),2);assert.equal(await svg.locator('rect').count(),1);
  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
  const attachmentImage=page.locator('img[src^="/api/attachments/"]').first();await attachmentImage.focus();await page.keyboard.press('Enter');await dialog.waitFor();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());

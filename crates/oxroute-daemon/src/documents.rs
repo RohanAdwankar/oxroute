@@ -146,9 +146,15 @@ pub async fn original(State(hub): Hubs, Path((agent, id)): Path<(String, String)
 struct Decision { status: String, #[serde(default)] text: String, #[serde(default)] annotations: Vec<Annotation>, request_id: String }
 #[derive(serde::Serialize, Deserialize)]
 struct Annotation {
+    #[serde(default)] style: MarkerStyle,
     page: usize, quote: String, region: Option<[f64; 4]>, strokes: Vec<Vec<[f64; 2]>>,
     #[serde(default)] comment: String,
     #[serde(default)] labels: Vec<TextMark>,
+}
+#[derive(serde::Serialize, Deserialize)]
+struct MarkerStyle { color: String, width: f64 }
+impl Default for MarkerStyle {
+    fn default() -> Self { Self { color: "#d23c2e".into(), width: 1.0 } }
 }
 #[derive(serde::Serialize, Deserialize)]
 struct TextMark { at: [f64; 2], text: String }
@@ -166,6 +172,7 @@ pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>,
     ensure!(!body.request_id.is_empty() && body.request_id.len() <= 100 && body.text.len() <= 32000 && body.annotations.len() <= 100, "Invalid review feedback");
     ensure!(body.status != "changes_requested" || !body.text.trim().is_empty() || body.annotations.iter().any(|note| !note.comment.trim().is_empty()), "Describe the requested revision");
     for note in &body.annotations {
+        ensure!(note.style.color.strip_prefix('#').is_some_and(|color| color.len() == 6 && color.bytes().all(|ch| ch.is_ascii_hexdigit())) && note.style.width.is_finite() && (0.1..=10.0).contains(&note.style.width), "Invalid marker style");
         ensure!(note.page <= review.pages && (review.pages == 0 || note.page > 0) && note.quote.len() <= 32000 && note.strokes.len() <= 100 && note.comment.len() <= 32000 && note.labels.len() <= 100 && note.labels.iter().all(|label| label.text.len() <= 2000), "Invalid annotation");
         let coordinates = note.strokes.iter().flatten().flatten().copied().chain(note.region.iter().flatten().copied()).chain(note.labels.iter().flat_map(|label| label.at));
         ensure!(coordinates.into_iter().all(|p| p.is_finite() && (0.0..=1.0).contains(&p)) && note.strokes.iter().map(Vec::len).sum::<usize>() <= 20000, "Invalid annotation coordinates");

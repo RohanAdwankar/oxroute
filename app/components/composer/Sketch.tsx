@@ -3,18 +3,16 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 
-import {MarkupTools, MarkupInput, MARKUP_INK} from "../MarkupTools";
+import {MarkupTools, MarkupInput, MARKUP_DEFAULT, type MarkupStyle} from "../MarkupTools";
 
 type Point = { x: number; y: number };
-type Shape =
+type Shape = {style: MarkupStyle} & (
   | { tool: "pen"; points: Point[] }
   | { tool: "box"; a: Point; b: Point }
   | { tool: "arrow"; a: Point; b: Point }
-  | { tool: "text"; at: Point; text: string };
+  | { tool: "text"; at: Point; text: string });
 type Tool = Shape["tool"];
 
-/** Marks are one red: on a screenshot, the thing that is not the page. */
-const INK = MARKUP_INK;
 const BLANK = { width: 1600, height: 1000 };
 
 export interface SketchHandle {
@@ -35,13 +33,14 @@ function paint(
   // A mark is read at whatever size the picture ends up: in a timeline, in
   // a thread, on a phone. It is drawn like a marker rather than a pen so it
   // survives being shrunk, and the arrowheads follow from it.
-  const line = Math.max(7, size.width / 170);
-  context.strokeStyle = INK;
-  context.fillStyle = INK;
-  context.lineWidth = line;
+  const baseLine = Math.max(7, size.width / 170);
   context.lineCap = "round";
   context.lineJoin = "round";
   for (const shape of shapes) {
+    const line = baseLine * shape.style.width;
+    context.strokeStyle = shape.style.color;
+    context.fillStyle = shape.style.color;
+    context.lineWidth = line;
     context.beginPath();
     switch (shape.tool) {
       case "pen":
@@ -78,7 +77,7 @@ function paint(
         const pad = font * 0.35;
         context.fillStyle = "rgba(255,253,250,0.92)";
         context.fillRect(shape.at.x - pad, shape.at.y - font - pad * 0.4, width + pad * 2, font + pad * 1.6);
-        context.fillStyle = INK;
+        context.fillStyle = shape.style.color;
         context.fillText(shape.text, shape.at.x, shape.at.y);
         break;
       }
@@ -108,7 +107,8 @@ export function Sketch({
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [drawing, setDrawing] = useState<Shape | null>(null);
   const [tool, setTool] = useState<Tool>("pen");
-  const [typing, setTyping] = useState<{ at: Point; value: string } | null>(null);
+  const [marker, setMarker] = useState<MarkupStyle>(MARKUP_DEFAULT);
+  const [typing, setTyping] = useState<{ at: Point; value: string; style: MarkupStyle } | null>(null);
   const [room, setRoom] = useState({ width: 0, height: 0 });
   const area = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -214,7 +214,7 @@ export function Sketch({
 
   const commitText = () => {
     if (typing && typing.value.trim()) {
-      setShapes((current) => [...current, { tool: "text", at: typing.at, text: typing.value.trim() }]);
+      setShapes((current) => [...current, { tool: "text", at: typing.at, text: typing.value.trim(), style: typing.style }]);
     }
     setTyping(null);
   };
@@ -237,7 +237,7 @@ export function Sketch({
           }}
         />
         <span className="mx-1 h-5 w-px bg-rule" />
-        <MarkupTools tool={tool} onTool={next => {if (next !== "select") setTool(next);}}
+        <MarkupTools marker={marker} onMarker={setMarker} tool={tool} onTool={next => {if (next !== "select") setTool(next);}}
           onUndo={() => setShapes(current => current.slice(0, -1))}
           onClear={() => {setShapes([]); setImage(null); setSize(BLANK);}}
           empty={!image && shapes.length === 0} undoDisabled={shapes.length === 0} />
@@ -267,11 +267,11 @@ export function Sketch({
                 // lands, blurring the note field the moment it appears.
                 event.preventDefault();
                 commitText();
-                setTyping({ at: point, value: "" });
+                setTyping({ at: point, value: "", style: marker });
                 return;
               }
               event.currentTarget.setPointerCapture(event.pointerId);
-              setDrawing(tool === "pen" ? { tool, points: [point] } : { tool, a: point, b: point });
+              setDrawing(tool === "pen" ? { tool, points: [point], style: marker } : { tool, a: point, b: point, style: marker });
             }}
             onPointerMove={(event) => {
               if (!drawing) return;
@@ -297,7 +297,7 @@ export function Sketch({
               if (big) setShapes((current) => [...current, done]);
             }}
           />
-          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: typing.at.x * scale, top: typing.at.y * scale}} />}
+          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: typing.at.x * scale, top: typing.at.y * scale, color: typing.style.color, borderColor: typing.style.color}} />}
           {!image && shapes.length === 0 && !drawing && (
             <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-8 text-center text-[13px] text-faint">
               Paste or drop a screenshot, take one, or draw on the blank page.

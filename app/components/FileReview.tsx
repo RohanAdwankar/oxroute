@@ -3,7 +3,7 @@
 import {createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type ImgHTMLAttributes} from "react";
 import {createPortal} from "react-dom";
 import {Icon} from "./Icon";
-import {MarkupTools, MarkupInput, MARKUP_INK, type MarkupTool} from "./MarkupTools";
+import {MarkupTools, MarkupInput, MARKUP_INK, MARKUP_DEFAULT, type MarkupStyle, type MarkupTool} from "./MarkupTools";
 
 export const FileReviews = createContext<((url: string) => void) | null>(null);
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
@@ -38,7 +38,7 @@ export function ReviewImage({src, alt, ...props}: ImgHTMLAttributes<HTMLImageEle
 }
 
 type Point = [number, number];
-type Annotation = {page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]; comment?: string; labels?: {at: Point; text: string}[]};
+type Annotation = {style?: MarkupStyle; page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]; comment?: string; labels?: {at: Point; text: string}[]};
 const isMark = (note: Annotation) => note.quote === "Drawing" && (note.region !== null || note.strokes.length > 0 || !!note.labels?.length);
 type Review = {agentId: string; id: string; name: string; extension: string; sha256: string; pages: number; text: string | null; status: string; feedback: string; annotations: Annotation[]};
 async function response<T>(request: Promise<Response>): Promise<T> {
@@ -60,11 +60,13 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
   const [review, setReview] = useState<Review | null>(() => local ? {agentId:"",id:crypto.randomUUID(),name:local.file.name,extension:"png",sha256:"",pages:1,text:null,status:"pending",feedback:"",annotations:[]} : null), [error, setError] = useState("");
   const [page, setPage] = useState(1), [tool, setTool] = useState<MarkupTool | "select">("select"), [busy, setBusy] = useState(false);
   const [size, setSize] = useState({width: 1100, height: 700});
-  const [typing, setTyping] = useState<{at: Point; value: string} | null>(null);
+  const [typing, setTyping] = useState<{at: Point; value: string; style: MarkupStyle} | null>(null);
   const [annotationState, setAnnotationState] = useState<{notes: Annotation[]; history: Annotation[][]; active: number | null}>({notes: [], history: [], active: null});
   const {notes, active} = annotationState;
   const setActive = useCallback((active: number | null) => setAnnotationState(current => ({...current, active})), []);
   const setNotes = useCallback((update: Annotation[] | ((notes: Annotation[]) => Annotation[])) => setAnnotationState(current => ({...current, notes: typeof update === "function" ? update(current.notes) : update})), []);
+  const [marker, setMarker] = useState<MarkupStyle>(MARKUP_DEFAULT);
+  const gestureStyle = useRef<MarkupStyle>(MARKUP_DEFAULT);
   const draw = tool !== "select";
   const [text, setText] = useState("");
   const [gesture, setGesture] = useState<Point[]>([]);
@@ -117,13 +119,14 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     setAnnotationState(current => ({notes: [...current.notes, note], history: [...current.history, current.notes], active: current.notes.length})); setMenu(null);
     field.current?.focus();
   }, []);
-  const mark = useCallback((strokes: Point[][] = [], labels: NonNullable<Annotation["labels"]> = []) => {
+  const mark = useCallback((strokes: Point[][] = [], labels: NonNullable<Annotation["labels"]> = [], style: MarkupStyle = gestureStyle.current) => {
     changeNotes(current => {
-      const index = current.findIndex(note => note.page === page && note.quote === "Drawing" && !note.region);
-      return index < 0 ? [...current, {page, quote: "Drawing", region: null, strokes, labels}] : current.map((note, i) => i === index ? {...note, strokes: [...note.strokes, ...strokes], labels: [...(note.labels ?? []), ...labels]} : note);
+      const index = current.length - 1, last = current[index];
+      const append = last?.page === page && last.quote === "Drawing" && !last.region && (last.style ?? MARKUP_DEFAULT).color === style.color && (last.style ?? MARKUP_DEFAULT).width === style.width;
+      return !append ? [...current, {page, quote: "Drawing", region: null, strokes, labels, style}] : current.map((note, i) => i === index ? {...note, strokes: [...note.strokes, ...strokes], labels: [...(note.labels ?? []), ...labels]} : note);
     });
   }, [page, changeNotes]);
-  function commitText() {if (typing?.value.trim()) mark([], [{at: typing.at, text: typing.value.trim()}]); setTyping(null);}
+  function commitText() {if (typing?.value.trim()) mark([], [{at: typing.at, text: typing.value.trim()}], typing.style); setTyping(null);}
   function quote() {
     if (menu) addComment({page: review?.pages ? page : 0, quote: menu.quote, region: null, strokes: []});
   }
@@ -134,10 +137,10 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     if (!start) return;
     const area: Annotation["region"] = [Math.min(start[0], end[0]), Math.min(start[1], end[1]), Math.abs(start[0]-end[0]), Math.abs(start[1]-end[1])];
     if (tool === "select") {if (area[2] > .003 && area[3] > .003) addComment({page, quote: "Selected area", region: area, strokes: []});}
-    else if (tool === "box") changeNotes(current => [...current, {page, quote: "Drawing", region: area, strokes: []}]);
+    else if (tool === "box") changeNotes(current => [...current, {page, quote: "Drawing", region: area, strokes: [], style: gestureStyle.current}]);
     else if (tool === "arrow") {
       const {width, height} = size;
-      const angle = Math.atan2((end[1]-start[1])*height, (end[0]-start[0])*width), head = Math.max(15, width*.02);
+      const angle = Math.atan2((end[1]-start[1])*height, (end[0]-start[0])*width), head = Math.max(15, width*.02) * gestureStyle.current.width;
       const tip = (angle: number): Point => [Math.max(0, Math.min(1, end[0]-head*Math.cos(angle)/width)), Math.max(0, Math.min(1, end[1]-head*Math.sin(angle)/height))];
       mark([[start, end], [tip(angle-.45), end, tip(angle+.45)]]);
     } else mark([[...points, end]]);
@@ -168,9 +171,11 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
         const context = canvas.getContext("2d")!; context.drawImage(picture, 0, 0); context.strokeStyle = MARKUP_INK; context.lineWidth = 3;
         for (const [index, note] of notes.entries()) {
           if (note.page !== number) continue;
-          if (note.region) {const [x, y, w, h] = note.region; context.strokeRect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height); if (note.quote !== "Drawing") {context.font = "600 20px system-ui"; context.fillStyle = MARKUP_INK; context.fillText(String(index+1), x*canvas.width+4, y*canvas.height+24);}}
+          const style = note.style ?? MARKUP_DEFAULT;
+          context.strokeStyle = style.color; context.lineWidth = 3 * style.width;
+          if (note.region) {const [x, y, w, h] = note.region; context.strokeRect(x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height); if (note.quote !== "Drawing") {context.font = "600 20px system-ui"; context.fillStyle = style.color; context.fillText(String(index+1), x*canvas.width+4, y*canvas.height+24);}}
           for (const stroke of note.strokes) {context.beginPath(); stroke.forEach(([x,y], i) => i ? context.lineTo(x * canvas.width, y * canvas.height) : context.moveTo(x * canvas.width, y * canvas.height)); context.stroke();}
-          for (const label of note.labels ?? []) {const font = Math.max(16, Math.round(canvas.width/55)); context.font = `600 ${font}px system-ui, sans-serif`; context.fillStyle = MARKUP_INK; context.fillText(label.text, label.at[0]*canvas.width, label.at[1]*canvas.height);}
+          for (const label of note.labels ?? []) {const font = Math.max(16, Math.round(canvas.width/55)); context.font = `600 ${font}px system-ui, sans-serif`; context.fillStyle = style.color; context.fillText(label.text, label.at[0]*canvas.width, label.at[1]*canvas.height);}
         }
         const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Could not capture annotation")), "image/png"));
         if (local) {
@@ -193,7 +198,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
       <img src={url} alt="Image preview" className="mx-auto block h-auto w-full max-w-[1100px]" />
     </div>}
     {review && <><div className="flex min-h-0 flex-1 flex-col md:flex-row"><main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {review.pages > 0 && <div className="flex shrink-0 items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
+      {review.pages > 0 && <div className="flex shrink-0 flex-wrap items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools marker={marker} onMarker={setMarker} select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
         onUndo={() => setAnnotationState(current => {
           const previous = current.history.at(-1), index = current.notes.findLastIndex(note => note.page === page);
           return {active: null, history: current.history.slice(0,-1), notes: previous ?? current.notes.flatMap((note,i) => i !== index ? [note] : note.labels?.length ? [{...note,labels:note.labels.slice(0,-1)}] : note.strokes.length ? [{...note,strokes:note.strokes.slice(0,-1)}] : [])};
@@ -205,14 +210,14 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img key={page} src={local ? url : `${base}/pages/${page}`} alt={`Document page ${page}`} onLoad={event => setSize({width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight})} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
           <svg ref={surface} aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: tool === "text" ? "text" : draw ? "crosshair" : "default"}}
-            onPointerDown={event => {if (event.button !== 0) return; if (tool === "text") {event.preventDefault(); commitText(); setTyping({at: point(event), value: ""}); return;} event.preventDefault(); drawingPointer.current = event.pointerId; gesturePoints.current = [point(event)]; setGesture(gesturePoints.current); setMenu(null);}}
+            onPointerDown={event => {if (event.button !== 0) return; gestureStyle.current = marker; if (tool === "text") {event.preventDefault(); commitText(); setTyping({at: point(event), value: "", style: marker}); return;} event.preventDefault(); drawingPointer.current = event.pointerId; gesturePoints.current = [point(event)]; setGesture(gesturePoints.current); setMenu(null);}}
             >
 
-            {pageNotes.map((note, i) => <g key={i}>{note.region && <rect x={note.region[0]} y={note.region[1]} width={note.region[2]} height={note.region[3]} fill="transparent" stroke={MARKUP_INK} strokeWidth=".002" />}{note.strokes.map((stroke, j) => <polyline key={j} points={stroke.map(p => p.join(",")).join(" ")} fill="none" stroke={MARKUP_INK} strokeWidth=".002" />)}{[...(note.labels ?? []), ...(note.region && note.quote !== "Drawing" ? [{at: [note.region[0]+.004, Math.min(1,note.region[1]+.03)] as Point, text: String(notes.indexOf(note)+1)}] : [])].map((label,j) => <text key={`text-${j}`} transform={`translate(${label.at[0]} ${label.at[1]}) scale(${1/size.width} ${1/size.height})`} fill={MARKUP_INK} fontSize={Math.max(16, Math.round(size.width/55))} fontWeight="600">{label.text}</text>)}</g>)}
+            {pageNotes.map((note, i) => <g key={i}>{note.region && <rect x={note.region[0]} y={note.region[1]} width={note.region[2]} height={note.region[3]} fill="transparent" stroke={(note.style ?? MARKUP_DEFAULT).color} strokeWidth={.002 * (note.style ?? MARKUP_DEFAULT).width} />}{note.strokes.map((stroke, j) => <polyline key={j} points={stroke.map(p => p.join(",")).join(" ")} fill="none" stroke={(note.style ?? MARKUP_DEFAULT).color} strokeWidth={.002 * (note.style ?? MARKUP_DEFAULT).width} />)}{[...(note.labels ?? []), ...(note.region && note.quote !== "Drawing" ? [{at: [note.region[0]+.004, Math.min(1,note.region[1]+.03)] as Point, text: String(notes.indexOf(note)+1)}] : [])].map((label,j) => <text key={`text-${j}`} transform={`translate(${label.at[0]} ${label.at[1]}) scale(${1/size.width} ${1/size.height})`} fill={(note.style ?? MARKUP_DEFAULT).color} fontSize={Math.max(16, Math.round(size.width/55))} fontWeight="600">{label.text}</text>)}</g>)}
 
-            {gesture.length > 1 && (tool === "pen" || tool === "arrow" ? <polyline points={gesture.map(p => p.join(",")).join(" ")} fill="none" stroke={MARKUP_INK} strokeWidth=".002" /> : <rect x={Math.min(gesture[0][0], gesture.at(-1)![0])} y={Math.min(gesture[0][1], gesture.at(-1)![1])} width={Math.abs(gesture[0][0]-gesture.at(-1)![0])} height={Math.abs(gesture[0][1]-gesture.at(-1)![1])} fill="#4b80b522" stroke="#4b80b5" strokeWidth=".002" />)}
+            {gesture.length > 1 && (tool === "pen" || tool === "arrow" ? <polyline points={gesture.map(p => p.join(",")).join(" ")} fill="none" stroke={gestureStyle.current.color} strokeWidth={.002 * gestureStyle.current.width} /> : <rect x={Math.min(gesture[0][0], gesture.at(-1)![0])} y={Math.min(gesture[0][1], gesture.at(-1)![1])} width={Math.abs(gesture[0][0]-gesture.at(-1)![0])} height={Math.abs(gesture[0][1]-gesture.at(-1)![1])} fill={tool === "select" ? "#4b80b522" : "transparent"} stroke={tool === "select" ? "#4b80b5" : gestureStyle.current.color} strokeWidth={tool === "select" ? .002 : .002 * gestureStyle.current.width} />)}
           </svg>
-          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: `${typing.at[0]*100}%`, top: `${typing.at[1]*100}%`}} />}
+          {typing && <MarkupInput value={typing.value} onChange={value => setTyping({...typing, value})} onCommit={commitText} onCancel={() => setTyping(null)} style={{left: `${typing.at[0]*100}%`, top: `${typing.at[1]*100}%`, color: typing.style.color, borderColor: typing.style.color}} />}
         </div>}
       </div>
     </main><aside className="flex w-full shrink-0 flex-col gap-3 bg-band p-5 md:w-80"><button type="button" aria-label="General feedback" className="text-left text-sm" onClick={() => setActive(null)}>{active === null ? isImage ? "Reply" : "Review feedback" : "Comment on selection"}</button>

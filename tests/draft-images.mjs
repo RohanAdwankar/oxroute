@@ -58,5 +58,28 @@ try{
  },await page.evaluate(()=>window.sentImages[0]));
  assert.ok(marked>30,'Delivered image includes the visible drawing');
  assert.equal(writes[0].text.replaceAll('\r\n','\n'),'Keep the original draft\n\nInspect the marked area');
+ await page.getByRole('button',{name:'Attach files options',exact:true}).click();await page.getByRole('menuitem',{name:'Draw',exact:true}).click();
+ const sketch=page.getByLabel('sketch',{exact:true}),bounds=await sketch.boundingBox();
+ const line=async y=>{await page.mouse.move(bounds.x+bounds.width*.2,bounds.y+bounds.height*y);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.8,bounds.y+bounds.height*y,{steps:8});await page.mouse.up();};
+ assert.equal(await page.getByLabel('Marker color',{exact:true}).inputValue(),'#d23c2e');
+ assert.equal(await page.getByLabel('Marker thickness',{exact:true}).inputValue(),'1');
+ await line(.25);
+ await page.getByLabel('Marker color',{exact:true}).fill('#2468c7');await page.getByLabel('Marker thickness',{exact:true}).selectOption('4');await line(.5);
+ await page.getByLabel('Marker color',{exact:true}).fill('#28a745');await page.getByLabel('Marker thickness',{exact:true}).selectOption('0.5');await line(.75);
+ await page.getByRole('button',{name:'Undo',exact:true}).click();
+ for(const width of [1280,390]) {
+  await page.setViewportSize({width,height:900});
+  for(const name of ['Marker color','Marker thickness']){const bounds=await page.getByLabel(name,{exact:true}).boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width,'Marker controls remain visible at narrow widths');}
+  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT.replace('.png',`-drawing-${width}.png`)});
+ }
+ await page.setViewportSize({width:1280,height:900});
+
+ await page.getByRole('button',{name:'Send the picture',exact:true}).click();await page.waitForTimeout(150);
+ assert.equal(writes.length,2);assert.equal(writes[1].files[0].type,'image/png');
+ const styles=await page.evaluate(async encoded=>{
+  const image=new Image();image.src='data:image/png;base64,'+encoded;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;let red=0,blue=0,green=0;
+  for(let i=0;i<data.length;i+=4){if(data[i]>150&&data[i+1]<100&&data[i+2]<100)red++;if(data[i]<100&&data[i+1]<160&&data[i+2]>150)blue++;if(data[i]<100&&data[i+1]>120&&data[i+2]<120)green++;}return {red,blue,green};
+ },await page.evaluate(()=>window.sentImages[0]));
+ assert.ok(styles.red>100&&styles.blue>styles.red*2,'Export retains each stroke color and relative thickness');assert.equal(styles.green,0,'Undo removes only the last styled stroke');
  console.log('Pasted image previews open the shared annotator; cancel is safe, apply edits the draft locally, and navigation/send preserve the marked image and text without premature uploads.');
 }finally{await browser.close();}
