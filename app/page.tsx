@@ -1094,6 +1094,8 @@ export default function Home() {
     const onKey = (event: KeyboardEvent) => {
       if ((event.target as HTMLElement)?.closest?.("[data-terminal-pane]")) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const control = (event.target as Element)?.closest?.("button,a[href]");
+      if ((event.key === "Enter" && control) || (event.key === " " && control?.tagName === "BUTTON")) return;
       if (isTyping(event.target)) {
         // Escape gets you out of the compose box and back to the keys.
         if (event.key === "Escape" && !(event.target instanceof HTMLSelectElement)) (event.target as HTMLElement).blur();

@@ -109,6 +109,13 @@ try {
    if(process.env.SCREENSHOT)await ui.screenshot({path:process.env.SCREENSHOT});
    await ui.goto(`${process.env.TEST_URL}/?agent=${focus.id}`);await ui.getByText('Internal update',{exact:true}).waitFor();
    assert.equal(await ui.locator(`[data-entry="${entry[0].id}"]`).evaluate(node=>node.className.includes('bg-mine')),false);
+   for (const width of [1280,390]) for (const key of ['Enter','Space']) {
+    await ui.setViewportSize({width,height:850});
+    await ui.goto(`${process.env.TEST_URL}/?agent=${focus.id}`);
+    const source=ui.locator(`[data-coordination-source="${current.agent.id}"]`).first();
+    await source.waitFor();await source.focus();await source.press(key);
+    await ui.locator(`[data-agent-pane="${current.agent.id}"]`).first().waitFor({timeout:3000});
+   }
   }finally{await browser.close();}
  }
  const focusConnection=opened.find(value=>value.thread===focusThread).config['mcp_servers.oxroute_internal'];
