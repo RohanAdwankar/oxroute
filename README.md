@@ -181,9 +181,12 @@ Incoming human DMs remain `response_needed`, `investigating` or `drafted` until
 fresh conversation evidence shows a reply or resolution (including a decision
 retained across conversations through `resolutionEntries`),
 or the user explicitly dismisses the item. A local draft never counts as sent.
+Keep conditional prerequisites and waiting ownership in the retained summary;
+`no_response_needed` does not assert that the user replied or granted approval.
 An explicit dismissal records its human timeline entry in `dismissedBy`;
-coordination entries cannot authorize dismissal. Edited requests reopen when
-newer than the reply or dismissal. Polling is read-only; it never sends, marks
+coordination entries cannot authorize dismissal. Changed request content reopens
+triage and requires fresh resolution context; timestamp-only edits retain
+established dispositions. Polling is read-only; it never sends, marks
 read, adds reactions, or creates external drafts.
 
 Set `outlook_token_file` to a protected file containing a rotating delegated Microsoft Graph `Mail.Read` access token. Set `slack_token_file` and `slack_app_token_file` to protected user-token and Socket Mode app-token files for a **separate** app installed from `deploy/slack-inbox-manifest.json`; its app token needs `connections:write`. Keep the existing bot app unchanged. Environment equivalents are `OXROUTE_OUTLOOK_TOKEN_FILE`, `OXROUTE_SLACK_INBOX_TOKEN_FILE` and `OXROUTE_SLACK_INBOX_APP_TOKEN_FILE`. Authentication renewal owns those files; Oxroute rereads them and never prints token values.

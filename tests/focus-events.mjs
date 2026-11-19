@@ -67,6 +67,10 @@ try{
  assert.deepEqual((await api('/api/focus/inbox')).items,[record],'Retries retain one local draft');
  const inbox=await api('/api/focus/inbox');assert.equal(inbox.total,1);assert.equal(inbox.pendingCount,1);assert.equal(inbox.nextOffset,null);assert.deepEqual(inbox.coverage,{},'Manual observation checkpoints cannot certify collection coverage');
  assert.deepEqual((await api('/api/focus/inbox?offset=100')).items,[],'Inbox pagination is available through the daemon API');
+ const evidence=(await api(`/api/agents/${workers[0].agent.id}`)).timeline.find(entry=>entry.kind==='you');
+ const conditional={...record,itemId:'conditional-request',state:'no_response_needed',summary:'Accepted route awaits external wording; an alternative route retains its confirmation prerequisite.',draft:null,resolutionEntries:[evidence.id]};
+ await api('/api/focus/inbox',{agentId:focus.id,items:[conditional]},'PUT');
+ assert.equal((await api('/api/focus/inbox')).pendingCount,1,'A retained conditional disposition is distinct from a pending draft');
  await stop();finish(focusThread,'completed',false);daemon=start();await healthy();
  await until(()=>focusTurns().length===2,'Pending events did not survive restart');
  const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Other conversation turns ended.')).text;
@@ -95,6 +99,7 @@ try{
  finish(focusThread);await until(async()=>(await api(`/api/agents/${focus.id}`)).agent.status==='complete','Retry did not settle');
  const count=focusTurns().length;await stop();daemon=start();await healthy();await pause(250);assert.equal(focusTurns().length,count,'Accepted events do not replay after restart');
  assert.deepEqual((await api('/api/focus/inbox?source=outlook&itemId=stable-message')).items,[record]);
+ assert.deepEqual((await api('/api/focus/inbox?itemId=conditional-request')).items,[conditional],'Cross-conversation disposition, conditional prerequisite and waiting ownership survive restart');
  assert.equal(interrupts,1,'Coordination never interrupts active turns');
  console.log('Real daemon passed completion/failure/stop coalescing, busy queuing, restart and failed-acceptance recovery, dedup/self-loop checks, durable local drafts and read-only prompt boundaries.');
 }finally{

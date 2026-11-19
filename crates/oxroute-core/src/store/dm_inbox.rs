@@ -263,13 +263,20 @@ mod tests {
             store.observe_slack_dm(&conversation,&revised,204.0)?;
             let retained=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);
             assert_eq!(retained.state,state);assert_eq!(retained.resolution_entries,vec![entry]);
+            store.update_focus_inbox(&FocusInboxUpdate {items:vec![retained],..Default::default()},204.5)?;
             revised["text"]=serde_json::json!("New requested outcome");revised["edited"]=serde_json::json!({"ts":"205"});
             store.observe_slack_dm(&conversation,&revised,206.0)?;
             let reopened=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);
             assert_eq!(reopened.state,"response_needed");assert!(reopened.resolution_entries.is_empty());
+            let mut stale=reopened.clone();stale.state=state.into();stale.resolution_entries=vec![entry];
+            assert!(store.update_focus_inbox(&FocusInboxUpdate {items:vec![stale],..Default::default()},207.0).is_err(),"An earlier decision cannot close a changed request");
             let coordination=store.with(|c| {c.execute("INSERT INTO entries(agent_id,at,kind,text) VALUES('coordinator',207,'coordination','Delivery accepted')",[])?;Ok(c.last_insert_rowid())})?;
             let mut invalid=reopened;invalid.state=state.into();invalid.resolution_entries=vec![coordination];
             assert!(store.update_focus_inbox(&FocusInboxUpdate {items:vec![invalid],..Default::default()},208.0).is_err());
+            let fresh=store.with(|c| {c.execute("INSERT INTO entries(agent_id,at,kind,text) VALUES('source-context',209,?1,'Current source context establishes resolution')",[if index==0 {"you"}else{"said"}])?;Ok(c.last_insert_rowid())})?;
+            let mut current=store.focus_inbox(Some("slack"),Some(&id))?.items.remove(0);current.state=state.into();current.resolution_entries=vec![entry,fresh];
+            store.update_focus_inbox(&FocusInboxUpdate {items:vec![current],..Default::default()},210.0)?;
+            assert_eq!(store.focus_inbox(Some("slack"),Some(&id))?.items[0].state,state,"Fresh evidence can reconcile retained historical context");
         }
         drop(store);std::fs::remove_dir_all(root)?;Ok(())
     }

@@ -109,8 +109,17 @@ impl Store {
                     dismissed=tx.query_row("SELECT kind='you' AND at>=?2 FROM entries WHERE id=?1",params![entry,obligation.as_ref().map(|v|v.1).unwrap_or(0.0)],|r|r.get::<_,bool>(0)).optional()?.unwrap_or(false);
                     anyhow::ensure!(dismissed,"dismissal requires an actual human entry after this message revision");
                 }
-                if let Some((revision,_,needed))=obligation {
+                if let Some((revision,activity,needed))=obligation {
                     anyhow::ensure!(item.revision==revision,"DM observation is stale; reread current source state");
+                    if needed&&!dismissed&&reviewed&&matches!(item.state.as_str(),"resolved"|"no_response_needed") {
+                        let previous:Option<String>=tx.query_row("SELECT data FROM focus_inbox WHERE source=?1 AND item_id=?2",params![item.source,item.item_id],|r|r.get(0)).optional()?;
+                        let previous=previous.map(|s|serde_json::from_str::<FocusInboxItem>(&s)).transpose()?;
+                        let mut grounded=previous.as_ref().is_some_and(|old|old.revision==item.revision&&matches!(old.state.as_str(),"resolved"|"no_response_needed")&&old.resolution_entries.iter().any(|entry|item.resolution_entries.contains(entry)));
+                        for entry in &item.resolution_entries {
+                            grounded|=tx.query_row("SELECT at>=?2 FROM entries WHERE id=?1",params![entry,activity],|r|r.get::<_,bool>(0))?;
+                        }
+                        anyhow::ensure!(grounded,"a changed request requires fresh resolution evidence");
+                    }
                     anyhow::ensure!(!needed||dismissed||reviewed||!matches!(item.state.as_str(),"resolved"|"no_response_needed"),"incoming human DM needs fresh source reply/resolution evidence or explicit human dismissal; drafts do not resolve it");
                 }
                 tx.execute("INSERT INTO focus_inbox(source,item_id,data,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(source,item_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at WHERE data!=excluded.data", params![item.source,item.item_id,serde_json::to_string(item)?,at])?;
