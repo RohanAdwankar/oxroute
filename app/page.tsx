@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
-import { EmbeddedReviews, ConversationCards, ConversationReferences, CoordinationRoles } from "./components/FocusContext";
+import { EmbeddedReviews, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
 import { receiveDraft, type DiffQuote } from "./lib/drafts";
 import { TaskActions } from "./components/TaskReference";
 
@@ -979,11 +979,6 @@ export default function Home() {
   const taskAgents = useTaskAgents(snapshot.agents);
   const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
   const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
-  const roleKey = JSON.stringify(Object.entries(snapshot.tags).flatMap(([id, tags]) => {
-    const role = tags.find(tag => tag.startsWith("role:"))?.slice(5).replaceAll("-", " ");
-    return role ? [[id, role.charAt(0).toUpperCase() + role.slice(1)]] : [];
-  }));
-  const coordinationRoles = useMemo(() => new Map<string,string>(JSON.parse(roleKey)), [roleKey]);
   const conversationReferences = useMemo(() => focusOpen ? JSON.stringify(namedTasks.map(agent => agent.id).sort()) : null, [focusOpen, namedTasks]);
   const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
   const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
@@ -1366,7 +1361,7 @@ export default function Home() {
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={taskActions}>
     <ConversationCards.Provider value={focusOpen?{state:{...snapshot,tasks:taskItems},batchEntry:focusAgentId?details[focusAgentId]?.timeline.findLast(entry=>entry.kind==="said"&&entry.text.includes("#agent/"))?.id:undefined,onTask:taskLinks.open,onSent:reload}:null}>
-    <ConversationReferences.Provider value={conversationReferences}><CoordinationRoles.Provider value={coordinationRoles}>
+    <ConversationReferences.Provider value={conversationReferences}><CoordinationTitles.Provider value={taskNames}>
     <EmbeddedReviews.Provider value={embeddedReviews}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
@@ -1775,7 +1770,7 @@ export default function Home() {
       </div>
     </main>
     </EmbeddedReviews.Provider>
-    </CoordinationRoles.Provider></ConversationReferences.Provider>
+    </CoordinationTitles.Provider></ConversationReferences.Provider>
     </ConversationCards.Provider>
     </TaskActions.Provider>
     </TaskLinks.Provider>

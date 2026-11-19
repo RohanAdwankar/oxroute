@@ -24,7 +24,7 @@ import { Icon, type IconName } from "./Icon";
 import { Markdown, ReviewLinks, QuoteLinks } from "./Markdown";
 import { QuoteDiscussion } from "./QuoteDiscussion";
 import { SplitAction } from "./SplitAction";
-import { CoordinationRoles } from "./FocusContext";
+import { CoordinationTitles } from "./FocusContext";
 
 /// What the person said needs no label: it is the one that sits on the
 /// right, in its own tint.
@@ -1314,10 +1314,10 @@ function Said({ text, detail }: { text: string; detail: string }) {
 }
 
 function CoordinationSource({origin, onOpen}: {origin: string; onOpen: (id: string) => void}) {
-  const label = useContext(CoordinationRoles).get(origin) ?? "Source agent";
+  const label = useContext(CoordinationTitles).get(origin) ?? "Source agent";
   return <button type="button" data-coordination-source={origin} title={`Open ${label}`} aria-label={`Open ${label}`}
     onClick={event => {event.stopPropagation(); onOpen(origin);}}
-    className="max-w-full cursor-pointer truncate text-mid hover:text-ink">{label}</button>;
+    className="max-w-[min(100%,40vw)] cursor-pointer truncate text-mid hover:text-ink sm:max-w-[min(100%,16rem)]">{label}</button>;
 }
 
 /// One message, drawn once.

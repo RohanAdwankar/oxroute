@@ -8,5 +8,5 @@ export const ConversationCards=createContext<null|{state:Snapshot;batchEntry?:nu
 // Parsing only depends on roster membership, not live fleet activity.
 export const ConversationReferences=createContext<string|null>(null);
 
-// Roles are existing role:<hyphenated-words> metadata; IDs remain navigation keys.
-export const CoordinationRoles=createContext<ReadonlyMap<string,string>>(new Map());
+// Titles update independently of live activity; IDs remain navigation keys.
+export const CoordinationTitles=createContext<ReadonlyMap<string,string>>(new Map());

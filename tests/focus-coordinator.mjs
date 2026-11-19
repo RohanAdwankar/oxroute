@@ -81,7 +81,6 @@ try{
  await until(async()=>turns.length===4&&(await api(`/api/agents/${worker.id}`)).agent.status==='complete'&&(await detail()).agent.status==='complete');
  await api('/api/focus/messages',{agentId:focusId,targetId:worker.id,text:'Check the existing validation evidence without changing approval state.',requestId});await pause(100);assert.equal(turns.length,4);assert.equal(interrupts,0);
  assert.equal((await api('/api/tasks')).find(item=>item.id===task.id).status,'done');
- await api(`/api/agents/${worker.id}/tags`,{set:['role:review-agent']});
  const reportRequest=crypto.randomUUID(),report={agentId:worker.id,targetId:focusId,text:'Independent evidence is ready for coordination.',requestId:reportRequest};
  await api('/api/focus/messages',report);
  await until(async()=>turns.length===5&&(await detail()).agent.status==='complete');
@@ -98,8 +97,8 @@ try{
  await reportRow.getByText(report.text,{exact:true}).waitFor();
  assert.notEqual(await reportRow.getByText(report.text,{exact:true}).evaluate(node=>getComputedStyle(node).color),await page.getByText('Validation evidence is ready. Review this result and approve it or request a revision.',{exact:true}).first().evaluate(node=>getComputedStyle(node).color),'Expanded coordination is muted');
 
- const sourceLink=reportRow.getByRole('button',{name:'Open Review agent',exact:true});await sourceLink.waitFor();
- assert.equal(await sourceLink.innerText(),'Review agent');assert.ok(!(await sourceLink.innerText()).includes(worker.id.slice(-6)),'Visible sender labels omit IDs');
+ const sourceLink=reportRow.getByRole('button',{name:'Open Storage validation',exact:true});await sourceLink.waitFor();
+ assert.equal(await sourceLink.innerText(),'Storage validation');assert.ok(!(await sourceLink.innerText()).includes(worker.id.slice(-6)),'Visible sender labels omit IDs');
  for(const width of [1280,390]) {
   await page.setViewportSize({width,height:900});await reportRow.scrollIntoViewIfNeeded();
   const source=await sourceLink.boundingBox(),label=await reportRow.getByText('Internal update',{exact:true}).boundingBox();
@@ -108,6 +107,13 @@ try{
   assert.ok(await sourceLink.isVisible());
   if(process.env.COORDINATION_SCREENSHOT)await page.screenshot({path:process.env.COORDINATION_SCREENSHOT.replace('.png',`-${width}.png`)});
  }
+ const longTitle='Storage orchestration interoperability verification';
+ await api('/api/rename',{agent:worker.id,name:longTitle});
+ const renamedSource=reportRow.getByRole('button',{name:`Open ${longTitle}`,exact:true});await renamedSource.waitFor();
+ assert.equal(await renamedSource.getAttribute('title'),`Open ${longTitle}`);
+ assert.ok(await renamedSource.evaluate(node=>node.scrollWidth>node.clientWidth),'Long titles truncate visually while retaining the full accessible title');
+ assert.ok((await renamedSource.boundingBox()).width<200,'Long titles remain compact on mobile');
+ await api('/api/rename',{agent:worker.id,name:'Storage validation'});await sourceLink.waitFor();
  await page.setViewportSize({width:1280,height:900});
  await sourceLink.focus();await page.keyboard.press('Enter');
  await page.locator(`[data-agent-pane="${worker.id}"]`).first().waitFor();
@@ -115,9 +121,16 @@ try{
  const ordinaryRow=page.locator(`[data-entry="${ordinaryReport.id}"]`);
  await ordinaryRow.getByText('Check the existing validation evidence without changing approval state.',{exact:true}).waitFor();
  assert.notEqual(await ordinaryRow.evaluate(node=>node.tagName),'DETAILS','Other conversation coordination stays expanded');
- assert.equal(await ordinaryRow.getByRole('button',{name:'Open Source agent',exact:true}).innerText(),'Source agent','Missing role metadata never exposes an ID');
- await api(`/api/agents/${focusId}/tags`,{set:['role:runtime-agent']});
- await until(async()=>await ordinaryRow.getByRole('button',{name:'Open Runtime agent',exact:true}).count()===1);
+ assert.equal(await ordinaryRow.getByRole('button',{name:'Open Focus',exact:true}).innerText(),'Focus','Existing titles identify senders without extra metadata');
+ await api('/api/rename',{agent:focusId,name:'Runtime validation'});
+ await until(async()=>await ordinaryRow.getByRole('button',{name:'Open Runtime validation',exact:true}).count()===1);
+ await page.setViewportSize({width:390,height:900});
+ await api('/api/rename',{agent:focusId,name:longTitle});
+ const ordinarySource=ordinaryRow.getByRole('button',{name:`Open ${longTitle}`,exact:true});await ordinarySource.waitFor();
+ const ordinaryBounds=await ordinarySource.boundingBox();assert.ok(ordinaryBounds.x>=0&&ordinaryBounds.x+ordinaryBounds.width<=390);
+ assert.ok(await ordinarySource.evaluate(node=>node.scrollWidth>node.clientWidth),'Expanded source titles remain compact too');
+ await api('/api/rename',{agent:focusId,name:'Runtime validation'});
+ await page.setViewportSize({width:1280,height:900});
 
 
  await page.goto(`${ui}/?view=focus`);await composer.waitFor();
