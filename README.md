@@ -163,6 +163,17 @@ harness acceptance and receipt persistence can redeliver the event. Closed,
 unmerged PRs never trigger a merge notification. Notifications grant no new
 publication or deployment permission.
 
+## Internal coordination
+
+Internal coordination stays queued by default. `send_agent_message` and
+`POST /api/focus/messages` accept `urgent: true` for time-sensitive corrections.
+Codex steers the expected active turn without interrupting tools; unsupported
+runtimes retain queued delivery and report that capability. Explicitly stopped
+recipients wait for authorized resumption. Receipts distinguish queued, accepted, steered
+and unconfirmed delivery; acceptance never means implementation or human approval.
+An uncertain steering attempt survives restart and is not automatically replayed;
+inspect current runtime and source evidence before any new delivery attempt.
+
 ## Personal inbox
 
 `[inbox]` in `config.toml` connects Outlook Inbox mail and Slack DMs, group DMs and mentions to the existing Inbox. Extra Slack channel IDs are opt-in through `slack_channels`. The first sync imports the last seven days; Graph delta cursors, Slack recovery checkpoints and message IDs survive restarts. Slack events provide live updates. Each email conversation, Slack thread or DM conversation stays in one row; new context reopens it. Known Slack threads recover replies through rotating, durable page checkpoints even without new roots or mentions. Routing advice uses recent bounded context while full conversations remain available for viewing and manual delivery. Dismissal only changes Oxroute.

@@ -755,6 +755,7 @@ impl Hub {
                 if let Some(turn) = self.live.lock().await.get(&agent_id) {
                     turn.mark_ready(turn_id);
                 }
+                self.focus_changed.notify_one();
                 let _ = self.store.touch_agent(&agent_id, None, now());
                 self.emit(Event::TurnStarted { agent_id });
             }
@@ -2292,6 +2293,7 @@ impl Hub {
                 self.store.clear_context(&context_ids)?;
                 if !turn_id.is_empty() {
                     turn.mark_ready(turn_id.clone());
+                    self.focus_changed.notify_one();
                     self.store.set_active_turn_id(&agent.id, &turn_id)?;
                 }
             }

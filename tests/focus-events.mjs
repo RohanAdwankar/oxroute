@@ -13,7 +13,7 @@ const pause=ms=>new Promise(done=>setTimeout(done,ms));
 const until=async(check,label)=>{for(let n=0;n<200;n++){if(await check())return;await pause(50);}assert.fail(label);};
 const transport=createServer(),rpc=new WebSocketServer({server:transport}),rpcPort=await listen(transport);
 let serial=0,focusThread='',rejectFocus=false,rejected=0,interrupts=0;
-const turns=[],sessions=new Map();
+const turns=[],steers=[],sessions=new Map();let rejectSteer=false;
 const send=(socket,method,params)=>{if(socket.readyState===1)socket.send(JSON.stringify({method,params}));};
 const finish=(threadId,status='completed',notify=true)=>{
  const current=sessions.get(threadId);current.turn.status=status;
@@ -29,6 +29,13 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
   result={thread:{id:params.threadId,turns:saved?[saved.turn]:[]}};
  }
  if(method==='turn/interrupt'){interrupts++;finish(params.threadId,'interrupted');}
+ if(method==='turn/steer'){
+  const active=sessions.get(params.threadId);assert.equal(params.expectedTurnId,active.turn.id,'Steering is bound to the current active turn');assert.equal(active.turn.status,'inProgress');
+  assert.ok(params.clientUserMessageId);assert.ok(params.input.every(input=>input.type==='text'));steers.push(params);
+  if(rejectSteer)return; // Retain the input but lose its acknowledgement.
+  result={turnId:active.turn.id};
+ }
+
  if(method==='turn/start'){
   if(params.threadId===focusThread&&rejectFocus){rejected++;socket.send(JSON.stringify({id,error:{code:-32000,message:'Temporary transport rejection'}}));return;}
   const turn={id:`turn-${++serial}`,status:'inProgress',items:[]};result={turn};
@@ -57,6 +64,17 @@ try{
  const old=await worker();finish(old.thread);await until(async()=>(await api(`/api/agents/${old.agent.id}`)).agent.status==='complete','Old worker did not settle');
  const focus=await api('/api/focus/agent',{});await until(()=>turns.length===2,'Initial Focus did not start');focusThread=turns.at(-1).threadId;
  const workers=[];for(let i=0;i<3;i++)workers.push(await worker());
+
+ const workerHuman=(await api(`/api/agents/${workers[0].agent.id}`)).timeline.filter(entry=>entry.kind==='you').at(-1).id;
+ const urgent={agentId:focus.id,targetId:workers[0].agent.id,text:'Retain the revised acceptance constraint while continuing the existing work.',requestId:crypto.randomUUID(),urgent:true};
+ const delivery=await api('/api/focus/messages',urgent);assert.equal(delivery.delivery.state,'steered');assert.equal(delivery.queued,false);assert.equal(steers.length,1);assert.equal(interrupts,0);
+ await api('/api/focus/messages',urgent);assert.equal(steers.length,1,'Steering retries do not inject another input');
+ const workerHistory=(await api(`/api/agents/${workers[0].agent.id}`)).timeline;
+ assert.equal(workerHistory.filter(entry=>entry.kind==='you').at(-1).id,workerHuman,'Urgent internal context cannot impersonate a human reply');
+ assert.equal(workerHistory.filter(entry=>entry.kind==='coordination'&&entry.origin===focus.id).length,1);
+ const uncertain={...urgent,text:'Another independent constraint requires reconciliation.',requestId:crypto.randomUUID()};rejectSteer=true;
+ assert.equal((await api('/api/focus/messages',uncertain)).delivery.state,'unconfirmed');rejectSteer=false;
+ await api('/api/focus/messages',uncertain);assert.equal(steers.length,2,'Ambiguous runtime writes are not replayed');
  finish(workers[0].thread);finish(workers[1].thread,'failed');await api('/api/interrupt',{agent:workers[2].agent.id});
  await until(async()=>(await api(`/api/agents/${workers[0].agent.id}`)).agent.status==='complete','Workers did not settle');
  await pause(100);assert.equal(focusTurns().length,1,'Busy Focus coalesces events');
@@ -73,6 +91,7 @@ try{
  assert.equal((await api('/api/focus/inbox')).pendingCount,1,'A retained conditional disposition is distinct from a pending draft');
  await stop();finish(focusThread,'completed',false);daemon=start();await healthy();
  await until(()=>focusTurns().length===2,'Pending events did not survive restart');
+ await api('/api/focus/messages',urgent);await api('/api/focus/messages',uncertain);assert.equal(steers.length,2,'Accepted and unconfirmed steering receipts survive daemon restart');
  const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Other conversation turns ended.')).text;
  const events=JSON.parse(eventText.slice(eventText.indexOf('[{"')));
  assert.deepEqual(events.map(event=>event.outcome).sort(),['completed','failed','stopped']);
@@ -101,6 +120,7 @@ try{
  assert.deepEqual((await api('/api/focus/inbox?source=outlook&itemId=stable-message')).items,[record]);
  assert.deepEqual((await api('/api/focus/inbox?itemId=conditional-request')).items,[conditional],'Cross-conversation disposition, conditional prerequisite and waiting ownership survive restart');
  assert.equal(interrupts,1,'Coordination never interrupts active turns');
+ console.log('Urgent steering arrives once within the active turn, keeps internal provenance, and lost acknowledgements survive restart without replay.');
  console.log('Real daemon passed completion/failure/stop coalescing, busy queuing, restart and failed-acceptance recovery, dedup/self-loop checks, durable local drafts and read-only prompt boundaries.');
 }finally{
  await stop();for(const client of rpc.clients)client.terminate();await new Promise(done=>rpc.close(done));await new Promise(done=>transport.close(done));await rm(root,{recursive:true,force:true});

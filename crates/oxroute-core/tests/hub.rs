@@ -28,11 +28,14 @@ use tokio::sync::broadcast;
 #[derive(Default)]
 struct Calls {
     started: Vec<(String, Vec<TurnInput>)>,
+    opening: usize,
     /// When each turn began, so a test can tell serialized from concurrent.
     start_times: Vec<std::time::Instant>,
     interrupted: Vec<String>,
     forked: Vec<(String, bool)>,
     injected: Vec<(String, usize)>,
+    steered: Vec<(String,String,Vec<TurnInput>,String)>,
+    steer_fail: bool,
     predictions: Vec<String>,
 }
 
@@ -96,6 +99,7 @@ impl Harness for FakeHarness {
             fork: true,
             inject: self.inject,
             resume: true,
+            steer: self.backend == Backend::Codex,
         }
     }
 
@@ -104,6 +108,7 @@ impl Harness for FakeHarness {
     }
 
     async fn open(&self, spec: &SessionSpec) -> Result<String> {
+        self.calls.lock().unwrap().opening+=1;
         if !self.open_delay.is_zero() {
             tokio::time::sleep(self.open_delay).await;
         }
@@ -164,6 +169,11 @@ impl Harness for FakeHarness {
             });
         }
         Ok(turn)
+    }
+
+    async fn steer(&self,session:&str,turn:&str,inputs:Vec<TurnInput>,request:&str)->Result<()> {
+        let mut calls=self.calls.lock().unwrap();calls.steered.push((session.into(),turn.into(),inputs,request.into()));
+        anyhow::ensure!(!calls.steer_fail,"Steering acknowledgement unavailable");Ok(())
     }
 
     async fn interrupt(&self, session: &str, _turn: &str) -> Result<()> {
@@ -3927,20 +3937,20 @@ async fn focus_internal_messages_are_durable_idempotent_and_local() {
     w.hub.store.bind("slack","D1","existing-thread",&worker.id).unwrap();
     let request=uuid::Uuid::new_v4().to_string();
     let other=w.hub.create_agent(None).unwrap();
-    assert!(w.hub.send_focus_message(&worker.id,&other.id,"Review existing evidence",&request).await.is_err());
-    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
-    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
+    assert!(w.hub.send_focus_message(&worker.id,&other.id,"Review existing evidence",&request,false).await.is_err());
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request,false).await.unwrap();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request,false).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
     assert_eq!(w.starts_for(&worker.id).len(),1);
-    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request).await.unwrap();
-    assert!(w.hub.send_focus_message(&focus.id,&worker.id,"Different request",&request).await.is_err());
+    w.hub.send_focus_message(&focus.id,&worker.id,"Review the existing validation evidence",&request,false).await.unwrap();
+    assert!(w.hub.send_focus_message(&focus.id,&worker.id,"Different request",&request,false).await.is_err());
     assert_eq!(w.starts_for(&worker.id).len(),1);
     assert!(w.calls.lock().unwrap().interrupted.is_empty());
     w.hub.reconcile_threads().await.unwrap();
     assert_eq!(w.posts.lock().unwrap().threads,Vec::<String>::new(),"An internal-only recipient must not be mirrored externally");
     assert!(w.posts.lock().unwrap().replies.is_empty());
     let unbound=w.hub.create_agent(None).unwrap();
-    w.hub.send_focus_message(&focus.id,&unbound.id,"Check existing work",&uuid::Uuid::new_v4().to_string()).await.unwrap();
+    w.hub.send_focus_message(&focus.id,&unbound.id,"Check existing work",&uuid::Uuid::new_v4().to_string(),false).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
     w.hub.store.set("dashboard","slack\u{1f}D1\u{1f}root").unwrap();
     w.hub.reconcile_threads().await.unwrap();
@@ -3958,7 +3968,7 @@ async fn focus_messages_wait_for_existing_turns_without_interrupting() {
     let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
     w.hub.say_to(&worker.id,"Inspect the current configuration").await.unwrap();
     assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
-    w.hub.send_focus_message(&focus.id,&worker.id,"Report the remaining blocker",&uuid::Uuid::new_v4().to_string()).await.unwrap();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Report the remaining blocker",&uuid::Uuid::new_v4().to_string(),false).await.unwrap();
     assert!(settle(||w.hub.store.pending_focus_messages().unwrap().is_empty()).await);
     let starts=w.starts_for(&worker.id);assert_eq!(starts.len(),2);assert!(w.calls.lock().unwrap().interrupted.is_empty());
     assert!(starts[1].duration_since(starts[0])>=Duration::from_millis(150));
@@ -3967,7 +3977,7 @@ async fn focus_messages_wait_for_existing_turns_without_interrupting() {
 #[test]
 fn focus_wake_receipts_and_outbox_survive_reopening_the_store() {
     let root=std::env::temp_dir().join(format!("oxroute-focus-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();let path=root.join("state.sqlite3");
-    {let store=Store::open(&path).unwrap();store.set("focus.agent","persistent-focus").unwrap();store.set("focus-wake:1900000000","delivered").unwrap();store.enqueue_focus_message("request","persistent-focus","recipient","Continue authorized work").unwrap();}
+    {let store=Store::open(&path).unwrap();store.set("focus.agent","persistent-focus").unwrap();store.set("focus-wake:1900000000","delivered").unwrap();store.enqueue_focus_message("request","persistent-focus","recipient","Continue authorized work",false).unwrap();}
     let store=Store::open(&path).unwrap();assert_eq!(store.last_focus_wake().unwrap(),Some(1900000000.0));assert_eq!(store.get("focus.agent").unwrap().as_deref(),Some("persistent-focus"));
     assert_eq!(store.pending_focus_messages().unwrap().len(),1);store.finish_focus_message("request").unwrap();drop(store);
     assert!(Store::open(&path).unwrap().pending_focus_messages().unwrap().is_empty());
@@ -4143,9 +4153,9 @@ async fn focus_reports_keep_agent_origin_without_becoming_human_replies() {
         w.hub.store.add_entry(&focus.id,now(),EntryKind::Said,answer,"","").unwrap();
     }
     let request=uuid::Uuid::new_v4().to_string();
-    w.hub.send_focus_message(&worker.id,&focus.id,text,&request).await.unwrap();
+    w.hub.send_focus_message(&worker.id,&focus.id,text,&request,false).await.unwrap();
     assert!(settle(||w.starts_for(&focus.id).len()==1).await);
-    w.hub.send_focus_message(&worker.id,&focus.id,text,&request).await.unwrap();
+    w.hub.send_focus_message(&worker.id,&focus.id,text,&request,false).await.unwrap();
     let timeline=w.hub.store.timeline(&focus.id,100).unwrap();
     let reports=timeline.iter().filter(|entry|entry.kind==EntryKind::Coordination).collect::<Vec<_>>();
     assert_eq!(reports.len(),1);
@@ -4319,4 +4329,93 @@ async fn automatic_commentary_keeps_final_results_and_direct_messages_visible() 
     w.harness.send(HarnessEvent::Message {session,text:"Inspecting retained source state.".into(),final_answer:false}).unwrap();
     assert!(settle(|| w.hub.store.timeline(&focus.id,100).unwrap().iter().any(|entry| entry.kind == EntryKind::Said && entry.text == "Inspecting retained source state.")).await,"Direct conversation commentary stays visible");
     w.hub.interrupt(&focus.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn urgent_coordination_steers_once_without_human_or_external_effects() {
+    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id,"Prepare the requested artifact").await.unwrap();
+    assert!(settle(||!w.starts_for(&worker.id).is_empty()).await);
+    let human=w.hub.store.last_human_entry(&worker.id).unwrap();
+    let request=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Apply the latest accepted output constraint",&request,true).await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().steered.len()==1).await);
+    w.hub.send_focus_message(&focus.id,&worker.id,"Apply the latest accepted output constraint",&request,true).await.unwrap();
+    assert_eq!(w.calls.lock().unwrap().steered.len(),1);
+    assert_eq!(w.hub.store.last_human_entry(&worker.id).unwrap(),human);
+    assert_eq!(w.hub.store.timeline(&worker.id,100).unwrap().iter().filter(|entry|entry.kind==EntryKind::Coordination&&entry.origin==focus.id).count(),1);
+    let calls=w.calls.lock().unwrap();let (session,turn,inputs,id)=&calls.steered[0];
+    assert!(!session.is_empty()&&!turn.is_empty());assert_eq!(id,&request);
+    let text=inputs.iter().filter_map(TurnInput::as_text).collect::<Vec<_>>().join("\n");
+    assert!(text.contains("internal correction")&&text.contains("not a human instruction")&&text.contains("no new permission"));
+    assert!(calls.interrupted.is_empty());drop(calls);
+    assert_eq!(w.starts_for(&worker.id).len(),1);assert!(w.posts.lock().unwrap().replies.is_empty());
+    assert_eq!(w.hub.focus_message_delivery(&request,&worker.id).unwrap()["state"],"steered");
+    let receipt=w.hub.call_agent_tool(&focus.id,"send_agent_message",serde_json::json!({"targetId":worker.id,"text":"Apply the latest accepted output constraint","requestId":request,"urgent":true})).await.unwrap();
+    assert_eq!(receipt["delivery"]["state"],"steered");assert_eq!(receipt["status"],"completed");
+
+    let routine=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Routine progress context",&routine,false).await.unwrap();
+    assert_eq!(w.calls.lock().unwrap().steered.len(),1);
+    assert!(w.hub.store.pending_focus_messages().unwrap().iter().any(|m|m.id==routine));
+ }
+
+#[tokio::test]
+async fn unconfirmed_steering_is_not_replayed_and_stops_remain_effective() {
+    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id,"Continue authorized inspection").await.unwrap();
+    assert!(settle(||!w.starts_for(&worker.id).is_empty()).await);
+    let uncertain=uuid::Uuid::new_v4().to_string();w.calls.lock().unwrap().steer_fail=true;
+    w.hub.send_focus_message(&focus.id,&worker.id,"A separate urgent revision",&uncertain,true).await.unwrap();
+    assert_eq!(w.hub.focus_message_delivery(&uncertain,&worker.id).unwrap()["state"],"unconfirmed");
+    w.calls.lock().unwrap().steer_fail=false;
+    w.hub.send_focus_message(&focus.id,&worker.id,"A separate urgent revision",&uncertain,true).await.unwrap();
+    assert_eq!(w.calls.lock().unwrap().steered.len(),1,"Ambiguous writes must not be replayed");
+    w.hub.interrupt(&worker.id).await.unwrap();
+    let stopped=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Retain a correction while stopped",&stopped,true).await.unwrap();
+    assert_eq!(w.hub.focus_message_delivery(&stopped,&worker.id).unwrap()["state"],"queued");
+    assert!(w.hub.store.pending_focus_messages().unwrap().iter().any(|m|m.id==stopped));
+}
+
+#[tokio::test]
+async fn urgent_messages_stay_queued_when_runtime_cannot_steer() {
+    let w=build(Mode::Ask,Harnessed {backend:Backend::ClaudeCode,hang:true,..Default::default()}).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id,"Inspect the requested source").await.unwrap();
+    assert!(settle(||!w.starts_for(&worker.id).is_empty()).await);
+    let request=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Apply the updated constraint",&request,true).await.unwrap();
+    let delivery=w.hub.focus_message_delivery(&request,&worker.id).unwrap();
+    assert_eq!(delivery["state"],"queued");assert_eq!(delivery["steeringSupported"],false);
+    assert!(w.calls.lock().unwrap().steered.is_empty());assert!(w.calls.lock().unwrap().interrupted.is_empty());
+}
+
+#[tokio::test]
+async fn delivery_acceptance_does_not_wait_for_work_completion() {
+    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    let request=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Inspect authorized evidence",&request,false).await.unwrap();
+    assert!(settle(||!w.starts_for(&worker.id).is_empty()).await);
+    assert_eq!(w.hub.store.agent(&worker.id).unwrap().unwrap().status,AgentStatus::Working);
+    let receipt=w.hub.call_agent_tool(&focus.id,"send_agent_message",serde_json::json!({"targetId":worker.id,"text":"Inspect authorized evidence","requestId":request})).await.unwrap();
+    assert_eq!(receipt["status"],"completed");assert_eq!(receipt["delivery"]["state"],"accepted");
+    assert_eq!(w.starts_for(&worker.id).len(),1,"Receipt inspection must not start work again");
+}
+
+#[tokio::test]
+async fn urgent_context_during_runtime_startup_reaches_the_same_turn() {
+    let w=build(Mode::Ask,Harnessed {hang:true,open_delay:Duration::from_millis(100),..Default::default()}).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();
+    w.hub.say_to(&worker.id,"Perform the authorized inspection").await.unwrap();
+    assert!(settle(||{let calls=w.calls.lock().unwrap();calls.opening==1&&calls.started.is_empty()}).await);
+    let request=uuid::Uuid::new_v4().to_string();
+    w.hub.send_focus_message(&focus.id,&worker.id,"Apply the current acceptance constraint",&request,true).await.unwrap();
+    assert!(settle(||w.calls.lock().unwrap().steered.len()==1).await);
+    assert_eq!(w.starts_for(&worker.id).len(),1);assert!(w.calls.lock().unwrap().interrupted.is_empty());
 }

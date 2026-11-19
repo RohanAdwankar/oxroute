@@ -25,7 +25,7 @@ pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 
 #[derive(Debug, Clone)]
-pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String}
+pub struct FocusMessage {pub id:String,pub sender:String,pub target:String,pub text:String,pub urgent:bool}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS focus_updates (
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS focus_turn_events (
 );
 CREATE INDEX IF NOT EXISTS focus_turn_events_queue ON focus_turn_events(focus_id,receipt,at);
 CREATE TABLE IF NOT EXISTS focus_messages (
- id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0
+ id TEXT PRIMARY KEY, sender TEXT NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0, urgent INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -258,6 +258,8 @@ fn migrate(conn: &Connection) -> Result<()> {
     conn.execute("UPDATE kv SET value = json_remove(value, '$.snapshot.files')
         WHERE key GLOB 'review:*' AND json_valid(value)
         AND json_type(value, '$.snapshot.files') IS NOT NULL", [])?;
+    let focus_columns=conn.prepare("PRAGMA table_info(focus_messages)")?.query_map([],|r|r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if !focus_columns.iter().any(|column|column=="urgent") {conn.execute("ALTER TABLE focus_messages ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0",[])?;}
     let mut statement = conn.prepare("PRAGMA table_info(agents)")?;
     let agent_columns = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -1976,19 +1978,19 @@ impl Store {
     pub fn last_focus_wake(&self) -> Result<Option<f64>> {
         self.read(|c|Ok(c.query_row("SELECT MAX(CAST(substr(key,12) AS REAL)) FROM kv WHERE key GLOB 'focus-wake:*'",[],|row|row.get(0))?))
     }
-    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str)->Result<Option<Entry>> {
+    pub fn enqueue_focus_message(&self,id:&str,sender:&str,target:&str,text:&str,urgent:bool)->Result<Option<Entry>> {
         self.with(|c|{
             let tx=c.unchecked_transaction()?;
-            let inserted=tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text) VALUES (?1,?2,?3,?4)",params![id,sender,target,text])? > 0;
-            let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 FROM focus_messages WHERE id=?1",params![id,sender,target,text],|row|row.get::<_,bool>(0))?;
+            let inserted=tx.execute("INSERT OR IGNORE INTO focus_messages(id,sender,target,text,urgent) VALUES (?1,?2,?3,?4,?5)",params![id,sender,target,text,urgent])? > 0;
+            let same=tx.query_row("SELECT sender=?2 AND target=?3 AND text=?4 AND urgent=?5 FROM focus_messages WHERE id=?1",params![id,sender,target,text,urgent],|row|row.get::<_,bool>(0))?;
             anyhow::ensure!(same,"requestId was already used for another message");
             let entry=if inserted {Some(tx.query_row("INSERT INTO entries(agent_id,at,kind,text,item_id,origin) VALUES(?1,?2,'coordination',?3,?4,?5) RETURNING id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id",params![target,crate::model::now(),text,id,sender],read_entry)?)} else {None};
             tx.commit()?;Ok(entry)
         })
     }
     pub fn pending_focus_messages(&self)->Result<Vec<FocusMessage>> {
-        self.read(|c|{let mut q=c.prepare("SELECT id,sender,target,text FROM focus_messages WHERE accepted=0 ORDER BY rowid")?;
-            let rows=q.query_map([],|row|Ok(FocusMessage{id:row.get(0)?,sender:row.get(1)?,target:row.get(2)?,text:row.get(3)?}))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.read(|c|{let mut q=c.prepare("SELECT id,sender,target,text,urgent FROM focus_messages WHERE accepted=0 ORDER BY rowid")?;
+            let rows=q.query_map([],|row|Ok(FocusMessage{id:row.get(0)?,sender:row.get(1)?,target:row.get(2)?,text:row.get(3)?,urgent:row.get(4)?}))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
     /// Queue-time versions come from immutable entry order, not message claims.
     pub fn focus_message_context(&self, id: &str) -> Result<Option<serde_json::Value>> {
@@ -2004,6 +2006,25 @@ impl Store {
             Ok(Some(serde_json::json!({"requestId":id,"queuedEntryId":entry,"queuedAt":at,"source":version(&sender)?,"recipient":version(&target)?,"authority":"internal_context_only"})))
         })
     }
+    pub fn begin_focus_steering(&self,id:&str,session:&str,turn:&str)->Result<bool> {
+        let data=serde_json::json!({"state":"unconfirmed","threadId":session,"turnId":turn,"reason":"Runtime acceptance is unconfirmed; inspect evidence before retrying. This request is not automatically replayed."});
+        self.with(|c|Ok(c.execute("INSERT OR IGNORE INTO kv(key,value) SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM focus_messages WHERE id=?3 AND urgent=1 AND accepted=0)",params![format!("focus-steering:{id}"),data.to_string(),id])?==1))
+    }
+
+    pub fn confirm_focus_steering(&self,id:&str)->Result<()> {
+        self.with(|c| {let tx=c.unchecked_transaction()?;
+            tx.execute("UPDATE kv SET value=json_set(value,'$.state','steered','$.reason','Runtime accepted internal context for the active turn') WHERE key=?1",[format!("focus-steering:{id}")])?;
+            tx.execute("INSERT OR REPLACE INTO kv(key,value) VALUES(?1,'steered')",[format!("focus-delivered:{id}")])?;
+            tx.execute("UPDATE focus_messages SET accepted=1 WHERE id=?1",[id])?;tx.commit()?;Ok(())})
+    }
+
+    pub fn focus_message_delivery(&self,id:&str)->Result<serde_json::Value> {
+        self.read(|c| {let (accepted,urgent):(bool,bool)=c.query_row("SELECT accepted OR EXISTS(SELECT 1 FROM kv WHERE key='focus-delivered:'||id),urgent FROM focus_messages WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            let steering:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("focus-steering:{id}")],|r|r.get(0)).optional()?;
+            let mut delivery=steering.map(|s|serde_json::from_str::<serde_json::Value>(&s)).transpose()?.unwrap_or_else(||serde_json::json!({"state":if accepted {"accepted"}else{"queued"}}));
+            delivery["urgent"]=serde_json::json!(urgent);Ok(delivery)})
+    }
+
     pub fn finish_focus_message(&self,id:&str)->Result<()> {self.with(|c|{c.execute("UPDATE focus_messages SET accepted=1 WHERE id=?1",[id])?;Ok(())})}
 
     pub fn agent_tool_token(&self, agent: &str) -> Result<String> {

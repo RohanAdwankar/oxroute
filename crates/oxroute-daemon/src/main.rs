@@ -607,10 +607,11 @@ async fn routing_recommendation(State(hub): Hubs, Path(id): Path<String>) -> Res
 async fn open_focus(State(hub):Hubs)->Result<Json<oxroute_core::Agent>,Failed> {Ok(Json(hub.open_focus().await?))}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-struct FocusMessageBody {agent_id:String,target_id:String,text:String,request_id:String}
+struct FocusMessageBody {agent_id:String,target_id:String,text:String,request_id:String,#[serde(default)] urgent:bool}
 async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Result<Json<serde_json::Value>,Failed> {
-    hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id).await?;
-    Ok(Json(json!({"queued":true})))
+    hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id,body.urgent).await?;
+    let delivery=hub.focus_message_delivery(&body.request_id,&body.target_id)?;
+    Ok(Json(json!({"queued":matches!(delivery["state"].as_str(),Some("queued"|"unconfirmed")),"delivery":delivery})))
 }
 
 #[derive(Deserialize)]
@@ -875,7 +876,7 @@ async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_j
     }
     if let Some(sender)=body.agent_id.as_deref() {
         if !body.diffs.is_empty() {return Err(Failed(anyhow::anyhow!("send internal report text through the coordination endpoint")));}
-        hub.send_focus_message(sender,&body.agent,&body.text,&body.request_id).await?;
+        hub.send_focus_message(sender,&body.agent,&body.text,&body.request_id,false).await?;
         return Ok(Json(json!({"ok":true})));
     }
     let detail = diff_detail(&body.text, &body.diffs)?;

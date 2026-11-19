@@ -203,13 +203,13 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();let path=root.join("state.sqlite3");
         {
             let store=Store::open(&path).unwrap();
-            let entry=store.enqueue_focus_message("request","source","recipient","Evidence ready").unwrap().unwrap();
+            let entry=store.enqueue_focus_message("request","source","recipient","Evidence ready",false).unwrap().unwrap();
             assert_eq!(entry.kind,EntryKind::Coordination);assert_eq!(entry.origin,"source");
             assert_eq!(store.last_human_entry("recipient").unwrap(),0);
         }
         let store=Store::open(&path).unwrap();
-        assert!(store.enqueue_focus_message("request","source","recipient","Evidence ready").unwrap().is_none());
-        assert!(store.enqueue_focus_message("request","another-source","recipient","Evidence ready").is_err());
+        assert!(store.enqueue_focus_message("request","source","recipient","Evidence ready",false).unwrap().is_none());
+        assert!(store.enqueue_focus_message("request","another-source","recipient","Evidence ready",false).is_err());
         let entries=store.timeline("recipient",100).unwrap();assert_eq!(entries.len(),1);
         assert_eq!(entries[0].kind,EntryKind::Coordination);assert_eq!(entries[0].origin,"source");assert_eq!(entries[0].request_id,"request");
         assert!(!store.has_human_message("recipient").unwrap());
@@ -225,7 +225,7 @@ mod tests {
             let store=Store::open(&path).unwrap();
             source=store.add_entry("source",1.0,EntryKind::You,"Prepare the requested outcome","","").unwrap().id;
             target=store.add_entry("recipient",2.0,EntryKind::Received,"Use the accepted scope","","").unwrap().id;
-            queued=store.enqueue_focus_message("receipt","source","recipient","Recorded evidence").unwrap().unwrap().id;
+            queued=store.enqueue_focus_message("receipt","source","recipient","Recorded evidence",false).unwrap().unwrap().id;
             new_target=store.add_entry("recipient",3.0,EntryKind::You,"Revise the requested outcome","","").unwrap().id;
             new_source=store.add_entry("source",4.0,EntryKind::You,"Apply the current authorization","","").unwrap().id;
         }
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(context["source"]["humanContextAdvanced"],true);
         assert_eq!(context["recipient"]["humanContextAdvanced"],true);
         assert_eq!(context["authority"],"internal_context_only");
-        assert!(store.enqueue_focus_message("receipt","source","recipient","Recorded evidence").unwrap().is_none());
+        assert!(store.enqueue_focus_message("receipt","source","recipient","Recorded evidence",false).unwrap().is_none());
         store.finish_focus_message("receipt").unwrap();
         assert_eq!(store.focus_message_context("receipt").unwrap().unwrap(),context);
         assert_eq!(store.last_human_entry("recipient").unwrap(),new_target);
@@ -319,5 +319,27 @@ mod tests {
         assert_eq!(batch.events[0].id, "next-turn");
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod steering_receipts {
+    use super::*;
+    #[test]
+    fn old_queues_and_uncertain_attempts_survive_reopening() -> Result<()> {
+        let root=std::env::temp_dir().join(crate::model::new_id("steering-store"));std::fs::create_dir_all(&root)?;
+        let path=root.join("state.sqlite3");
+        {let c=rusqlite::Connection::open(&path)?;c.execute_batch("CREATE TABLE focus_messages(id TEXT PRIMARY KEY,sender TEXT NOT NULL,target TEXT NOT NULL,text TEXT NOT NULL,accepted INTEGER NOT NULL DEFAULT 0); INSERT INTO focus_messages(id,sender,target,text) VALUES('existing','source','target','Routine context');")?;}
+        let store=Store::open(&path)?;assert!(!store.pending_focus_messages()?[0].urgent);
+        store.enqueue_focus_message("new","source","target","Current correction",true)?;
+        assert!(store.begin_focus_steering("new","session","turn")?);
+        assert!(!store.begin_focus_steering("new","session","turn")?);drop(store);
+        let store=Store::open(&path)?;assert_eq!(store.focus_message_delivery("new")?["state"],"unconfirmed");
+        assert!(!store.begin_focus_steering("new","session","turn")?);
+        assert!(store.enqueue_focus_message("new","source","target","Current correction",false).is_err(),"Retry modes cannot silently change intent");
+        store.confirm_focus_steering("new")?;drop(store);
+        let store=Store::open(&path)?;assert_eq!(store.focus_message_delivery("new")?["state"],"steered");
+        assert_eq!(store.pending_focus_messages()?.len(),1);assert_eq!(store.pending_focus_messages()?[0].id,"existing");
+        drop(store);std::fs::remove_dir_all(root)?;Ok(())
     }
 }

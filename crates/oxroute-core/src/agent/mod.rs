@@ -1,11 +1,12 @@
 //! The seam between oxroute and whatever is actually running the agents.
 //!
-//! oxroute wants four things from a harness and nothing else:
+//! oxroute uses a small lifecycle, with optional active-turn steering:
 //!
 //! ```text
 //! open        attach to a session, or make one
 //! start       run a turn
 //! interrupt   stop a turn without losing the session
+//! steer       add internal context without stopping a turn, when supported
 //! events      a stream of what it is doing
 //! ```
 //!
@@ -31,6 +32,8 @@ pub struct Capabilities {
     pub inject: bool,
     /// Reattach to a session after oxroute restarts.
     pub resume: bool,
+    /// Add internal context to an active turn without stopping its tools.
+    pub steer: bool,
 }
 
 /// How a session should be opened.
@@ -120,6 +123,11 @@ pub trait Harness: Send + Sync {
     async fn start(&self, session: &str, inputs: Vec<TurnInput>) -> Result<String>;
 
     async fn interrupt(&self, session: &str, turn_id: &str) -> Result<()>;
+
+    async fn steer(&self, _session:&str, _turn_id:&str, _inputs:Vec<TurnInput>, _request:&str)->Result<()> {
+        anyhow::bail!("{} does not support active-turn steering",self.backend())
+    }
+
 
     /// Branch a session. `exclude_turns` copies the setup but not the history,
     /// which is what a side question wants.

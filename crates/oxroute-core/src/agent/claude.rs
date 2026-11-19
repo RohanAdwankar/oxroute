@@ -181,6 +181,7 @@ impl Harness for ClaudeHarness {
             fork: true,
             inject: false,
             resume: true,
+            steer: false,
         }
     }
 

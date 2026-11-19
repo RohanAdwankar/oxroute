@@ -476,6 +476,7 @@ impl Harness for CodexHarness {
             fork: true,
             inject: true,
             resume: true,
+            steer: true,
         }
     }
 
@@ -517,6 +518,12 @@ impl Harness for CodexHarness {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string())
+    }
+
+    async fn steer(&self,session:&str,turn_id:&str,inputs:Vec<TurnInput>,request:&str)->Result<()> {
+        let result=self.request_within("turn/steer",json!({"threadId":session,"expectedTurnId":turn_id,"input":inputs,"clientUserMessageId":request}),Duration::from_secs(10)).await?;
+        anyhow::ensure!(result["turnId"].as_str()==Some(turn_id),"runtime did not confirm the expected active turn");
+        Ok(())
     }
 
     async fn interrupt(&self, session: &str, turn_id: &str) -> Result<()> {
