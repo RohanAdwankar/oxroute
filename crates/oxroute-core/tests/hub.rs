@@ -4257,6 +4257,11 @@ async fn slack_main_messages_share_focus_and_keep_thread_ownership() {
     drop(calls);
     let replies = w.hub.store.bindings_for(&focus).unwrap();
     assert!(replies.iter().any(|binding| binding.thread_key.starts_with("reply-")), "transport response IDs retain Focus ownership");
+    assert!(settle(|| {
+        let posts=w.posts.lock().unwrap();
+        posts.replies.iter().filter(|(thread,text)|thread=="503"&&text=="done").count()==2
+            && posts.replies.iter().filter(|(thread,text)|thread.is_empty()&&text=="done").count()==2
+    }).await,"Finish earlier transport replies before checking local-only delivery");
     let before = w.posts.lock().unwrap().replies.len();
     w.hub.say_to(&focus, "Local follow-up").await.unwrap();
     assert!(settle(|| w.hub.store.agent(&focus).unwrap().unwrap().status == AgentStatus::Complete).await);
