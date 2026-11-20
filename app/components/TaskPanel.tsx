@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Component
 import { flushSync } from "react-dom";
 
 import { canParent } from "../lib/tasks";
-import type { TaskRow } from "../lib/tasks";
+import type { TaskRow, FocusDecision } from "../lib/tasks";
 import type { Agent, TaskItem, TaskNote, TaskStatus, Snapshot } from "../lib/types";
 import { clock } from "../lib/format";
 import { Icon } from "./Icon";
@@ -131,6 +131,8 @@ export const TaskPanel = memo(function TaskPanel({
   rows,
   priorities,
   decisions = false,
+  decisionItems = [],
+  onDecision,
   reviewingDecisions = false,
   onDecisions,
   query,
@@ -161,6 +163,8 @@ export const TaskPanel = memo(function TaskPanel({
   onScope: () => void;
   priorities?: Snapshot["taskPriorities"];
   decisions?: boolean;
+  decisionItems?: FocusDecision[];
+  onDecision?: (id:string)=>void;
   reviewingDecisions?: boolean;
   onDecisions?: () => void;
   onSearch: (query: string) => void;
@@ -260,11 +264,11 @@ export const TaskPanel = memo(function TaskPanel({
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
           className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink"
         >
-          {decisions && advice ? advice.nextAction : task.text}
+          {task.text}
         </button>
       )}
       {advice && <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={advice.reason}>
-        {decisions ? <>{advice.humanReason}{" · "}Unblocks {advice.unblocks}{priorities?.[task.id]?.needsReview && <> · Checking latest context</>}</> : <><span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}</>}
+        <span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}
       </p>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -406,12 +410,12 @@ export const TaskPanel = memo(function TaskPanel({
         className={`shrink-0 cursor-pointer px-3 text-[11px] ${scope ? "bg-band text-ink" : "text-faint hover:text-ink"}`}><Icon name="scope" size={14} /></button>
       </div>
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
-        {rows.length === 0 ? (
+        {(decisions ? decisionItems.length : rows.length) === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
             {decisions ? query.trim() ? "No matching decisions." : reviewingDecisions ? "Checking updated decision evidence. Agents continue their work." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
-          {linked && <div className="border-b border-rule bg-paper p-4">
+          {!decisions && linked && <div className="border-b border-rule bg-paper p-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/api/task-diagram.svg?${graphQuery}`}
@@ -419,7 +423,12 @@ export const TaskPanel = memo(function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>}
-          {rows.map((entry, at) => row(entry.task, at, entry.depth))}
+          {decisions ? decisionItems.map((item,at)=><Row key={item.id} depth={0} focused={active&&at===cursor} shown={false} onContextMenu={()=>{}}>
+            <div data-decision={item.id} className="min-w-0 flex-1">
+              <button type="button" data-task-open data-decision-open title="Open decision card" onClick={()=>onDecision?.(item.id)} className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink">{item.title}</button>
+              <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={item.state.recommendation?.reason}>{item.state.recommendation?.humanReason} · Unblocks {item.state.recommendation?.unblocks}{item.state.needsReview&&<> · Checking latest context</>}</p>
+            </div>
+          </Row>) : rows.map((entry, at) => row(entry.task, at, entry.depth))}
         </>}
       </div>
     </aside>

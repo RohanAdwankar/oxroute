@@ -22,7 +22,7 @@ mod focus;
 mod dm_inbox;
 mod focus_updates;
 mod task_priorities;
-pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState};
+pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState, ReviewPriorityState};
 pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 

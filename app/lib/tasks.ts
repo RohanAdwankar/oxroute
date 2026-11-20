@@ -72,3 +72,18 @@ export function humanDecision(state: NonNullable<Snapshot["taskPriorities"]>[str
   const advice = state?.recommendation;
   return !!state && !state.stale && advice?.nextActor === "human" && !!advice.humanReason?.trim() && !!advice.unblocks?.trim();
 }
+
+export type FocusDecision = {id:string;taskId?:string;reviewId?:string;agentId:string;title:string;position:number;state:NonNullable<Snapshot["taskPriorities"]>[string]};
+
+/** Reviews use their artifact identity even when also linked to a tracking task. */
+export function focusDecisions(tasks:TaskItem[],priorities:Snapshot["taskPriorities"],reviews:Snapshot["reviewPriorities"]):FocusDecision[] {
+  const decisions=new Map<string,FocusDecision>();
+  for(const task of tasks){const state=priorities?.[task.id];if(task.status==="complete"||!humanDecision(state))continue;
+    const reviewId=state!.recommendation!.reviewId,id=reviewId??task.id;
+    decisions.set(id,{id,taskId:task.id,reviewId,agentId:task.agentId,title:state!.recommendation!.nextAction,position:state!.position,state:state!});
+  }
+  for(const review of Object.values(reviews??{})){if(!humanDecision(review))continue;
+    decisions.set(review.id,{id:review.id,reviewId:review.id,agentId:review.agentId,title:review.title,position:review.position,state:review});
+  }
+  return [...decisions.values()].sort((a,b)=>a.position-b.position);
+}

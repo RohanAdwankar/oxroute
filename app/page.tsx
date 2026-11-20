@@ -25,13 +25,14 @@ import { TaskComposer } from "./components/TaskComposer";
 import { Jump } from "./components/Jump";
 import { Inbox } from "./components/Inbox";
 import { TaskPanel } from "./components/TaskPanel";
+import { FocusDecisionDeck } from "./components/FocusDecisionDeck";
 import { BoardView } from "./components/BoardView";
 import { captureClientFailures } from "./lib/client-failures";
 import { api, follow } from "./lib/api";
 import { useAgentViews } from "./lib/agent-views";
 import { preloadReview, reviewEndpoint } from "./lib/reviews";
 import { inboxRows } from "./lib/inbox";
-import { taskSubtree, taskAncestors, taskRows, humanDecision } from "./lib/tasks";
+import { taskSubtree, taskAncestors, taskRows, focusDecisions } from "./lib/tasks";
 import { acceptsFileDrop } from "./lib/uploads";
 import {
   HINTS,
@@ -232,6 +233,8 @@ export default function Home() {
   const [taskQuery, setTaskQuery] = useState("");
   const [allTasks, setAllTasks] = useState(false);
   const decisionQueue = focusOpen && !allTasks;
+  const [decisionId,setDecisionId]=useState<string|null>(()=>{try{return new URL(window.location.href).searchParams.get("decision");}catch{return null;}});
+  const chooseDecision=useCallback((id:string|null)=>{setDecisionId(id);if(id)setFocus("fleet");const url=new URL(window.location.href);if(id)url.searchParams.set("decision",id);else url.searchParams.delete("decision");window.history.replaceState(null,"",url);},[]);
   const scopedTasks = useSyncExternalStore(defaultWindowTasks.subscribe, defaultWindowTasks.get, defaultWindowTasks.fallback);
   const [windowTaskOverride, setWindowTaskOverride] = useState<boolean | null>(() => {
     try { const saved = sessionStorage.getItem("oxroute.windowTasks"); return saved === null ? null : saved === "true"; } catch { return null; }
@@ -448,6 +451,7 @@ export default function Home() {
       setBoardId(url.searchParams.get("board"));
       const isFocus = url.searchParams.get("view") === "focus";
       setFocusOpen(isFocus);
+      setDecisionId(url.searchParams.get("decision"));
       const agent = isFocus ? null : url.searchParams.get("agent");
       if (url.searchParams.has("transfer")) { setOpen(null); setPanes([]); return; }
       setOpen(agent);
@@ -980,6 +984,8 @@ export default function Home() {
   // Task controls use identity and names, never high-frequency progress fields.
   const priorityData = JSON.stringify(Object.fromEntries(Object.entries(snapshot.taskPriorities ?? {}).sort(([a], [b]) => a.localeCompare(b))));
   const taskPriorities = useMemo(() => JSON.parse(priorityData) as Snapshot["taskPriorities"], [priorityData]);
+  const reviewPriorityData=JSON.stringify(snapshot.reviewPriorities??{});
+  const reviewPriorities=useMemo(()=>JSON.parse(reviewPriorityData) as Snapshot["reviewPriorities"],[reviewPriorityData]);
   const taskAgents = useTaskAgents(snapshot.agents);
   const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
   const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
@@ -987,7 +993,7 @@ export default function Home() {
   const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
   const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
     owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
-    quote: (quote: DiffQuote) => receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]}),
+    quote: (quote: DiffQuote) => {receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);},
   } : null, [focusOpen, focusAgentId, reviewOwnerKey]);
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowTasks ? [...new Set([...tabIds.flatMap(id => {
@@ -1000,10 +1006,11 @@ export default function Home() {
   useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
   const tasks = useMemo(() => {
     const scoped = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
-    const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""} ${decisionQueue ? Object.values(taskPriorities?.[task.id]?.recommendation ?? {}).join(" ") : ""}`.toLowerCase().includes(taskSearch)));
-    if (decisionQueue) return matches.filter(task => humanDecision(taskPriorities?.[task.id])).map(task => ({task, depth: 0}));
+    const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch)));
     return taskRows(taskAncestors(scoped, matches));
   }, [taskItems, taskScope, taskSearch, taskNames, decisionQueue, taskPriorities]);
+  const decisionItems=useMemo(()=>focusDecisions(taskItems,taskPriorities,reviewPriorities).filter(item=>(!taskScope||taskScope.includes(item.agentId))&&(!taskSearch||`${item.title} ${item.state.recommendation?.humanReason} ${item.state.recommendation?.unblocks} ${taskNames.get(item.agentId)??""}`.toLowerCase().includes(taskSearch))),[taskItems,taskPriorities,reviewPriorities,taskScope,taskSearch,taskNames]);
+  useEffect(()=>{if(decisionId&&decisionItems.length&&!decisionItems.some(item=>item.id===decisionId))chooseDecision(decisionItems[0].id);},[decisionId,decisionItems,chooseDecision]);
   const scopeTasks = useCallback(() => { setWindowTasks(!windowTasks); setTaskAt(0); }, [windowTasks, setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
@@ -1126,7 +1133,7 @@ export default function Home() {
 
       const fleet = showArchived ? snapshot.archived : snapshot.agents;
       const here =
-        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : tasks.length;
+        focus === "inbox" ? rows.length : focus === "fleet" ? fleet.length : decisionQueue ? decisionItems.length : tasks.length;
       const move = (delta: number) => {
         // In an open agent the middle column is a conversation, not a list,
         // so moving in it means reading it.
@@ -1213,7 +1220,7 @@ export default function Home() {
         case "K": {
           if (focus !== "tasks") return;
           stop();
-          const row = tasks[taskAt];
+          const row = decisionQueue ? tasks.find(row=>row.task.id===decisionItems[taskAt]?.taskId&&!decisionItems[taskAt]?.reviewId) : tasks[taskAt];
           if (!row) return;
           const up = event.key === "K";
           // The task it lands after: the one two places up when moving up,
@@ -1241,6 +1248,7 @@ export default function Home() {
           return step(event.shiftKey ? -1 : 1);
         case "Escape":
           stop();
+          if(focusOpen&&decisionId){chooseDecision(null);return;}
           if (open || focusOpen) return showAgent(null);
           clearRouting();
           return setFocus("inbox");
@@ -1542,7 +1550,7 @@ export default function Home() {
 
         {focusOpen&&(!focusAgentId||!open) ? <section aria-label="Focus" className="min-w-0 flex-1 px-[var(--pane-x)] py-6 text-[13px] text-faint">
           {focusError?<><p role="alert">{focusError}</p><button type="button" aria-label="Retry Focus" title="Retry Focus" className="mt-3 cursor-pointer" onClick={()=>setFocusRetry(value=>value+1)}><Icon name="refresh"/></button></>:<p role="status">Opening Focus…</p>}
-        </section> : open ? (
+        </section> : focusOpen&&decisionId&&decisionItems.length ? <FocusDecisionDeck items={decisionItems} selected={decisionId} onSelect={chooseDecision}/> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}
@@ -1751,8 +1759,8 @@ export default function Home() {
           <TaskPanel
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
-            decisions={decisionQueue}
-            reviewingDecisions={Object.values(taskPriorities ?? {}).some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
+            decisions={decisionQueue} decisionItems={decisionItems} onDecision={chooseDecision}
+            reviewingDecisions={[...Object.values(taskPriorities ?? {}),...Object.values(reviewPriorities??{})].some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}
             scope={taskScope}

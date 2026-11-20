@@ -47,7 +47,7 @@ export function FocusCards({ids}:{ids:string[]}) {
   </section>;
 }
 
-function ConversationCard({agent}:{agent:Agent}) {
+export function ConversationCard({agent}:{agent:Agent}) {
   const context=useContext(ConversationCards)!;
   const [view,setView]=useState<AgentView|null>(null),[error,setError]=useState("");
   const [expanded,setExpanded]=useState(false),[revision,setRevision]=useState(0),[taskPage,setTaskPage]=useState(0);

@@ -6,7 +6,10 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct TaskPriority {
+    #[serde(default,skip_serializing_if="String::is_empty")]
     pub task_id: String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub review_id: Option<String>,
     pub basis: String,
     pub next_action: String,
     pub reason: String,
@@ -26,7 +29,11 @@ pub struct TaskPriority {
 pub struct TaskPriorityOrder {pub request_id:String, pub focus_context_entry_id:i64, pub items:Vec<TaskPriority>}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct TaskPriorityState {pub basis:String, pub stale:bool, pub needs_review:bool, pub recommendation:Option<TaskPriority>}
+pub struct TaskPriorityState {pub position:f64, pub basis:String, pub stale:bool, pub needs_review:bool, pub recommendation:Option<TaskPriority>}
+
+#[derive(Debug,Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ReviewPriorityState {pub id:String,pub agent_id:String,pub title:String,pub status:String,#[serde(flatten)]pub state:TaskPriorityState}
 
 // Task facts invalidate stale actions. Advanced conversation context requests
 // reconciliation without assuming an unrelated message resolved the outcome.
@@ -39,22 +46,48 @@ pub(super) fn states(c:&Connection, all:bool)->Result<HashMap<String,TaskPriorit
              FROM tasks b WHERE b.id=t.blocked_by_task_id)),
         p.basis,p.details,
         json_array((SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=t.agent_id AND kind IN ('you','received','said','asked')),
-            (SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=(SELECT agent_id FROM tasks WHERE id=t.blocked_by_task_id) AND kind IN ('you','received','said','asked')))
+            (SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=(SELECT agent_id FROM tasks WHERE id=t.blocked_by_task_id) AND kind IN ('you','received','said','asked'))),t.position
         FROM tasks t
         LEFT JOIN (SELECT task_id,MAX(rowid) revision FROM task_notes GROUP BY task_id) n ON n.task_id=t.id
         LEFT JOIN task_priorities p ON p.task_id=t.id WHERE t.status!='complete' {}",if all {""} else {"AND p.task_id IS NOT NULL"}))?;
     let reviewed_context:Option<String>=c.query_row("SELECT value FROM kv WHERE key='task-priority-focus-context'",[],|r|r.get(0)).optional()?;
     let context_changed=reviewed_context.as_deref()!=Some(focus_context(c)?.to_string().as_str());
-    let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,String>(4)?)))?;
+    let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,String>(4)?,r.get::<_,f64>(5)?)))?;
     rows.map(|row| {
-        let (id,task_basis,saved,details,source_context)=row?;
+        let (id,task_basis,saved,details,source_context,position)=row?;
         let task_basis=fingerprint(&task_basis);
         let basis=format!("{}:{}",task_basis,fingerprint(&source_context));
         let stale=saved.as_ref().is_some_and(|saved|saved.split(':').next()!=Some(task_basis.as_str()));
         let needs_review=saved.as_ref().is_some_and(|saved|*saved!=basis || context_changed);
         let recommendation=if stale {None} else {details.map(|details|serde_json::from_str(&details)).transpose()?};
-        Ok((id,TaskPriorityState{basis,stale,needs_review,recommendation}))
+        Ok((id,TaskPriorityState{position,basis,stale,needs_review,recommendation}))
     }).collect()
+}
+fn review_states(c:&Connection,all:bool)->Result<HashMap<String,ReviewPriorityState>> {
+    let mut q=c.prepare(&format!("SELECT r.value,p.value,
+        (SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=json_extract(r.value,'$.agentId') AND kind IN ('you','received','said','asked')),o.value
+        FROM kv r LEFT JOIN kv p ON p.key='focus-review-priority:'||json_extract(r.value,'$.id')
+        LEFT JOIN kv o ON o.key='review-status:'||json_extract(r.value,'$.id')
+        WHERE r.key GLOB 'review:*' AND json_type(r.value,'$.id')='text' AND json_type(r.value,'$.agentId')='text'
+        AND json_extract(r.value,'$.approvedAt') IS NULL AND COALESCE(json_extract(r.value,'$.staleNotified'),0)=0 {}",if all {""}else{"AND p.key IS NOT NULL"}))?;
+    let context:Option<String>=c.query_row("SELECT value FROM kv WHERE key='task-priority-focus-context'",[],|r|r.get(0)).optional()?;
+    let advanced=context.as_deref()!=Some(focus_context(c)?.to_string().as_str());
+    let rows=q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?)))?;
+    rows.map(|row| {
+        let (raw,saved,source,observed)=row?;let meta:Value=serde_json::from_str(&raw)?;
+        let observed:Option<Value>=observed.map(|s|serde_json::from_str(&s)).transpose()?;
+        let status=observed.as_ref().filter(|o|o["snapshot"]==meta["snapshot"]).and_then(|o|o["status"].as_str()).unwrap_or("unverified").to_owned();
+        let basis=format!("{}:{}",fingerprint(&raw),fingerprint(&(source,&status)));
+        let saved:Option<Value>=saved.map(|s|serde_json::from_str(&s)).transpose()?;
+        let stale=saved.as_ref().is_some_and(|s|status!="pending"||s["basis"].as_str().and_then(|b|b.split(':').next())!=basis.split(':').next());
+        let needs_review=saved.as_ref().is_some_and(|s|stale||s["basis"]!=basis||advanced);
+        let recommendation=if stale {None}else{saved.as_ref().map(|s|serde_json::from_value(s["item"].clone())).transpose()?};
+        let id=meta["id"].as_str().context("review identity missing")?.to_owned();
+        Ok((id.clone(),ReviewPriorityState{id,agent_id:meta["agentId"].as_str().context("review owner missing")?.into(),title:meta["title"].as_str().unwrap_or("Change review").into(),status,state:TaskPriorityState{position:saved.as_ref().and_then(|s|s["position"].as_f64()).unwrap_or(f64::MAX),basis,stale,needs_review,recommendation}}))
+    }).collect()
+}
+fn review_revision(states:&HashMap<String,ReviewPriorityState>)->String {
+    let mut values:Vec<_>=states.iter().map(|(id,state)|(id,&state.state.basis)).collect();values.sort();fingerprint(&values)
 }
 fn fingerprint(value:&impl std::hash::Hash)->String {
     use std::hash::Hasher;
@@ -71,6 +104,8 @@ fn revision(states:&HashMap<String,TaskPriorityState>)->String {
     fingerprint(&revisions)
 }
 impl Store {
+    pub fn review_priority_states(&self,all:bool)->Result<HashMap<String,ReviewPriorityState>> {self.read(|c|review_states(c,all))}
+
     pub fn task_priority_states(&self)->Result<HashMap<String,TaskPriorityState>> {self.read(|c|states(c,true))}
 
     pub fn task_priority_advice(&self)->Result<HashMap<String,TaskPriorityState>> {
@@ -78,11 +113,13 @@ impl Store {
     }
     pub fn task_priority_review(&self)->Result<Value> {
         let states=self.task_priority_states()?;
+        let reviews=self.review_priority_states(true)?;
         let context=self.read(focus_context)?;
-        let revision=fingerprint(&(revision(&states),context));
+        let revision=fingerprint(&(revision(&states),review_revision(&reviews),context));
         Ok(json!({"changed":self.get("task-priority-reviewed-revision")?.as_deref()!=Some(&revision),"revision":revision,"focusContextEntryId":context,
             "nextDeadlineAt":states.values().filter_map(|state|state.recommendation.as_ref()?.deadline_at).min_by(f64::total_cmp),
             "reviewTaskIds":states.iter().filter(|(_,state)|state.needs_review).map(|(id,_)|id).collect::<Vec<_>>(),
+            "reviewIds":reviews.iter().filter(|(_,s)|s.state.needs_review).map(|(id,_)|id).collect::<Vec<_>>(),
             "staleTaskIds":states.iter().filter(|(_,state)|state.stale).map(|(id,_)|id).collect::<Vec<_>>()}))
     }
 
@@ -102,13 +139,23 @@ impl Store {
             }
             let context=focus_context(&tx)?;
             anyhow::ensure!(context==order.focus_context_entry_id,"Focus context advanced; reconcile latest human instructions before prioritizing");
-            let current=states(&tx,true)?;
-            let mut seen=HashSet::new();
+            let current=states(&tx,true)?;let reviews=review_states(&tx,true)?;
+            let mut seen=HashSet::new();let mut ordered=Vec::new();
             for item in &order.items {
-                anyhow::ensure!(seen.insert(&item.task_id),"duplicate task priority");
-                anyhow::ensure!(current.get(&item.task_id).is_some_and(|state|state.basis==item.basis),"task evidence changed; inspect current task and source before prioritizing");
-                let (status,owner,blocker):(String,String,String)=tx.query_row("SELECT status,agent_id,blocked_by_task_id FROM tasks WHERE id=?1",[&item.task_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-                anyhow::ensure!(status!="complete","completed tasks cannot be promoted");
+                let (key,owner,blocker)=if let Some(id)=&item.review_id {
+                    let review=reviews.get(id).context("choose a current pending review")?;
+                    anyhow::ensure!(review.status=="pending","inspect the actual current review before prioritizing; stale or unverified artifacts are not ready decisions");
+                    anyhow::ensure!(review.state.basis==item.basis,"review evidence changed; inspect the current review");
+                    anyhow::ensure!(item.next_actor=="human","a review decision requires human action");
+                    if !item.task_id.is_empty() {anyhow::ensure!(tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND agent_id=?2)",params![item.task_id,review.agent_id],|r|r.get::<_,bool>(0))?,"linked task does not belong to the review owner");}
+                    (format!("review:{id}"),review.agent_id.clone(),String::new())
+                }else{
+                    anyhow::ensure!(current.get(&item.task_id).is_some_and(|state|state.basis==item.basis),"task evidence changed; inspect current task and source before prioritizing");
+                    let (status,owner,blocker):(String,String,String)=tx.query_row("SELECT status,agent_id,blocked_by_task_id FROM tasks WHERE id=?1",[&item.task_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+                    anyhow::ensure!(status!="complete","completed tasks cannot be promoted");
+                    (format!("task:{}",item.task_id),owner,blocker)
+                };
+                let first=seen.insert(key);anyhow::ensure!(first||item.review_id.is_some(),"duplicate task priority");
                 for text in [&item.next_action,&item.reason] {anyhow::ensure!(!text.trim().is_empty() && text.chars().count()<=160,"next action and reason must be concise and nonempty");}
                 anyhow::ensure!(["human","agent","other"].contains(&item.next_actor.as_str()) && ["urgent","normal"].contains(&item.urgency.as_str()) && ["substantial","routine"].contains(&item.impact.as_str()) && ["small","substantial"].contains(&item.effort.as_str()),"invalid priority dimensions");
                 if item.next_actor=="human" {
@@ -122,16 +169,25 @@ impl Store {
                     let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND (agent_id=?2 OR agent_id=?3 OR agent_id=(SELECT agent_id FROM tasks WHERE id=?4)))",params![evidence,owner,focus,blocker],|r|r.get(0))?;
                     anyhow::ensure!(valid,"priority evidence must belong to the task owner, blocker owner or Focus");
                 }
+                if first {ordered.push(item);}
             }
+            let task_ids:HashSet<_>=ordered.iter().filter(|i|i.review_id.is_none()).map(|i|i.task_id.as_str()).collect();
             let remaining:Vec<String>={let mut q=tx.prepare("SELECT id FROM tasks ORDER BY position,created_at")?;let ids=q.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;ids};
-            tx.execute("INSERT INTO kv VALUES('task-priority-reviewed-revision',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[fingerprint(&(revision(&current),context))])?;
+            tx.execute("INSERT INTO kv VALUES('task-priority-reviewed-revision',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[fingerprint(&(revision(&current),review_revision(&reviews),context))])?;
             tx.execute("INSERT INTO kv VALUES('task-priority-focus-context',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[context.to_string()])?;
             tx.execute("DELETE FROM task_priorities",[])?;
-            for (position,id) in order.items.iter().map(|item|&item.task_id).chain(remaining.iter().filter(|id|!seen.contains(id))).enumerate() {
-                tx.execute("UPDATE tasks SET position=?2 WHERE id=?1",params![id,position as f64])?;
+            tx.execute("DELETE FROM kv WHERE key GLOB 'focus-review-priority:*'",[])?;
+            for (position,item) in ordered.iter().enumerate() {
+                if let Some(id)=&item.review_id {
+                    let source:i64=tx.query_row("SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=?1 AND kind IN ('you','received','said','asked')",[&reviews[id].agent_id],|r|r.get(0))?;
+                    tx.execute("INSERT INTO kv VALUES(?1,?2)",params![format!("focus-review-priority:{id}"),json!({"basis":item.basis,"item":item,"sourceContext":source,"position":position}).to_string()])?;
+                }else{
+                    tx.execute("UPDATE tasks SET position=?2 WHERE id=?1",params![item.task_id,position as f64])?;
+                    tx.execute("INSERT INTO task_priorities VALUES(?1,?2,?3)",params![item.task_id,item.basis,serde_json::to_string(item)?])?;
+                }
             }
-            for item in &order.items {tx.execute("INSERT INTO task_priorities VALUES(?1,?2,?3)",params![item.task_id,item.basis,serde_json::to_string(item)?])?;}
-            let receipt=json!({"status":"completed","requestId":order.request_id,"taskIds":order.items.iter().map(|item|&item.task_id).collect::<Vec<_>>(),"meaning":"Sidebar order persisted; no task status, ownership or consent changed."});
+            for (at,id) in remaining.iter().filter(|id|!task_ids.contains(id.as_str())).enumerate(){tx.execute("UPDATE tasks SET position=?2 WHERE id=?1",params![id,(ordered.len()+at) as f64])?;}
+            let receipt=json!({"status":"completed","requestId":order.request_id,"taskIds":ordered.iter().filter(|i|!i.task_id.is_empty()).map(|i|&i.task_id).collect::<Vec<_>>(),"reviewIds":ordered.iter().filter_map(|i|i.review_id.as_ref()).collect::<Vec<_>>(),"meaning":"Decision order persisted; no task status, ownership or consent changed."});
             tx.execute("INSERT INTO kv VALUES(?1,?2)",params![key,json!({"focusId":focus,"payload":payload,"receipt":receipt}).to_string()])?;
             tx.commit()?;
             Ok(receipt)

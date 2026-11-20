@@ -3449,6 +3449,7 @@ impl Hub {
             task_notes: if notes { self.store.task_notes()? } else { vec![] },
             task_notes_deferred: !notes,
             task_priorities: self.store.task_priority_advice()?,
+            review_priorities: self.store.review_priority_states(false)?,
             tags: self.store.all_tags()?,
             boards: self.store.boards()?,
             sources: self.sources.keys().cloned().collect(),
@@ -4302,6 +4303,8 @@ pub struct Snapshot {
     pub task_notes_deferred: bool,
     #[serde(default)]
     pub task_priorities: std::collections::HashMap<String, crate::store::TaskPriorityState>,
+    #[serde(default)]
+    pub review_priorities: std::collections::HashMap<String, crate::store::ReviewPriorityState>,
     /// Agent id -> its tags. Defaulted, like `boards`, so a client talking
     /// to an older daemon still reads a snapshot.
     #[serde(default)]

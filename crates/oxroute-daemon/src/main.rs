@@ -617,7 +617,7 @@ async fn task_priorities(State(hub): Hubs, axum::extract::Query(query):axum::ext
     let ids:std::collections::HashSet<_>=tasks.iter().map(|task|task.id.as_str()).collect();
     let priorities:std::collections::HashMap<_,_>=hub.store.task_priority_states()?.into_iter().filter(|(id,_)|ids.contains(id.as_str())).collect();
     let notes:Vec<_>=hub.task_notes()?.into_iter().filter(|note|ids.contains(note.task_id.as_str())).collect();
-    Ok(Json(serde_json::json!({"tasks":tasks,"priorities":priorities,"notes":notes,"review":hub.store.task_priority_review()?})))
+    Ok(Json(serde_json::json!({"tasks":tasks,"priorities":priorities,"reviews":hub.store.review_priority_states(true)?,"notes":notes,"review":hub.store.task_priority_review()?})))
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
@@ -745,6 +745,17 @@ async fn review_response(review: ChangeReview, full: bool) -> anyhow::Result<ser
     Ok(response)
 }
 
+// Observations ground queue eligibility; they never approve or replace a review.
+async fn observed_review(hub:&Hub,review:ChangeReview,full:bool)->anyhow::Result<serde_json::Value> {
+    let key=format!("review-status:{}",review.id);
+    let snapshot=serde_json::to_value(&review.snapshot)?;
+    let result=review_response(review,full).await;
+    let status=result.as_ref().ok().and_then(|body|body["status"].as_str()).unwrap_or("unavailable");
+    let observation=json!({"snapshot":snapshot,"status":status}).to_string();
+    if hub.store.get(&key)?.as_deref()!=Some(observation.as_str()) {hub.store.set(&key,&observation)?;hub.emit(oxroute_core::model::Event::Sync);}
+    result
+}
+
 #[utoipa::path(post, path = "/api/agents/{id}/reviews", operation_id = "reviews.create", params(("id" = String, Path)), request_body = ReviewBody, responses((status = 200, body = serde_json::Value)))]
 async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body): Json<ReviewBody>) -> Result<Json<serde_json::Value>, Failed> {
     hub.store.agent(&agent_id)?.context("no such agent")?;
@@ -760,7 +771,7 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
     let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
-    let response = review_response(review, false).await?;
+    let response = observed_review(&hub,review, false).await?;
     tokio::spawn(async move {
         if let Err(error) = hub.share_review(&agent, &id, &title).await {
             tracing::warn!(review = id, %error, "could not share review link");
@@ -776,7 +787,7 @@ struct ReviewQuery { #[serde(default)] full: bool }
 async fn get_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewQuery>) -> Result<Response, Failed> {
     let started = std::time::Instant::now();
     let review = review_record(&hub, &agent_id, &id, true)?.0;
-    let body = review_response(review, query.full).await?;
+    let body = observed_review(&hub,review, query.full).await?;
     Ok(([("server-timing", format!("review;dur={:.2}", started.elapsed().as_secs_f64() * 1000.0))], Json(body)).into_response())
 }
 
@@ -834,7 +845,7 @@ async fn edit_review(State(hub): Hubs, Path((agent, id)): Path<(String, String)>
     review.stale_notified = false;
     let entry = hub.store.add_review(&agent, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
-    Ok(Json(review_response(review, false).await?))
+    Ok(Json(observed_review(&hub,review, false).await?))
 }
 
 async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {
