@@ -19,9 +19,28 @@ pub struct FocusUpdate {
     #[serde(default)] pub qualification: String,
     #[serde(default)] pub task_id: Option<String>,
     #[serde(default)] pub supersedes: Vec<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub task_reopen_scope: Option<TaskReopenScope>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct TaskReopenScope {
+    pub entry_id:i64,
+    pub revision_entry_id:i64,
+    pub outcome_ids:Vec<String>,
 }
 
 impl Store {
+    pub fn task_reopen_entries(&self,agent:&str)->Result<Vec<Value>> {
+        self.read(|c| {
+            let mut q=c.prepare("SELECT t.id,CAST(k.value AS INTEGER),s.value FROM tasks t JOIN kv k ON k.key='task-reopened-entry:'||t.id
+                LEFT JOIN kv s ON s.key='focus-task-reopen:'||(SELECT value FROM kv WHERE key='focus.agent')||':'||t.id||':'||k.value
+                WHERE t.agent_id=?1 ORDER BY t.updated_at DESC LIMIT 10")?;
+            let rows=q.query_map([agent],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.into_iter().map(|(task,entry,scope)|Ok(json!({"taskId":task,"entryId":entry,"scope":scope.map(|scope|serde_json::from_str::<Value>(&scope)).transpose()?}))).collect()
+        })
+    }
+
     pub fn focus_update_receipt(&self, focus: &str, update: &FocusUpdate) -> Result<Option<Value>> {
         let payload=serde_json::to_string(update)?;
         self.read(|c| receipt(c,focus,&update.request_id,&payload))
@@ -45,11 +64,12 @@ impl Store {
                 anyhow::ensure!(valid,"request and revision references must identify actual originating human entries");
             }
             anyhow::ensure!(u.revision_entry_id>=u.source_request_entry_id,"outcome revision precedes its originating request");
-            let reopened=reopened(&tx,u.task_id.as_deref())?;
-            let revision=format!("{}:{reopened}",u.revision_entry_id);
             if let Some(task)=&u.task_id {
                 anyhow::ensure!(tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND agent_id=?2)",params![task,u.source_agent_id],|r|r.get::<_,bool>(0))?,"task does not belong to the cited source conversation");
             }
+            if let Some(scope)=&u.task_reopen_scope {scope_reopen(&tx,focus,u,scope)?;}
+            let reopened=outcome_reopened(&tx,focus,u)?;
+            let revision=format!("{}:{reopened}",u.revision_entry_id);
             let newer:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM focus_updates WHERE focus_id=?1 AND source_agent=?2 AND outcome_id=?3 AND CAST(json_extract(payload,'$.revisionEntryId') AS INTEGER)>?4)",params![focus,u.source_agent_id,u.outcome_id,u.revision_entry_id],|r|r.get(0))?;
             anyhow::ensure!(!newer,"this outcome already has a newer user revision");
             if u.kind=="completion" {
@@ -99,13 +119,13 @@ impl Store {
             let mut updates=Vec::new();
             for (payload,entry,revision,superseded) in rows {
                 let u:FocusUpdate=serde_json::from_str(&payload)?;
-                updates.push(json!({"requestId":u.request_id,"entryId":entry,"kind":u.kind,"outcomeId":u.outcome_id,"sourceAgentId":u.source_agent_id,"sourceRequestEntryId":u.source_request_entry_id,"revisionEntryId":u.revision_entry_id,"qualification":u.qualification,"evidenceEntryIds":u.evidence_entry_ids,"current":superseded.is_none()&&current(c,&u,&revision)?,"supersededBy":superseded,"sourceContextAdvanced":human(c,&u.source_agent_id)?!=u.source_context_entry_id,"focusContextAdvanced":cycle!=u.focus_cycle}));
+                updates.push(json!({"requestId":u.request_id,"entryId":entry,"kind":u.kind,"outcomeId":u.outcome_id,"sourceAgentId":u.source_agent_id,"sourceRequestEntryId":u.source_request_entry_id,"revisionEntryId":u.revision_entry_id,"qualification":u.qualification,"evidenceEntryIds":u.evidence_entry_ids,"taskId":u.task_id,"taskReopenScope":u.task_reopen_scope,"current":superseded.is_none()&&current(c,focus,&u,&revision)?,"supersededBy":superseded,"sourceContextAdvanced":human(c,&u.source_agent_id)?!=u.source_context_entry_id,"focusContextAdvanced":cycle!=u.focus_cycle}));
             }
             let mut q=c.prepare("SELECT payload,revision FROM focus_updates WHERE focus_id=?1 AND kind='decision' AND focus_cycle=?2 AND entry_id>?2 AND superseded_by IS NULL")?;
             let mut decisions=0;
             for row in q.query_map(params![focus,cycle],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))? {
                 let (payload,revision)=row?;
-                if current(c,&serde_json::from_str(&payload)?,&revision)? {decisions+=1;}
+                if current(c,focus,&serde_json::from_str(&payload)?,&revision)? {decisions+=1;}
             }
             Ok(json!({"focusCycle":cycle,"unansweredDecisions":decisions,"recentUpdates":updates}))
         })
@@ -134,8 +154,32 @@ fn reopened(c:&Connection,task:Option<&str>)->Result<i64> {
     let Some(task)=task else {return Ok(0)};
     Ok(c.query_row("SELECT CAST(value AS INTEGER) FROM kv WHERE key=?1",[format!("task-reopened-entry:{task}")],|r|r.get(0)).optional()?.unwrap_or(0))
 }
-fn current(c:&Connection,u:&FocusUpdate,revision:&str)->Result<bool> {
-    Ok(revision==format!("{}:{}",u.revision_entry_id,reopened(c,u.task_id.as_deref())?))
+fn scope_key(focus:&str,task:&str,entry:i64)->String {format!("focus-task-reopen:{focus}:{task}:{entry}")}
+fn scope_reopen(c:&Connection,focus:&str,u:&FocusUpdate,scope:&TaskReopenScope)->Result<()> {
+    let task=u.task_id.as_deref().context("taskReopenScope requires taskId")?;
+    anyhow::ensure!(scope.entry_id>0&&scope.entry_id==reopened(c,Some(task))?,"task reopen changed; inspect its current scope before classifying");
+    let human:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND kind IN ('you','received') AND agent_id IN (?2,?3))",params![scope.revision_entry_id,focus,u.source_agent_id],|r|r.get(0))?;
+    anyhow::ensure!(human,"reopen scope must cite the actual source or Focus human request");
+    anyhow::ensure!(!scope.outcome_ids.is_empty()&&scope.outcome_ids.len()<=10&&scope.outcome_ids.iter().all(|id|!id.trim().is_empty()&&id.len()<=200),"identify the reopened outcomes explicitly");
+    let mut scope=scope.clone();scope.outcome_ids.sort();scope.outcome_ids.dedup();
+    let payload=serde_json::to_string(&scope)?;let key=scope_key(focus,task,scope.entry_id);
+    let saved:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[&key],|r|r.get(0)).optional()?;
+    anyhow::ensure!(saved.as_ref().is_none_or(|saved|*saved==payload),"this task reopen already has a different outcome classification");
+    c.execute("INSERT OR IGNORE INTO kv VALUES(?1,?2)",params![key,payload])?;
+    // Normalize historical metadata, preserving visible entries and receipt payloads.
+    c.execute("UPDATE focus_updates SET revision=CAST(json_extract(payload,'$.revisionEntryId') AS TEXT)||':0'
+        WHERE focus_id=?1 AND json_extract(payload,'$.taskId')=?2 AND revision=CAST(json_extract(payload,'$.revisionEntryId') AS TEXT)||':'||?3
+        AND outcome_id NOT IN (SELECT value FROM json_each(?4))",params![focus,task,scope.entry_id,serde_json::to_string(&scope.outcome_ids)?])?;
+    Ok(())
+}
+fn outcome_reopened(c:&Connection,focus:&str,u:&FocusUpdate)->Result<i64> {
+    let entry=reopened(c,u.task_id.as_deref())?;
+    let Some(task)=&u.task_id else {return Ok(entry)};
+    let scope:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[scope_key(focus,task,entry)],|r|r.get(0)).optional()?;
+    Ok(if let Some(scope)=scope {let scope:TaskReopenScope=serde_json::from_str(&scope)?;if scope.outcome_ids.contains(&u.outcome_id){entry}else{0}}else{entry})
+}
+fn current(c:&Connection,focus:&str,u:&FocusUpdate,revision:&str)->Result<bool> {
+    Ok(revision==format!("{}:{}",u.revision_entry_id,outcome_reopened(c,focus,u)?))
 }
 
 #[cfg(test)]
@@ -151,7 +195,7 @@ mod tests {
         (store,path)
     }
     fn update(kind:&str,source:&str,request:i64)->FocusUpdate {
-        FocusUpdate{request_id:uuid::Uuid::new_v4().to_string(),kind:kind.into(),outcome_id:"requested-result".into(),source_agent_id:source.into(),source_request_entry_id:request,source_context_entry_id:request,focus_cycle:0,revision_entry_id:request,text:"The requested result is available; its remaining limits are recorded.".into(),existing_entry_id:None,evidence_entry_ids:vec![],qualification:if kind=="completion"{"prepared".into()}else{String::new()},task_id:None,supersedes:vec![]}
+        FocusUpdate{request_id:uuid::Uuid::new_v4().to_string(),kind:kind.into(),outcome_id:"requested-result".into(),source_agent_id:source.into(),source_request_entry_id:request,source_context_entry_id:request,focus_cycle:0,revision_entry_id:request,text:"The requested result is available; its remaining limits are recorded.".into(),existing_entry_id:None,evidence_entry_ids:vec![],qualification:if kind=="completion"{"prepared".into()}else{String::new()},task_id:None,supersedes:vec![],task_reopen_scope:None}
     }
     fn add(store:&Store,source:&str,kind:EntryKind)->i64 {store.add_entry(source,now(),kind,"Representative source evidence","","").unwrap().id}
     #[test]
@@ -223,6 +267,33 @@ mod tests {
         assert!(store.publish_focus_update("focus",&stale,now()).is_err(),"A registered newer relevant revision supersedes old evidence");
         stale.revision_entry_id=relevant;assert!(store.publish_focus_update("focus",&stale,now()).is_err(),"Result must follow the relevant revision, not merely a refreshed inspection");
         stale.evidence_entry_ids=vec![add(&store,"source",EntryKind::Said)];store.publish_focus_update("focus",&stale,now()).unwrap();
+        drop(store);std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn independent_outcomes_survive_a_scoped_task_reopen_without_republication() {
+        let (store,path)=fixture();let request=add(&store,"source",EntryKind::You);let evidence=add(&store,"source",EntryKind::Said);
+        let mut task=TaskItem{id:"shared-work".into(),text:"Deliver requested work".into(),status:TaskStatus::Done,parent_task_id:String::new(),blocked_by_task_id:String::new(),agent_id:"source".into(),position:0.0,images:vec![],created_at:now(),updated_at:now()};store.save_task(&task).unwrap();
+        let mut prior=update("completion","source",request);prior.task_id=Some(task.id.clone());prior.evidence_entry_ids=vec![evidence];
+        let prior_receipt=store.publish_focus_update("focus",&prior,now()).unwrap().0;
+        let audit=add(&store,"source",EntryKind::You);task.status=TaskStatus::Incomplete;store.save_task(&task).unwrap();
+        let visible=add(&store,"focus",EntryKind::Said);let count=store.timeline("focus",100).unwrap().len();
+        let mut classified=prior.clone();classified.request_id=uuid::Uuid::new_v4().to_string();classified.outcome_id="artifact-delivery".into();classified.source_context_entry_id=audit;classified.text.clear();classified.existing_entry_id=Some(visible);
+        assert!(store.publish_focus_update("focus",&classified,now()).is_err(),"An unclassified reopen stays conservative");
+        classified.task_reopen_scope=Some(TaskReopenScope{entry_id:audit,revision_entry_id:audit,outcome_ids:vec!["independent-audit".into()]});
+        let (receipt,entry)=store.publish_focus_update("focus",&classified,now()).unwrap();assert!(entry.is_none());assert_eq!(receipt["entryId"],visible);
+        assert_eq!(store.timeline("focus",100).unwrap().len(),count,"Classification never republishes the result");
+        let context=store.focus_update_context("focus").unwrap();assert!(context["recentUpdates"].as_array().unwrap().iter().any(|u|u["requestId"]==prior.request_id&&u["current"]==true),"Independent completed outcomes remain current");
+        let mut same=classified.clone();same.request_id=uuid::Uuid::new_v4().to_string();same.outcome_id="independent-audit".into();same.existing_entry_id=None;same.text="The independent audit result is prepared.".into();
+        assert!(store.publish_focus_update("focus",&same,now()).is_err(),"The actual reopened outcome still needs new evidence");
+        same.evidence_entry_ids=vec![add(&store,"source",EntryKind::Said)];store.publish_focus_update("focus",&same,now()).unwrap();
+        let correction=add(&store,"source",EntryKind::You);task.status=TaskStatus::Done;store.save_task(&task).unwrap();task.status=TaskStatus::Incomplete;store.save_task(&task).unwrap();
+        let mut revised=classified.clone();revised.request_id=uuid::Uuid::new_v4().to_string();revised.source_context_entry_id=correction;
+        assert!(store.publish_focus_update("focus",&revised,now()).is_err(),"An old scope cannot exempt a new reopen");
+        revised.revision_entry_id=correction;revised.task_reopen_scope=Some(TaskReopenScope{entry_id:correction,revision_entry_id:correction,outcome_ids:vec![revised.outcome_id.clone()]});
+        assert!(store.publish_focus_update("focus",&revised,now()).is_err(),"A genuine same-outcome correction rejects old results");
+        revised.evidence_entry_ids=vec![add(&store,"source",EntryKind::Said)];store.publish_focus_update("focus",&revised,now()).unwrap();
+        assert_eq!(store.publish_focus_update("focus",&prior,now()).unwrap().0,prior_receipt,"Retries preserve original publication receipts");
+        assert_eq!(store.tasks().unwrap()[0].status,TaskStatus::Incomplete);
         drop(store);std::fs::remove_file(path).unwrap();
     }
     #[test]

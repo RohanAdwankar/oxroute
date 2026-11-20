@@ -42,7 +42,8 @@ const reserve=createServer(),port=await listen(reserve);await new Promise(done=>
 const base=`http://127.0.0.1:${port}`,config=join(root,'config.toml');
 await writeFile(config,`owner="fixture"\nlisten="127.0.0.1:${port}"\nworkspace=${JSON.stringify(root)}\n[limits]\nmin_free_bytes=0\n[paths]\ndatabase=${JSON.stringify(join(root,'state.sqlite3'))}\nartifacts=${JSON.stringify(join(root,'artifacts'))}\nattachments=${JSON.stringify(join(root,'attachments'))}\n`);
 const env={PATH:process.env.PATH,HOME:root,LANG:'C.UTF-8',RUST_LOG:'warn',CODEX_HOME:join(root,'codex'),OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:`ws://127.0.0.1:${rpcPort}`,OXROUTE_CODEX_CLI:'/bin/false'};
-const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env});let daemon=start();
+let runtimeBinary=process.env.TEST_PRIOR_DAEMON??process.env.TEST_DAEMON;
+const start=()=>spawn(runtimeBinary,[],{stdio:['ignore','ignore','inherit'],env});let daemon=start();
 const stop=async()=>{daemon.kill('SIGKILL');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));};
 const api=async(path,body,method='POST')=>{const r=await fetch(base+path,body===undefined?{}:{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,`${path}: ${r.status} ${await r.clone().text()}`);return r.json();};
 const healthy=()=>until(async()=>{try{return(await fetch(base+'/api/health')).ok;}catch{return false;}},'Daemon did not start');
@@ -62,8 +63,8 @@ try {
  const evidence=async id=>{const data=await detail(id);return {request:data.timeline.filter(e=>e.kind==='you').at(-1).id,result:data.timeline.filter(e=>e.kind==='said').at(-1).id};};
  const firstEvidence=await evidence(first.agent.id),secondEvidence=await evidence(second.agent.id);
  const connection=opened.find(value=>value.thread===focusThread).config['mcp_servers.oxroute_internal'];
- const call=async args=>{
-  const response=await fetch(connection.url,{method:'POST',headers:{'content-type':'application/json',authorization:connection.http_headers.Authorization},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method:'tools/call',params:{name:'publish_focus_update',arguments:args}})});
+ const call=async(args,name='publish_focus_update')=>{
+  const response=await fetch(connection.url,{method:'POST',headers:{'content-type':'application/json',authorization:connection.http_headers.Authorization},body:JSON.stringify({jsonrpc:'2.0',id:++serial,method:'tools/call',params:{name,arguments:args}})});
   assert.ok(response.ok);return(await response.json()).result;
  };
  const update=(kind,owner,ref,outcomeId)=>({requestId:crypto.randomUUID(),kind,outcomeId,sourceAgentId:owner.id,sourceRequestEntryId:ref.request,sourceContextEntryId:ref.request,revisionEntryId:ref.request,focusCycle:0,text:kind==='decision'?'Choose a validation environment.':'Source inspection is complete; preparation continues.'});
@@ -109,9 +110,33 @@ try {
   const {chromium}=await import('playwright'),browser=await chromium.launch();
   try{const page=await browser.newPage({viewport:{width:1280,height:1000}});await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});await page.route('**/api/**',async route=>{const request=route.request(),url=new URL(request.url());if(url.pathname==='/api/version')return route.continue();if(request.method()!=='GET')return route.fulfill({json:[]});return route.fulfill({response:await page.request.get(base+url.pathname+url.search,{headers:request.headers()})});});await page.goto(`${process.env.TEST_URL}/?agent=${focus.id}`);await page.locator(`[data-entry="${freshReceipt.entryId}"]`).waitFor();assert.equal(await page.locator(`[data-entry="${receipt.entryId}"]`).count(),1);if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});}finally{await browser.close();}
  }
- await stop();daemon=start();await healthy();assert.deepEqual((await call(duplicate)).structuredContent,receipt,'Visible publication receipts survive restart');
+ await stop();runtimeBinary=process.env.TEST_DAEMON;daemon=start();await healthy();assert.deepEqual((await call(duplicate)).structuredContent,receipt,'Visible publication receipts survive restart');
  assert.equal((await visible()).length,1);
  const before=focusTurns().length;await api('/api/say',{agent:focus.id,text:'Answer this new direct request.'});await until(()=>focusTurns().length>before,'Direct replies must remain available after stop');
+ // The same task now tracks an independent request; classify a result already shown.
+ const finishedTask=(await api('/api/tasks')).find(t=>t.id===task.id);
+ await api(`/api/tasks/${task.id}`,{...finishedTask,status:'done',note:'The earlier deliverable is prepared.'},'PUT');
+ await api('/api/say',{agent:second.agent.id,text:'Audit an independent evidence category.'});
+ const audit=(await detail(second.agent.id)).timeline.filter(e=>e.kind==='you').at(-1).id;
+ await api(`/api/tasks/${task.id}`,{...finishedTask,status:'incomplete',note:'Track the independently requested audit.'},'PUT');
+ const sourceRead=(await call({agentId:second.agent.id,limit:5},'read_conversation')).structuredContent;
+ const reopen=sourceRead.taskReopens.find(t=>t.taskId===task.id).entryId;
+ finish(focusThread,'completed',true,'The independent deliverable was already shown.');
+ await until(async()=>(await detail(focus.id)).timeline.some(e=>e.text==='The independent deliverable was already shown.'),'Visible result missing');
+ const existing=(await detail(focus.id)).timeline.find(e=>e.text==='The independent deliverable was already shown.').id;
+ await api('/api/say',{agent:focus.id,text:'Reconcile the previously delivered independent result.'});
+ await until(()=>JSON.stringify(focusTurns().at(-1)?.input).includes('Reconcile the previously delivered independent result.')&&sessions.get(focusThread)?.turn.status==='inProgress','Focus reconciliation did not start');
+ const cycle=(await detail(focus.id)).timeline.filter(e=>e.kind==='you').at(-1).id;
+ const classification={...completed,requestId:crypto.randomUUID(),outcomeId:'independent-delivery',sourceContextEntryId:audit,focusCycle:cycle,text:'',existingEntryId:existing};
+ const unscoped=await call(classification);assert.equal(unscoped.isError,true,'Unscoped reopening remains conservative');assert.ok(unscoped.structuredContent.error.includes('result entries'),JSON.stringify(unscoped));
+ classification.taskReopenScope={entryId:reopen,revisionEntryId:audit,outcomeIds:['independent-audit']};
+ const count=(await detail(focus.id)).timeline.filter(e=>e.kind==='said').length;
+ const classified=await call(classification);assert.equal(classified.isError,false,JSON.stringify(classified));assert.equal(classified.structuredContent.entryId,existing);
+ assert.equal((await detail(focus.id)).timeline.filter(e=>e.kind==='said').length,count,'Classification cannot send the visible result again');
+ const scopedSource=(await call({agentId:second.agent.id,limit:5},'read_conversation')).structuredContent;
+ assert.deepEqual(scopedSource.taskReopens.find(t=>t.taskId===task.id).scope.outcomeIds,['independent-audit']);
+ await stop();daemon=start();await healthy();assert.deepEqual((await call(classification)).structuredContent,classified.structuredContent,'Scoped classification receipt survives restart');
+ assert.equal((await api('/api/tasks')).find(t=>t.id===task.id).status,'incomplete','Independent audit is neither closed nor approved');
  await api('/api/interrupt',{agent:focus.id});
  console.log('Authenticated native publication delivered one relevant completion despite two unrelated progress updates and two pending decisions; duplicate/restart receipts, new revisions, task reopen evidence, stop, direct replies and unchanged approval state pass.');
 }finally{await stop();for(const socket of rpc.clients)socket.terminate();await new Promise(done=>rpc.close(done));await new Promise(done=>transport.close(done));await rm(root,{recursive:true,force:true});}
