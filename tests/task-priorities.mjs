@@ -185,6 +185,22 @@ try {
  const beforeTasks=await api('/api/tasks');
  const reviewReceipt=(await mcp('prioritize_tasks',mixed)).structuredContent;assert.deepEqual(reviewReceipt.reviewIds,[firstReview.id,secondReview.id]);
  assert.equal((await api('/api/tasks')).length,beforeTasks.length,'Reviews never create wrapper tasks');
+ const scopedReview=await browser.newPage();
+ await scopedReview.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');sessionStorage.setItem('oxroute.windowTasks','true');});
+ await scopedReview.goto(`${base}/?view=focus`);
+ const scopedPanel=scopedReview.locator('[data-task-panel]');
+ await scopedPanel.getByText(secondReview.title,{exact:true}).waitFor();
+ await scopedReview.setViewportSize({width:390,height:850});
+ const decisionBox=await scopedPanel.boundingBox();assert.ok(decisionBox.x>=0&&decisionBox.x+decisionBox.width<=390,'Default-width decisions fit a narrow viewport');
+ assert.equal(await scopedPanel.getByRole('button',{name:'Only open conversations',exact:true}).getAttribute('aria-pressed'),'false','Cross-thread decisions are independent of window-scoped task defaults');
+ entry('you','Check progress on a separate outcome.',focus.id);await scopedReview.reload();await scopedPanel.getByText(secondReview.title,{exact:true}).waitFor();
+ await scopedPanel.getByRole('button',{name:'Only open conversations',exact:true}).click();
+ assert.equal(await scopedPanel.getByText(secondReview.title,{exact:true}).count(),0,'Explicit decision scope remains available');
+ await scopedPanel.getByText('No decisions for open conversations.',{exact:true}).waitFor();
+ await scopedPanel.getByRole('button',{name:'All tasks',exact:true}).click();
+ assert.equal(await scopedPanel.getByRole('button',{name:'Only open conversations',exact:true}).getAttribute('aria-pressed'),'true','Task scope is preserved independently');
+ await scopedReview.close();
+
  await page.goto(`${base}/?view=focus`);await panel.getByText(firstReview.title,{exact:true}).waitFor();
  assert.deepEqual(await panel.locator('[data-task-open]').allInnerTexts(),[firstReview.title,secondReview.title,'Choose the execution plan'],'Task-backed and taskless representations share one review identity');
  const tabCount=await page.getByRole('tab').count();

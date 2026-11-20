@@ -412,7 +412,7 @@ export const TaskPanel = memo(function TaskPanel({
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {(decisions ? decisionItems.length : rows.length) === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
-            {decisions ? query.trim() ? "No matching decisions." : reviewingDecisions ? "Checking updated decision evidence. Agents continue their work." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
+            {decisions ? query.trim() ? "No matching decisions." : scope ? "No decisions for open conversations." : reviewingDecisions ? "Checking updated decision evidence. Agents continue their work." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
           {!decisions && linked && <div className="border-b border-rule bg-paper p-4">

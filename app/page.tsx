@@ -240,6 +240,8 @@ export default function Home() {
     try { const saved = sessionStorage.getItem("oxroute.windowTasks"); return saved === null ? null : saved === "true"; } catch { return null; }
   });
   const windowTasks = windowTaskOverride ?? scopedTasks === "on";
+  const [windowDecisions,setWindowDecisions]=useState(()=>{try{return sessionStorage.getItem("oxroute.windowDecisions")==="true";}catch{return false;}});
+  const windowScope=decisionQueue?windowDecisions:windowTasks;
   const setWindowTasks = useCallback((enabled: boolean) => {
     setWindowTaskOverride(enabled);
     sessionStorage.setItem("oxroute.windowTasks", String(enabled));
@@ -996,14 +998,14 @@ export default function Home() {
     quote: (quote: DiffQuote) => {receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);},
   } : null, [focusOpen, focusAgentId, reviewOwnerKey]);
   const taskSearch = taskQuery.trim().toLowerCase();
-  const scopeIds = windowTasks ? [...new Set([...tabIds.flatMap(id => {
+  const scopeIds = windowScope ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
     const saved = readPanes(id);
     return saved ? paneIds(saved) : linkedPanes(id, snapshot.paneLinks);
   }), ...panes].flatMap(id => (id.startsWith("terminal_") || id.startsWith("browser_")) ? [...terminals, ...browsers].flatMap(pane => pane.id === id && pane.agentId ? [pane.agentId] : []) : [id]))].filter(id => taskNames.has(id)).sort() : undefined;
   const taskScopeKey = JSON.stringify(scopeIds ?? null);
   const taskScope = useMemo(() => JSON.parse(taskScopeKey) as string[] | null, [taskScopeKey]) ?? undefined;
-  useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
+  useEffect(() => { if (windowScope) setTaskAt(0); }, [taskScopeKey, windowScope]);
   const tasks = useMemo(() => {
     const scoped = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
     const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch)));
@@ -1011,7 +1013,7 @@ export default function Home() {
   }, [taskItems, taskScope, taskSearch, taskNames, decisionQueue, taskPriorities]);
   const decisionItems=useMemo(()=>focusDecisions(taskItems,taskPriorities,reviewPriorities).filter(item=>(!taskScope||taskScope.includes(item.agentId))&&(!taskSearch||`${item.title} ${item.state.recommendation?.humanReason} ${item.state.recommendation?.unblocks} ${taskNames.get(item.agentId)??""}`.toLowerCase().includes(taskSearch))),[taskItems,taskPriorities,reviewPriorities,taskScope,taskSearch,taskNames]);
   useEffect(()=>{if(decisionId&&decisionItems.length&&!decisionItems.some(item=>item.id===decisionId))chooseDecision(decisionItems[0].id);},[decisionId,decisionItems,chooseDecision]);
-  const scopeTasks = useCallback(() => { setWindowTasks(!windowTasks); setTaskAt(0); }, [windowTasks, setWindowTasks]);
+  const scopeTasks = useCallback(() => { if(decisionQueue){setWindowDecisions(!windowDecisions);sessionStorage.setItem("oxroute.windowDecisions",String(!windowDecisions));}else setWindowTasks(!windowTasks);setTaskAt(0); }, [decisionQueue,windowDecisions,windowTasks,setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
   const taskActions = useMemo(() => ({
@@ -1755,7 +1757,7 @@ export default function Home() {
             >
               <span className="absolute inset-y-0 -left-[4px] w-[8px]" />
             </div>
-            <div data-task-pane className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: taskWidth }}>
+            <div data-task-pane className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: taskWidth, maxWidth: "100vw" }}>
           <TaskPanel
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
