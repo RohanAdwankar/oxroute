@@ -67,8 +67,8 @@ export function taskRows(tasks: TaskItem[]): TaskRow[] {
   return (children.get("") ?? []).flatMap(task => branch(task));
 }
 
-/** Status alone never establishes a user obligation. Legacy advice stays in tracking. */
+/** Context review does not resolve a verified obligation; changed task facts withdraw it. */
 export function humanDecision(state: NonNullable<Snapshot["taskPriorities"]>[string] | undefined): boolean {
   const advice = state?.recommendation;
-  return !!state && !state.stale && !state.needsReview && advice?.nextActor === "human" && !!advice.humanReason?.trim() && !!advice.unblocks?.trim();
+  return !!state && !state.stale && advice?.nextActor === "human" && !!advice.humanReason?.trim() && !!advice.unblocks?.trim();
 }

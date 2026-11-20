@@ -3655,7 +3655,6 @@ impl Hub {
             None => 0,
         };
         tasks.insert(to, moving);
-        self.store.clear_stale_task_priorities()?;
         // Renumbering the whole list keeps the positions plain integers, and
         // the list is short enough that saving it is not worth avoiding.
         for (at, task) in tasks.iter_mut().enumerate() {

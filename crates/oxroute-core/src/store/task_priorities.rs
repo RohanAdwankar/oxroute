@@ -86,13 +86,6 @@ impl Store {
             "staleTaskIds":states.iter().filter(|(_,state)|state.stale).map(|(id,_)|id).collect::<Vec<_>>()}))
     }
 
-    pub fn clear_stale_task_priorities(&self)->Result<()> {
-        self.with(|c| {
-            for (id,state) in states(c,false)? {if state.stale {c.execute("DELETE FROM task_priorities WHERE task_id=?1",[id])?;}}
-            Ok(())
-        })
-    }
-
     /// Advice and order commit together; a retry never overwrites a newer manual move.
     pub fn prioritize_tasks(&self,focus:&str,order:&TaskPriorityOrder)->Result<Value> {
         uuid::Uuid::parse_str(&order.request_id)?;

@@ -1752,6 +1752,7 @@ export default function Home() {
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
             decisions={decisionQueue}
+            reviewingDecisions={Object.values(taskPriorities ?? {}).some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}
             scope={taskScope}

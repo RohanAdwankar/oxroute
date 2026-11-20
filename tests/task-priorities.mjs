@@ -118,12 +118,37 @@ try {
  const unrelated=await api('/api/focus/task-priorities');
  assert.equal(unrelated.review.changed,true);assert.equal(unrelated.priorities[unblocker.id].stale,false,'Unrelated Focus input does not erase outcome-linked next action');
  assert.equal((await api('/api/tasks'))[0].id,trivial.id,'Unrelated input preserves manual order and valid priorities');
+ await page.goto(`${base}/?view=focus`);
+ await panel.getByText('Choose the available environment',{exact:true}).waitFor({timeout:3000});
+ assert.equal(await panel.getByText('No verified decision queued. Agents continue their work.',{exact:true}).count(),0,'An unrelated conversation message cannot erase an existing decision');
+ const independent=await task('Choose execution region');
+ const pairState=await api('/api/focus/task-priorities');
+ await mcp('prioritize_tasks',{requestId:crypto.randomUUID(),focusContextEntryId:pairState.review.focusContextEntryId,items:[{...order.items[1],basis:pairState.priorities[unblocker.id].basis},{...order.items[1],taskId:independent.id,basis:pairState.priorities[independent.id].basis,nextAction:'Select the permitted region'}]});
+ entry('you','One independent choice is complete; keep the separate request pending.',focus.id);
+ await api(`/api/tasks/${independent.id}`,{...independent,status:'complete',approved:true,note:'Fixture human completed this independent choice.'},'PUT');
+ await page.reload();await panel.getByText('Choose the available environment',{exact:true}).waitFor();
+ assert.equal(await panel.getByText('Select the permitted region',{exact:true}).count(),0,'Completing one human choice must not restore it or erase another pending decision');
+ const onlyState=await api('/api/focus/task-priorities');
+ const onlyDecision={requestId:crypto.randomUUID(),focusContextEntryId:onlyState.review.focusContextEntryId,items:[{...order.items[1],basis:onlyState.priorities[unblocker.id].basis}]};
+ await mcp('prioritize_tasks',onlyDecision);
+
  assert.equal((await mcp('prioritize_tasks',{...order,requestId:crypto.randomUUID()})).isError,true,'New order requires reconciliation with fresh Focus human context');
  entry('you','The environment choice is complete. Revalidate the selected service.');
  const sourceAdvanced=await api('/api/focus/task-priorities');
  assert.equal(sourceAdvanced.priorities[unblocker.id].needsReview,true);assert.equal(sourceAdvanced.priorities[unblocker.id].stale,false,'Advanced conversation context requests reconciliation without silently canceling an outcome');
+ await page.reload();await panel.getByText('Choose the available environment',{exact:true}).waitFor();
+ await panel.getByText('Checking latest context',{exact:false}).waitFor();
+
  await api(`/api/tasks/${unblocker.id}/notes`,{text:'The human prerequisite is complete; agent verification is next.',agentId:owner.id});
  const stale=await api('/api/focus/task-priorities');assert.equal(stale.review.changed,true,'Changed evidence requests fresh Focus judgment');assert.equal(stale.priorities[unblocker.id].stale,true,'New actual human/source evidence withdraws old action');assert.equal(stale.priorities[unblocker.id].recommendation,null);
+ await page.reload();await panel.getByText('Checking updated decision evidence. Agents continue their work.',{exact:true}).waitFor();
+ assert.equal(await panel.getByText('Choose the available environment',{exact:true}).count(),0,'Changed task facts withdraw the old action without claiming all decisions resolved');
+ await api(`/api/tasks/${trivial.id}/move`,{after:null});
+ assert.equal((await api('/api/focus/task-priorities')).priorities[unblocker.id].stale,true,'Manual movement is not a resolution of pending decision evidence');
+ await page.reload();await panel.getByText('Checking updated decision evidence. Agents continue their work.',{exact:true}).waitFor();
+
+ await page.goto(`${base}/?agent=${owner.id}`);
+
  const rejected=await mcp('prioritize_tasks',{...order,requestId:crypto.randomUUID()});assert.equal(rejected.isError,true,'Stale evidence cannot restore an obsolete human obligation');
  const fresh={requestId:crypto.randomUUID(),focusContextEntryId:stale.review.focusContextEntryId,items:[{...order.items[1],basis:stale.priorities[unblocker.id].basis,nextActor:'agent',nextAction:'Revalidate the selected service',reason:'Human prerequisite completed',evidenceEntryIds:[entry('said','The selected environment is available for verification.')]}]};
  // The fresh result advances the source head, so read its new basis before applying.

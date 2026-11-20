@@ -131,6 +131,7 @@ export const TaskPanel = memo(function TaskPanel({
   rows,
   priorities,
   decisions = false,
+  reviewingDecisions = false,
   onDecisions,
   query,
   scope,
@@ -160,6 +161,7 @@ export const TaskPanel = memo(function TaskPanel({
   onScope: () => void;
   priorities?: Snapshot["taskPriorities"];
   decisions?: boolean;
+  reviewingDecisions?: boolean;
   onDecisions?: () => void;
   onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
@@ -262,7 +264,7 @@ export const TaskPanel = memo(function TaskPanel({
         </button>
       )}
       {advice && <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={advice.reason}>
-        {decisions ? <>{advice.humanReason}{" · "}Unblocks {advice.unblocks}</> : <><span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}</>}
+        {decisions ? <>{advice.humanReason}{" · "}Unblocks {advice.unblocks}{priorities?.[task.id]?.needsReview && <> · Checking latest context</>}</> : <><span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}</>}
       </p>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -406,7 +408,7 @@ export const TaskPanel = memo(function TaskPanel({
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
-            {decisions ? query.trim() ? "No matching decisions." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
+            {decisions ? query.trim() ? "No matching decisions." : reviewingDecisions ? "Checking updated decision evidence. Agents continue their work." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">
