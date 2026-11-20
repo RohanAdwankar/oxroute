@@ -117,10 +117,17 @@ try {
  const finishedTask=(await api('/api/tasks')).find(t=>t.id===task.id);
  await api(`/api/tasks/${task.id}`,{...finishedTask,status:'done',note:'The earlier deliverable is prepared.'},'PUT');
  await api('/api/say',{agent:second.agent.id,text:'Audit an independent evidence category.'});
+ await until(()=>sessions.get(second.thread)?.turn.status==='inProgress'&&JSON.stringify(turns.filter(t=>t.threadId===second.thread).at(-1)?.input).includes('Audit an independent evidence category.'),'Source audit turn did not start');
  const audit=(await detail(second.agent.id)).timeline.filter(e=>e.kind==='you').at(-1).id;
  await api(`/api/tasks/${task.id}`,{...finishedTask,status:'incomplete',note:'Track the independently requested audit.'},'PUT');
  const sourceRead=(await call({agentId:second.agent.id,limit:5},'read_conversation')).structuredContent;
  const reopen=sourceRead.taskReopens.find(t=>t.taskId===task.id).entryId;
+ const toolResult={id:'recorded-inspection',type:'commandExecution',command:'node --version',aggregatedOutput:process.version,exitCode:0,status:'completed'};
+ send(sessions.get(second.thread).socket,'item/completed',{threadId:second.thread,item:toolResult});
+ await until(async()=>(await detail(second.agent.id)).timeline.some(e=>e.kind==='worked'&&e.detail===toolResult.command),'Recorded tool result was not retained');
+ const toolEvidence=(await detail(second.agent.id)).timeline.find(e=>e.kind==='worked'&&e.detail===toolResult.command).id;
+ const recorded=(await call({agentId:second.agent.id,limit:10},'read_conversation')).structuredContent.entries.find(e=>e.id===toolEvidence);assert.equal(recorded.output,process.version);
+
  finish(focusThread,'completed',true,'The independent deliverable was already shown.');
  await until(async()=>(await detail(focus.id)).timeline.some(e=>e.text==='The independent deliverable was already shown.'),'Visible result missing');
  const existing=(await detail(focus.id)).timeline.find(e=>e.text==='The independent deliverable was already shown.').id;
@@ -130,6 +137,7 @@ try {
  const classification={...completed,requestId:crypto.randomUUID(),outcomeId:'independent-delivery',sourceContextEntryId:audit,focusCycle:cycle,text:'',existingEntryId:existing};
  const unscoped=await call(classification);assert.equal(unscoped.isError,true,'Unscoped reopening remains conservative');assert.ok(unscoped.structuredContent.error.includes('result entries'),JSON.stringify(unscoped));
  classification.taskReopenScope={entryId:reopen,revisionEntryId:audit,outcomeIds:['independent-audit']};
+ classification.evidenceEntryIds=[...classification.evidenceEntryIds,toolEvidence];
  const count=(await detail(focus.id)).timeline.filter(e=>e.kind==='said').length;
  const classified=await call(classification);assert.equal(classified.isError,false,JSON.stringify(classified));assert.equal(classified.structuredContent.entryId,existing);
  assert.equal((await detail(focus.id)).timeline.filter(e=>e.kind==='said').length,count,'Classification cannot send the visible result again');

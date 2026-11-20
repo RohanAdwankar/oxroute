@@ -76,7 +76,7 @@ impl Store {
                 anyhow::ensure!(matches!(u.qualification.as_str(),"prepared"|"validated"|"live"),"qualify completion as prepared, validated or live");
                 anyhow::ensure!(!u.evidence_entry_ids.is_empty(),"completion needs cited result evidence");
                 for id in &u.evidence_entry_ids {
-                    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND agent_id=?2 AND id>?3 AND kind='said' AND trim(text)!='')",params![id,u.source_agent_id,u.source_request_entry_id.max(u.revision_entry_id).max(reopened)],|r|r.get(0))?;
+                    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND agent_id=?2 AND id>?3 AND ((kind='said' AND trim(text)!='') OR (kind='worked' AND trim(detail)!='' AND trim(output)!='')))",params![id,u.source_agent_id,u.source_request_entry_id.max(u.revision_entry_id).max(reopened)],|r|r.get(0))?;
                     anyhow::ensure!(valid,"cite actual source result entries after the current request or reopen");
                 }
             } else {anyhow::ensure!(u.qualification.is_empty(),"qualification only applies to completion");}
@@ -294,6 +294,21 @@ mod tests {
         revised.evidence_entry_ids=vec![add(&store,"source",EntryKind::Said)];store.publish_focus_update("focus",&revised,now()).unwrap();
         assert_eq!(store.publish_focus_update("focus",&prior,now()).unwrap().0,prior_receipt,"Retries preserve original publication receipts");
         assert_eq!(store.tasks().unwrap()[0].status,TaskStatus::Incomplete);
+        drop(store);std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn focus_originated_requests_can_cite_recorded_tool_results() {
+        let (store,path)=fixture();let request=add(&store,"focus",EntryKind::You);
+        let output=store.add_work_entry("source",now(),"Inspection","Read artifact metadata","records=2","").unwrap().id;
+        let mut u=update("completion","source",0);u.focus_cycle=request;u.revision_entry_id=request;u.evidence_entry_ids=vec![output];
+        store.publish_focus_update("focus",&u,now()).unwrap();
+        let empty=store.add_work_entry("source",now(),"Inspection","Read artifact metadata","","").unwrap().id;
+        let foreign=store.add_work_entry("other",now(),"Inspection","Read artifact metadata","records=2","").unwrap().id;
+        let coordination=add(&store,"source",EntryKind::Coordination);
+        for evidence in [empty,foreign,coordination] {
+            let mut invalid=u.clone();invalid.request_id=uuid::Uuid::new_v4().to_string();invalid.outcome_id=format!("other-{evidence}");invalid.evidence_entry_ids=vec![evidence];
+            assert!(store.publish_focus_update("focus",&invalid,now()).is_err(),"Only recorded results from the cited source qualify");
+        }
         drop(store);std::fs::remove_file(path).unwrap();
     }
     #[test]
