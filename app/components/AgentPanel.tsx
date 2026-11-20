@@ -22,6 +22,7 @@ import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown, ReviewLinks, QuoteLinks } from "./Markdown";
+import {ConversationPublication} from "./FocusContext";
 import { QuoteDiscussion } from "./QuoteDiscussion";
 import { SplitAction } from "./SplitAction";
 import { CoordinationTitles } from "./FocusContext";
@@ -1373,7 +1374,7 @@ const Message = memo(function Message({
                   {entry.kind === "coordination" && entry.origin && <CoordinationSource origin={entry.origin} onOpen={onOpenAgent} />}
                 </span>
               )}
-              <Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} />
+              <ConversationPublication.Provider value={{before:entry.id,results:entry.sourceResults}}><Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} /></ConversationPublication.Provider>
               {delegated && <button type="button" onClick={() => onOpenAgent(entry.detail)}
                 aria-label="Open delegated conversation" title="Open delegated conversation"
                 className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-faint hover:text-ink">

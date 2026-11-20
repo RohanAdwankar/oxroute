@@ -41,6 +41,15 @@ impl Store {
         })
     }
 
+    /// Resolve narrative evidence by publication identity, never by the latest reply.
+    pub fn focus_publication_sources(&self,entry:i64)->Result<HashMap<String,i64>> {
+        self.read(|c| {
+            let mut q=c.prepare("SELECT e.agent_id,MAX(e.id) FROM focus_updates u JOIN json_each(u.payload,'$.evidenceEntryIds') evidence JOIN entries e ON e.id=evidence.value AND e.agent_id=u.source_agent AND e.kind='said' WHERE u.entry_id=?1 GROUP BY e.agent_id")?;
+            let rows=q.query_map([entry],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            Ok(rows)
+        })
+    }
+
     pub fn focus_update_receipt(&self, focus: &str, update: &FocusUpdate) -> Result<Option<Value>> {
         let payload=serde_json::to_string(update)?;
         self.read(|c| receipt(c,focus,&update.request_id,&payload))

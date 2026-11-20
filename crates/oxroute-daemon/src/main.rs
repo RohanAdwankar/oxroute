@@ -420,9 +420,13 @@ async fn agent(
     if has_earlier { timeline.remove(0); }
     let timeline = timeline.into_iter().map(|(entry, deferred)| {
         let mut value = json!(entry);
+        if entry.kind==oxroute_core::model::EntryKind::Said {
+            let sources=hub.store.focus_publication_sources(entry.id)?;
+            if !sources.is_empty(){value["sourceResults"]=json!(sources);}
+        }
         if deferred { value["outputDeferred"] = json!(true); }
-        value
-    }).collect::<Vec<_>>();
+        Ok(value)
+    }).collect::<anyhow::Result<Vec<_>>>()?;
     Ok(([(header::VARY, "x-oxroute-compact")], Json(json!({
         "agent": agent,
         "timeline": timeline,

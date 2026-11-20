@@ -89,6 +89,7 @@ export interface InboxItem {
 }
 
 export interface Entry {
+  sourceResults?: Record<string,number>;
   requestId?: string;
   id: number;
   agentId: string;

@@ -78,6 +78,7 @@ try {
  const delivered=await call(completed);assert.equal(delivered.isError,false);const receipt=delivered.structuredContent;
  const visible=async()=>(await detail(focus.id)).timeline.filter(entry=>entry.id===receipt.entryId);
  assert.equal((await visible()).length,1);assert.ok((await visible())[0].text.startsWith('Prepared:'));
+ assert.deepEqual((await visible())[0].sourceResults,{[second.agent.id]:secondEvidence.result},'Publication cards cite their original narrative result');
  assert.equal((await api('/api/tasks')).find(t=>t.id===task.id).status,'done','Completion does not approve tracked work');
  const duplicate={...completed,requestId:crypto.randomUUID()};assert.deepEqual((await call(duplicate)).structuredContent,receipt);
  finish(focusThread,'completed',true,'');await until(()=>focusTurns().length===2,'Queued event check did not run');
@@ -97,6 +98,8 @@ try {
  await writeFile(join(root,'revised-result.txt'),'Representative revised artifact.\n');finish(second.thread,'completed',true,'The revised artifact and its supporting evidence are prepared; review remains outstanding.');await until(async()=>(await detail(second.agent.id)).agent.status==='complete','Reopened result did not settle');
  const refreshed=await evidence(second.agent.id),newCompletion={...completed,requestId:crypto.randomUUID(),evidenceEntryIds:[refreshed.result],text:'The revised artifact is prepared from the new requirements. Review remains outstanding.'};
  const freshReceipt=(await call(newCompletion)).structuredContent;assert.ok(freshReceipt&&freshReceipt.entryId!==receipt.entryId,'Fresh result evidence permits a new revision');
+ assert.deepEqual((await visible())[0].sourceResults,{[second.agent.id]:secondEvidence.result},'Later publications never rewrite historical source grounding');
+ assert.deepEqual((await detail(focus.id)).timeline.find(entry=>entry.id===freshReceipt.entryId).sourceResults,{[second.agent.id]:refreshed.result});
  assert.equal((await api('/api/tasks')).find(t=>t.id===task.id).status,'incomplete','Publishing never closes a reopened task');
  await api('/api/say',{agent:second.agent.id,text:'Use the corrected source requirements.'});await until(async()=>(await detail(second.agent.id)).agent.status==='working','New source correction did not start');
  assert.equal((await call({...newCompletion,requestId:crypto.randomUUID()})).isError,true,'A newer source request supersedes the old completion');

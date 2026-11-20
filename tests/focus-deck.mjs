@@ -14,6 +14,7 @@ const listen=server=>new Promise(done=>server.listen(0,'127.0.0.1',()=>done(serv
 const pause=ms=>new Promise(done=>setTimeout(done,ms));
 const until=async check=>{for(let i=0;i<160;i++){if(await check())return;await pause(75);}assert.fail('Expected runtime state did not arrive');};
 const rpcHttp=createServer(),rpc=new WebSocketServer({server:rpcHttp}),rpcPort=await listen(rpcHttp);
+let workerReply='**Validation is ready.** The current result and evidence can be reviewed here.';
 let serial=0,interrupts=0,focusMode=false,focusThread='',reviewId='';const workerIds=[],turns=[];
 rpc.on('connection',socket=>socket.on('message',raw=>{
  const {id,method,params={}}=JSON.parse(raw);if(id===undefined)return;
@@ -24,7 +25,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  if(method==='turn/start'){
   const turn={id:`turn-${++serial}`,status:'completed'};result={turn};
   if(focusMode&&!focusThread&&!params.outputSchema)focusThread=params.threadId;
-  const text=params.outputSchema?JSON.stringify({actions:[],title:'Focus',tags:[]}):params.threadId===focusThread?`Start with **[Conversation 1](#agent/${workerIds[0]})**, then compare the alternatives.\n\n[Conversation 2](#agent/${workerIds[1]})\n\n- [Conversation 3](#agent/${workerIds[2]})\n\nThe comparison is ready; choose the next action after reading the evidence.\n\n[Inspect the network change](#review/${reviewId})`:'**Validation is ready.** The current result and evidence can be reviewed here.';
+  const text=params.outputSchema?JSON.stringify({actions:[],title:'Focus',tags:[]}):params.threadId===focusThread?`Start with **[Conversation 1](#agent/${workerIds[0]})**, then compare the alternatives.\n\n[Conversation 2](#agent/${workerIds[1]})\n\n- [Conversation 3](#agent/${workerIds[2]})\n\nThe comparison is ready; choose the next action after reading the evidence.\n\n[Inspect the network change](#review/${reviewId})`:workerReply;
   if(!params.outputSchema)turns.push(params);
   setTimeout(()=>{for(const [method,extra]of[['turn/started',{turn}],['item/completed',{item:{id:`message-${turn.id}`,type:'agentMessage',text,phase:'final_answer'}}],['turn/completed',{turn}]])if(socket.readyState===1)socket.send(JSON.stringify({method,params:{threadId:params.threadId,...extra}}));},20);
  }
@@ -84,6 +85,17 @@ try{
  const card=id=>deck.locator(`[data-focus-conversation="${id}"]`);
  await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor();
  assert.equal(await deck.locator('[data-focus-conversation]').count(),1,'Only the selected card is interactive');
+ const original=(await api(`/api/agents/${workerIds[0]}`)).timeline.findLast(entry=>entry.kind==='said');
+ workerReply='A separate later result supersedes the current conversation preview.';
+ await api('/api/say',{agent:workerIds[0],text:'Investigate a separate authorized follow-up'});
+ await until(async()=>(await api(`/api/agents/${workerIds[0]}`)).timeline.some(entry=>entry.kind==='said'&&entry.text===workerReply));
+ await page.reload();await deck.waitFor();
+ await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor({timeout:5000});
+ assert.equal(await card(workerIds[0]).getByText(workerReply,{exact:true}).count(),0,'Historical publications cannot drift to later source results');
+ assert.ok(original.id<Number(await entry.getAttribute('data-entry')));
+ assert.equal(await card(workerIds[0]).getByRole('link',{name:names[0],exact:true}).getAttribute('href'),`#agent/${workerIds[0]}`,'Historical results retain source navigation');
+ if(process.env.HISTORY_SCREENSHOT){for(const width of[1280,390]){await page.setViewportSize({width,height:850});await card(workerIds[0]).screenshot({path:`${process.env.HISTORY_SCREENSHOT}-${width}.png`});}await page.setViewportSize({width:1280,height:1000});}
+
  const reply=card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true});
  assert.ok((await reply.boundingBox()).height<40,'The empty inline reply uses one compact line');
  if(process.env.PLACEMENT_SCREENSHOT){

@@ -10,3 +10,6 @@ export const ConversationReferences=createContext<string|null>(null);
 
 // Titles update independently of live activity; IDs remain navigation keys.
 export const CoordinationTitles=createContext<ReadonlyMap<string,string>>(new Map());
+
+// Historical cards retain the publication boundary and cited narrative result.
+export const ConversationPublication=createContext<null|{before:number;results?:Record<string,number>}>(null);
