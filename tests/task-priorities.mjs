@@ -32,19 +32,20 @@ try {
  const evidence=entry('you','Prioritize important delivery and concrete unblockers.');
  const task=async(text,status='waiting_for_human',blocker='')=>{const t=await api('/api/tasks',{text});return api(`/api/tasks/${t.id}`,{...t,agentId:owner.id,status,blockedByTaskId:blocker,note:'Source-grounded next action retained.'},'PUT');};
  const trivial=await task('Refine chart labels'), published=await task('Inspect published output','done');
- const urgent=await task('Review release readiness'), unblocker=await task('Choose validation environment');
+ const urgent=await task('Review release readiness'), unblocker=await task('Choose validation environment','incomplete');
  const other=await task('Await upstream package','blocked',urgent.id);
  const closed=await task('Archive finished outcome');
  await api(`/api/tasks/${closed.id}`,{...closed,status:'complete',note:'Fixture human approval.',approved:true},'PUT');
  const state=await api('/api/focus/task-priorities');
- const priority=(t,nextAction,reason,urgency,impact,effort,nextActor='human')=>({taskId:t.id,basis:state.priorities[t.id].basis,nextAction,reason,urgency,impact,effort,nextActor,evidenceEntryIds:[evidence]});
+ const priority=(t,nextAction,reason,urgency,impact,effort,nextActor='human')=>({taskId:t.id,basis:state.priorities[t.id].basis,nextAction,reason,urgency,impact,effort,nextActor,...(nextActor==='human'?{humanReason:'The user owns this choice.',unblocks:'The selected delivery path.'}:{}),evidenceEntryIds:[evidence]});
  const order={requestId:crypto.randomUUID(),focusContextEntryId:state.review.focusContextEntryId,items:[
-  {...priority(urgent,'Inspect release evidence','Delivery deadline today','urgent','substantial','substantial'),deadlineAt:Date.now()/1000+3600},
+  {...priority(urgent,'Choose release window','Delivery deadline today','urgent','substantial','substantial'),deadlineAt:Date.now()/1000+3600},
   priority(unblocker,'Choose the available environment','Unblocks recording and validation','normal','substantial','small'),
   priority(trivial,'Inspect chart wording','Presentation cleanup can wait','normal','routine','small'),
   priority(other,'Wait for upstream delivery','External dependency remains','normal','substantial','substantial','other')
  ]};
  const response=await fetch(native+'/api/focus/task-priorities',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:owner.id,...order})});assert.equal(response.ok,false,'Workers cannot reprioritize shared work');
+ const missingReason=await fetch(native+'/api/focus/task-priorities',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({agentId:focus.id,...order,requestId:crypto.randomUUID(),items:[{...order.items[0],humanReason:''}]})});assert.equal(missingReason.ok,false,'A status or generic review label cannot substitute for why human input is required');
  const receipt=await api('/api/focus/task-priorities',{agentId:focus.id,...order},'PUT');
  assert.equal((await api('/api/focus/task-priorities')).review.changed,false,'Applied review revision is durable');
  const current=await api('/api/tasks');assert.deepEqual(current.slice(0,4).map(t=>t.id),order.items.map(t=>t.taskId),'Contextual order beats insertion/status/recency: urgent substantial, small high-impact, trivial, waiting others');
@@ -57,7 +58,7 @@ try {
   await page.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');localStorage.setItem('oxroute.taskWidth','320');sessionStorage.setItem('oxroute.windowTasks','false');});
   await page.goto(`${base}/?agent=${owner.id}`);return page;};
  let page=await open(),panel=page.locator('[data-task-panel]'),rows=panel.locator('[data-task-row]');
- await panel.getByText('You: Inspect release evidence',{exact:false}).waitFor();
+ await panel.getByText('You: Choose release window',{exact:false}).waitFor();
  assert.equal(await rows.first().locator('[data-task-open]').innerText(),urgent.text);
  assert.equal(await panel.getByText(closed.text,{exact:true}).count(),0);
  for(const width of [1280,390]){
@@ -69,6 +70,41 @@ try {
   }
   if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT.replace('.png',`-${width}.png`)});
  }
+ // Focus is a maintained decision queue; ordinary task tracking remains intact.
+ const decisions=await browser.newPage({viewport:{width:1280,height:850}});
+ await decisions.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');localStorage.setItem('oxroute.taskWidth','320');sessionStorage.setItem('oxroute.windowTasks','false');});
+ await decisions.goto(`${base}/?view=focus`);
+ const queue=decisions.locator('[data-task-panel]');
+ await queue.getByRole('button',{name:'All tasks',exact:true}).waitFor();
+ await queue.getByText('Choose release window',{exact:true}).waitFor();
+ assert.deepEqual(await queue.locator('[data-task-open]').allInnerTexts(),order.items.filter(i=>i.nextActor==='human').map(i=>i.nextAction),'Only current human decisions occupy the primary queue');
+ assert.equal(await queue.getByText(published.text,{exact:true}).count(),0,'Done status alone does not imply a decision');
+ assert.equal(await queue.getByText(other.text,{exact:true}).count(),0,'Waiting on others is tracking context');
+ for(const width of [1280,390]){
+  await decisions.setViewportSize({width,height:850});
+  const row=queue.locator('[data-task-row]').first();
+  await row.getByText('The user owns this choice.',{exact:false}).waitFor();
+  assert.ok((await row.innerText()).includes('Unblocks The selected delivery path.'));
+  const box=await row.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
+  if(process.env.DECISION_SCREENSHOT)await decisions.screenshot({path:process.env.DECISION_SCREENSHOT.replace('.png',`-${width}.png`)});
+ }
+ await decisions.reload();await queue.getByText('Choose release window',{exact:true}).waitFor();
+ await queue.getByRole('button',{name:'All tasks',exact:true}).click();
+ await queue.getByText(published.text,{exact:true}).waitFor();
+ assert.ok(await queue.getByRole('combobox',{name:`status for ${published.text}`,exact:true}).isVisible(),'All status and approval controls remain accessible');
+ await queue.getByRole('button',{name:'All tasks',exact:true}).click();
+ const legacy=JSON.parse(db.prepare('SELECT details FROM task_priorities WHERE task_id=?').get(trivial.id).details);delete legacy.humanReason;delete legacy.unblocks;
+ db.prepare('UPDATE task_priorities SET details=? WHERE task_id=?').run(JSON.stringify(legacy),trivial.id);
+ await decisions.reload();await queue.getByText('Choose release window',{exact:true}).waitFor();
+ assert.equal(await queue.getByText('Inspect chart wording',{exact:true}).count(),0,'Legacy recommendations without a grounded human action never become decisions');
+ await api(`/api/tasks/${urgent.id}/notes`,{text:'A newer decision resolves this prerequisite; verification is now agent work.',agentId:owner.id});
+ await queue.getByText('Choose release window',{exact:true}).waitFor({state:'hidden'});
+ await decisions.reload();assert.equal(await queue.getByText('Choose release window',{exact:true}).count(),0,'Changed task evidence retires the old human action');
+ await decisions.close();
+ // Restore the actual fixture facts for independent manual-order checks below.
+ const rebased=await api('/api/focus/task-priorities');
+ const refreshed={...order,requestId:crypto.randomUUID(),items:order.items.map(item=>({...item,basis:rebased.priorities[item.taskId].basis}))};
+ await api('/api/focus/task-priorities',{agentId:focus.id,...refreshed},'PUT');
  await page.setViewportSize({width:1280,height:850});
  await panel.getByRole('searchbox').fill('environment');assert.equal(await panel.locator('[data-task-open]').count(),1);await panel.getByRole('searchbox').fill('');
  await panel.getByRole('button',{name:'Only open conversations',exact:true}).click();assert.ok(await panel.locator('[data-task-open]').count()>0);await panel.getByRole('button',{name:'Only open conversations',exact:true}).click();
@@ -76,8 +112,8 @@ try {
  assert.equal((await api('/api/tasks'))[0].id,trivial.id,'Existing manual movement remains effective');
  assert.deepEqual(await api('/api/focus/task-priorities',{agentId:focus.id,...order},'PUT'),receipt);assert.equal((await api('/api/tasks'))[0].id,trivial.id,'Retries do not overwrite newer manual order');
  await page.close();await stop();daemon=start();await healthy();
- assert.equal((await api('/api/tasks'))[0].id,trivial.id);assert.equal((await api('/api/state')).taskPriorities[urgent.id].recommendation.nextAction,'Inspect release evidence');
- page=await open();panel=page.locator('[data-task-panel]');rows=panel.locator('[data-task-row]');await panel.getByText('You: Inspect release evidence',{exact:false}).waitFor();assert.equal(await rows.first().locator('[data-task-open]').innerText(),trivial.text);
+ assert.equal((await api('/api/tasks'))[0].id,trivial.id);assert.equal((await api('/api/state')).taskPriorities[urgent.id].recommendation.nextAction,'Choose release window');
+ page=await open();panel=page.locator('[data-task-panel]');rows=panel.locator('[data-task-row]');await panel.getByText('You: Choose release window',{exact:false}).waitFor();assert.equal(await rows.first().locator('[data-task-open]').innerText(),trivial.text);
  entry('you','Inspect an unrelated contextual metric.',focus.id);
  const unrelated=await api('/api/focus/task-priorities');
  assert.equal(unrelated.review.changed,true);assert.equal(unrelated.priorities[unblocker.id].stale,false,'Unrelated Focus input does not erase outcome-linked next action');
@@ -94,12 +130,18 @@ try {
  fresh.items[0].basis=(await api('/api/focus/task-priorities')).priorities[unblocker.id].basis;
  assert.equal((await mcp('prioritize_tasks',fresh)).isError,false);
  await page.reload();await panel.getByText('Next: Revalidate the selected service',{exact:false}).waitFor();assert.equal(await panel.getByText('You: Choose the available environment',{exact:false}).count(),0);
- const preserved=(await api('/api/tasks')).find(t=>t.id===unblocker.id);assert.equal(preserved.agentId,owner.id);assert.equal(preserved.status,'waiting_for_human','Priority judgment does not silently change status or consent');
+ await page.goto(`${base}/?view=focus`);
+ await panel.getByText('No verified decision queued. Agents continue their work.',{exact:true}).waitFor();
+ assert.equal(await panel.locator('[data-task-row]').count(),0,'Agent verification cannot fill an empty human decision queue');
+ await panel.getByRole('button',{name:'All tasks',exact:true}).click();await panel.getByText('Next: Revalidate the selected service',{exact:false}).waitFor();
+ await page.goto(`${base}/?agent=${owner.id}`);
+
+ const preserved=(await api('/api/tasks')).find(t=>t.id===unblocker.id);assert.equal(preserved.agentId,owner.id);assert.equal(preserved.status,unblocker.status,'Priority judgment does not silently change status or consent');
  const parent=await task('Complete release preparation');
  const nested=await api(`/api/tasks/${urgent.id}`,{...urgent,parentTaskId:parent.id,note:'Retain the existing work hierarchy.'},'PUT');
  const nestedState=await api('/api/focus/task-priorities');
  await api('/api/focus/task-priorities',{agentId:focus.id,requestId:crypto.randomUUID(),focusContextEntryId:nestedState.review.focusContextEntryId,items:[{...order.items[0],basis:nestedState.priorities[nested.id].basis,evidenceEntryIds:fresh.items[0].evidenceEntryIds}]},'PUT');
- await page.reload();await panel.getByText('You: Inspect release evidence',{exact:false}).waitFor();
+ await page.reload();await panel.getByText('You: Choose release window',{exact:false}).waitFor();
  assert.equal(await rows.nth(0).locator('[data-task-open]').innerText(),parent.text,'Prioritized child brings its intact branch forward');
  assert.equal(await rows.nth(1).locator('[data-task-open]').innerText(),urgent.text);
  assert.deepEqual(errors,[]);

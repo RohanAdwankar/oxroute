@@ -1,4 +1,4 @@
-import type { TaskItem } from "./types";
+import type { TaskItem, Snapshot } from "./types";
 
 /** Visible task rows, in keyboard order. */
 export type TaskRow = { task: TaskItem; depth: number };
@@ -65,4 +65,10 @@ export function taskRows(tasks: TaskItem[]): TaskRow[] {
     { task, depth }, ...(children.get(task.id) ?? []).flatMap(child => branch(child, depth + 1)),
   ];
   return (children.get("") ?? []).flatMap(task => branch(task));
+}
+
+/** Status alone never establishes a user obligation. Legacy advice stays in tracking. */
+export function humanDecision(state: NonNullable<Snapshot["taskPriorities"]>[string] | undefined): boolean {
+  const advice = state?.recommendation;
+  return !!state && !state.stale && !state.needsReview && advice?.nextActor === "human" && !!advice.humanReason?.trim() && !!advice.unblocks?.trim();
 }

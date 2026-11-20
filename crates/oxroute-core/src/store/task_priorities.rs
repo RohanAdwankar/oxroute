@@ -11,6 +11,10 @@ pub struct TaskPriority {
     pub next_action: String,
     pub reason: String,
     pub next_actor: String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub human_reason: Option<String>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub unblocks: Option<String>,
     pub urgency: String,
     pub impact: String,
     pub effort: String,
@@ -39,13 +43,15 @@ pub(super) fn states(c:&Connection, all:bool)->Result<HashMap<String,TaskPriorit
         FROM tasks t
         LEFT JOIN (SELECT task_id,MAX(rowid) revision FROM task_notes GROUP BY task_id) n ON n.task_id=t.id
         LEFT JOIN task_priorities p ON p.task_id=t.id WHERE t.status!='complete' {}",if all {""} else {"AND p.task_id IS NOT NULL"}))?;
+    let reviewed_context:Option<String>=c.query_row("SELECT value FROM kv WHERE key='task-priority-focus-context'",[],|r|r.get(0)).optional()?;
+    let context_changed=reviewed_context.as_deref()!=Some(focus_context(c)?.to_string().as_str());
     let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,String>(4)?)))?;
     rows.map(|row| {
         let (id,task_basis,saved,details,source_context)=row?;
         let task_basis=fingerprint(&task_basis);
         let basis=format!("{}:{}",task_basis,fingerprint(&source_context));
         let stale=saved.as_ref().is_some_and(|saved|saved.split(':').next()!=Some(task_basis.as_str()));
-        let needs_review=saved.as_ref().is_some_and(|saved|*saved!=basis);
+        let needs_review=saved.as_ref().is_some_and(|saved|*saved!=basis || context_changed);
         let recommendation=if stale {None} else {details.map(|details|serde_json::from_str(&details)).transpose()?};
         Ok((id,TaskPriorityState{basis,stale,needs_review,recommendation}))
     }).collect()
@@ -112,6 +118,11 @@ impl Store {
                 anyhow::ensure!(status!="complete","completed tasks cannot be promoted");
                 for text in [&item.next_action,&item.reason] {anyhow::ensure!(!text.trim().is_empty() && text.chars().count()<=160,"next action and reason must be concise and nonempty");}
                 anyhow::ensure!(["human","agent","other"].contains(&item.next_actor.as_str()) && ["urgent","normal"].contains(&item.urgency.as_str()) && ["substantial","routine"].contains(&item.impact.as_str()) && ["small","substantial"].contains(&item.effort.as_str()),"invalid priority dimensions");
+                if item.next_actor=="human" {
+                    for text in [&item.human_reason,&item.unblocks] {
+                        anyhow::ensure!(text.as_ref().is_some_and(|text|!text.trim().is_empty()&&text.chars().count()<=160),"human decisions need a concise reason human input is required and what it unblocks");
+                    }
+                }
                 anyhow::ensure!(item.deadline_at.is_none_or(|deadline|deadline.is_finite() && deadline>0.0),"invalid factual deadline");
                 anyhow::ensure!(!item.evidence_entry_ids.is_empty() && item.evidence_entry_ids.len()<=10,"cite actual source evidence");
                 for evidence in &item.evidence_entry_ids {
@@ -121,6 +132,7 @@ impl Store {
             }
             let remaining:Vec<String>={let mut q=tx.prepare("SELECT id FROM tasks ORDER BY position,created_at")?;let ids=q.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;ids};
             tx.execute("INSERT INTO kv VALUES('task-priority-reviewed-revision',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[fingerprint(&(revision(&current),context))])?;
+            tx.execute("INSERT INTO kv VALUES('task-priority-focus-context',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[context.to_string()])?;
             tx.execute("DELETE FROM task_priorities",[])?;
             for (position,id) in order.items.iter().map(|item|&item.task_id).chain(remaining.iter().filter(|id|!seen.contains(id))).enumerate() {
                 tx.execute("UPDATE tasks SET position=?2 WHERE id=?1",params![id,position as f64])?;

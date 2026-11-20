@@ -31,7 +31,7 @@ import { api, follow } from "./lib/api";
 import { useAgentViews } from "./lib/agent-views";
 import { preloadReview, reviewEndpoint } from "./lib/reviews";
 import { inboxRows } from "./lib/inbox";
-import { taskSubtree, taskAncestors, taskRows } from "./lib/tasks";
+import { taskSubtree, taskAncestors, taskRows, humanDecision } from "./lib/tasks";
 import { acceptsFileDrop } from "./lib/uploads";
 import {
   HINTS,
@@ -230,6 +230,8 @@ export default function Home() {
   const [taskAt, setTaskAt] = useState(0);
   const [inboxDone, setInboxDone] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
+  const [allTasks, setAllTasks] = useState(false);
+  const decisionQueue = focusOpen && !allTasks;
   const scopedTasks = useSyncExternalStore(defaultWindowTasks.subscribe, defaultWindowTasks.get, defaultWindowTasks.fallback);
   const [windowTaskOverride, setWindowTaskOverride] = useState<boolean | null>(() => {
     try { const saved = sessionStorage.getItem("oxroute.windowTasks"); return saved === null ? null : saved === "true"; } catch { return null; }
@@ -296,7 +298,7 @@ export default function Home() {
       showTasks(true);
       setWindowTasks(false);
       setTaskQuery("");
-      setShownTask(id);
+      setAllTasks(true); setShownTask(id);
       setTaskAt(taskRows(currentTasks.current).findIndex(row => row.task.id === id));
       setFocus("tasks");
       setTaskFocusRequest(request => request + 1);
@@ -767,13 +769,13 @@ export default function Home() {
     } satisfies TaskItem & { existing: Set<string> };
     setCreatingTasks((current) => ({ ...current, [id]: pending }));
     showTasks(true);
-    setShownTask(id);
+    setAllTasks(true); setShownTask(id);
     try {
       const task = await api.createTaskWithImages(text, agentId, images, parentTaskId);
       setSnapshot((current) => ({
         ...current, tasks: [...current.tasks.filter((item) => item.id !== task.id), task],
       }));
-      setShownTask(task.id);
+      setAllTasks(true); setShownTask(task.id);
       reload();
       return true;
     } catch (error) {
@@ -998,9 +1000,10 @@ export default function Home() {
   useEffect(() => { if (windowTasks) setTaskAt(0); }, [taskScopeKey, windowTasks]);
   const tasks = useMemo(() => {
     const scoped = taskScope ? taskItems.filter(task => taskScope.includes(task.agentId)) : taskItems;
-    const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""}`.toLowerCase().includes(taskSearch)));
+    const matches = scoped.filter(task => task.status !== "complete" && (!taskSearch || `${task.text} ${taskNames.get(task.agentId) ?? ""} ${decisionQueue ? Object.values(taskPriorities?.[task.id]?.recommendation ?? {}).join(" ") : ""}`.toLowerCase().includes(taskSearch)));
+    if (decisionQueue) return matches.filter(task => humanDecision(taskPriorities?.[task.id])).map(task => ({task, depth: 0}));
     return taskRows(taskAncestors(scoped, matches));
-  }, [taskItems, taskScope, taskSearch, taskNames]);
+  }, [taskItems, taskScope, taskSearch, taskNames, decisionQueue, taskPriorities]);
   const scopeTasks = useCallback(() => { setWindowTasks(!windowTasks); setTaskAt(0); }, [windowTasks, setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
   const taskBusy = useCallback((id: string) => busy || id in savingTasks || id in creatingTasks, [busy, savingTasks, creatingTasks]);
@@ -1748,6 +1751,8 @@ export default function Home() {
           <TaskPanel
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
+            decisions={decisionQueue}
+            onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}
             scope={taskScope}
             onScope={scopeTasks}

@@ -174,7 +174,7 @@ export interface Snapshot {
   tasks: TaskItem[];
   taskNotes: TaskNote[];
   taskNotesDeferred?: boolean;
-  taskPriorities?: Record<string, { basis: string; stale: boolean; recommendation: { nextAction: string; reason: string; nextActor: "human" | "agent" | "other" } | null }>;
+  taskPriorities?: Record<string, { basis: string; stale: boolean; needsReview: boolean; recommendation: { nextAction: string; reason: string; humanReason?: string; unblocks?: string; nextActor: "human" | "agent" | "other" } | null }>;
   /** Agent id -> its tags. */
   tags: Record<string, string[]>;
   /** Every board, in tab order. */

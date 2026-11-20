@@ -130,6 +130,8 @@ export const TaskPanel = memo(function TaskPanel({
   tasks,
   rows,
   priorities,
+  decisions = false,
+  onDecisions,
   query,
   scope,
   onScope,
@@ -157,6 +159,8 @@ export const TaskPanel = memo(function TaskPanel({
   scope?: string[];
   onScope: () => void;
   priorities?: Snapshot["taskPriorities"];
+  decisions?: boolean;
+  onDecisions?: () => void;
   onSearch: (query: string) => void;
   /// Why each task is where it is, oldest first.
   notes: TaskNote[];
@@ -254,11 +258,11 @@ export const TaskPanel = memo(function TaskPanel({
           title={task.agentId ? `Open ${names.get(task.agentId) ?? "the session"}` : "Edit"}
           className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink"
         >
-          {task.text}
+          {decisions && advice ? advice.nextAction : task.text}
         </button>
       )}
       {advice && <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={advice.reason}>
-        <span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}
+        {decisions ? <>{advice.humanReason}{" · "}Unblocks {advice.unblocks}</> : <><span className="text-ink">{advice.nextActor === "human" ? "You: " : advice.nextActor === "other" ? "Waiting: " : "Next: "}{advice.nextAction}</span>{" · "}{advice.reason}</>}
       </p>}
       {task.images.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -374,7 +378,7 @@ export const TaskPanel = memo(function TaskPanel({
   };
 
   return (
-    <aside data-task-panel aria-label="Tasks" className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-rule bg-card">
+    <aside data-task-panel data-decisions={decisions || undefined} aria-label={decisions ? "Your decisions" : "Tasks"} className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-rule bg-card">
       {menu && menuTask && <div ref={menuRef} role="dialog" aria-label="Task options" className="fixed z-50 w-72 bg-paper p-3 shadow-lg ring-1 ring-rule" style={{ left: menu.x, top: menu.y }}>
         {adding ? <SubtaskEditor create={async text => {
           const saved = await onCreate(text, menuTask);
@@ -394,14 +398,15 @@ export const TaskPanel = memo(function TaskPanel({
       </div>}
       <div data-task-rail title="Drag the left edge to expand tasks" className="hidden h-[var(--bar)] shrink-0 items-center justify-center border-b border-rule text-faint"><Icon name="tasks" /></div>
       <div className="flex h-[var(--bar)] shrink-0 items-stretch border-b border-rule">
-      <input type="search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="min-w-0 flex-1 bg-transparent px-5 text-[12px] outline-none" />
+      {onDecisions && <button type="button" aria-label="All tasks" aria-pressed={!decisions} title={decisions ? "All tasks" : "Your decisions"} onClick={onDecisions} className="shrink-0 cursor-pointer px-3 text-faint hover:text-ink"><Icon name={decisions ? "tasks" : "ask"} size={14} /></button>}
+      <input type="search" aria-label="Search tasks" placeholder={decisions ? "Your decisions" : "Search tasks"} value={query} onChange={event => onSearch(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); } }} className="min-w-0 flex-1 bg-transparent px-5 text-[12px] outline-none" />
       <button type="button" aria-label="Only open conversations" aria-pressed={scope !== undefined} title={scope ? "All tasks" : "Open conversations"} onClick={onScope}
         className={`shrink-0 cursor-pointer px-3 text-[11px] ${scope ? "bg-band text-ink" : "text-faint hover:text-ink"}`}><Icon name="scope" size={14} /></button>
       </div>
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto">
         {rows.length === 0 ? (
           <p className="px-5 py-6 text-[12.5px] text-faint">
-            {query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
+            {decisions ? query.trim() ? "No matching decisions." : "No verified decision queued. Agents continue their work." : query.trim() ? "No matching tasks." : scope ? scope.length ? "No tasks for open conversations." : "No conversations open in this window." : <>No tasks yet. Type in a conversation and choose &ldquo;add to the task list&rdquo;, or press tab.</>}
           </p>
         ) : <>
           {linked && <div className="border-b border-rule bg-paper p-4">
