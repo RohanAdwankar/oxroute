@@ -415,7 +415,7 @@ impl Source for SlackSource {
     }
 
     async fn upload(&self, target: &Target, paths: &[String]) -> Result<Vec<Posted>> {
-        let mut messages = Vec::new();
+        let mut uploaded = Vec::new();
         for path in paths {
             let bytes = tokio::fs::read(path).await?;
             let name = std::path::Path::new(path)
@@ -449,23 +449,28 @@ impl Source for SlackSource {
                 .and_then(Value::as_str)
                 .context("slack gave no file id")?;
             self.http.post(upload_url).body(bytes).send().await?;
-            let response = self.call(
-                "files.completeUploadExternal",
-                json!({
-                    "files": [{ "id": file_id, "title": name }],
-                    "channel_id": target.conversation,
-                    "thread_ts": target.thread_key,
-                }),
-            )
-            .await?;
-            if let Some(files) = response["files"].as_array() {
-                for file in files {
-                    for visibility in ["private", "public"] {
-                        if let Some(shares) = file["shares"][visibility][&target.conversation].as_array() {
-                            messages.extend(shares.iter().filter_map(|share| share["ts"].as_str()).map(|ts| Posted {
-                                conversation: target.conversation.clone(), id: ts.into(),
-                            }));
-                        }
+            uploaded.push(json!({ "id": file_id, "title": name }));
+        }
+        if uploaded.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One completion call posts every file as a single message.
+        let response = self.call(
+            "files.completeUploadExternal",
+            json!({
+                "files": uploaded,
+                "channel_id": target.conversation,
+                "thread_ts": target.thread_key,
+            }),
+        )
+        .await?;
+        let mut messages: Vec<Posted> = Vec::new();
+        for file in response["files"].as_array().into_iter().flatten() {
+            for visibility in ["private", "public"] {
+                for share in file["shares"][visibility][&target.conversation].as_array().into_iter().flatten() {
+                    let Some(ts) = share["ts"].as_str() else { continue };
+                    if !messages.iter().any(|m| m.id == ts) {
+                        messages.push(Posted { conversation: target.conversation.clone(), id: ts.into() });
                     }
                 }
             }
