@@ -1522,6 +1522,15 @@ impl Store {
     }
 
     /// Only the neighboring entries needed by a search preview.
+    pub fn cited_entries(&self, ids: &[i64]) -> Result<Vec<Entry>> {
+        anyhow::ensure!(!ids.is_empty() && ids.len() <= 10 && ids.iter().all(|id| *id > 0), "cite between one and ten entries");
+        self.read(|c| {
+            let mut query = c.prepare("SELECT id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id FROM entries WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY id")?;
+            let entries = query.query_map([serde_json::to_string(ids)?], read_entry)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(entries)
+        })
+    }
+
     pub fn timeline_context(&self, agent_id: &str, entry: i64) -> Result<Vec<Entry>> {
         self.read(|c| {
             let mut statement = c.prepare("SELECT id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id FROM entries

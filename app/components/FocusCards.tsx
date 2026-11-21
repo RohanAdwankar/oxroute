@@ -2,6 +2,7 @@
 import {useContext,useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
 import type {Agent,AgentView} from "../lib/types";
+import type {FocusDecision} from "../lib/tasks";
 import {ConversationCards,ConversationReferences,ConversationPublication} from "./FocusContext";
 import {ConversationChoices} from "./ConversationChoices";
 import {FocusReview} from "./FocusReview";
@@ -47,26 +48,33 @@ export function FocusCards({ids}:{ids:string[]}) {
   </section>;
 }
 
-export function ConversationCard({agent}:{agent:Agent}) {
+export function ConversationCard({agent,decision}:{agent:Agent;decision?:FocusDecision}) {
   const context=useContext(ConversationCards)!;
   const publication=useContext(ConversationPublication),before=publication? (publication.results?.[agent.id]??publication.before-1)+1:undefined;
-  const sourceRevision=publication?0:agent.updatedAt;
-  const [view,setView]=useState<AgentView|null>(null),[error,setError]=useState("");
+  const evidence=decision?.state.recommendation?.evidenceEntryIds.join(',');
+  const sourceRevision=publication||decision?0:agent.updatedAt;
+  const [view,setView]=useState<Pick<AgentView,"timeline"|"nextActions">|null>(null),[error,setError]=useState("");
   const [expanded,setExpanded]=useState(false),[revision,setRevision]=useState(0),[taskPage,setTaskPage]=useState(0);
-  useEffect(()=>{let live=true;setError("");api.agent(agent.id,before).then(view=>{if(live)setView(view);}).catch(error=>{if(live)setError(String(error));});return()=>{live=false;};},[agent.id,before,sourceRevision,revision]);
-  const text=view?.timeline.findLast(entry=>entry.kind==="said")?.text??(publication?"":context.state.messages[agent.id]??"");
+  useEffect(()=>{let live=true;setError("");setView(null);
+    const load=evidence===undefined?api.agent(agent.id,before):api.citedEntries(evidence.split(',').map(Number)).then(async timeline=>({timeline,nextActions:(await api.agent(agent.id,0)).nextActions}));
+    load.then(view=>{if(live)setView(view);}).catch(error=>{if(live)setError(String(error));});return()=>{live=false;};},[agent.id,before,evidence,sourceRevision,revision]);
+  const narrative=view?.timeline.findLast(entry=>entry.kind==="said");
+  const text=narrative?.text??(publication||decision?"":context.state.messages[agent.id]??"");
   const review=view?.timeline.findLast(entry=>entry.kind==="review");
-  const tasks=context.state.tasks.filter(task=>task.agentId===agent.id&&(task.status==="done"||task.status==="waiting_for_human"));
+  const task=context.state.tasks.find(task=>task.id===decision?.taskId);
+  const tasks=decision?(task?[task]:[]):context.state.tasks.filter(task=>task.agentId===agent.id&&(task.status==="done"||task.status==="waiting_for_human")&&(!publication||text.includes(`#task/${task.id}`)));
+  const nextActions=view?.nextActions;
+  const source=decision?view?.timeline.at(-1):narrative;
   const page=Math.min(taskPage,Math.max(0,Math.ceil(tasks.length/3)-1)),start=page*3;
   const sent=()=>{setRevision(value=>value+1);context.onSent();};
   return <article data-focus-conversation={agent.id} aria-label={`Conversation ${agent.name}`} className="quiet-scroll relative max-h-[min(70vh,42rem)] min-w-0 overflow-y-auto bg-paper p-3 ring-1 ring-hair">
-    <header className="mb-2 flex items-baseline justify-between gap-3"><h3 className="font-semibold"><a href={`#agent/${agent.id}`} title="Open source conversation">{agent.name}</a></h3><span className="text-[11px] text-mid">{publication?"Published result":agent.status}</span></header>
+    <header className="mb-2 flex items-baseline justify-between gap-3"><h3 className="font-semibold"><a href={source?`?agent=${source.agentId}&entry=${source.id}`:`#agent/${agent.id}`} title="Open source conversation">{agent.name}</a></h3><span className="text-[11px] text-mid">{decision?"Decision evidence":publication?"Published result":agent.status}</span></header>
     <div><ConversationCards.Provider value={null}><ConversationReferences.Provider value={null}>
-      {text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{publication?"No narrative result at publication.":agent.activity||"No reply yet."}</p>}
+      {decision?view?.timeline.map(entry=><div key={entry.id} data-decision-evidence={entry.id}><a href={`?agent=${entry.agentId}&entry=${entry.id}`} title="Open decision evidence" className="text-[11px] text-mid">Source · {entry.kind==="you"?"You":entry.kind==="said"?"Reply":"Evidence"}</a><Markdown>{[entry.text,entry.output].filter(Boolean).join('\n\n')}</Markdown></div>):text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{publication?"No narrative result at publication.":agent.activity||"No reply yet."}</p>}
       {review&&!text.includes(review.detail)&&<FocusReview id={review.detail} initiallyExpanded={false}/>}
     </ConversationReferences.Provider></ConversationCards.Provider></div>
     {error&&<p role="alert" className="mt-2 flex items-center gap-2 text-[12px]">{error}<button type="button" aria-label="Retry card" title="Retry card" onClick={()=>setRevision(value=>value+1)}><Icon name="refresh"/></button></p>}
-    {agent.status==="complete"&&context.state.nextActionSuggestions&&view?.nextActions&&<ConversationChoices key={view.nextActions.entryId} agent={agent} nextActions={view.nextActions} onSent={sent}/>}
+    {agent.status==="complete"&&context.state.nextActionSuggestions&&nextActions&&(!(decision||publication)||view?.timeline.some(entry=>entry.id===nextActions.entryId&&(decision||entry.id===narrative?.id)))&&<ConversationChoices key={nextActions.entryId} agent={agent} nextActions={nextActions} onSent={sent}/>}
     {!!tasks.length&&<section aria-label={`Tasks for ${agent.name}`}>
       {tasks.length>3&&<div className="mt-3 flex items-center justify-end gap-3 text-[12px] text-mid">
         <span role="status">Tasks {start+1}–{Math.min(start+3,tasks.length)} / {tasks.length}</span>
@@ -75,6 +83,6 @@ export function ConversationCard({agent}:{agent:Agent}) {
       </div>}
       {tasks.slice(start,start+3).map(task=><TaskReference key={task.id} id={task.id} open={()=>context.onTask(task.id)}/>)}
     </section>}
-    <InlineReply compact agent={agent} expanded={expanded} onExpanded={setExpanded} onSent={sent}/>
+    {(!(decision||publication)||view)&&<InlineReply key={evidence??before??agent.id} compact agent={agent} task={task} contextEntries={decision?view?.timeline:publication?(narrative?[narrative]:[]):undefined} expanded={expanded} onExpanded={setExpanded} onSent={sent}/>}
   </article>;
 }

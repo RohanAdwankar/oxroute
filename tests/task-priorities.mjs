@@ -239,6 +239,39 @@ try {
  grounding=await api('/api/focus/task-priorities');assert.equal(grounding.reviews[secondReview.id].status,'stale');assert.equal(grounding.reviews[secondReview.id].recommendation,null);
  const obsolete=await mcp('prioritize_tasks',{requestId:crypto.randomUUID(),focusContextEntryId:grounding.review.focusContextEntryId,items:[{...reviewItem(secondReview,secondEvidence),basis:grounding.reviews[secondReview.id].basis}]});assert.equal(obsolete.isError,true,'A stale saved snapshot remains readable without becoming a ready publication decision');
 
+ // A coordinator can own several independent decisions and unrelated results.
+ page=await open();panel=page.locator('[data-task-panel]');
+ const scopedTasks=[];
+ for(const label of ['Select execution region','Select storage policy']){
+  const created=await task(label);scopedTasks.push(await api(`/api/tasks/${created.id}`,{...created,agentId:focus.id,note:'Coordinator owns this independent decision.'},'PUT'));
+ }
+ const sourceTexts=['The execution choices are east and west.','The retention choices are short and extended.'];
+ const sourceIds=sourceTexts.map(text=>entry('said',text,focus.id));
+ const scopedState=await api('/api/focus/task-priorities');
+ await api('/api/focus/task-priorities',{agentId:focus.id,requestId:crypto.randomUUID(),focusContextEntryId:scopedState.review.focusContextEntryId,items:scopedTasks.map((task,index)=>({...order.items[0],taskId:task.id,basis:scopedState.priorities[task.id].basis,nextAction:task.text,evidenceEntryIds:[sourceIds[index]]}))},'PUT');
+ entry('said','An unrelated completed calculation is available.',focus.id);
+ assert.deepEqual((await api(`/api/entries?ids=${sourceIds.join(',')}`)).map(e=>e.id),sourceIds,'Evidence reads return exact cited records across intervening work');
+ assert.equal((await fetch(native+'/api/entries?ids=0')).ok,false);
+ assert.equal((await fetch(native+`/api/entries?ids=${Array(11).fill(sourceIds[0]).join(',')}`)).ok,false);
+ await page.goto(`${base}/?view=focus`);await panel.getByText(scopedTasks[0].text,{exact:true}).click();deck=page.locator('[data-focus-decisions]');
+ const scopedReply=index=>deck.getByRole('textbox',{name:`Reply about ${scopedTasks[index].text}`,exact:true});
+ await deck.getByText(sourceTexts[0],{exact:true}).waitFor();await scopedReply(0).fill('Use the first option.');
+ await deck.getByRole('button',{name:'Next decision',exact:true}).click();await deck.getByText(sourceTexts[1],{exact:true}).waitFor();await scopedReply(1).fill('Use the second option.');
+ await deck.getByRole('button',{name:'Previous decision',exact:true}).click();await deck.getByText(sourceTexts[0],{exact:true}).waitFor();assert.equal(await scopedReply(0).inputValue(),'Use the first option.','Same-owner decisions keep separate drafts');
+ entry('said','A newer unrelated outcome has finished.',focus.id);await page.reload();deck=page.locator('[data-focus-decisions]');await deck.getByText(sourceTexts[0],{exact:true}).waitFor();
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});
+  assert.equal(await deck.getByText(sourceTexts[1],{exact:true}).count(),0);
+  assert.equal((await deck.innerText()).includes('unrelated'),false,'New owner activity cannot replace selected evidence or add unrelated task chips');
+  const source=deck.locator('a[title="Open decision evidence"]');assert.ok((await source.getAttribute('href')).includes(`entry=${sourceIds[0]}`));
+  const toggle=deck.getByRole('button',{name:'Conversation context',exact:true});await toggle.focus();await toggle.press('Enter');assert.equal((await deck.locator('div[aria-label="Conversation context"]').innerText()).includes('unrelated'),false);
+  await toggle.press('Enter');
+  if(process.env.SOURCE_SCREENSHOT)await page.screenshot({path:process.env.SOURCE_SCREENSHOT.replace('.png',`-${width}.png`)});
+ }
+ await scopedReply(0).press('Enter');
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`);i++)await new Promise(done=>setTimeout(done,100));
+ const submitted=db.prepare("SELECT text FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`)?.text;
+ assert.ok(submitted?.includes(`${focus.id}/${sourceIds[0]}`)&&submitted.includes('Use the first option.')&&!submitted.includes(scopedTasks[1].id),'Actual reply retains selected task, cited source and destination');
  assert.deepEqual(errors,[]);
  console.log('Real daemon: contextual order, native/API authorization and receipts, manual moves, reload/restart, fresh evidence, unchanged ownership/status, search/scope, keyboard and 1280/390 sidebar passed.');
 } finally {if(browser)await browser.close();if(db)db.close();await stop();await new Promise(done=>proxy.close(done));await rm(root,{recursive:true,force:true});}

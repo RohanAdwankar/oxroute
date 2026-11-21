@@ -7,8 +7,8 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 /** Task replies have their own durable draft, independent of the conversation composer. */
-export function InlineReply({ task, agent, expanded, onExpanded, onSent, compact = false }: { compact?: boolean; task?: TaskItem; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
-  const key = task ? `oxroute.taskReply.${task.id}` : `oxroute.homeReply.${agent.id}`;
+export function InlineReply({ task, agent, contextEntries, expanded, onExpanded, onSent, compact = false }: { compact?: boolean; task?: TaskItem; contextEntries?: Entry[]; agent: Agent; expanded: boolean; onExpanded: (expanded: boolean) => void; onSent: () => void }) {
+  const key = task ? `oxroute.taskReply.${task.id}` : contextEntries ? `oxroute.sourceReply.${agent.id}.${contextEntries.map(entry=>entry.id).join('.')}` : `oxroute.homeReply.${agent.id}`;
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } });
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -20,6 +20,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent, compact
   const request = useRef<{ text: string; id: string }>(null);
   useEffect(() => {
     if (!expanded) return;
+    if (contextEntries) { setEntries(contextEntries); setLoading(false); setContextError(""); return; }
     const controller = new AbortController();
     let current = true;
     setLoading(true);
@@ -28,7 +29,7 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent, compact
     }).catch(error => { if (current) setContextError(String(error instanceof Error ? error.message : error)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; controller.abort(); };
-  }, [agent.id, agent.updatedAt, expanded, revision]);
+  }, [agent.id, agent.updatedAt, contextEntries, expanded, revision]);
   const change = (text: string) => {
     setDraft(text);
     try { if (text) localStorage.setItem(key, text); else localStorage.removeItem(key); } catch { /* Keep the in-memory draft when storage is unavailable. */ }
@@ -42,7 +43,8 @@ export function InlineReply({ task, agent, expanded, onExpanded, onSent, compact
     const original=draft,previous=sent;
     setPending(true); setError("");setDraft("");setSent(text);
     try {
-      await api.say(agent.id, task ? `Regarding task ${task.id} (${task.text}):\n\n${text}` : text, [], true, [], request.current.id);
+      const scope=contextEntries?.length?`Decision evidence: ${contextEntries.map(entry=>`${entry.agentId}/${entry.id}`).join(', ')}\n\n`:"";
+      await api.say(agent.id, `${scope}${task ? `Regarding task ${task.id} (${task.text}):\n\n` : ""}${text}`, [], true, [], request.current.id);
       change(""); request.current = null;
       try { localStorage.removeItem(`${key}.request`); } catch { /* The sent draft is already cleared in memory. */ }
       setRevision(value => value + 1); onSent();

@@ -19,7 +19,7 @@ export function FocusDecisionDeck({items,selected,onSelect}:{items:FocusDecision
       <button type="button" aria-label="Close decision" title="Close decision" onClick={()=>onSelect(null)} className="cursor-pointer"><Icon name="stop"/></button>
     </header>
     <div data-transcript className="quiet-scroll min-h-0 min-w-0 flex-1 overflow-auto px-[var(--pane-x)] py-3">
-      {item.reviewId?<FocusReview key={item.reviewId} id={item.reviewId}/>:owner?<ConversationCard key={owner.id} agent={owner}/>:<p role="status">Conversation unavailable.</p>}
+      {item.reviewId?<FocusReview key={item.reviewId} id={item.reviewId}/>:owner?<ConversationCard key={item.id} agent={owner} decision={item}/>:<p role="status">Conversation unavailable.</p>}
     </div>
   </section>;
 }

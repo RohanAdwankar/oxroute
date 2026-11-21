@@ -231,6 +231,7 @@ async fn serve() -> Result<()> {
         .route("/api/events", get(events))
         .route("/api/search", get(search))
         .route("/api/agents/{id}/context/{entry}", get(search_context))
+        .route("/api/entries", get(cited_entries))
         .route("/api/agents/{id}/messages", get(recent_messages))
         .route("/api/agents/{id}/outputs", get(tool_outputs))
         .route("/api/search/native", get(search_native))
@@ -478,6 +479,14 @@ async fn search(
 async fn recent_messages(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
     hub.store.agent(&id)?.context("No such agent")?;
     Ok(Json(hub.store.recent_messages(&id, 4)?))
+}
+
+#[derive(Deserialize)]
+struct CitedEntriesQuery { ids: String }
+
+async fn cited_entries(State(hub): Hubs, Query(query): Query<CitedEntriesQuery>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
+    let ids = query.ids.split(',').map(str::parse).collect::<std::result::Result<Vec<i64>, _>>().map_err(anyhow::Error::from)?;
+    Ok(Json(hub.store.cited_entries(&ids)?))
 }
 
 async fn search_context(State(hub): Hubs, Path((id, entry)): Path<(String, i64)>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
