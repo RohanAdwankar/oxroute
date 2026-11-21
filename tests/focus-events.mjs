@@ -1,7 +1,7 @@
 // Real disposable daemon and SQLite recovery, using a credential-free local harness.
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {resolve,join} from 'node:path';
 import {createRequire} from 'node:module';
@@ -131,7 +131,7 @@ try{
  await until(()=>!!resumeGate,'Background resume did not reach its gate');
  await api('/api/say',{agent:focus.id,text:'Explain the prepared artifact status.'});resumeGate();resumeGate=undefined;
  await until(()=>focusTurns().length===priorTurns+1,'Direct request did not start');
- const directInput=JSON.stringify(focusTurns().at(-1).input);
+ const directTurn=focusTurns().at(-1),directInput=JSON.stringify(directTurn.input);
  assert.equal(focusTurns().at(-1).input[0].text,'Explain the prepared artifact status.');
  assert.ok(!directInput.includes(record.draft),'Direct requests do not preload unrelated inbox bodies; they remain readable through the API');
  assert.equal(await fleetNotices(),priorNotices,'Direct requests cannot inherit a fleet-check notice');
@@ -140,6 +140,12 @@ try{
  finish(focusThread);await until(()=>focusTurns().length===priorTurns+2,'Deferred background work was lost');
  assert.ok(JSON.stringify(focusTurns().at(-1).input).includes(pendingWorker.agent.id));
  assert.equal(await fleetNotices(),priorNotices,'Conversation events are not labeled scheduled fleet scans');finish(focusThread);
+ const source=await readFile(new URL('../crates/oxroute-core/src/hub/focus.rs',import.meta.url),'utf8');
+ const policyLine=source.split('\n').find(line=>line.startsWith('const INBOX_POLICY:'));
+ const policy=JSON.parse(policyLine.slice(policyLine.indexOf('=')+1).trim().slice(0,-1));
+ assert.ok(focusTurns().every(turn=>turn.input.some(input=>input.text?.includes(policy))),'Every Focus turn receives the maintained canonical inbox and decision policy unchanged');
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
+ console.log(`Canonical inbox and decision policy captured unchanged in automatic, event and direct turns (${focusTurns().length} total).`);
  console.log('Direct requests take priority across a gated runtime resume, retain visible responses and scoped input, then resume durable background events without false fleet labels.');
  console.log('Urgent steering arrives once within the active turn, keeps internal provenance, and lost acknowledgements survive restart without replay.');
  console.log('Real daemon passed completion/failure/stop coalescing, busy queuing, restart and failed-acceptance recovery, dedup/self-loop checks, durable local drafts and read-only prompt boundaries.');
