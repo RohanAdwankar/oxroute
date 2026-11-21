@@ -26,7 +26,7 @@ try {
  for(const name of ['automatic-titles','automatic-tags','recommendation-learning','next-action-suggestions'])await api(`/api/${name}`,{enabled:false});
  const focus=await api('/api/agents',{}),owner=await api('/api/agents',{});
  await api('/api/rename',{agent:owner.id,name:'Release validation'});
- db=new DatabaseSync(dbPath);db.prepare('INSERT INTO kv VALUES(?,?)').run('focus.agent',focus.id);
+ db=new DatabaseSync(dbPath);db.exec('PRAGMA busy_timeout=5000');db.prepare('INSERT INTO kv VALUES(?,?)').run('focus.agent',focus.id);
  db.prepare('INSERT INTO kv VALUES(?,?)').run(`agent-tool-token:${focus.id}`,'fixture-token');
  const entry=(kind,text,agent=owner.id)=>Number(db.prepare('INSERT INTO entries(agent_id,at,kind,text) VALUES(?,?,?,?)').run(agent,Date.now()/1000,kind,text).lastInsertRowid);
  const evidence=entry('you','Prioritize important delivery and concrete unblockers.');
@@ -53,6 +53,14 @@ try {
  const mcp=async(name,args)=>{const r=await fetch(native+`/api/agent-tools/${focus.id}`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer fixture-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})});assert.ok(r.ok);return(await r.json()).result;};
  assert.deepEqual((await mcp('prioritize_tasks',order)).structuredContent,receipt,'Native and HTTP paths share durable receipts');
  browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
+ const quoteTitle=async(page,title,start,end,screenshot,touch=false)=>{
+  await title.scrollIntoViewIfNeeded();
+  if(touch)await title.dispatchEvent('pointerdown',{pointerType:'touch',button:0});
+  const selected=await title.evaluate((element,{start,end})=>{const range=document.createRange();range.setStart(element.firstChild,start);range.setEnd(element.firstChild,end);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));return selection.toString();},{start,end});
+  if(!touch)await title.click({button:'right'});await page.getByRole('button',{name:'Quote title into chat',exact:true}).waitFor();
+  if(screenshot)await page.screenshot({path:screenshot});
+  await page.getByRole('button',{name:'Quote title into chat',exact:true}).click();return selected;
+ };
  const errors=[];
  const open=async()=>{const page=await browser.newPage({viewport:{width:1280,height:850}});page.on('pageerror',e=>errors.push(String(e)));
   await page.addInitScript(()=>{localStorage.setItem('oxroute.tasks','true');localStorage.setItem('oxroute.taskWidth','320');sessionStorage.setItem('oxroute.windowTasks','false');});
@@ -208,6 +216,26 @@ try {
  await panel.getByText(firstReview.title,{exact:true}).click();
  let deck=page.locator('[data-focus-decisions]');await deck.locator(`[data-focus-review="${firstReview.id}"]`).getByRole('button',{name:'Approve publication',exact:true}).waitFor();
  assert.equal(new URL(page.url()).searchParams.get('view'),'focus');assert.equal(await page.getByRole('tab').count(),tabCount);
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});
+  for(const partial of[true,false]){
+   const title=deck.locator('[aria-label="Change review"] [data-quote-title]'),text=await title.textContent();
+   const selected=await quoteTitle(page,title,partial?1:0,partial?text.length-1:text.length,process.env.TITLE_SCREENSHOT?.replace('.png',`-${width}-${partial?'partial':'full'}.png`));
+   await deck.waitFor({state:'hidden'});assert.ok((await page.getByRole('region',{name:'Attached diff Review title',exact:true}).locator('[data-quoted-diff-line]').allInnerTexts()).includes(selected));
+   await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await deck.getByRole('button',{name:'Approve publication',exact:true}).waitFor();
+  }
+ }
+ const fullReview=await browser.newPage({viewport:{width:390,height:850},isMobile:true,hasTouch:true});await fullReview.goto(`${base}/?agent=${owner.id}&review=${firstReview.id}`);
+ const fullTitle=fullReview.locator('[aria-label="Change review"] [data-quote-title]');await fullTitle.waitFor();
+ const fullSelected=await quoteTitle(fullReview,fullTitle,0,firstReview.title.length,process.env.TITLE_SCREENSHOT?.replace('.png','-touch.png'),true);
+ await fullReview.getByRole('region',{name:'Attached diff Review title',exact:true}).waitFor();await fullReview.locator('[data-composer]').fill('Inspect this selected heading.');await fullReview.locator('[data-composer]').press('Enter');
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(owner.id,fullSelected);i++)await new Promise(done=>setTimeout(done,100));
+ assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,?)>0").get(owner.id,fullSelected,firstReview.id),'Full review title quotes retain the selected owner and review identity');await fullReview.close();
+ await page.setViewportSize({width:1280,height:850});await deck.getByRole('button',{name:'Close decision',exact:true}).click();await page.locator('[data-composer]').press('Enter');
+ for(let i=0;i<60&&!db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,'Selected title:')>0").get(focus.id);i++)await new Promise(done=>setTimeout(done,100));
+ const titleSubmission=db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,'Selected title:')>0").get(focus.id)?.detail;
+ assert.ok(titleSubmission?.includes('Source conversation: '+owner.id)&&titleSubmission.includes(firstReview.title.slice(1,-1))&&titleSubmission.includes(firstReview.id),'Inline title quotes preserve exact partial selections and source identity in the actual Focus submission');
+ await page.locator('[data-composer]').fill('Retain the decision note.');await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');
  for(const width of[1280,390]){await page.setViewportSize({width,height:850});const box=await deck.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);if(process.env.REVIEW_SCREENSHOT)await page.screenshot({path:process.env.REVIEW_SCREENSHOT.replace('.png',`-${width}.png`)});}
  await page.setViewportSize({width:1280,height:850});
  await deck.getByRole('button',{name:'Next decision',exact:true}).click();await deck.locator(`[data-focus-review="${secondReview.id}"]`).waitFor();
@@ -220,8 +248,8 @@ try {
  const quoted=deck.locator('[data-diff-line]').filter({hasText:'beta'}).first();await quoted.click({button:'right'});await page.getByRole('button',{name:'Quote diff into chat',exact:true}).click();
  await deck.waitFor({state:'hidden'});await page.getByRole('region',{name:'Attached diff setting.txt',exact:true}).waitFor();assert.equal(await page.locator('[data-composer]').inputValue(),'Retain the decision note.','Quoting preserves the Focus draft');
  await page.locator('[data-composer]').press('Enter');
- for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,firstReview.id);i++)await new Promise(done=>setTimeout(done,100));
- assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,firstReview.id),'The attached quote retains original review identity in the actual Focus submission');
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,firstReview.id);i++)await new Promise(done=>setTimeout(done,100));
+ assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,firstReview.id),'The attached diff retains original review identity in the actual Focus submission');
  entry('you','Inspect an independent status update.',focus.id);await page.reload();await panel.getByText(firstReview.title,{exact:true}).waitFor();
  assert.equal(await panel.getByText('No verified decision queued. Agents continue their work.',{exact:true}).count(),0,'Context changes retain taskless and multi-owner reviews');
  for(const review of[firstReview,secondReview])assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${review.id}`).value).approvedAt,null,'Selecting, quoting and editing do not approve reviews');
@@ -272,6 +300,11 @@ try {
  for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`);i++)await new Promise(done=>setTimeout(done,100));
  const submitted=db.prepare("SELECT text FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`)?.text;
  assert.ok(submitted?.includes(`${focus.id}/${sourceIds[0]}`)&&submitted.includes('Use the first option.')&&!submitted.includes(scopedTasks[1].id),'Actual reply retains selected task, cited source and destination');
+ await page.setViewportSize({width:1280,height:850});const decisionTitle=deck.locator('header [data-quote-title]');await quoteTitle(page,decisionTitle,0,scopedTasks[0].text.length);
+ await page.getByRole('region',{name:'Attached diff Decision title',exact:true}).waitFor();await page.locator('[data-composer]').fill('Inspect this decision heading.');await page.locator('[data-composer]').press('Enter');
+ for(let i=0;i<60&&!db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id);i++)await new Promise(done=>setTimeout(done,100));
+ const decisionQuote=db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id)?.detail;
+ assert.ok(decisionQuote?.includes(String(sourceIds[0]))&&decisionQuote.includes(scopedTasks[0].text),'Decision title quotes retain task and evidence provenance');
  assert.deepEqual(errors,[]);
  console.log('Real daemon: contextual order, native/API authorization and receipts, manual moves, reload/restart, fresh evidence, unchanged ownership/status, search/scope, keyboard and 1280/390 sidebar passed.');
 } finally {if(browser)await browser.close();if(db)db.close();await stop();await new Promise(done=>proxy.close(done));await rm(root,{recursive:true,force:true});}

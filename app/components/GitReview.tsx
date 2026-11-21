@@ -8,6 +8,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent } from 
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
+import {titleQuote} from "../lib/title-quotes";
+import {QuoteTitle} from "./QuoteTitle";
 
 type Line = { text: string; old: number | null; next: number | null };
 type Expansion = { gap?: string; lines: string[]; more: boolean; busy?: boolean; error?: string };
@@ -201,7 +203,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
     <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
-      <span className="min-w-0 flex-1 font-semibold">{review?.title ?? (error ? "Review unavailable" : "Reading review…")}
+      <span className="min-w-0 flex-1 font-semibold">{review?<QuoteTitle text={review.title} onQuote={text=>onQuote(titleQuote(text,{agentId,reviewId:review.id}))}/>:error?"Review unavailable":"Reading review…"}
         {review?.status === "stale" && <button type="button" aria-label="Snapshot changed"
           title={review.staleNotified ? "The agent has been asked to prepare an updated review. This saved snapshot remains readable." : "This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."}
           className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}

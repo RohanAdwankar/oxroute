@@ -141,9 +141,10 @@ try{
  await deck.getByRole('button',{name:'Next card',exact:true}).click();await card(workerIds[1]).waitFor();
  await deck.getByRole('button',{name:'Next card',exact:true}).click();await card(workerIds[2]).waitFor();
  assert.equal(await card(workerIds[2]).locator('[data-task-card]').count(),0,'Conversations do not need tracked tasks');
+ const replySource=(await api(`/api/agents/${workerIds[2]}`)).timeline.findLast(entry=>entry.kind==='said');
  await card(workerIds[2]).getByRole('textbox',{name:`Reply to ${names[2]}`,exact:true}).fill('Please explain the alternatives.');
  await card(workerIds[2]).getByRole('button',{name:'Send reply',exact:true}).click();
- await until(async()=>(await api(`/api/agents/${workerIds[2]}`)).timeline.some(entry=>entry.kind==='you'&&entry.text==='Please explain the alternatives.'));
+ await until(async()=>(await api(`/api/agents/${workerIds[2]}`)).timeline.some(entry=>entry.kind==='you'&&entry.text.endsWith('Please explain the alternatives.')&&entry.text.includes(`${workerIds[2]}/${replySource.id}`)));
  assert.equal(new URL(page.url()).searchParams.get('view'),'focus');
  assert.equal(await composer.inputValue(),'Retain the coordinator draft.');
  await deck.getByRole('button',{name:'Next card',exact:true}).click();await card(workerIds[0]).waitFor();

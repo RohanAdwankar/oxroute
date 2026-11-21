@@ -43,7 +43,7 @@ export function InlineReply({ task, agent, contextEntries, expanded, onExpanded,
     const original=draft,previous=sent;
     setPending(true); setError("");setDraft("");setSent(text);
     try {
-      const scope=contextEntries?.length?`Decision evidence: ${contextEntries.map(entry=>`${entry.agentId}/${entry.id}`).join(', ')}\n\n`:"";
+      const scope=contextEntries?.length?`Source evidence: ${contextEntries.map(entry=>`${entry.agentId}/${entry.id}`).join(', ')}\n\n`:"";
       await api.say(agent.id, `${scope}${task ? `Regarding task ${task.id} (${task.text}):\n\n` : ""}${text}`, [], true, [], request.current.id);
       change(""); request.current = null;
       try { localStorage.removeItem(`${key}.request`); } catch { /* The sent draft is already cleared in memory. */ }

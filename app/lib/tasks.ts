@@ -83,7 +83,7 @@ export function focusDecisions(tasks:TaskItem[],priorities:Snapshot["taskPriorit
     decisions.set(id,{id,taskId:task.id,reviewId,agentId:task.agentId,title:state!.recommendation!.nextAction,position:state!.position,state:state!});
   }
   for(const review of Object.values(reviews??{})){if(!humanDecision(review))continue;
-    decisions.set(review.id,{id:review.id,reviewId:review.id,agentId:review.agentId,title:review.title,position:review.position,state:review});
+    decisions.set(review.id,{id:review.id,taskId:review.recommendation?.taskId,reviewId:review.id,agentId:review.agentId,title:review.title,position:review.position,state:review});
   }
   return [...decisions.values()].sort((a,b)=>a.position-b.position);
 }
