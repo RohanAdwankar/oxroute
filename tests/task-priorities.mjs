@@ -305,6 +305,10 @@ try {
  for(let i=0;i<60&&!db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id);i++)await new Promise(done=>setTimeout(done,100));
  const decisionQuote=db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id)?.detail;
  assert.ok(decisionQuote?.includes(String(sourceIds[0]))&&decisionQuote.includes(scopedTasks[0].text),'Decision title quotes retain task and evidence provenance');
+ await panel.locator(`[data-decision="${scopedTasks[1].id}"]`).getByRole('button',{name:'Reply',exact:true}).click();
+ await page.getByRole('region',{name:'Attached diff Decision title',exact:true}).last().waitFor();await page.locator('[data-composer]').fill('Go with the second option.');await page.locator('[data-composer]').press('Enter');
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(text,?)>0").get(focus.id,scopedTasks[1].id,'Go with the second option.');i++)await new Promise(done=>setTimeout(done,100));
+ assert.ok(db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[1].id)?.detail.includes(scopedTasks[1].text),'A decision Reply quotes the card into the Focus thread');
  assert.deepEqual(errors,[]);
  console.log('Real daemon: contextual order, native/API authorization and receipts, manual moves, reload/restart, fresh evidence, unchanged ownership/status, search/scope, keyboard and 1280/390 sidebar passed.');
 } finally {if(browser)await browser.close();if(db)db.close();await stop();await new Promise(done=>proxy.close(done));await rm(root,{recursive:true,force:true});}

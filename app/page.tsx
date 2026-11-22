@@ -4,6 +4,7 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useR
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
 import { EmbeddedReviews, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
 import { receiveDraft, type DiffQuote } from "./lib/drafts";
+import { titleQuote } from "./lib/title-quotes";
 import { TaskActions } from "./components/TaskReference";
 
 import { ArchiveAgent } from "./components/ArchiveAgent";
@@ -1761,7 +1762,7 @@ export default function Home() {
           <TaskPanel
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
-            decisions={decisionQueue} decisionItems={decisionItems} onDecision={chooseDecision}
+            decisions={decisionQueue} decisionItems={decisionItems} onDecision={chooseDecision} onReply={item=>embeddedReviews?.quote(titleQuote(`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}))}
             reviewingDecisions={[...Object.values(taskPriorities ?? {}),...Object.values(reviewPriorities??{})].some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}

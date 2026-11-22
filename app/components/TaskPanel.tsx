@@ -133,6 +133,7 @@ export const TaskPanel = memo(function TaskPanel({
   decisions = false,
   decisionItems = [],
   onDecision,
+  onReply,
   reviewingDecisions = false,
   onDecisions,
   query,
@@ -165,6 +166,7 @@ export const TaskPanel = memo(function TaskPanel({
   decisions?: boolean;
   decisionItems?: FocusDecision[];
   onDecision?: (id:string)=>void;
+  onReply?: (item:FocusDecision)=>void;
   reviewingDecisions?: boolean;
   onDecisions?: () => void;
   onSearch: (query: string) => void;
@@ -427,6 +429,7 @@ export const TaskPanel = memo(function TaskPanel({
             <div data-decision={item.id} className="min-w-0 flex-1">
               <button type="button" data-task-open data-decision-open title="Open decision card" onClick={()=>onDecision?.(item.id)} className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink">{item.title}</button>
               <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={item.state.recommendation?.reason}>{item.state.recommendation?.humanReason} · Unblocks {item.state.recommendation?.unblocks}{item.state.needsReview&&<> · Checking latest context</>}</p>
+              <button type="button" data-decision-reply onClick={()=>onReply?.(item)} className="mt-1 cursor-pointer text-[11px] text-mid hover:text-ink">Reply</button>
             </div>
           </Row>) : rows.map((entry, at) => row(entry.task, at, entry.depth))}
         </>}
