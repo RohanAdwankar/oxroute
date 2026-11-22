@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {resolve,join} from 'node:path';
 import assert from 'node:assert/strict';
+import {baseEnv} from './daemon-env.mjs';
 await mkdir(resolve('.tmp'),{recursive:true});
 const root=await mkdtemp(resolve('.tmp/file-workflows-'));
 const server=createServer();await new Promise(done=>server.listen(0,'127.0.0.1',done));const port=server.address().port;await new Promise(done=>server.close(done));
@@ -27,7 +28,7 @@ im=Image.new('RGB',(960,540),'#faf8f4');d=ImageDraw.Draw(im);d.rectangle((90,100
 for ext in ['jpg','webp','gif']: im.save(p/f'diagram.{ext}')
 (p/'diagram.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect x="90" y="100" width="300" height="170" fill="none" stroke="black"/></svg>')
 (p/'proposal.txt').write_text('Release plan\\nApprove the rollout window.\\n')`]);
- daemon=spawn(process.env.TEST_DAEMON??join(process.env.HOME,'.local/bin/oxrouted'),[],{stdio:['ignore','ignore','inherit'],env:{...process.env,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});
+ daemon=spawn(process.env.TEST_DAEMON??join(process.env.HOME,'.local/bin/oxrouted'),[],{stdio:['ignore','ignore','inherit'],env:{...baseEnv,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});
  let ready=false;
  for(let attempt=0;attempt<100;attempt++){try{if((await fetch(`${native}/api/health`)).ok){ready=true;break;}}catch{}await new Promise(done=>setTimeout(done,100));}
  assert.ok(ready,'Disposable daemon started');

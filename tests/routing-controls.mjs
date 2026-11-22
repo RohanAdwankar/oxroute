@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { resolve, join } from 'node:path';
 import { chromium, webkit } from 'playwright';
+import {baseEnv} from './daemon-env.mjs';
 assert.ok(process.env.TEST_URL && process.env.TEST_DAEMON);
 await mkdir(resolve('.tmp'), { recursive: true });
 const root = await mkdtemp(resolve('.tmp/routing-controls-'));
@@ -12,7 +13,7 @@ const reserve = createServer(), port = await listen(reserve);
 await new Promise(done => reserve.close(done));
 const native = `http://127.0.0.1:${port}`, config = join(root, 'config.toml');
 await writeFile(config, `owner = "fixture"\nlisten = "127.0.0.1:${port}"\nworkspace = ${JSON.stringify(root)}\n[limits]\nmin_free_bytes = 0\n[paths]\ndatabase = ${JSON.stringify(join(root, 'test.sqlite3'))}\nartifacts = ${JSON.stringify(join(root, 'artifacts'))}\nattachments = ${JSON.stringify(join(root, 'attachments'))}\n`);
-const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: 'ws://127.0.0.1:9', OXROUTE_CODEX_CLI: '/bin/false' } });
+const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...baseEnv, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: 'ws://127.0.0.1:9', OXROUTE_CODEX_CLI: '/bin/false' } });
 let daemon = start();
 const proxy = createServer((req, res) => {
   const target = new URL(req.url, req.url.startsWith('/api/') && !req.url.startsWith('/api/version') ? native : process.env.TEST_URL);

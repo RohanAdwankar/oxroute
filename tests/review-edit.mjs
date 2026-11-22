@@ -5,13 +5,14 @@ import {mkdtemp,mkdir,writeFile,readFile,rm,symlink} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {createServer} from 'node:net';
 import {chromium} from 'playwright';
+import {baseEnv} from './daemon-env.mjs';
 assert.ok(process.env.TEST_URL && process.env.TEST_DAEMON);
 await mkdir(resolve('.tmp'),{recursive:true});
 const root=await mkdtemp(resolve('.tmp/review-edit-')),repo=join(root,'source');await mkdir(repo);
 const socket=createServer();await new Promise(done=>socket.listen(0,'127.0.0.1',done));const port=socket.address().port;await new Promise(done=>socket.close(done));
 const api=`http://127.0.0.1:${port}`,config=join(root,'config.toml');
 await writeFile(config,`owner="fixture"\nlisten="127.0.0.1:${port}"\nworkspace=${JSON.stringify(root)}\n[limits]\nmin_free_bytes=0\n[paths]\ndatabase=${JSON.stringify(join(root,'state.sqlite3'))}\nartifacts=${JSON.stringify(join(root,'artifacts'))}\nattachments=${JSON.stringify(join(root,'attachments'))}\n`);
-const daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...process.env,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});
+const daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...baseEnv,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});
 let browser;
 try {
  for(let n=0;n<100;n++){try{if((await fetch(api+'/api/health')).ok)break;}catch{}await new Promise(done=>setTimeout(done,100));}

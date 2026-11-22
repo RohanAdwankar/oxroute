@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {resolve,join} from 'node:path';
 import {createRequire} from 'node:module';
 import {chromium,webkit} from 'playwright';
+import {baseEnv} from './daemon-env.mjs';
 const {WebSocketServer}=createRequire(import.meta.url)('next/dist/compiled/ws');
 assert.ok(process.env.TEST_DAEMON,'TEST_DAEMON must name the reviewed daemon');
 await mkdir(resolve('.tmp'),{recursive:true});
@@ -41,7 +42,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
 const reserve=createServer(),port=await listen(reserve);await new Promise(done=>reserve.close(done));
 const native=`http://127.0.0.1:${port}`,config=join(root,'config.toml');
 await writeFile(config,`owner = "fixture"\nlisten = "127.0.0.1:${port}"\nworkspace = ${JSON.stringify(root)}\n[limits]\nmin_free_bytes = 0\n[paths]\ndatabase = ${JSON.stringify(join(root,'test.sqlite3'))}\nartifacts = ${JSON.stringify(join(root,'artifacts'))}\nattachments = ${JSON.stringify(join(root,'attachments'))}\n`);
-const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...process.env,CODEX_HOME:join(root,'codex'),OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:`ws://127.0.0.1:${rpcPort}`,OXROUTE_CODEX_CLI:'/bin/false'}});
+const start=()=>spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...baseEnv,CODEX_HOME:join(root,'codex'),OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:`ws://127.0.0.1:${rpcPort}`,OXROUTE_CODEX_CLI:'/bin/false'}});
 let daemon=start();
 const frontend=process.env.TEST_URL??'http://127.0.0.1:14039';
 const proxy=createServer((req,res)=>{

@@ -3,6 +3,7 @@ import {mkdtemp,mkdir,writeFile,readFile,access,rm} from 'node:fs/promises';
 import {spawn,execFileSync} from 'node:child_process';
 import {resolve,join} from 'node:path';
 import {createServer} from 'node:net';
+import {baseEnv} from './daemon-env.mjs';
 assert.ok(process.env.TEST_DAEMON, 'Use a disposable reviewed daemon binary');
 const root=await mkdtemp(resolve('.tmp/review-probe-'));await mkdir(join(root,'artifacts'));await mkdir(join(root,'bin'));
 const gate=join(root,'hold'),entered=join(root,'entered');await writeFile(gate,'');
@@ -12,7 +13,7 @@ const pdfinfo=execFileSync('which',['pdfinfo'],{encoding:'utf8'}).trim();
 await writeFile(join(root,'bin/pdfinfo'),`#!/usr/bin/env node\nconst fs=require('node:fs'),{spawnSync}=require('node:child_process');fs.writeFileSync(${JSON.stringify(entered)},'');const wait=()=>{if(fs.existsSync(${JSON.stringify(gate)}))setTimeout(wait,20);else process.exit(spawnSync(${JSON.stringify(pdfinfo)},process.argv.slice(2),{stdio:'inherit'}).status??1)};wait();`,{mode:0o755});
 const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));
 const config=join(root,'config.toml');await writeFile(config,`owner="fixture"\nlisten="127.0.0.1:${port}"\nworkspace=${JSON.stringify(root)}\n[limits]\nmin_free_bytes=0\n[paths]\ndatabase=${JSON.stringify(join(root,'test.sqlite3'))}\nartifacts=${JSON.stringify(join(root,'artifacts'))}\nattachments=${JSON.stringify(join(root,'attachments'))}\n`);
-const daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...process.env,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',PATH:join(root,'bin')+':'+process.env.PATH}});
+const daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...baseEnv,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',PATH:join(root,'bin')+':'+process.env.PATH}});
 const base=`http://127.0.0.1:${port}`,pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function api(path,body){const r=await fetch(base+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();}
 try{

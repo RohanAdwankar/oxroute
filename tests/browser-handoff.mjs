@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
+import {baseEnv} from './daemon-env.mjs';
 
 assert.ok(process.env.TEST_DAEMON && process.env.TEST_URL);
 const { WebSocketServer } = createRequire(import.meta.url)('next/dist/compiled/ws');
@@ -43,7 +44,7 @@ const native = `http://127.0.0.1:${port}`, config = join(root, 'config.toml');
 await writeFile(config, `owner = "fixture"\nlisten = "127.0.0.1:${port}"\nworkspace = ${JSON.stringify(root)}\n[limits]\nmin_free_bytes = 0\n[paths]\ndatabase = ${JSON.stringify(join(root, 'test.sqlite3'))}\nartifacts = ${JSON.stringify(join(root, 'artifacts'))}\nattachments = ${JSON.stringify(join(root, 'attachments'))}\n`);
 const sandbox = process.env.TEST_BROWSER_SANDBOX ?? 'false';
 assert.ok(['true', 'false'].includes(sandbox));
-const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, HOME: root, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: `ws://127.0.0.1:${rpcPort}`, OXROUTE_CODEX_CLI: '/bin/false', OXROUTE_BROWSER_EXECUTABLE: process.env.TEST_BROWSER_EXECUTABLE ?? chromium.executablePath(), OXROUTE_BROWSER_SANDBOX: sandbox, OXROUTE_NEXT_ACTION_SUGGESTIONS: 'false' } });
+const start = () => spawn(process.env.TEST_DAEMON, [], { stdio: ['ignore', 'ignore', 'inherit'], env: { ...baseEnv, HOME: root, CODEX_HOME: join(root, 'codex'), OXROUTE_CONFIG: config, OXROUTE_CODEX_URL: `ws://127.0.0.1:${rpcPort}`, OXROUTE_CODEX_CLI: '/bin/false', OXROUTE_BROWSER_EXECUTABLE: process.env.TEST_BROWSER_EXECUTABLE ?? chromium.executablePath(), OXROUTE_BROWSER_SANDBOX: sandbox, OXROUTE_NEXT_ACTION_SUGGESTIONS: 'false' } });
 let daemon = start();
 const proxy = createServer((req, res) => {
   const target = new URL(req.url, req.url.startsWith('/api/') && !req.url.startsWith('/api/version') ? native : process.env.TEST_URL);

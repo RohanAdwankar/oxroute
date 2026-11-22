@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {createServer as httpServer,request} from 'node:http';
 import {resolve,join} from 'node:path';
+import {baseEnv} from './daemon-env.mjs';
 const web=process.env.TEST_URL;
 assert.ok(web && process.env.TEST_DAEMON,'Set TEST_URL and TEST_DAEMON');
 await mkdir(resolve('.tmp'),{recursive:true});
@@ -15,7 +16,7 @@ await mkdir(join(root,'artifacts'));await mkdir(join(root,'attachments'));
 await writeFile(config,`owner = "fixture"\nlisten = "127.0.0.1:${port}"\nworkspace = ${JSON.stringify(root)}\n[limits]\nmin_free_bytes = 0\n[paths]\ndatabase = ${JSON.stringify(join(root,'test.sqlite3'))}\nartifacts = ${JSON.stringify(join(root,'artifacts'))}\nattachments = ${JSON.stringify(join(root,'attachments'))}\n`);
 let daemon;
 async function stop(){if(daemon){daemon.kill('SIGTERM');await new Promise(done=>daemon.exitCode===null?daemon.once('exit',done):done());daemon=null;}}
-async function start(){daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...process.env,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});for(let i=0;i<100;i++){try{if((await fetch(`${native}/api/health`)).ok)return;}catch{}await new Promise(done=>setTimeout(done,100));}throw Error('Disposable daemon did not start');}
+async function start(){daemon=spawn(process.env.TEST_DAEMON,[],{stdio:['ignore','ignore','inherit'],env:{...baseEnv,OXROUTE_CONFIG:config,OXROUTE_CODEX_URL:'ws://127.0.0.1:9',OXROUTE_CODEX_CLI:'/bin/false'}});for(let i=0;i<100;i++){try{if((await fetch(`${native}/api/health`)).ok)return;}catch{}await new Promise(done=>setTimeout(done,100));}throw Error('Disposable daemon did not start');}
 try{
 await start();
 assert.ok((await(await fetch(`${native}/api/state`)).json()).artifactRoot.includes('/.tmp/'),'Requires disposable runtime');
