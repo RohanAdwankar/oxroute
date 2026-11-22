@@ -80,7 +80,7 @@ try {
  if(process.env.IMAGE_SCREENSHOT)await page.screenshot({path:process.env.IMAGE_SCREENSHOT});
  const beforeReply=(await api(`/api/agents/${agent.id}`)).timeline.map(entry=>entry.id);
  const decisionResponse=page.waitForResponse(response=>response.url().endsWith('/decision')&&response.request().method()==='POST');
- await dialog.getByRole('button',{name:'Send image reply'}).click();await dialog.getByText('Reply sent',{exact:true}).waitFor();
+ await dialog.getByRole('button',{name:'Send image reply'}).click();await dialog.waitFor({state:'hidden'});
  const saved=await (await decisionResponse).json();
  const styles=saved.annotations.filter(note=>note.quote==='Drawing').flatMap(note=>note.strokes.map(()=>note.style));
  assert.deepEqual(styles,[{color:'#d23c2e',width:1},{color:'#2468c7',width:4},{color:'#d23c2e',width:1}]);
@@ -95,8 +95,6 @@ try {
  assert.ok(bytes.length>1000, `Image reply bytes=${bytes.length}, signature=${bytes.subarray(0,40).toString('hex')}, file=${filename}`);assert.notDeepEqual(bytes,await readFile(source),'Reply contains painted image');
  const painted=await page.evaluate(async filename=>{const image=new Image();image.src=`/api/attachments/${encodeURIComponent(filename)}`;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;let red=0,blue=0;for(let i=0;i<data.length;i+=4){if(data[i]>170&&data[i+1]<100&&data[i+2]<100)red++;if(data[i]<100&&data[i+1]<160&&data[i+2]>150)blue++;}return {red,blue};},filename);
  assert.ok(painted.red>100&&painted.blue>100,'Delivered pixels retain each marker color');
- assert.equal(await svg.locator('polyline').count(),3);assert.equal(await svg.locator('text').count(),2);assert.equal(await svg.locator('rect').count(),1);
- await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
  const attachmentImage=page.locator('img[src^="/api/attachments/"]').first();await attachmentImage.focus();await page.keyboard.press('Enter');await dialog.waitFor();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
  assert.equal(page.context().pages().length,1);

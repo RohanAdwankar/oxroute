@@ -187,7 +187,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
         form.append("files", blob, `review-${review.id.slice(0, 12)}-page-${number}.png`);
       }
       const value = await response<Review>(fetch(`${base}/decision`, {method: "POST", body: form}));
-      setReview(value); requestId.current = crypto.randomUUID(); sessionStorage.removeItem(`oxroute.fileReview.${review.id}`);
+      setReview(value); requestId.current = crypto.randomUUID(); sessionStorage.removeItem(`oxroute.fileReview.${review.id}`); if (isImage) close();
     } catch (reason) {setError(String(reason));} finally {setBusy(false);}
   }
   return <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={isImage ? "Image preview" : "File review"} className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
