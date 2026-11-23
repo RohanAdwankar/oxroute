@@ -556,6 +556,7 @@ impl Hub {
         }
         self.clone().consume(rx);
         self.clone().watch_stalls();
+        self.dispatch_review_feedback().await?;
         self.watch_focus_events();
         self.refresh_dashboard().await;
         Ok(())
@@ -720,6 +721,7 @@ impl Hub {
                 if let Err(error) = self.reconcile_threads().await {
                     tracing::warn!(%error, "source thread reconciliation failed");
                 }
+                if let Err(error)=self.dispatch_review_feedback().await { tracing::warn!(%error,"Review feedback delivery failed"); }
                 if let Err(error)=self.sweep_focus(at).await { tracing::warn!(%error,"Focus sweep failed"); }
                 self.hand_out_open_work().await;
                 self.refresh_dashboard().await;
@@ -1987,6 +1989,30 @@ impl Hub {
             .entry(agent_id.to_string())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone()
+    }
+
+    /// Human review feedback stays local and waits for its owning turn to finish.
+    pub async fn dispatch_review_feedback(self:&Arc<Self>)->Result<()> {
+        for raw in self.store.values_with_prefix("review-feedback-pending:")? {
+            let (entry,epoch):(Entry,Option<String>)=serde_json::from_str(&raw)?;
+            let lock=self.lock_for(&entry.agent_id).await;
+            let Ok(held)=lock.try_lock_owned() else {continue};
+            let receipt=format!("review-feedback-receipt:{}",entry.request_id);
+            if self.store.get(&receipt)?.is_some() {self.store.finish_review_feedback(&entry.request_id)?;continue;}
+            if self.store.get(&format!("quiet-stop:{}",entry.agent_id))?!=epoch {self.store.set(&receipt,"cancelled")?;self.store.finish_review_feedback(&entry.request_id)?;continue;}
+            let agent=self.store.agent(&entry.agent_id)?.context("Review feedback owner missing")?;
+            let hub=self.clone();
+            tokio::spawn(async move {
+                let _held=held;
+                let target=Some(Target::new("you","local",&agent.id));
+                if let Err(error)=hub.run_turn(&agent,vec![TurnInput::text(entry.text)],None,target,None,Some((&receipt,"",false))).await {
+                    tracing::warn!(%error,"Review feedback retained for retry");
+                } else if let Err(error)=hub.store.finish_review_feedback(&entry.request_id) {
+                    tracing::warn!(%error,"Review feedback receipt cleanup deferred");
+                }
+            });
+        }
+        Ok(())
     }
 
     /// Deliver a durable system event once the harness accepts a new turn.

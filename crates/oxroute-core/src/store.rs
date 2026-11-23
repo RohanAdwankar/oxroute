@@ -2101,6 +2101,27 @@ impl Store {
         })
     }
 
+    /// Feedback, its human entry and local delivery are committed together.
+    pub fn record_review_feedback(&self, id:&str, before:&str, after:&str, agent:&str, request:&str, message:(&str,&str)) -> Result<Option<Entry>> {
+        self.with(|c| {
+            let tx=c.unchecked_transaction()?;
+            let existing=tx.query_row("SELECT id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id FROM entries WHERE agent_id=?1 AND item_id=?2 AND kind='you'",params![agent,request],read_entry).optional()?;
+            if let Some(entry)=existing {
+                anyhow::ensure!(entry.text==message.0&&entry.detail==message.1,"requestId already belongs to different feedback");
+                return Ok(None);
+            }
+            anyhow::ensure!(tx.execute("UPDATE kv SET value=?3 WHERE key=?1 AND value=?2",params![format!("review:{id}"),before,after])?==1,"Review changed; refresh and retry your feedback");
+            let entry=tx.query_row("INSERT INTO entries(agent_id,at,kind,text,detail,item_id) VALUES(?1,?2,'you',?3,?4,?5) RETURNING id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id",params![agent,crate::model::now(),message.0,message.1,request],read_entry)?;
+            let epoch:Option<String>=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("quiet-stop:{agent}")],|row|row.get(0)).optional()?;
+            tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2)",params![format!("review-feedback-pending:{request}"),serde_json::to_string(&(&entry,epoch))?])?;
+            tx.commit()?;Ok(Some(entry))
+        })
+    }
+
+    pub fn finish_review_feedback(&self,request:&str)->Result<()> {
+        self.with(|c| {c.execute("DELETE FROM kv WHERE key=?1 AND EXISTS(SELECT 1 FROM kv WHERE key=?2)",params![format!("review-feedback-pending:{request}"),format!("review-feedback-receipt:{request}")])?;Ok(())})
+    }
+
     /// Only one request may claim a revision's approval notification.
     pub fn replace_value(&self, key: &str, before: &str, after: &str) -> Result<bool> {
         self.with(|c| Ok(c.execute("UPDATE kv SET value = ?3 WHERE key = ?1 AND value = ?2", params![key, before, after])? == 1))

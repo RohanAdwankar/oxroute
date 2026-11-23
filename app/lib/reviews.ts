@@ -1,5 +1,6 @@
 export type Review = {
-  id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale"; staleNotified?: boolean;
+  id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale" | "changes_requested"; staleNotified?: boolean;
+  feedback?: {requestId:string;at:number;reason:string;headCommit:string}[];
   full: boolean;
   snapshot: { repository: string; remote: string; remoteUrl: string; branch: string;
     baseRef: string; baseCommit: string; headCommit: string; reviewBaseCommit?: string; files: { path: string; patch: string; image?: { before: boolean; after: boolean } }[] };

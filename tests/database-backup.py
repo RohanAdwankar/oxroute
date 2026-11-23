@@ -1,6 +1,7 @@
 """Real SQLite snapshot/rollback checks, including uncheckpointed WAL and FTS."""
 import gzip
 import importlib.util
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -13,6 +14,24 @@ spec.loader.exec_module(backup)
 
 
 class DatabaseBackup(unittest.TestCase):
+    def test_human_decisions_survive_review_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database, archive = (Path(directory) / name for name in ('live.sqlite3', 'snapshot.gz'))
+            original = {'snapshot': {'files': ['saved evidence']}, 'approvedAt': 1, 'feedback': []}
+            with sqlite3.connect(database) as live:
+                live.execute('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)')
+                live.execute('INSERT INTO kv VALUES (?,?)', ('review:proposal', json.dumps(original)))
+                live.commit()
+                backup.backup(database, archive)
+                feedback = [{'reason': 'Revise the prepared configuration.', 'headCommit': 'saved revision'}]
+                for approval in (None, 2):
+                    changed = {'snapshot': {'files': []}, 'approvedAt': approval, 'feedback': feedback}
+                    live.execute('UPDATE kv SET value=?', (json.dumps(changed),))
+                    live.commit()
+                    backup.restore_reviews(database, archive)
+                    restored = json.loads(live.execute('SELECT value FROM kv').fetchone()[0])
+                    self.assertEqual(restored, {**original, 'approvedAt': approval, 'feedback': feedback})
+
     def test_compressed_snapshot_and_selective_rollback(self):
         with tempfile.TemporaryDirectory() as directory:
             database, archive = (Path(directory) / name for name in ('live.sqlite3', 'snapshot.gz'))

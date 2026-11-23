@@ -252,6 +252,7 @@ async fn serve() -> Result<()> {
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
         .route("/api/agents/{id}/reviews/{review}/edit", get(review_edit_text).post(edit_review))
         .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
+        .route("/api/agents/{id}/reviews/{review}/feedback", post(review_feedback))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
@@ -721,6 +722,10 @@ struct ReviewBody { repository: String, base: String, remote: String, title: Str
 
 #[derive(Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ReviewFeedback { request_id:String, at:f64, reason:String, head_commit:String }
+
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ChangeReview {
     id: String,
     agent_id: String,
@@ -730,6 +735,8 @@ struct ChangeReview {
     approved_at: Option<f64>,
     #[serde(default)]
     stale_notified: bool,
+    #[serde(default)]
+    feedback: Vec<ReviewFeedback>,
 }
 
 fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(ChangeReview, String)> {
@@ -750,7 +757,7 @@ async fn review_response(review: ChangeReview, full: bool) -> anyhow::Result<ser
     tracing::info!(review = %review.id, diff_ms, check_ms, total_ms = started.elapsed().as_secs_f64() * 1000.0, "review prepared");
     let files = files?;
     let status = if !current.unwrap_or(false) { "stale" }
-        else if review.approved_at.is_some() { "approved" } else { "pending" };
+        else if review.approved_at.is_some() { "approved" } else if !review.feedback.is_empty() { "changes_requested" } else { "pending" };
     let mut response = serde_json::to_value(review).expect("review is serializable");
     response["status"] = json!(status);
     response["full"] = json!(full);
@@ -780,7 +787,7 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
         let previous: ChangeReview = serde_json::from_str(&previous)?;
         git::since_approval(&mut snapshot, &previous.snapshot.head_commit).await;
     }
-    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None, stale_notified: false };
+    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None, stale_notified: false, feedback:vec![] };
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
     let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
@@ -882,6 +889,31 @@ async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, Stri
         .header("x-content-type-options", "nosniff")
         .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox")
         .body(Body::from_stream(stream))?)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ReviewFeedbackBody { request_id:String, head_commit:String, reason:String }
+
+async fn review_feedback(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,Json(body):Json<ReviewFeedbackBody>)->Result<Json<serde_json::Value>,Failed> {
+    if body.request_id.is_empty()||body.request_id.len()>100||body.reason.trim().is_empty()||body.reason.len()>32000 {return Err(anyhow::anyhow!("Describe the requested changes").into());}
+    let (mut review,before)=review_record(&hub,&agent,&id,false)?;
+    if body.head_commit!=review.snapshot.head_commit {return Err(anyhow::anyhow!("Feedback must match this saved review snapshot").into());}
+    if let Some(saved)=review.feedback.iter().find(|saved|saved.request_id==body.request_id) {
+        if saved.reason!=body.reason||saved.head_commit!=body.head_commit {return Err(anyhow::anyhow!("requestId already belongs to different feedback").into());}
+    } else {
+        let text=format!("Changes requested for review {id}: {}\nSnapshot: {} (base {})\n\n{}\n\nThis feedback applies to this saved review snapshot. Publication is not approved; revise the change and present its updated review. No merge, deployment or external communication is authorized.",review.title,review.snapshot.head_commit,review.snapshot.base_commit,body.reason);
+        let detail=format!("review-feedback:{}",json!({"id":id,"title":review.title,"headCommit":body.head_commit,"baseCommit":review.snapshot.base_commit,"requestId":body.request_id}));
+        review.approved_at=None;
+        review.feedback.push(ReviewFeedback{request_id:body.request_id.clone(),at:oxroute_core::model::now(),reason:body.reason,head_commit:body.head_commit});
+        let request=format!("review-feedback:{id}:{}",body.request_id);
+        if let Some(entry)=hub.store.record_review_feedback(&id,&before,&serde_json::to_string(&review)?,&agent,&request,(&text,&detail))? {
+            hub.emit(oxroute_core::model::Event::Timeline{entry:Box::new(entry)});
+            hub.emit(oxroute_core::model::Event::Sync);
+        }
+    }
+    hub.dispatch_review_feedback().await?;
+    Ok(Json(observed_review(&hub,review_record(&hub,&agent,&id,false)?.0,false).await?))
 }
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {

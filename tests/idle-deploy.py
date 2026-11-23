@@ -27,6 +27,10 @@ class DeploymentRecovery(unittest.TestCase):
                 agent_binary.write_bytes(b"old agent binary")
                 (release / "bin/oxroute-agent").write_bytes(b"new agent binary")
                 (release / "bin/oxroute-agent").chmod(0o755)
+                tui_binary = root / "tui-binary"
+                tui_binary.write_bytes(b"old tui binary")
+                (release / "bin/oxroute").write_bytes(b"new tui binary")
+                (release / "bin/oxroute").chmod(0o755)
                 validation = release / "validation"
                 (validation / "deploy").mkdir(parents=True)
                 (validation / "REVISION").write_text("fixture")
@@ -41,6 +45,7 @@ class DeploymentRecovery(unittest.TestCase):
                     "commit": "fixture", "version": "fixture",
                     "binarySha256": hashlib.sha256(daemon.read_bytes()).hexdigest(),
                     "agentBinarySha256": hashlib.sha256((release / "bin/oxroute-agent").read_bytes()).hexdigest(),
+                    "tuiBinarySha256": hashlib.sha256((release / "bin/oxroute").read_bytes()).hexdigest(),
                     "agentId": "fixture", "tasks": [{"id": "task-fixture", "text": "Fixture"}],
                 }))
                 with sqlite3.connect(root / "database") as database:
@@ -49,6 +54,7 @@ class DeploymentRecovery(unittest.TestCase):
                 for before, after in [
                     ('binary=$HOME/.local/bin/oxrouted', f'binary={binary}'),
                     ('agent_binary=$HOME/.local/bin/oxroute-agent', f'agent_binary={agent_binary}'),
+                    ('tui_binary=$HOME/.local/bin/oxroute', f'tui_binary={tui_binary}'),
                     ('web=$HOME/.local/share/oxroute/web', f'web={web}'),
                     ('database=$HOME/.local/state/oxroute/oxroute.sqlite3', f'database={root}/database'),
                     ('sleep 2', 'sleep 0'),

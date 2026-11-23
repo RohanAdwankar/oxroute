@@ -58,7 +58,15 @@ def backup(database, archive):
 def restore_reviews(database, archive):
     # One transaction also rolls back all writes if gzip detects corruption.
     with sqlite3.connect(database) as current, gzip.open(reviews_path(archive), 'rt') as reviews:
-        current.executemany('INSERT OR REPLACE INTO kv (key,value) VALUES (?,?)', (json.loads(line) for line in reviews))
+        for line in reviews:
+            key, value = json.loads(line)
+            row = current.execute('SELECT value FROM kv WHERE key=? AND json_valid(value) AND json_valid(?)', (key, value)).fetchone()
+            if row:
+                saved, live = json.loads(value), json.loads(row[0])
+                if isinstance(saved, dict) and isinstance(live, dict):
+                    saved.update({field: live[field] for field in ('approvedAt', 'feedback') if field in live})
+                    value = json.dumps(saved)
+            current.execute('INSERT OR REPLACE INTO kv (key,value) VALUES (?,?)', (key, value))
 
 
 if __name__ == '__main__':

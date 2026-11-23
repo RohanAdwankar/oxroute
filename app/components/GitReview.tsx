@@ -12,6 +12,7 @@ import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
 import {titleQuote} from "../lib/title-quotes";
 import {QuoteTitle} from "./QuoteTitle";
+import {ReviewFeedback} from "./ReviewFeedback";
 
 type Line = { text: string; old: number | null; next: number | null };
 type DiffSelection={file:string;start:number;end:number;wholeFile?:boolean};
@@ -82,6 +83,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [feedbackOpen,setFeedbackOpen]=useState(false);
   const cancelLoad = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<(DiffSelection&{x:number;y:number}) | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
@@ -223,12 +225,14 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
       {review && <>
         {snapshot?.reviewBaseCommit && <button className="cursor-pointer text-faint hover:text-ink" title={full ? "Show only changes since the previous approval" : "Show the complete PR diff"}
           onClick={() => { setMenu(null); setReview(null); setFull(!full); }}>{full ? "Full PR" : "Since approval"}</button>}
-        <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "stale" ? review.staleNotified ? "Update requested" : "Revision changed" : "Awaiting approval"}</span>
+        <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "changes_requested" ? "Changes requested" : review.status === "stale" ? review.staleNotified ? "Update requested" : "Revision changed" : "Awaiting approval"}</span>
+        <button type="button" aria-label="Request changes" title="Request changes" aria-expanded={feedbackOpen} onClick={()=>setFeedbackOpen(value=>!value)} className="cursor-pointer p-2 hover:bg-band"><Icon name="thumbDown"/></button>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}
-          disabled={approving || review.status !== "pending"}
+          disabled={approving || !["pending","changes_requested"].includes(review.status)}
           className="cursor-pointer p-2 hover:bg-band disabled:cursor-default disabled:opacity-40"><Icon name="tick" /></button>
       </>}
     </div>
+    {review&&<ReviewFeedback key={review.id} review={review} endpoint={endpoint} open={feedbackOpen} onClose={()=>setFeedbackOpen(false)} onSaved={value=>{cancelLoad.current?.();setReview(current=>current?{...value,full:current.full,snapshot:current.snapshot}:value);}}/>}
     {review && snapshot && <details className="border-b border-rule px-4 py-2 text-[12px]">
       <summary className="cursor-pointer break-all"><span className="ml-2">{snapshot.branch} <span className="text-faint">into</span> {snapshot.baseRef.replace("refs/heads/", "").replace("refs/remotes/", "")}</span></summary>
       <div className="mt-2 break-all text-faint">{snapshot.repository}<br />Publish to {snapshot.remoteUrl}<br />Base {snapshot.baseCommit.slice(0, 8)} · Head {snapshot.headCommit.slice(0, 8)}</div>
