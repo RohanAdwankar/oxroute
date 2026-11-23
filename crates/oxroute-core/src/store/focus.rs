@@ -187,6 +187,7 @@ impl Store {
     pub fn last_focus_activity(&self, focus: &str) -> Result<Option<f64>> {
         self.read(|c| Ok(c.query_row("SELECT MAX(at) FROM (
             SELECT at FROM focus_turn_events WHERE focus_id=?1
+            UNION ALL SELECT at FROM entries WHERE agent_id=?1 AND kind='you'
             UNION ALL SELECT CAST(value AS REAL) FROM kv WHERE key IN ('focus.last-event-delivery','focus.idle-baseline')
             UNION ALL SELECT CAST(substr(key,12) AS REAL) FROM kv WHERE key GLOB 'focus-wake:*'
         )", [focus], |row| row.get(0))?))
@@ -196,6 +197,19 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn talking_to_focus_counts_as_activity() {
+        let root=std::env::temp_dir().join(crate::model::new_id("focus-activity"));
+        std::fs::create_dir_all(&root).unwrap();
+        let store=Store::open(&root.join("state.sqlite3")).unwrap();
+        assert_eq!(store.last_focus_activity("focus").unwrap(),None);
+        store.add_entry("focus",5.0,EntryKind::You,"hello","","").unwrap();
+        store.add_entry("other",9.0,EntryKind::You,"unrelated","","").unwrap();
+        store.add_entry("focus",7.0,EntryKind::Said,"reply","","").unwrap();
+        assert_eq!(store.last_focus_activity("focus").unwrap(),Some(5.0));
+        drop(store);std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn coordination_origin_survives_retries_and_restart() {
