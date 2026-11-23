@@ -6,7 +6,7 @@ import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review 
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {createPortal} from "react-dom";
-import {ReviewQuoteMenus,DecisionReferences} from "./FocusContext";
+import {ReviewQuoteMenus,DecisionReferences,ConversationNavigation} from "./FocusContext";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
@@ -77,6 +77,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
 }) {
   const endpoint = reviewEndpoint(agentId, reviewId);
   const quoteMenu=useContext(ReviewQuoteMenus);
+  const openConversation=useContext(ConversationNavigation);
   const decision=useContext(DecisionReferences).get(reviewId);
   const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
@@ -240,7 +241,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
           className="cursor-pointer p-2 hover:bg-band disabled:cursor-default disabled:opacity-40"><Icon name="tick" /></button>
       </>}
     </div>
-    {review&&<ReviewFeedback key={review.id} review={review} endpoint={endpoint} open={feedbackOpen} onClose={()=>setFeedbackOpen(false)} onSaved={value=>{cancelLoad.current?.();setReview(current=>current?{...value,full:current.full,snapshot:current.snapshot}:value);}}/>}
+    {review&&<ReviewFeedback key={review.id} review={review} endpoint={endpoint} open={feedbackOpen} onClose={()=>setFeedbackOpen(false)} onSaved={value=>{cancelLoad.current?.();setReview(current=>current?{...value,full:current.full,snapshot:current.snapshot}:value);onClose();openConversation?.(value.agentId);}}/>}
     {review && snapshot && <details className="border-b border-rule px-4 py-2 text-[12px]">
       <summary className="cursor-pointer break-all"><span className="ml-2">{snapshot.branch} <span className="text-faint">into</span> {snapshot.baseRef.replace("refs/heads/", "").replace("refs/remotes/", "")}</span></summary>
       <div className="mt-2 break-all text-faint">{snapshot.repository}<br />Publish to {snapshot.remoteUrl}<br />Base {snapshot.baseCommit.slice(0, 8)} · Head {snapshot.headCommit.slice(0, 8)}</div>

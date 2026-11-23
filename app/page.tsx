@@ -403,11 +403,10 @@ export default function Home() {
   }, []);
 
   const openConversation=useCallback((id:string,entry?:number)=>{
-    showAgent(id,entry);
-    if(id===snapshot.focusAgentId){
-      setFocusOpen(true);setDecisionId(null);
-      const url=new URL(window.location.href);url.searchParams.set('view','focus');url.searchParams.delete('decision');window.history.replaceState(null,'',url);
-    }
+    showAgent(id,entry);setDecisionId(null);
+    const url=new URL(window.location.href);url.searchParams.delete('decision');
+    if(id===snapshot.focusAgentId){setFocusOpen(true);url.searchParams.set('view','focus');}
+    window.history.replaceState(null,'',url);
   },[showAgent,snapshot.focusAgentId]);
 
   const showFocus = () => {
