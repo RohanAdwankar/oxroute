@@ -145,6 +145,9 @@ try{
  const policy=JSON.parse(policyLine.slice(policyLine.indexOf('=')+1).trim().slice(0,-1));
  assert.ok(focusTurns().every(turn=>turn.input.some(input=>input.text?.includes(policy))),'Every Focus turn receives the maintained canonical inbox and decision policy unchanged');
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
+ const responseLine=source.split('\n').find(line=>line.startsWith('const CONSENT_RESPONSE_GUIDANCE:'));
+ const responsePolicy=JSON.parse(responseLine.slice(responseLine.indexOf('=')+1).trim().slice(0,-1));
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(responsePolicy)),`${scope} turns receive canonical consent response controls and scope guidance`);
  console.log(`Canonical inbox and decision policy captured unchanged in automatic, event and direct turns (${focusTurns().length} total).`);
  console.log('Direct requests take priority across a gated runtime resume, retain visible responses and scoped input, then resume durable background events without false fleet labels.');
  console.log('Urgent steering arrives once within the active turn, keeps internal provenance, and lost acknowledgements survive restart without replay.');
