@@ -10,6 +10,7 @@ import { encodePrFormLink } from "../lib/pr-links";
 import { FocusReview } from "./FocusReview";
 import { EmbeddedReviews, ConversationReferences } from "./FocusContext";
 import { FocusCards } from "./FocusCards";
+import {ConversationLink} from "./ConversationLink";
 import { TaskReference } from "./TaskReference";
 import type { QuoteThread } from "../lib/types";
 
@@ -122,6 +123,7 @@ const markdownComponents: Components = {
     const reviews = useContext(ReviewLinks);
     const tasks = useContext(TaskLinks);
     const embedded=useContext(EmbeddedReviews);
+    if(href?.startsWith("#agent/")&&href.length>7)return <ConversationLink {...props} id={href.slice(7)}>{children}</ConversationLink>;
     if(href?.startsWith("#review/")&&embedded?.owners.has(href.slice(8)))return <FocusReview id={href.slice(8)}/>;
     if (href && savedReview(href) && openFile) return <button type="button" className="cursor-pointer underline" onClick={() => openFile(href)}>{children}</button>;
     const task = href?.startsWith("#task/");

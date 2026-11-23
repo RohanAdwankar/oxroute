@@ -93,7 +93,22 @@ try{
  await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor({timeout:5000});
  assert.equal(await card(workerIds[0]).getByText(workerReply,{exact:true}).count(),0,'Historical publications cannot drift to later source results');
  assert.ok(original.id<Number(await entry.getAttribute('data-entry')));
- assert.equal(await card(workerIds[0]).getByRole('link',{name:names[0],exact:true}).getAttribute('href'),`#agent/${workerIds[0]}`,'Historical results retain source navigation');
+ const navigationTasks=await api('/api/tasks');const beforeNavigationTabs=await page.getByRole('tab').count();const navigationToken=await page.evaluate(()=>window.navigationToken=crypto.randomUUID());
+ await page.locator('[data-composer]').fill('Keep the coordinator navigation draft.');
+ const inline=()=>card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true});await inline().fill('Keep the inline source question.');
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:1000});const link=card(workerIds[0]).getByRole('link',{name:names[0],exact:true});
+  if(width===390){await link.focus();await link.press('Enter');}else await link.click();
+  const tab=page.getByRole('tab',{name:names[0],exact:true});await tab.waitFor({timeout:5000});assert.equal(await tab.getAttribute('aria-selected'),'true','A conversation title activates the owning session tab');
+  assert.equal(new URL(page.url()).searchParams.get('agent'),workerIds[0]);assert.equal(new URL(page.url()).searchParams.get('view'),null);assert.equal(await page.getByRole('tab').count(),beforeNavigationTabs+1,'An existing session tab is reused without duplication');
+  assert.equal(await page.evaluate(()=>window.navigationToken),navigationToken,'Conversation title navigation does not reload the application');
+  if(width===1280)await page.locator('[data-composer]').fill('Keep the owning conversation draft.');else assert.equal(await page.locator('[data-composer]').inputValue(),'Keep the owning conversation draft.');
+  if(process.env.NAVIGATION_SCREENSHOT)await page.screenshot({path:`${process.env.NAVIGATION_SCREENSHOT}-${width}.png`});
+  await page.getByRole('tab',{name:'Focus',exact:true}).click();await deck.waitFor();await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor();assert.equal(await inline().inputValue(),'Keep the inline source question.');assert.equal(await page.locator('[data-composer]').inputValue(),'Keep the coordinator navigation draft.');
+ }
+ assert.deepEqual(await api('/api/tasks'),navigationTasks,'Conversation title navigation preserves task state and ownership');assert.equal((await api(`/api/agents/${workerIds[1]}/reviews/${reviewId}`)).approvedAt,null,'Navigation never grants review consent');
+ await inline().fill('');await page.setViewportSize({width:1280,height:1000});
+
  if(process.env.HISTORY_SCREENSHOT){for(const width of[1280,390]){await page.setViewportSize({width,height:850});await card(workerIds[0]).screenshot({path:`${process.env.HISTORY_SCREENSHOT}-${width}.png`});}await page.setViewportSize({width:1280,height:1000});}
 
  const reply=card(workerIds[0]).getByRole('textbox',{name:`Reply to ${names[0]}`,exact:true});

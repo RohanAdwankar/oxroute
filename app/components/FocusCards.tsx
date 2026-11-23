@@ -9,6 +9,7 @@ import {FocusReview} from "./FocusReview";
 import {Icon} from "./Icon";
 import {InlineReply} from "./InlineReply";
 import {Markdown} from "./Markdown";
+import {ConversationLink} from "./ConversationLink";
 import {TaskReference} from "./TaskReference";
 
 export function FocusCards({ids}:{ids:string[]}) {
@@ -69,9 +70,9 @@ export function ConversationCard({agent,decision}:{agent:Agent;decision?:FocusDe
   const page=Math.min(taskPage,Math.max(0,Math.ceil(tasks.length/3)-1)),start=page*3;
   const sent=()=>{setRevision(value=>value+1);context.onSent();};
   return <article data-focus-conversation={agent.id} aria-label={`Conversation ${agent.name}`} className="quiet-scroll relative max-h-[min(70vh,42rem)] min-w-0 overflow-y-auto bg-paper p-3 ring-1 ring-hair">
-    <header className="mb-2 flex items-baseline justify-between gap-3"><h3 className="font-semibold"><a href={`#agent/${agent.id}`} title="Open source conversation">{agent.name}</a></h3><span className="text-[11px] text-mid">{decision?"Decision evidence":publication?"Published result":agent.status}</span></header>
+    <header className="mb-2 flex items-baseline justify-between gap-3"><h3 className="font-semibold"><ConversationLink id={agent.id} title="Open source conversation">{agent.name}</ConversationLink></h3><span className="text-[11px] text-mid">{decision?"Decision evidence":publication?"Published result":agent.status}</span></header>
     <div><ConversationCards.Provider value={null}><ConversationReferences.Provider value={null}>
-      {decision?view?.timeline.map(entry=><div key={entry.id} data-decision-evidence={entry.id}><a href={`?agent=${entry.agentId}&entry=${entry.id}`} title="Open decision evidence" className="text-[11px] text-mid">Source · {entry.kind==="you"?"You":entry.kind==="said"?"Reply":"Evidence"}</a><Markdown>{[entry.text,entry.output].filter(Boolean).join('\n\n')}</Markdown></div>):text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{publication?"No narrative result at publication.":agent.activity||"No reply yet."}</p>}
+      {decision?view?.timeline.map(entry=><div key={entry.id} data-decision-evidence={entry.id}><ConversationLink id={entry.agentId} entry={entry.id} title="Open decision evidence" className="text-[11px] text-mid">Source · {entry.kind==="you"?"You":entry.kind==="said"?"Reply":"Evidence"}</ConversationLink><Markdown>{[entry.text,entry.output].filter(Boolean).join('\n\n')}</Markdown></div>):text?<Markdown>{text}</Markdown>:<p className="text-[12px] text-mid">{publication?"No narrative result at publication.":agent.activity||"No reply yet."}</p>}
       {review&&!text.includes(review.detail)&&<FocusReview id={review.detail} initiallyExpanded={false}/>}
     </ConversationReferences.Provider></ConversationCards.Provider></div>
     {error&&<p role="alert" className="mt-2 flex items-center gap-2 text-[12px]">{error}<button type="button" aria-label="Retry card" title="Retry card" onClick={()=>setRevision(value=>value+1)}><Icon name="refresh"/></button></p>}

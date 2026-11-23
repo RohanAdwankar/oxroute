@@ -17,3 +17,5 @@ export const CoordinationTitles=createContext<ReadonlyMap<string,string>>(new Ma
 export const ConversationPublication=createContext<null|{before:number;results?:Record<string,number>}>(null);
 
 export const DecisionReferences=createContext<ReadonlyMap<string,{id:string;revision:string}>>(new Map());
+
+export const ConversationNavigation=createContext<null|((id:string,entry?:number)=>void)>(null);

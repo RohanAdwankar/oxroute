@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
-import { EmbeddedReviews, DecisionReferences, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
+import { EmbeddedReviews, DecisionReferences, ConversationNavigation, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
 import { receiveDraft, type DiffQuote } from "./lib/drafts";
 import { titleQuote } from "./lib/title-quotes";
 import { TaskActions } from "./components/TaskReference";
@@ -401,6 +401,14 @@ export default function Home() {
     else url.searchParams.delete("entry");
     window.history.pushState(null, "", url);
   }, []);
+
+  const openConversation=useCallback((id:string,entry?:number)=>{
+    showAgent(id,entry);
+    if(id===snapshot.focusAgentId){
+      setFocusOpen(true);setDecisionId(null);
+      const url=new URL(window.location.href);url.searchParams.set('view','focus');url.searchParams.delete('decision');window.history.replaceState(null,'',url);
+    }
+  },[showAgent,snapshot.focusAgentId]);
 
   const showFocus = () => {
     showAgent(null);
@@ -1016,7 +1024,7 @@ export default function Home() {
     quote: (quote: DiffQuote,decision=decisionId) => {if(decision)setReplyDecisionId(decision);const item=decisionItems.find(item=>item.id===decision);if(item?.state.decisionRevision&&!quote.decision)quote={...quote,decision:{id:item.id,revision:item.state.decisionRevision}};receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
   } : null, [focusOpen, focusAgentId, reviewOwnerKey,decisionId,decisionItems]);
   const replyToDecision=useCallback((item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote({...titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),decision:item.state.decisionRevision?{id:item.id,revision:item.state.decisionRevision}:undefined},item.id);},[embeddedReviews]);
-  const openDecisionSource=useCallback((item:typeof decisionItems[number])=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);}),[run,chooseDecision,showAgent]);
+  const openDecisionSource=useCallback((item:typeof decisionItems[number])=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);openConversation(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);}),[run,chooseDecision,openConversation]);
   useEffect(()=>{if(decisionId&&decisionItems.length&&!decisionItems.some(item=>item.id===decisionId))chooseDecision(decisionItems[0].id);},[decisionId,decisionItems,chooseDecision]);
   const scopeTasks = useCallback(() => { if(decisionQueue){setWindowDecisions(!windowDecisions);sessionStorage.setItem("oxroute.windowDecisions",String(!windowDecisions));}else setWindowTasks(!windowTasks);setTaskAt(0); }, [decisionQueue,windowDecisions,windowTasks,setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
@@ -1379,7 +1387,7 @@ export default function Home() {
   }
 
   return (
-    <ArtifactRoot.Provider value={snapshot.artifactRoot}>
+    <ConversationNavigation.Provider value={openConversation}><ArtifactRoot.Provider value={snapshot.artifactRoot}>
     <TaskLinks.Provider value={taskLinks}>
     <TaskActions.Provider value={taskActions}>
     <ConversationCards.Provider value={focusOpen?{state:{...snapshot,tasks:taskItems},batchEntry:focusAgentId?details[focusAgentId]?.timeline.findLast(entry=>entry.kind==="said"&&entry.text.includes("#agent/"))?.id:undefined,onTask:taskLinks.open,onSent:reload}:null}>
@@ -1800,6 +1808,6 @@ export default function Home() {
     </ConversationCards.Provider>
     </TaskActions.Provider>
     </TaskLinks.Provider>
-    </ArtifactRoot.Provider>
+    </ArtifactRoot.Provider></ConversationNavigation.Provider>
   );
 }
