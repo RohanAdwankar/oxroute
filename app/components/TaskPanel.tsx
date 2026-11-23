@@ -134,6 +134,7 @@ export const TaskPanel = memo(function TaskPanel({
   decisionItems = [],
   onDecision,
   onReply,
+  onSource,
   reviewingDecisions = false,
   onDecisions,
   query,
@@ -167,6 +168,7 @@ export const TaskPanel = memo(function TaskPanel({
   decisionItems?: FocusDecision[];
   onDecision?: (id:string)=>void;
   onReply?: (item:FocusDecision)=>void;
+  onSource?: (item:FocusDecision)=>void;
   reviewingDecisions?: boolean;
   onDecisions?: () => void;
   onSearch: (query: string) => void;
@@ -427,9 +429,12 @@ export const TaskPanel = memo(function TaskPanel({
           </div>}
           {decisions ? decisionItems.map((item,at)=><Row key={item.id} depth={0} focused={active&&at===cursor} shown={false} onContextMenu={()=>{}}>
             <div data-decision={item.id} className="min-w-0 flex-1">
-              <button type="button" data-task-open data-decision-open title="Open decision card" onClick={()=>onDecision?.(item.id)} className="block w-full cursor-pointer text-left text-[13px] leading-[1.45] text-ink">{item.title}</button>
+              <button type="button" data-task-open data-decision-open title="Open decision context" onClick={()=>onDecision?.(item.id)} className="flex w-full cursor-pointer items-start gap-2 text-left text-[13px] leading-[1.45] text-ink"><span className="min-w-0 flex-1">{item.title}</span><Icon name="open" size={14}/></button>
               <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={item.state.recommendation?.reason}>{item.state.recommendation?.humanReason} · Unblocks {item.state.recommendation?.unblocks}{item.state.needsReview&&<> · Checking latest context</>}</p>
-              <button type="button" data-decision-reply onClick={()=>onReply?.(item)} className="mt-1 cursor-pointer text-[11px] text-mid hover:text-ink">Reply</button>
+              <div className="mt-1 flex items-center gap-3 text-mid">
+                <button type="button" data-decision-reply aria-label="Reply" title="Reply in Focus" onClick={()=>onReply?.(item)} className="cursor-pointer p-1 hover:text-ink"><Icon name="quote" size={14}/></button>
+                <button type="button" aria-label="Open decision source" title="Open decision source" onClick={()=>onSource?.(item)} className="cursor-pointer p-1 hover:text-ink"><Icon name="external" size={14}/></button>
+              </div>
             </div>
           </Row>) : rows.map((entry, at) => row(entry.task, at, entry.depth))}
         </>}

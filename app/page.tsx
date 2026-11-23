@@ -996,7 +996,7 @@ export default function Home() {
   const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
   const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
     owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
-    quote: (quote: DiffQuote) => {receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);},
+    quote: (quote: DiffQuote) => {receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
   } : null, [focusOpen, focusAgentId, reviewOwnerKey]);
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowScope ? [...new Set([...tabIds.flatMap(id => {
@@ -1763,6 +1763,7 @@ export default function Home() {
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
             decisions={decisionQueue} decisionItems={decisionItems} onDecision={chooseDecision} onReply={item=>embeddedReviews?.quote(titleQuote(`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}))}
+            onSource={item=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);})}
             reviewingDecisions={[...Object.values(taskPriorities ?? {}),...Object.values(reviewPriorities??{})].some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}

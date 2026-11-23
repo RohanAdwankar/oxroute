@@ -211,6 +211,14 @@ try {
 
  await page.goto(`${base}/?view=focus`);await panel.getByText(firstReview.title,{exact:true}).waitFor();
  assert.deepEqual(await panel.locator('[data-task-open]').allInnerTexts(),[firstReview.title,secondReview.title,'Choose the execution plan'],'Task-backed and taskless representations share one review identity');
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});
+  await panel.locator(`[data-decision="${secondReview.id}"]`).getByRole('button',{name:'Open decision source',exact:true}).click();
+  await page.waitForURL(url=>url.searchParams.get('agent')===second.id&&url.searchParams.get('entry')===String(secondEvidence));
+  assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Source navigation never approves a review');
+  await page.goto(`${base}/?view=focus`);await panel.getByText(firstReview.title,{exact:true}).waitFor();
+ }
+ await page.setViewportSize({width:1280,height:850});
  const tabCount=await page.getByRole('tab').count();
  await page.locator('[data-composer]').fill('Retain the decision note.');
  await panel.getByText(firstReview.title,{exact:true}).click();
@@ -222,6 +230,7 @@ try {
    const title=deck.locator('[aria-label="Change review"] [data-quote-title]'),text=await title.textContent();
    const selected=await quoteTitle(page,title,partial?1:0,partial?text.length-1:text.length,process.env.TITLE_SCREENSHOT?.replace('.png',`-${width}-${partial?'partial':'full'}.png`));
    await deck.waitFor({state:'hidden'});assert.ok((await page.getByRole('region',{name:'Attached diff Review title',exact:true}).locator('[data-quoted-diff-line]').allInnerTexts()).includes(selected));
+   if(!await panel.count())await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
    await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await deck.getByRole('button',{name:'Approve publication',exact:true}).waitFor();
   }
  }
@@ -296,6 +305,30 @@ try {
   await toggle.press('Enter');
   if(process.env.SOURCE_SCREENSHOT)await page.screenshot({path:process.env.SOURCE_SCREENSHOT.replace('.png',`-${width}.png`)});
  }
+ const beforeNavigation=await api('/api/tasks');
+ const humanCount=db.prepare("SELECT count(*) AS n FROM entries WHERE kind='you'").get().n;
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});
+  await deck.getByRole('button',{name:'Close decision',exact:true}).click();
+  const row=panel.locator(`[data-decision="${scopedTasks[0].id}"]`);
+  const source=row.getByRole('button',{name:'Open decision source',exact:true});
+  await source.focus();await source.press('Enter');
+  await page.waitForURL(url=>url.searchParams.get('agent')===focus.id&&url.searchParams.get('entry')===String(sourceIds[0]));
+  assert.equal(db.prepare("SELECT count(*) AS n FROM entries WHERE kind='you'").get().n,humanCount,'Opening a decision source never submits consent');
+  await page.goto(`${base}/?view=focus`);await panel.getByText(scopedTasks[0].text,{exact:true}).click();deck=page.locator('[data-focus-decisions]');
+  await scopedReply(0).waitFor();
+  if(process.env.RESPONSE_SCREENSHOT)await page.screenshot({path:process.env.RESPONSE_SCREENSHOT.replace('.png',`-${width}.png`)});
+ }
+ await deck.getByRole('button',{name:'Close decision',exact:true}).click();
+ await panel.locator(`[data-decision="${scopedTasks[1].id}"]`).getByRole('button',{name:'Reply',exact:true}).click();
+ const mobileComposer=page.locator('[data-composer]');await mobileComposer.waitFor();const composerBox=await mobileComposer.boundingBox();
+ assert.ok(composerBox.x>=0&&composerBox.x+composerBox.width<=390,'Mobile reply reveals the Focus composer instead of leaving it behind the sidebar');
+ assert.equal(await panel.count(),0,'Mobile reply dismisses the sidebar while retaining access through its toggle');
+ assert.equal(db.prepare("SELECT count(*) AS n FROM entries WHERE kind='you'").get().n,humanCount,'Preparing a scoped reply never submits consent');
+ if(process.env.RESPONSE_SCREENSHOT)await page.screenshot({path:process.env.RESPONSE_SCREENSHOT.replace('.png','-mobile-reply.png')});
+ await page.getByRole('button',{name:'Remove diff Decision title',exact:true}).click();
+ await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();await panel.getByText(scopedTasks[0].text,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await scopedReply(0).waitFor();
+ assert.deepEqual(await api('/api/tasks'),beforeNavigation,'Opening decision sources preserves task ownership and state');
  await scopedReply(0).press('Enter');
  for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`);i++)await new Promise(done=>setTimeout(done,100));
  const submitted=db.prepare("SELECT text FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`)?.text;
