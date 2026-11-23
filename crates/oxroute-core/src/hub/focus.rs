@@ -236,6 +236,8 @@ impl Hub {
     async fn schedule_focus(self: &Arc<Self>, at: f64, opened: bool) -> Result<()> {
         let Some(id) = self.focus_agent_id()? else { return Ok(()); };
         if self.store.agent_archived(&id)? { return Ok(()); }
+        // The periodic check exists to poll the inbox connectors; without one it has nothing to read.
+        if !opened && !crate::inbox::configured(self) { return Ok(()); }
         let last = self.store.last_focus_activity(&id)?;
         if last.is_none() && !opened {
             // Establish the initial idle deadline without replaying old fleet history.

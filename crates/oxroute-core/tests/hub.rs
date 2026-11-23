@@ -408,6 +408,8 @@ struct Harnessed {
     open_delay: Duration,
     backend: Backend,
     inject: bool,
+    /// Whether an inbox connector is configured; the periodic Focus check needs one.
+    inbox: bool,
 }
 
 impl Default for Harnessed {
@@ -423,8 +425,13 @@ impl Default for Harnessed {
             open_delay: Duration::ZERO,
             backend: Backend::Codex,
             inject: true,
+            inbox: false,
         }
     }
+}
+
+async fn world_with_inbox(mode: Mode, hang: bool) -> World {
+    build(mode, Harnessed { hang, inbox: true, ..Default::default() }).await
 }
 
 async fn world(mode: Mode, hang: bool) -> World {
@@ -480,7 +487,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         backend: Backend::Codex,
     };
     let config = Config {
-        inbox: Default::default(),
+        inbox: if options.inbox { oxroute_core::inbox::Config { outlook_token_file: Some(scratch.join("outlook-token")), ..Default::default() } } else { Default::default() },
         source: None,
         web_url: "http://localhost:3939".into(),
         workspace: scratch.to_string_lossy().to_string(),
@@ -3912,7 +3919,7 @@ async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conv
 
 #[tokio::test]
 async fn focus_identity_and_periodic_wakes_preserve_human_dependencies() {
-    let w=world(Mode::Ask,false).await;
+    let w=world_with_inbox(Mode::Ask,false).await;
     w.hub.set_next_action_suggestions(false).unwrap();
     let (one,two)=tokio::join!(w.hub.ensure_focus_agent(),w.hub.ensure_focus_agent());
     let focus=one.unwrap();assert_eq!(focus.id,two.unwrap().id);
@@ -3938,6 +3945,29 @@ async fn focus_identity_and_periodic_wakes_preserve_human_dependencies() {
     w.hub.reconcile_threads().await.unwrap();
     assert!(w.posts.lock().unwrap().threads.is_empty(),"Focus must remain a local conversation");
     assert!(w.posts.lock().unwrap().replies.is_empty());
+}
+
+#[tokio::test]
+async fn periodic_focus_check_needs_an_inbox_connector_and_counts_your_messages() {
+    let w = world(Mode::Ask, false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus = w.hub.ensure_focus_agent().await.unwrap();
+    let at = now();
+    w.hub.sweep_focus(at).await.unwrap();
+    w.hub.sweep_focus(at + 3600.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert!(w.starts_for(&focus.id).is_empty(), "With no inbox connector there is nothing for the periodic check to read");
+    let w = world_with_inbox(Mode::Ask, false).await;
+    w.hub.set_next_action_suggestions(false).unwrap();
+    let focus = w.hub.ensure_focus_agent().await.unwrap();
+    let at = now();
+    w.hub.sweep_focus(at).await.unwrap();
+    w.hub.store.add_entry(&focus.id, at + 1000.0, EntryKind::You, "still talking", "", "").unwrap();
+    w.hub.sweep_focus(at + 1500.0).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert!(w.starts_for(&focus.id).is_empty(), "A message from the user restarts the idle clock");
+    w.hub.sweep_focus(at + 2300.0).await.unwrap();
+    assert!(settle(|| !w.starts_for(&focus.id).is_empty()).await, "The check runs once the user has been quiet for twenty minutes");
 }
 
 #[tokio::test]
@@ -3998,7 +4028,7 @@ fn focus_wake_receipts_and_outbox_survive_reopening_the_store() {
 
 #[tokio::test]
 async fn focus_timer_never_overlaps_an_active_coordinator_turn() {
-    let w=world(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let w=world_with_inbox(Mode::Ask,true).await;w.hub.set_next_action_suggestions(false).unwrap();
     let focus=w.hub.ensure_focus_agent().await.unwrap();let worker=w.hub.create_agent(None).unwrap();let at=now();
     w.hub.store.save_task(&TaskItem{id:new_id("task"),text:"Choose an available window".into(),agent_id:worker.id,status:TaskStatus::WaitingForHuman,blocked_by_task_id:String::new(),parent_task_id:String::new(),images:vec![],created_at:at,updated_at:at,position:0.0}).unwrap();
     w.hub.open_focus().await.unwrap();assert!(settle(||w.calls.lock().unwrap().started.len()==1).await);
@@ -4061,7 +4091,7 @@ async fn shared_shell_routing_survives_priority_changes_in_both_backends() {
 
 #[tokio::test]
 async fn focus_turn_events_coalesce_outcomes_without_self_loops_or_periodic_duplicates() {
-    let w = build(Mode::Ask, Harnessed {source: false, hang: true, ..Default::default()}).await;
+    let w = build(Mode::Ask, Harnessed {source: false, hang: true, inbox: true, ..Default::default()}).await;
     w.hub.set_next_action_suggestions(false).unwrap();
     async fn end(w: &World, agent: &str, status: &str) {
         let previous = w.hub.store.active_turns().unwrap().into_iter().find(|turn| turn.agent_id == agent).unwrap().artifact_dir;
@@ -4326,7 +4356,7 @@ async fn slack_focus_publication_retries_and_final_echo_send_once() {
 
 #[tokio::test]
 async fn automatic_commentary_keeps_final_results_and_direct_messages_visible() {
-    let w = world(Mode::Auto, true).await;
+    let w = world_with_inbox(Mode::Auto, true).await;
     w.hub.set_next_action_suggestions(false).unwrap();
     let focus = w.hub.ensure_focus_agent().await.unwrap();
     let source = w.hub.create_agent(None).unwrap();
@@ -4468,7 +4498,7 @@ async fn focus_titles_share_message_identity_and_preserve_human_choices() {
 
 #[tokio::test]
 async fn direct_focus_request_keeps_its_turn_when_background_start_is_pending() {
-    let w=build(Mode::Ask,Harnessed {hang:true,open_delay:Duration::from_millis(150),..Default::default()}).await;
+    let w=build(Mode::Ask,Harnessed {hang:true,inbox:true,open_delay:Duration::from_millis(150),..Default::default()}).await;
     w.hub.set_next_action_suggestions(false).unwrap();
     let focus=w.hub.ensure_focus_agent().await.unwrap();let source=w.hub.create_agent(None).unwrap();
     w.hub.store.finish_focus_turn(&source.id,"completed-artifact","completed",now(),true).unwrap();

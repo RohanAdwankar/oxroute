@@ -34,6 +34,10 @@ pub struct Status {
     pub error: Option<String>,
 }
 
+pub fn configured(hub: &Hub) -> bool {
+    hub.config.inbox.outlook_token_file.is_some() || hub.config.inbox.slack_token_file.is_some()
+}
+
 pub fn statuses(hub: &Hub) -> Vec<Status> {
     [
         (OUTLOOK, &hub.config.inbox.outlook_token_file),
