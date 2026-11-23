@@ -39,7 +39,7 @@ try {
  const state=await api('/api/focus/task-priorities');
  const priority=(t,nextAction,reason,urgency,impact,effort,nextActor='human')=>({taskId:t.id,basis:state.priorities[t.id].basis,nextAction,reason,urgency,impact,effort,nextActor,...(nextActor==='human'?{humanReason:'The user owns this choice.',unblocks:'The selected delivery path.'}:{}),evidenceEntryIds:[evidence]});
  const order={requestId:crypto.randomUUID(),focusContextEntryId:state.review.focusContextEntryId,items:[
-  {...priority(urgent,'Choose release window','Delivery deadline today','urgent','substantial','substantial'),deadlineAt:Date.now()/1000+3600},
+  {...priority(urgent,'Choose release window','Timing blocks validation. Recommend the first window; rollback is available, but expect interruption and uncertain shared capacity.','urgent','substantial','substantial'),deadlineAt:Date.now()/1000+3600},
   priority(unblocker,'Choose the available environment','Unblocks recording and validation','normal','substantial','small'),
   priority(trivial,'Inspect chart wording','Presentation cleanup can wait','normal','routine','small'),
   priority(other,'Wait for upstream delivery','External dependency remains','normal','substantial','substantial','other')
@@ -93,6 +93,7 @@ try {
   const row=queue.locator('[data-task-row]').first();
   await row.getByText('The user owns this choice.',{exact:false}).waitFor();
   assert.ok((await row.innerText()).includes('Unblocks The selected delivery path.'));
+  assert.ok((await row.locator('[data-task-next-action]').innerText()).includes(order.items[0].reason),'The source-grounded decision rationale is visible on desktop and mobile rather than confined to a tooltip');
   const box=await row.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
   if(process.env.DECISION_SCREENSHOT)await decisions.screenshot({path:process.env.DECISION_SCREENSHOT.replace('.png',`-${width}.png`)});
  }
