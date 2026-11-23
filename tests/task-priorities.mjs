@@ -256,35 +256,34 @@ try {
    await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await deck.getByRole('button',{name:'Approve publication',exact:true}).waitFor();
   }
  }
- const fullReview=await browser.newPage({viewport:{width:390,height:850},isMobile:true,hasTouch:true});await fullReview.goto(`${base}/?agent=${owner.id}&review=${firstReview.id}`);
+ const standalone=await api('/api/agents',{}),standaloneReview=await makeReview(standalone,'Standalone Change Review');
+ const fullReview=await browser.newPage({viewport:{width:390,height:850},isMobile:true,hasTouch:true});await fullReview.goto(`${base}/?agent=${standalone.id}&review=${standaloneReview.id}`);
  const fullTitle=fullReview.locator('[aria-label="Change review"] [data-quote-title]');await fullTitle.waitFor();
- const fullSelected=await quoteTitle(fullReview,fullTitle,0,firstReview.title.length,process.env.TITLE_SCREENSHOT?.replace('.png','-touch.png'),true);
+ const fullSelected=await quoteTitle(fullReview,fullTitle,0,standaloneReview.title.length,process.env.TITLE_SCREENSHOT?.replace('.png','-touch.png'),true);
  await fullReview.getByRole('region',{name:'Attached diff Review title',exact:true}).waitFor();await fullReview.locator('[data-composer]').fill('Inspect this selected heading.');await fullReview.locator('[data-composer]').press('Enter');
- for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(owner.id,fullSelected);i++)await new Promise(done=>setTimeout(done,100));
- assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,?)>0").get(owner.id,fullSelected,firstReview.id),'Full review title quotes retain the selected owner and review identity');await fullReview.close();
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(standalone.id,fullSelected);i++)await new Promise(done=>setTimeout(done,100));
+ assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,?)>0").get(standalone.id,fullSelected,standaloneReview.id),'Full review title quotes retain the selected owner and review identity');await fullReview.close();
  await page.setViewportSize({width:1280,height:850});await deck.getByRole('button',{name:'Close decision',exact:true}).click();await page.locator('[data-composer]').press('Enter');
  for(let i=0;i<60&&!db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,'Selected title:')>0").get(focus.id);i++)await new Promise(done=>setTimeout(done,100));
  const titleSubmission=db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,'Selected title:')>0").get(focus.id)?.detail;
  assert.ok(titleSubmission?.includes('Source conversation: '+owner.id)&&titleSubmission.includes(firstReview.title.slice(1,-1))&&titleSubmission.includes(firstReview.id),'Inline title quotes preserve exact partial selections and source identity in the actual Focus submission');
- await page.locator('[data-composer]').fill('Retain the decision note.');await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');
+ await page.locator('[data-composer]').fill('Retain the decision note.');await panel.getByText(secondReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');
  for(const width of[1280,390]){await page.setViewportSize({width,height:850});const box=await deck.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);if(process.env.REVIEW_SCREENSHOT)await page.screenshot({path:process.env.REVIEW_SCREENSHOT.replace('.png',`-${width}.png`)});}
  await page.setViewportSize({width:1280,height:850});
- await deck.getByRole('button',{name:'Next decision',exact:true}).click();await deck.locator(`[data-focus-review="${secondReview.id}"]`).waitFor();
- await page.reload();deck=page.locator('[data-focus-decisions]');await deck.locator(`[data-focus-review="${secondReview.id}"]`).waitFor();
  await deck.getByRole('button',{name:'Next decision',exact:true}).click();await deck.locator(`[data-focus-conversation="${owner.id}"]`).waitFor();
  assert.equal(await page.getByRole('tab').count(),tabCount,'Normal decision cards stay inside Focus too');
  await deck.getByRole('button',{name:'Previous decision',exact:true}).click();await deck.locator(`[data-focus-review="${secondReview.id}"]`).getByRole('button',{name:'Edit setting.txt',exact:true}).click();
  await page.getByRole('textbox',{name:'File contents setting.txt',exact:true}).waitFor();await page.getByRole('button',{name:'Cancel edit',exact:true}).click();
- await deck.getByRole('button',{name:'Previous decision',exact:true}).click();
  const quoted=deck.locator('[data-diff-line]').filter({hasText:'beta'}).first();await quoted.click({button:'right'});await page.getByRole('button',{name:'Quote diff into chat',exact:true}).click();
  await deck.waitFor({state:'hidden'});await page.getByRole('region',{name:'Attached diff setting.txt',exact:true}).waitFor();assert.equal(await page.locator('[data-composer]').inputValue(),'Retain the decision note.','Quoting preserves the Focus draft');
  await page.locator('[data-composer]').press('Enter');
- for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,firstReview.id);i++)await new Promise(done=>setTimeout(done,100));
- assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,firstReview.id),'The attached diff retains original review identity in the actual Focus submission');
- entry('you','Inspect an independent status update.',focus.id);await page.reload();await panel.getByText(firstReview.title,{exact:true}).waitFor();
+ for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,secondReview.id);i++)await new Promise(done=>setTimeout(done,100));
+ assert.ok(db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(detail,'setting.txt')>0").get(focus.id,secondReview.id),'The attached diff retains original review identity in the actual Focus submission');
+ entry('you','Inspect an independent status update.',focus.id);await page.reload();await panel.getByText('Choose the execution plan',{exact:true}).waitFor();
+ for(const review of[firstReview,secondReview])assert.equal(await panel.getByText(review.title,{exact:true}).count(),0,'Submitted decision quotes remain consumed across refresh and unrelated context');
  assert.equal(await panel.getByText('No verified decision queued. Agents continue their work.',{exact:true}).count(),0,'Context changes retain taskless and multi-owner reviews');
  for(const review of[firstReview,secondReview])assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${review.id}`).value).approvedAt,null,'Selecting, quoting and editing do not approve reviews');
- await panel.getByText(firstReview.title,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await deck.getByRole('button',{name:'Approve publication',exact:true}).click();
+ await page.goto(`${base}/?agent=${owner.id}&review=${firstReview.id}`);await page.getByRole('button',{name:'Approve publication',exact:true}).click();
  for(let i=0;i<60&&!JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).approvedAt;i++)await new Promise(done=>setTimeout(done,100));
  assert.ok(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).approvedAt);assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Human approval applies only to the selected owner and artifact');
  assert.equal((await api('/api/tasks')).find(t=>t.id===urgent.id).status,beforeTasks.find(t=>t.id===urgent.id).status,'Review approval never closes its broader tracking task');

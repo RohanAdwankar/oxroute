@@ -2,7 +2,7 @@
 
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArtifactRoot, TaskLinks } from "./components/Markdown";
-import { EmbeddedReviews, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
+import { EmbeddedReviews, DecisionReferences, ConversationCards, ConversationReferences, CoordinationTitles } from "./components/FocusContext";
 import { receiveDraft, type DiffQuote } from "./lib/drafts";
 import { titleQuote } from "./lib/title-quotes";
 import { TaskActions } from "./components/TaskReference";
@@ -994,13 +994,6 @@ export default function Home() {
   const namedTasks = useTaskAgents([...snapshot.agents, ...snapshot.archived]);
   const taskNames = useMemo(() => new Map(namedTasks.map(agent => [agent.id, agent.name])), [namedTasks]);
   const conversationReferences = useMemo(() => focusOpen ? JSON.stringify(namedTasks.map(agent => agent.id).sort()) : null, [focusOpen, namedTasks]);
-  const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
-  const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
-    owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
-    quote: (quote: DiffQuote,decision=decisionId) => {if(decision)setReplyDecisionId(decision);receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
-  } : null, [focusOpen, focusAgentId, reviewOwnerKey,decisionId]);
-  const replyToDecision=useCallback((item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote(titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),item.id);},[embeddedReviews]);
-  const openDecisionSource=useCallback((item:typeof decisionItems[number])=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);}),[run,chooseDecision,showAgent]);
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowScope ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
@@ -1016,6 +1009,14 @@ export default function Home() {
     return taskRows(taskAncestors(scoped, matches));
   }, [taskItems, taskScope, taskSearch, taskNames, decisionQueue, taskPriorities]);
   const decisionItems=useMemo(()=>focusDecisions(taskItems,taskPriorities,reviewPriorities).filter(item=>(!taskScope||taskScope.includes(item.agentId))&&(!taskSearch||`${item.title} ${item.state.recommendation?.humanReason} ${item.state.recommendation?.unblocks} ${taskNames.get(item.agentId)??""}`.toLowerCase().includes(taskSearch))),[taskItems,taskPriorities,reviewPriorities,taskScope,taskSearch,taskNames]);
+  const decisionReferences=useMemo(()=>new Map(focusDecisions(taskItems,taskPriorities,reviewPriorities).flatMap(item=>item.state.decisionRevision?[[item.id,{id:item.id,revision:item.state.decisionRevision}] as const]:[])),[taskItems,taskPriorities,reviewPriorities]);
+  const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
+  const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
+    owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
+    quote: (quote: DiffQuote,decision=decisionId) => {if(decision)setReplyDecisionId(decision);const item=decisionItems.find(item=>item.id===decision);if(item?.state.decisionRevision&&!quote.decision)quote={...quote,decision:{id:item.id,revision:item.state.decisionRevision}};receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
+  } : null, [focusOpen, focusAgentId, reviewOwnerKey,decisionId,decisionItems]);
+  const replyToDecision=useCallback((item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote({...titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),decision:item.state.decisionRevision?{id:item.id,revision:item.state.decisionRevision}:undefined},item.id);},[embeddedReviews]);
+  const openDecisionSource=useCallback((item:typeof decisionItems[number])=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);}),[run,chooseDecision,showAgent]);
   useEffect(()=>{if(decisionId&&decisionItems.length&&!decisionItems.some(item=>item.id===decisionId))chooseDecision(decisionItems[0].id);},[decisionId,decisionItems,chooseDecision]);
   const scopeTasks = useCallback(() => { if(decisionQueue){setWindowDecisions(!windowDecisions);sessionStorage.setItem("oxroute.windowDecisions",String(!windowDecisions));}else setWindowTasks(!windowTasks);setTaskAt(0); }, [decisionQueue,windowDecisions,windowTasks,setWindowTasks]);
   const searchTasks = useCallback((query: string) => { setTaskQuery(query); setTaskAt(0); setFocus("tasks"); }, []);
@@ -1383,7 +1384,7 @@ export default function Home() {
     <TaskActions.Provider value={taskActions}>
     <ConversationCards.Provider value={focusOpen?{state:{...snapshot,tasks:taskItems},batchEntry:focusAgentId?details[focusAgentId]?.timeline.findLast(entry=>entry.kind==="said"&&entry.text.includes("#agent/"))?.id:undefined,onTask:taskLinks.open,onSent:reload}:null}>
     <ConversationReferences.Provider value={conversationReferences}><CoordinationTitles.Provider value={taskNames}>
-    <EmbeddedReviews.Provider value={embeddedReviews}>
+    <DecisionReferences.Provider value={decisionReferences}><EmbeddedReviews.Provider value={embeddedReviews}>
     <main className="flex h-full flex-col">
       <FrontendVersion />
       {archiving && <ArchiveAgent agent={archiving} tasks={snapshot.tasks.filter(task => task.agentId === archiving.id)} error={archiveError} onCancel={() => setArchiving(null)} onArchive={completeTasks => archiveAgent(archiving, true, completeTasks)} />}
@@ -1794,7 +1795,7 @@ export default function Home() {
         )}
       </div>
     </main>
-    </EmbeddedReviews.Provider>
+    </EmbeddedReviews.Provider></DecisionReferences.Provider>
     </CoordinationTitles.Provider></ConversationReferences.Provider>
     </ConversationCards.Provider>
     </TaskActions.Provider>

@@ -22,7 +22,7 @@ mod focus;
 mod dm_inbox;
 mod focus_updates;
 mod task_priorities;
-pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState, ReviewPriorityState};
+pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState, ReviewPriorityState, DecisionReference};
 pub use focus_updates::FocusUpdate;
 pub use focus::{FocusEventBatch, FocusTurnEvent, FocusInboxItem, FocusInboxUpdate, FocusInboxSnapshot};
 
@@ -1406,6 +1406,7 @@ impl Store {
                  RETURNING id, agent_id, at, kind, text, detail, output, origin, reaction, slack_url, item_id",
                 params![agent_id, at, text, detail, request_id], read_entry,
             )?;
+            task_priorities::consume_quotes(&transaction,&entry)?;
             transaction.commit()?;
             Ok(Some(entry))
         })
@@ -2110,8 +2111,10 @@ impl Store {
                 anyhow::ensure!(entry.text==message.0&&entry.detail==message.1,"requestId already belongs to different feedback");
                 return Ok(None);
             }
+            let decision=task_priorities::review_states(&tx,true)?.get(id).and_then(|state|state.state.decision_revision.clone()).map(|revision|DecisionReference{id:id.into(),revision});
             anyhow::ensure!(tx.execute("UPDATE kv SET value=?3 WHERE key=?1 AND value=?2",params![format!("review:{id}"),before,after])?==1,"Review changed; refresh and retry your feedback");
             let entry=tx.query_row("INSERT INTO entries(agent_id,at,kind,text,detail,item_id) VALUES(?1,?2,'you',?3,?4,?5) RETURNING id,agent_id,at,kind,text,detail,output,origin,reaction,slack_url,item_id",params![agent,crate::model::now(),message.0,message.1,request],read_entry)?;
+            if let Some(reference)=decision {task_priorities::consume_decision(&tx,&entry,&reference)?;}
             let epoch:Option<String>=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("quiet-stop:{agent}")],|row|row.get(0)).optional()?;
             tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2)",params![format!("review-feedback-pending:{request}"),serde_json::to_string(&(&entry,epoch))?])?;
             tx.commit()?;Ok(Some(entry))

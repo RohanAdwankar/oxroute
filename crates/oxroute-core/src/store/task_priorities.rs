@@ -23,13 +23,15 @@ pub struct TaskPriority {
     pub effort: String,
     pub deadline_at: Option<f64>,
     pub evidence_entry_ids: Vec<i64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub after_response_entry_id: Option<i64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct TaskPriorityOrder {pub request_id:String, pub focus_context_entry_id:i64, pub items:Vec<TaskPriority>}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct TaskPriorityState {pub position:f64, pub basis:String, pub stale:bool, pub needs_review:bool, pub recommendation:Option<TaskPriority>}
+pub struct TaskPriorityState {pub decision_revision:Option<String>,pub position:f64, pub basis:String, pub stale:bool, pub needs_review:bool, pub recommendation:Option<TaskPriority>}
 
 #[derive(Debug,Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -59,11 +61,12 @@ pub(super) fn states(c:&Connection, all:bool)->Result<HashMap<String,TaskPriorit
         let basis=format!("{}:{}",task_basis,fingerprint(&source_context));
         let stale=saved.as_ref().is_some_and(|saved|saved.split(':').next()!=Some(task_basis.as_str()));
         let needs_review=saved.as_ref().is_some_and(|saved|*saved!=basis || context_changed);
-        let recommendation=if stale {None} else {details.map(|details|serde_json::from_str(&details)).transpose()?};
-        Ok((id,TaskPriorityState{position,basis,stale,needs_review,recommendation}))
+        let mut recommendation:Option<TaskPriority>=if stale {None} else {details.map(|details|serde_json::from_str(&details)).transpose()?};
+        let decision_revision=filter_responses(c,&mut recommendation)?;
+        Ok((id,TaskPriorityState{decision_revision,position,basis,stale,needs_review,recommendation}))
     }).collect()
 }
-fn review_states(c:&Connection,all:bool)->Result<HashMap<String,ReviewPriorityState>> {
+pub(super) fn review_states(c:&Connection,all:bool)->Result<HashMap<String,ReviewPriorityState>> {
     let mut q=c.prepare(&format!("SELECT r.value,p.value,
         (SELECT COALESCE(MAX(id),0) FROM entries WHERE agent_id=json_extract(r.value,'$.agentId') AND kind IN ('you','received','said','asked')),o.value
         FROM kv r LEFT JOIN kv p ON p.key='focus-review-priority:'||json_extract(r.value,'$.id')
@@ -81,11 +84,39 @@ fn review_states(c:&Connection,all:bool)->Result<HashMap<String,ReviewPrioritySt
         let saved:Option<Value>=saved.map(|s|serde_json::from_str(&s)).transpose()?;
         let stale=saved.as_ref().is_some_and(|s|status!="pending"||s["basis"].as_str().and_then(|b|b.split(':').next())!=basis.split(':').next());
         let needs_review=saved.as_ref().is_some_and(|s|stale||s["basis"]!=basis||advanced);
-        let recommendation=if stale {None}else{saved.as_ref().map(|s|serde_json::from_value(s["item"].clone())).transpose()?};
+        let mut recommendation:Option<TaskPriority>=if stale {None}else{saved.as_ref().map(|s|serde_json::from_value(s["item"].clone())).transpose()?};
+        let decision_revision=filter_responses(c,&mut recommendation)?;
         let id=meta["id"].as_str().context("review identity missing")?.to_owned();
-        Ok((id.clone(),ReviewPriorityState{id,agent_id:meta["agentId"].as_str().context("review owner missing")?.into(),title:meta["title"].as_str().unwrap_or("Change review").into(),status,state:TaskPriorityState{position:saved.as_ref().and_then(|s|s["position"].as_f64()).unwrap_or(f64::MAX),basis,stale,needs_review,recommendation}}))
+        Ok((id.clone(),ReviewPriorityState{id,agent_id:meta["agentId"].as_str().context("review owner missing")?.into(),title:meta["title"].as_str().unwrap_or("Change review").into(),status,state:TaskPriorityState{decision_revision,position:saved.as_ref().and_then(|s|s["position"].as_f64()).unwrap_or(f64::MAX),basis,stale,needs_review,recommendation}}))
     }).collect()
 }
+#[derive(Debug,Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct DecisionReference {pub id:String,pub revision:String}
+
+fn identity(item:&TaskPriority)->&str {item.review_id.as_deref().unwrap_or(&item.task_id)}
+fn decision_revision(item:&TaskPriority)->String {fingerprint(&(identity(item),item.basis.split(':').next(),&item.evidence_entry_ids,item.after_response_entry_id))}
+fn filter_responses(c:&Connection,item:&mut Option<TaskPriority>)->Result<Option<String>> {
+ let Some(value)=item else{return Ok(None)};let revision=decision_revision(value);
+ let consumed:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key=?1)",[format!("decision-response:{}:{revision}",identity(value))],|row|row.get(0))?;
+ if consumed&&value.next_actor=="human" {*item=None;}Ok(Some(revision))
+}
+pub(super) fn consume_decision(c:&Connection,entry:&Entry,reference:&DecisionReference)->Result<()> {
+ anyhow::ensure!(!reference.id.is_empty()&&!reference.revision.is_empty()&&reference.revision.len()<=100,"Invalid decision reference");
+ let known:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 UNION SELECT 1 FROM kv WHERE key='review:'||?1)",[&reference.id],|row|row.get(0))?;
+ if !known {return Ok(())}
+ let receipt=json!({"entryId":entry.id,"agentId":entry.agent_id,"revision":reference.revision}).to_string();
+ c.execute("INSERT OR IGNORE INTO kv VALUES(?1,?2)",params![format!("decision-response:{}:{}",reference.id,reference.revision),receipt])?;
+ c.execute("INSERT INTO kv VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE json_extract(kv.value,'$.entryId')<json_extract(excluded.value,'$.entryId')",params![format!("decision-latest-response:{}",reference.id),receipt])?;Ok(())
+}
+pub(super) fn consume_quotes(c:&Connection,entry:&Entry)->Result<()> {
+ if let Some(raw)=entry.detail.strip_prefix("diff-attachments:") {
+  for quote in serde_json::from_str::<Vec<Value>>(raw)? {
+   if let Some(reference)=quote.get("decision").filter(|value|!value.is_null()) {consume_decision(c,entry,&serde_json::from_value(reference.clone())?)?;}
+  }
+ }Ok(())
+}
+
 fn review_revision(states:&HashMap<String,ReviewPriorityState>)->String {
     let mut values:Vec<_>=states.iter().map(|(id,state)|(id,&state.state.basis)).collect();values.sort();fingerprint(&values)
 }
@@ -168,6 +199,16 @@ impl Store {
                 for evidence in &item.evidence_entry_ids {
                     let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND (agent_id=?2 OR agent_id=?3 OR agent_id=(SELECT agent_id FROM tasks WHERE id=?4)))",params![evidence,owner,focus,blocker],|r|r.get(0))?;
                     anyhow::ensure!(valid,"priority evidence must belong to the task owner, blocker owner or Focus");
+                }
+                if item.next_actor=="human" {
+                    let previous:Option<String>=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("decision-latest-response:{}",identity(item))],|row|row.get(0)).optional()?;
+                    if let Some(previous)=previous {
+                        let response=serde_json::from_str::<Value>(&previous)?["entryId"].as_i64().context("decision response entry missing")?;
+                        anyhow::ensure!(item.after_response_entry_id==Some(response),"Decision already answered; a new follow-up must explicitly address the recorded response");
+                        let mut fresh=false;
+                        for id in &item.evidence_entry_ids {fresh|=tx.query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND id>?3 AND ((agent_id=?2 AND ((kind IN ('you','said','asked') AND length(trim(text))>0) OR (kind='worked' AND length(trim(output))>0))) OR (agent_id=?4 AND kind='you' AND length(trim(text))>0)))",params![id,owner,response,focus],|row|row.get::<_,bool>(0))?;}
+                        anyhow::ensure!(fresh,"Address the response with fresh owning-source evidence before presenting a new follow-up");
+                    }
                 }
                 if first {ordered.push(item);}
             }

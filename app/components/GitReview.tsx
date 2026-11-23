@@ -6,7 +6,7 @@ import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review 
 
 import { Fragment, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {createPortal} from "react-dom";
-import {ReviewQuoteMenus} from "./FocusContext";
+import {ReviewQuoteMenus,DecisionReferences} from "./FocusContext";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
@@ -77,6 +77,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
 }) {
   const endpoint = reviewEndpoint(agentId, reviewId);
   const quoteMenu=useContext(ReviewQuoteMenus);
+  const decision=useContext(DecisionReferences).get(reviewId);
   const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
   const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
@@ -197,7 +198,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
     const range = selection.wholeFile ? "whole file" : `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
-    return { path: selection.file, rows: selected, text: `Source conversation: ${review.agentId}\nReview ${review.id}: ${review.title}\n${!review.full && snapshot.reviewBaseCommit ? snapshot.reviewBaseCommit : snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${selection.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` };
+    return { decision, path: selection.file, rows: selected, text: `Source conversation: ${review.agentId}\nReview ${review.id}: ${review.title}\n${!review.full && snapshot.reviewBaseCommit ? snapshot.reviewBaseCommit : snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${selection.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` };
   };
   const quote = () => {
     const value=menu&&selectedQuote(menu);if(value)onQuote(value);
@@ -217,7 +218,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
     <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
-      <span className="min-w-0 flex-1 font-semibold">{review?<QuoteTitle text={review.title} onQuote={text=>onQuote(titleQuote(text,{agentId,reviewId:review.id}))}/>:error?"Review unavailable":"Reading review…"}
+      <span className="min-w-0 flex-1 font-semibold">{review?<QuoteTitle text={review.title} onQuote={text=>onQuote({...titleQuote(text,{agentId,reviewId:review.id}),decision})}/>:error?"Review unavailable":"Reading review…"}
         {review?.status === "stale" && <button type="button" aria-label="Snapshot changed"
           title={review.staleNotified ? "The agent has been asked to prepare an updated review. This saved snapshot remains readable." : "This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."}
           className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}

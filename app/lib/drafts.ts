@@ -6,7 +6,7 @@
  * out here instead, under the name of whatever you were typing to.
  */
 const drafts = new Map<string, string>();
-export type DiffQuote = { text: string; path: string; rows: { text: string; old: number | null; next: number | null }[] };
+export type DiffQuote = { decision?:{id:string;revision:string}; text: string; path: string; rows: { text: string; old: number | null; next: number | null }[] };
 const diffDrafts = new Map<string, DiffQuote[]>();
 const fileDrafts = new Map<string, File[]>();
 export const DRAFT_CHANGED = "oxroute.draftChanged";

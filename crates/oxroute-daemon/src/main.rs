@@ -703,7 +703,7 @@ struct SayBody {
 }
 
 #[derive(serde::Serialize, Deserialize)]
-struct DiffQuote { text: String, path: String, rows: Vec<DiffRow> }
+struct DiffQuote { text: String, path: String, rows: Vec<DiffRow>, #[serde(default,skip_serializing_if="Option::is_none")] decision:Option<oxroute_core::store::DecisionReference> }
 
 #[derive(serde::Serialize, Deserialize)]
 struct DiffRow { text: String, old: Option<u32>, next: Option<u32> }
