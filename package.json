@@ -14,6 +14,7 @@
     "diff": "^9.0.0",
     "diff2html": "3.4.56",
     "fastest-levenshtein": "1.0.16",
+    "gifuct-js": "^2.1.2",
     "highlight.js": "^11.12.0",
     "lowlight": "^3.3.0",
     "next": "16.3.5",

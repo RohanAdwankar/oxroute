@@ -12,6 +12,7 @@ import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
 import {titleQuote} from "../lib/title-quotes";
 import {QuoteTitle} from "./QuoteTitle";
+import {GifComparison} from "./GifComparison";
 import {ReviewFeedback} from "./ReviewFeedback";
 
 type Line = { text: string; old: number | null; next: number | null };
@@ -271,8 +272,10 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
         }}>
           <h3 aria-label={item.path} onContextMenu={event => quoteFile(event, item)} className="sticky top-0 z-10 flex items-center gap-2 bg-band px-3 py-1 text-[10px] text-mid"><span className="min-w-0 flex-1 truncate">{item.path}</span><button type="button" aria-label={`Edit ${item.path}`} title="Edit file" onClick={() => setEditing(item.path)} className="cursor-pointer p-1"><Icon name="pen" size={14} /></button></h3>
           {item.image && <div aria-label={`Image comparison ${item.path}`} className="flex gap-4 bg-band/30 p-4">
-            <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} full={!!review?.full} />
-            <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} full={!!review?.full} />
+            {item.image.before&&item.image.after&&item.path.toLowerCase().endsWith('.gif')?<GifComparison key={`${endpoint}:${item.path}`} endpoint={endpoint} path={item.path} full={!!review?.full}/>:<>
+              <ReviewImage endpoint={endpoint} path={item.path} side="before" present={item.image.before} full={!!review?.full} />
+              <ReviewImage endpoint={endpoint} path={item.path} side="after" present={item.image.after} full={!!review?.full} />
+            </>}
           </div>}
           <div className="overflow-x-auto px-3 py-1">
           <DiffCode rows={item.rows} path={item.path}>{(code,ready) => <pre data-diff aria-busy={!ready} className="w-max min-w-full font-mono leading-[1.6]" onContextMenu={event => {

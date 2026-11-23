@@ -40,14 +40,15 @@ async function storedResponse(url: string, refresh: boolean, priority: RequestPr
   return response;
 }
 
-export function loadReviewImage(url: string, priority: RequestPriority = "high"): Promise<Blob> {
-  const running = images.get(url);
+export function loadReviewImage(url: string, priority: RequestPriority = "high", refresh = false): Promise<Blob> {
+  const key = `${url}:${refresh}`;
+  const running = images.get(key);
   if (running) return running;
-  const request = storedResponse(url, false, priority).then(response => {
+  const request = storedResponse(url, refresh, priority).then(response => {
     if (!response.ok) throw new Error("Could not load review image");
     return response.blob();
-  }).finally(() => images.delete(url));
-  images.set(url, request);
+  }).finally(() => images.delete(key));
+  images.set(key, request);
   return request;
 }
 

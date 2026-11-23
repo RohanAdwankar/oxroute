@@ -71,3 +71,6 @@ try {
   await page.getByRole('region', { name: `Attached diff ${files[0].path}`, exact: true }).waitFor();
   console.log('Changed, added and deleted images render from separate Git revision URLs; SVG source, original-size links, navigation and load errors remain available.');
 } finally { await browser.close(); }
+
+await import('./gif-comparison.mjs');
+await import('./gif-pixels.mjs');
