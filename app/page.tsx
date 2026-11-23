@@ -999,7 +999,8 @@ export default function Home() {
     owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
     quote: (quote: DiffQuote,decision=decisionId) => {if(decision)setReplyDecisionId(decision);receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
   } : null, [focusOpen, focusAgentId, reviewOwnerKey,decisionId]);
-  const replyToDecision=(item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote(titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),item.id);};
+  const replyToDecision=useCallback((item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote(titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),item.id);},[embeddedReviews]);
+  const openDecisionSource=useCallback((item:typeof decisionItems[number])=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);}),[run,chooseDecision,showAgent]);
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowScope ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
@@ -1765,7 +1766,7 @@ export default function Home() {
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
             decisions={decisionQueue} decisionItems={decisionItems} selectedDecision={decisionId??replyDecisionId} onDecision={chooseDecision} onReply={replyToDecision}
-            onSource={item=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);})}
+            onSource={openDecisionSource}
             reviewingDecisions={[...Object.values(taskPriorities ?? {}),...Object.values(reviewPriorities??{})].some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}
             query={taskQuery}
