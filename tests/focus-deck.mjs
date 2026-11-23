@@ -64,8 +64,8 @@ try{
  const repo=join(root,'source');await mkdir(repo);
  const git=(...args)=>execFileSync('git',['-C',repo,...args],{encoding:'utf8'}).trim();
  git('init','-b','main');git('config','user.name','Reviewer');git('config','user.email','review@example.invalid');git('remote','add','origin','https://example.invalid/repo.git');
- await writeFile(join(repo,'service.conf'),'workers=2\n');git('add','.');git('commit','-m','Base');git('checkout','-b','proposal');
- await writeFile(join(repo,'service.conf'),'workers=4\n');git('add','.');git('commit','-m','Proposal');
+ await writeFile(join(repo,'service.conf'),'workers=2\nmode=steady\nregion=west\n');git('add','.');git('commit','-m','Base');git('checkout','-b','proposal');
+ await writeFile(join(repo,'service.conf'),'workers=4\nmode=steady\nregion=east\n');git('add','.');git('commit','-m','Proposal');
  const review=await api(`/api/agents/${workerIds[1]}/reviews`,{repository:repo,base:'main',remote:'origin',title:'Review worker count',description:'Adjust concurrency for the service.'});reviewId=review.id;
  turns.length=0;focusMode=true;
  browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
@@ -152,10 +152,39 @@ try{
  const embedded=page.locator(`[data-focus-review="${reviewId}"]`).first();
  await embedded.getByText('+workers=4',{exact:true}).waitFor();
  assert.equal((await api(`/api/agents/${workerIds[1]}/reviews/${reviewId}`)).status,'pending');
- await embedded.locator('[data-diff-line]').filter({hasText:'+workers=4'}).click({button:'right'});
- await page.getByRole('button',{name:'Quote diff into chat',exact:true}).click();
- await page.getByRole('region',{name:'Attached diff service.conf',exact:true}).waitFor();
- assert.equal(await composer.inputValue(),'Retain the coordinator draft.','Review quotes retain the Focus draft');
+ const expected=['-workers=2','+workers=4',' mode=steady','-region=west','+region=east'];
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:1000});
+  const first=embedded.locator('[data-diff-line]').filter({hasText:expected[0]});await first.scrollIntoViewIfNeeded();
+  const selected=await first.evaluate(element=>{
+   const rows=[...element.closest('[data-diff]').querySelectorAll('[data-diff-line]')],last=rows.at(-1),range=document.createRange();
+   range.setStart(element.lastElementChild,0);range.setEnd(last.lastElementChild,last.lastElementChild.childNodes.length);
+   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));return selection.toString();
+  });
+  assert.equal(selected,expected.join('\n'),'Native selection/copy text excludes gutters and retains code line boundaries');
+  await first.click({button:'right'});await page.getByRole('button',{name:'Quote diff into chat',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'quote reply',exact:true}).count(),0,'Structured review selection cannot open a competing plain-text quote');
+  assert.equal(await page.getByRole('button',{name:'quote into thread',exact:true}).count(),1,'Other enclosing message actions remain available');
+  const menu=await page.getByRole('group',{name:'message actions',exact:true}).boundingBox();assert.ok(menu.x>=0&&menu.x+menu.width<=width);
+  if(process.env.DIFF_SCREENSHOT)await page.screenshot({path:`${process.env.DIFF_SCREENSHOT}-selection-${width}.png`});
+  await page.getByRole('button',{name:'Quote diff into chat',exact:true}).click();
+  const attachment=page.getByRole('region',{name:'Attached diff service.conf',exact:true});await attachment.waitFor();
+  assert.deepEqual(await attachment.locator('[data-quoted-diff-line]').evaluateAll(rows=>rows.map(row=>row.lastElementChild.textContent)),expected);
+  assert.equal(await composer.inputValue(),'Retain the coordinator draft.','Review quotes retain the Focus draft');
+  if(process.env.DIFF_SCREENSHOT)await page.screenshot({path:`${process.env.DIFF_SCREENSHOT}-composer-${width}.png`});
+  if(width===1280){await page.getByRole('button',{name:'Remove diff service.conf',exact:true}).click();await embedded.getByRole('button',{name:'Expand review from Network rollout',exact:true}).click();}
+ }
+ const focusId=(await api('/api/state')).focusAgentId;
+ await composer.press('Enter');
+ await until(async()=>(await api(`/api/agents/${focusId}`)).timeline.some(entry=>entry.kind==='you'&&entry.detail.startsWith('diff-attachments:')));
+ const sent=(await api(`/api/agents/${focusId}`)).timeline.findLast(entry=>entry.kind==='you'&&entry.detail.startsWith('diff-attachments:'));
+ const quote=JSON.parse(sent.detail.slice('diff-attachments:'.length))[0];
+ assert.deepEqual(quote.rows.map(row=>row.text),expected);assert.deepEqual(quote.rows.map(({old,next})=>[old,next]),[[1,null],[null,1],[2,2],[3,null],[null,3]]);
+ for(const source of[workerIds[1],reviewId,review.snapshot.headCommit,'service.conf'])assert.ok(quote.text.includes(source),'Sent quotes retain review, source conversation, revision and file identity');
+ const sentAttachment=page.locator(`[data-entry="${sent.id}"]`).getByRole('region',{name:'Attached diff service.conf',exact:true});await sentAttachment.waitFor();
+ assert.deepEqual(await sentAttachment.locator('[data-quoted-diff-line]').evaluateAll(rows=>rows.map(row=>row.lastElementChild.textContent)),expected);
+ for(const width of[1280,390]){await page.setViewportSize({width,height:1000});await sentAttachment.scrollIntoViewIfNeeded();if(process.env.DIFF_SCREENSHOT)await page.screenshot({path:`${process.env.DIFF_SCREENSHOT}-sent-${width}.png`});}
+ await page.setViewportSize({width:1280,height:1000});
  await embedded.getByRole('button',{name:'Expand review from Network rollout',exact:true}).click();
  await embedded.getByText('+workers=4',{exact:true}).waitFor();
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
 
 import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import { api } from "../lib/api";
@@ -22,7 +22,7 @@ import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
 import { Icon, type IconName } from "./Icon";
 import { Markdown, ReviewLinks, QuoteLinks } from "./Markdown";
-import {ConversationPublication} from "./FocusContext";
+import {ConversationPublication,ReviewQuoteMenus,type ReviewQuoteAction} from "./FocusContext";
 import { QuoteDiscussion } from "./QuoteDiscussion";
 import { SplitAction } from "./SplitAction";
 import { CoordinationTitles } from "./FocusContext";
@@ -68,7 +68,7 @@ function splitAttached(text: string): { body: string; names: string[] } {
   };
 }
 /// Quote the selection or the clicked message, and react to that message.
-type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null };
+type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null; diff?:ReviewQuoteAction };
 type SelectedQuote = Pick<LineMenu, "text" | "anchor">;
 
 function quoteAnchor(row: Element | null, entryId: number | null): QuoteAnchor | null {
@@ -645,14 +645,26 @@ export function AgentPanel({
 
   const quoteSelection = () => {
     if (!quoteMenu) return;
-    const quote = quoteMenu.text
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-    setDraft((current) => `${current}${current ? "\n\n" : ""}${quote}\n\n`);
+    if(quoteMenu.diff)quoteMenu.diff.send();
+    else {
+      const quote = quoteMenu.text.split("\n").map((line) => `> ${line}`).join("\n");
+      setDraft((current) => `${current}${current ? "\n\n" : ""}${quote}\n\n`);
+    }
     setQuoteMenu(null);
     window.requestAnimationFrame(() => composer.current?.focus());
   };
+
+  const openQuoteMenu=useCallback((event:ReactMouseEvent,diff?:ReviewQuoteAction)=>{
+    if ((event.target as Element).closest("a[href]")) return;
+    const selected=selectedQuote.current;selectedQuote.current=null;
+    const row=(event.target as HTMLElement).closest("[data-entry]"),id=row?Number(row.getAttribute("data-entry")):null;
+    const entry=id!==null&&Number.isFinite(id)?id:null,line=view.timeline.find(line=>line.id===entry);
+    const text=diff?diff.quote.rows.map(row=>row.text).join('\n'):selected?.text||selectedText(timeline.current)||line?.text.trim()||"";
+    if(!text&&entry===null)return;
+    event.preventDefault();
+    setQuoteMenu({diff,anchor:selected?selected.anchor:quoteAnchor(row,entry),text,entry,reaction:line?.reaction??"",slackUrl:line?.slackUrl??"",
+      x:Math.max(8,Math.min(event.clientX,window.innerWidth-(entry===null?38:190)-8)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-46))});
+  },[view.timeline]);
 
   const renderedTimeline=useMemo(()=>items.map((item, at) => {
               if ("tools" in item) {
@@ -904,37 +916,14 @@ export function AgentPanel({
       )}
       {mode === "draw" && <Sketch ref={sketch} onChange={setSketchReady} say={say} />}
 
-      <div
+      <ReviewQuoteMenus.Provider value={openQuoteMenu}><div
         ref={timeline}
         hidden={mode !== "type" || reviewingGit === true}
         onPointerDown={(event) => {
           if ((event.target as Element).closest("a[href]")) return;
           if ((event.button === 2 || (event.button === 0 && event.ctrlKey)) && selectedQuote.current) event.preventDefault();
         }}
-        onContextMenu={(event) => {
-          if ((event.target as Element).closest("a[href]")) return;
-          // Use the completed selection, before focus or context-click changes it.
-          const selected = selectedQuote.current;
-          selectedQuote.current = null;
-          const row = (event.target as HTMLElement).closest("[data-entry]");
-          const id = row ? Number(row.getAttribute("data-entry")) : null;
-          const entry = id !== null && Number.isFinite(id) ? id : null;
-          const line = view.timeline.find((line) => line.id === entry);
-          const text = selected?.text || selectedText(timeline.current) || line?.text.trim() || "";
-          // Nothing selected and nothing under the cursor means the browser's
-          // own menu is the more useful one.
-          if (!text && entry === null) return;
-          event.preventDefault();
-          setQuoteMenu({
-            anchor: selected ? selected.anchor : quoteAnchor(row, entry),
-            text,
-            entry,
-            reaction: line?.reaction ?? "",
-            slackUrl: line?.slackUrl ?? "",
-            x: Math.max(8, Math.min(event.clientX, window.innerWidth - (entry === null ? 38 : 190) - 8)),
-            y: Math.max(8, Math.min(event.clientY, window.innerHeight - 46)),
-          });
-        }}
+        onContextMenu={openQuoteMenu}
         onScroll={(event) => {
           const node = event.currentTarget;
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
@@ -967,7 +956,7 @@ export function AgentPanel({
             </section>
           )}
         </div>
-      </div>
+      </div></ReviewQuoteMenus.Provider>
 
       {quoteMenu && (
         <div
@@ -996,8 +985,8 @@ export function AgentPanel({
             <button
               type="button"
               onClick={quoteSelection}
-              aria-label="quote reply"
-              title="Quote reply"
+              aria-label={quoteMenu.diff?quoteMenu.diff.wholeFile?"Quote file into chat":"Quote diff into chat":"quote reply"}
+              title={quoteMenu.diff?quoteMenu.diff.wholeFile?"Quote file into chat":"Quote diff into chat":"Quote reply"}
               className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash"
             >
               <Icon name="quote" />

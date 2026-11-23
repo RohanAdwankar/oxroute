@@ -4,7 +4,9 @@ import { ReviewEditor } from "./ReviewEditor";
 import { DiffCode } from "./DiffCode";
 import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {createPortal} from "react-dom";
+import {ReviewQuoteMenus} from "./FocusContext";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import type { DiffQuote } from "../lib/drafts";
@@ -12,6 +14,7 @@ import {titleQuote} from "../lib/title-quotes";
 import {QuoteTitle} from "./QuoteTitle";
 
 type Line = { text: string; old: number | null; next: number | null };
+type DiffSelection={file:string;start:number;end:number;wholeFile?:boolean};
 type Expansion = { gap?: string; lines: string[]; more: boolean; busy?: boolean; error?: string };
 type Context = { key: string; gap: string; old: number; next: number; limit: number; direction: "up" | "down"; side: "before" | "after" };
 
@@ -72,6 +75,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   agentId: string; reviewId: string; active: boolean; onQuote: (quote: DiffQuote) => void; onClose: () => void; onRevised: (id: string) => void;
 }) {
   const endpoint = reviewEndpoint(agentId, reviewId);
+  const quoteMenu=useContext(ReviewQuoteMenus);
   const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
   const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
@@ -79,7 +83,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const [editing, setEditing] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const cancelLoad = useRef<(() => void) | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; file: string; start: number; end: number; wholeFile?: boolean } | null>(null);
+  const [menu, setMenu] = useState<(DiffSelection&{x:number;y:number}) | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
   const selectedRange = useRef<Range|null>(null);
@@ -185,19 +189,27 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
     finally { setApproving(false); }
   };
 
-  const quote = () => {
-    if (!menu || !review || !snapshot) return;
-    const selected = files.find(item => item.path === menu.file)!.rows.slice(menu.start, menu.end + 1);
+  const selectedQuote = (selection:DiffSelection):DiffQuote|null => {
+    if (!review || !snapshot) return null;
+    const selected = files.find(item => item.path === selection.file)!.rows.slice(selection.start, selection.end + 1);
     const old = selected.flatMap(row => row.old === null ? [] : [row.old]);
     const next = selected.flatMap(row => row.next === null ? [] : [row.next]);
-    const range = menu.wholeFile ? "whole file" : `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
-    onQuote({ path: menu.file, rows: selected, text: `Review ${review.id}: ${review.title}\n${!review.full && snapshot.reviewBaseCommit ? snapshot.reviewBaseCommit : snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${menu.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` });
+    const range = selection.wholeFile ? "whole file" : `old ${old.length ? `${old[0]}–${old.at(-1)}` : "none"}, new ${next.length ? `${next[0]}–${next.at(-1)}` : "none"}`;
+    return { path: selection.file, rows: selected, text: `Source conversation: ${review.agentId}\nReview ${review.id}: ${review.title}\n${!review.full && snapshot.reviewBaseCommit ? snapshot.reviewBaseCommit : snapshot.baseCommit}...${snapshot.headCommit}\nFile: ${selection.file} (${range})\n\n${selected.map(row => `> ${row.text}`).join("\n")}\n\n` };
+  };
+  const quote = () => {
+    const value=menu&&selectedQuote(menu);if(value)onQuote(value);
     setMenu(null);
+  };
+  const openMenu=(event:MouseEvent,selection:DiffSelection)=>{
+    event.preventDefault();event.stopPropagation();
+    const value=selectedQuote(selection);
+    if(quoteMenu&&value)quoteMenu(event,{quote:value,wholeFile:selection.wholeFile,send:()=>onQuote(value)});
+    else setMenu({...selection,x:Math.min(event.clientX,window.innerWidth-48),y:Math.min(event.clientY,window.innerHeight-48)});
   };
 
   const quoteFile = (event: MouseEvent, item: { path: string; rows: Line[] }) => {
-    event.preventDefault();
-    setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: 0, end: item.rows.length - 1, wholeFile: true });
+    openMenu(event,{file:item.path,start:0,end:item.rows.length-1,wholeFile:true});
   };
 
   return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
@@ -268,7 +280,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
             }) : [];
             const start = Number((selected[0] ?? clicked).dataset.diffLine);
             const end = Number((selected.at(-1) ?? clicked).dataset.diffLine);
-            setMenu({ x: Math.min(event.clientX, window.innerWidth - 48), y: Math.min(event.clientY, window.innerHeight - 48), file: item.path, start: Math.min(start, end), end: Math.max(start, end) });
+            openMenu(event,{file:item.path,start:Math.min(start,end),end:Math.max(start,end)});
           }}>
             {item.rows.map((row, index) => {
               const context = item.controls.get(index), status = context ? expanded[context.key] : undefined;
@@ -285,8 +297,8 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
       </div>
     </div>
     {editing && snapshot && <ReviewEditor key={editing} endpoint={endpoint} path={editing} head={snapshot.headCommit} onClose={() => setEditing(null)} onSaved={revised => onRevised(revised.id)} />}
-    {menu && <div role="group" aria-label="Diff actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-2 shadow-md">
+    {menu && createPortal(<div role="group" aria-label="Diff actions" style={{ left: menu.x, top: menu.y }} className="fixed z-50 bg-card p-2 shadow-md" onPointerDown={event=>event.preventDefault()}>
       <button title={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} aria-label={menu.wholeFile ? "Quote file into chat" : "Quote diff into chat"} onClick={quote} className="cursor-pointer"><Icon name="quote" /></button>
-    </div>}
+    </div>,document.body)}
   </section>;
 }
