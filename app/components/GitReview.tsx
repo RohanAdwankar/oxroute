@@ -4,7 +4,7 @@ import { ReviewEditor } from "./ReviewEditor";
 import { DiffCode } from "./DiffCode";
 import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
-import { Fragment, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {createPortal} from "react-dom";
 import {ReviewQuoteMenus,DecisionReferences} from "./FocusContext";
 import { Icon } from "./Icon";
@@ -89,24 +89,31 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const [menu, setMenu] = useState<(DiffSelection&{x:number;y:number}) | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
-  const selectedRange = useRef<Range|null>(null);
-  useEffect(() => {
-    const remember = () => {
-      if (selectedRange.current) return;
-      const selection=window.getSelection();
-      if (!selection || selection.isCollapsed || !selection.rangeCount || !scroll.current) return;
-      const range=selection.getRangeAt(0);
-      if(scroll.current.contains(range.commonAncestorContainer)) selectedRange.current=range.cloneRange();
-    };
-    const pointer = (event:PointerEvent) => {if(event.button===0&&!event.ctrlKey)selectedRange.current=null;};
-    const finish = () => {selectedRange.current=null;remember();};
-    const release = (event:PointerEvent) => {if(event.button===0&&!event.ctrlKey)finish();};
-    document.addEventListener("selectionchange",remember);
-    document.addEventListener("pointerdown",pointer,true);
-    document.addEventListener("pointerup",release);
-    document.addEventListener("keyup",finish);
-    return()=>{document.removeEventListener("selectionchange",remember);document.removeEventListener("pointerdown",pointer,true);document.removeEventListener("pointerup",release);document.removeEventListener("keyup",finish);};
-  }, []);
+  const selectedRows=useRef<Map<Element,{start:number;end:number}>|null>(null);
+  const rememberSelection=useCallback(()=>{
+    if(selectedRows.current)return;
+    const selection=window.getSelection();
+    if(!selection||selection.isCollapsed||!selection.rangeCount||!scroll.current)return;
+    const range=selection.getRangeAt(0),spans=new Map<Element,{start:number;end:number}>();
+    for(const pre of scroll.current.querySelectorAll('[data-diff]')){
+      const rows=Array.from(pre.querySelectorAll<HTMLElement>('[data-diff-line]')).filter(row=>{
+        const code=row.lastElementChild!;if(!range.intersectsNode(code))return false;
+        const content=document.createRange(),overlap=range.cloneRange();content.selectNodeContents(code);
+        if(overlap.compareBoundaryPoints(Range.START_TO_START,content)<0)overlap.setStart(content.startContainer,content.startOffset);
+        if(overlap.compareBoundaryPoints(Range.END_TO_END,content)>0)overlap.setEnd(content.endContainer,content.endOffset);
+        return overlap.toString().length>0;
+      });
+      if(rows.length)spans.set(pre,{start:Number(rows[0].dataset.diffLine),end:Number(rows.at(-1)!.dataset.diffLine)});
+    }
+    if(spans.size)selectedRows.current=spans;
+  },[]);
+  useEffect(()=>{
+    const pointer=(event:PointerEvent)=>{if(event.button===0&&!event.ctrlKey)selectedRows.current=null;};
+    const finish=()=>{selectedRows.current=null;rememberSelection();};
+    const release=(event:PointerEvent)=>{if(event.button===0&&!event.ctrlKey)finish();};
+    document.addEventListener('selectionchange',rememberSelection);document.addEventListener('pointerdown',pointer,true);document.addEventListener('pointerup',release);document.addEventListener('keyup',finish);
+    return()=>{document.removeEventListener('selectionchange',rememberSelection);document.removeEventListener('pointerdown',pointer,true);document.removeEventListener('pointerup',release);document.removeEventListener('keyup',finish);};
+  },[rememberSelection]);
   const snapshot = review?.snapshot;
   const expanding = useRef(new Set<string>());
   const [expanded, setExpanded] = useState<Record<string, Expansion>>({});
@@ -271,20 +278,9 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
             const clicked = (event.target as HTMLElement).closest<HTMLElement>("[data-diff-line]");
             if (!clicked) return;
             event.preventDefault();
-            const selection = window.getSelection();
-            const range = selectedRange.current ?? (selection&&!selection.isCollapsed&&selection.rangeCount ? selection.getRangeAt(0) : null);
-            selectedRange.current=null;
-            const selected = range ? Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-diff-line]")).filter(row => {
-              const code = row.lastElementChild!;
-              if (!range.intersectsNode(code)) return false;
-              const content = document.createRange(), overlap = range.cloneRange();
-              content.selectNodeContents(code);
-              if (overlap.compareBoundaryPoints(Range.START_TO_START, content) < 0) overlap.setStart(content.startContainer, content.startOffset);
-              if (overlap.compareBoundaryPoints(Range.END_TO_END, content) > 0) overlap.setEnd(content.endContainer, content.endOffset);
-              return overlap.toString().length > 0;
-            }) : [];
-            const start = Number((selected[0] ?? clicked).dataset.diffLine);
-            const end = Number((selected.at(-1) ?? clicked).dataset.diffLine);
+            rememberSelection();
+            const selected=selectedRows.current?.get(event.currentTarget);selectedRows.current=null;
+            const start=selected?.start??Number(clicked.dataset.diffLine),end=selected?.end??start;
             openMenu(event,{file:item.path,start:Math.min(start,end),end:Math.max(start,end)});
           }}>
             {item.rows.map((row, index) => {

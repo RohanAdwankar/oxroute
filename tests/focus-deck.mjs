@@ -177,6 +177,10 @@ try{
    const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.dispatchEvent(new Event('selectionchange'));return selection.toString();
   });
   assert.equal(selected,expected.join('\n'),'Native selection/copy text excludes gutters and retains code line boundaries');
+  await first.evaluate(element=>{
+   const last=[...element.closest('[data-diff]').querySelectorAll('[data-diff-line]')].at(-1).lastElementChild;
+   last.replaceChildren(...[...last.childNodes].map(node=>node.cloneNode(true)));
+  });
   await first.click({button:'right'});await page.getByRole('button',{name:'Quote diff into chat',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'quote reply',exact:true}).count(),0,'Structured review selection cannot open a competing plain-text quote');
   assert.equal(await page.getByRole('button',{name:'quote into thread',exact:true}).count(),1,'Other enclosing message actions remain available');
