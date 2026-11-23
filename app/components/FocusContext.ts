@@ -2,7 +2,7 @@ import {createContext,type MouseEvent} from "react";
 import type {DiffQuote} from "../lib/drafts";
 import type {Snapshot} from "../lib/types";
 
-export const EmbeddedReviews=createContext<null|{owners:Map<string,{id:string;name:string}>;quote:(quote:DiffQuote)=>void}>(null);
+export const EmbeddedReviews=createContext<null|{owners:Map<string,{id:string;name:string}>;quote:(quote:DiffQuote,decision?:string)=>void}>(null);
 export const ConversationCards=createContext<null|{state:Snapshot;batchEntry?:number;onTask:(id:string)=>void;onSent:()=>void}>(null);
 export type ReviewQuoteAction={quote:DiffQuote;wholeFile?:boolean;send:()=>void};
 export const ReviewQuoteMenus=createContext<null|((event:MouseEvent,action:ReviewQuoteAction)=>void)>(null);

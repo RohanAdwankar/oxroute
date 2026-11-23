@@ -8,7 +8,7 @@ import {Icon} from "./Icon";
 import {QuoteTitle} from "./QuoteTitle";
 import {titleQuote} from "../lib/title-quotes";
 
-export function FocusDecisionDeck({items,selected,onSelect}:{items:FocusDecision[];selected:string;onSelect:(id:string|null)=>void}) {
+export function FocusDecisionDeck({items,selected,onSelect,onReply}:{items:FocusDecision[];selected:string;onSelect:(id:string|null)=>void;onReply:(item:FocusDecision)=>void}) {
   const context=useContext(ConversationCards);
   const reviews=useContext(EmbeddedReviews);
   const at=Math.max(0,items.findIndex(item=>item.id===selected)),item=items[at];
@@ -17,6 +17,7 @@ export function FocusDecisionDeck({items,selected,onSelect}:{items:FocusDecision
   return <section data-focus-decisions data-pane-active="true" aria-label="Decision cards" className="flex min-h-0 min-w-0 flex-1 flex-col max-sm:absolute max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-[var(--cell)] max-sm:z-40 max-sm:bg-card">
     <header className="flex h-[var(--bar)] shrink-0 items-center justify-end gap-3 border-b border-rule px-4 text-[12px] text-mid">
       <span className="mr-auto truncate">{reviews?<QuoteTitle key={item.id} text={item.title} onQuote={text=>reviews.quote(titleQuote(text,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}))}/>:item.title}</span><span role="status">{at+1} / {items.length}</span>
+      <button type="button" aria-label="Reply to decision" title="Reply in Focus" onClick={()=>onReply(item)} className="cursor-pointer"><Icon name="quote"/></button>
       <button type="button" aria-label="Previous decision" title="Previous decision" disabled={items.length<2} onClick={()=>onSelect(items[(at+items.length-1)%items.length].id)} className="cursor-pointer disabled:opacity-30"><Icon name="back"/></button>
       <button type="button" aria-label="Next decision" title="Next decision" disabled={items.length<2} onClick={()=>onSelect(items[(at+1)%items.length].id)} className="rotate-180 cursor-pointer disabled:opacity-30"><Icon name="back"/></button>
       <button type="button" aria-label="Close decision" title="Close decision" onClick={()=>onSelect(null)} className="cursor-pointer"><Icon name="stop"/></button>

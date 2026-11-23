@@ -219,6 +219,28 @@ try {
   await page.goto(`${base}/?view=focus`);await panel.getByText(firstReview.title,{exact:true}).waitFor();
  }
  await page.setViewportSize({width:1280,height:850});
+ const navigationTasks=await api('/api/tasks');
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});
+  const row=panel.locator(`[data-decision="${secondReview.id}"]`);await row.locator('[data-decision-open]').focus();await row.locator('[data-decision-open]').press('Enter');
+  let selectedDeck=page.locator('[data-focus-decisions]');await selectedDeck.getByRole('button',{name:'Approve publication',exact:true}).waitFor();
+  assert.equal(await row.locator('[data-decision-open]').getAttribute('aria-pressed'),'true','Selected review remains visibly selected after focus enters the card');
+  await selectedDeck.getByRole('button',{name:'Reply to decision',exact:true}).click();
+  await page.getByRole('region',{name:'Attached diff Review title',exact:true}).waitFor();
+  if(width===390)await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
+  assert.equal(await row.locator('xpath=..').getAttribute('data-selected'),'true','Preparing a review reply retains its selected row');
+  await page.getByRole('button',{name:'Remove diff Review title',exact:true}).click();
+  const title=row.locator('[data-quote-title]'),text=await title.textContent();
+  const selected=await quoteTitle(page,title,1,text.length-1);
+  const quoted=page.getByRole('region',{name:'Attached diff Review title',exact:true});await quoted.waitFor();
+  assert.deepEqual(await quoted.locator('[data-quoted-diff-line]').allInnerTexts(),[selected],'Sidebar text selection preserves the exact selected review text');
+  await page.getByRole('button',{name:'Remove diff Review title',exact:true}).click();
+  if(width===390)await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
+  if(process.env.SELECTION_SCREENSHOT)await page.screenshot({path:process.env.SELECTION_SCREENSHOT.replace('.png',`-review-${width}.png`)});
+  assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Selection and contextual replies never approve reviews');
+ }
+ assert.deepEqual(await api('/api/tasks'),navigationTasks,'Selection does not change task state or ownership');
+ await page.setViewportSize({width:1280,height:850});
  const tabCount=await page.getByRole('tab').count();
  await page.locator('[data-composer]').fill('Retain the decision note.');
  await panel.getByText(firstReview.title,{exact:true}).click();
@@ -304,6 +326,18 @@ try {
   const toggle=deck.getByRole('button',{name:'Conversation context',exact:true});await toggle.focus();await toggle.press('Enter');assert.equal((await deck.locator('div[aria-label="Conversation context"]').innerText()).includes('unrelated'),false);
   await toggle.press('Enter');
   if(process.env.SOURCE_SCREENSHOT)await page.screenshot({path:process.env.SOURCE_SCREENSHOT.replace('.png',`-${width}.png`)});
+ }
+ for(const width of[1280,390]){
+  await page.setViewportSize({width,height:850});await deck.getByRole('button',{name:'Close decision',exact:true}).click();
+  const row=panel.locator(`[data-decision="${scopedTasks[0].id}"]`),title=row.locator('[data-quote-title]');
+  const selected=await quoteTitle(page,title,1,scopedTasks[0].text.length-1);
+  const attachment=page.getByRole('region',{name:'Attached diff Decision title',exact:true});await attachment.waitFor();
+  assert.deepEqual(await attachment.locator('[data-quoted-diff-line]').allInnerTexts(),[selected]);
+  if(width===390)await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
+  assert.equal(await row.locator('[data-decision-open]').getAttribute('aria-pressed'),'true','Selected task reply keeps its contextual selection');
+  if(process.env.SELECTION_SCREENSHOT)await page.screenshot({path:process.env.SELECTION_SCREENSHOT.replace('.png',`-task-${width}.png`)});
+  await page.getByRole('button',{name:'Remove diff Decision title',exact:true}).click();
+  await row.locator('[data-decision-open]').click();deck=page.locator('[data-focus-decisions]');await scopedReply(0).waitFor();
  }
  const beforeNavigation=await api('/api/tasks');
  const humanCount=db.prepare("SELECT count(*) AS n FROM entries WHERE kind='you'").get().n;

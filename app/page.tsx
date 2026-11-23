@@ -234,6 +234,7 @@ export default function Home() {
   const [taskQuery, setTaskQuery] = useState("");
   const [allTasks, setAllTasks] = useState(false);
   const decisionQueue = focusOpen && !allTasks;
+  const [replyDecisionId,setReplyDecisionId]=useState<string|null>(null);
   const [decisionId,setDecisionId]=useState<string|null>(()=>{try{return new URL(window.location.href).searchParams.get("decision");}catch{return null;}});
   const chooseDecision=useCallback((id:string|null)=>{setDecisionId(id);if(id)setFocus("fleet");const url=new URL(window.location.href);if(id)url.searchParams.set("decision",id);else url.searchParams.delete("decision");window.history.replaceState(null,"",url);},[]);
   const scopedTasks = useSyncExternalStore(defaultWindowTasks.subscribe, defaultWindowTasks.get, defaultWindowTasks.fallback);
@@ -996,8 +997,9 @@ export default function Home() {
   const reviewOwnerKey = JSON.stringify(Object.entries(snapshot.reviews ?? {}).flatMap(([id, reviews]) => reviews.map(review => [review, {id, name: taskNames.get(id) ?? "Conversation"}])));
   const embeddedReviews = useMemo(() => focusOpen && focusAgentId ? {
     owners: new Map<string, {id:string;name:string}>(JSON.parse(reviewOwnerKey)),
-    quote: (quote: DiffQuote) => {receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
-  } : null, [focusOpen, focusAgentId, reviewOwnerKey]);
+    quote: (quote: DiffQuote,decision=decisionId) => {if(decision)setReplyDecisionId(decision);receiveDraft(focusAgentId, {text:"", files:[], diffs:[quote]});chooseDecision(null);if(window.innerWidth<640)setTasksOpen(false);},
+  } : null, [focusOpen, focusAgentId, reviewOwnerKey,decisionId]);
+  const replyToDecision=(item:typeof decisionItems[number],text?:string)=>{embeddedReviews?.quote(titleQuote(text??`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}),item.id);};
   const taskSearch = taskQuery.trim().toLowerCase();
   const scopeIds = windowScope ? [...new Set([...tabIds.flatMap(id => {
     if (id === open) return panes;
@@ -1553,7 +1555,7 @@ export default function Home() {
 
         {focusOpen&&(!focusAgentId||!open) ? <section aria-label="Focus" className="min-w-0 flex-1 px-[var(--pane-x)] py-6 text-[13px] text-faint">
           {focusError?<><p role="alert">{focusError}</p><button type="button" aria-label="Retry Focus" title="Retry Focus" className="mt-3 cursor-pointer" onClick={()=>setFocusRetry(value=>value+1)}><Icon name="refresh"/></button></>:<p role="status">Opening Focus…</p>}
-        </section> : focusOpen&&decisionId&&decisionItems.length ? <FocusDecisionDeck items={decisionItems} selected={decisionId} onSelect={chooseDecision}/> : open ? (
+        </section> : focusOpen&&decisionId&&decisionItems.length ? <FocusDecisionDeck items={decisionItems} selected={decisionId} onSelect={chooseDecision} onReply={replyToDecision}/> : open ? (
           <PaneWorkspace key={open} workspace={open} ids={panes} revision={paneRevision}
             onDragStart={(event, id) => transfer.start(event, open, id, tabLayout(open))} onDragEnd={transfer.end}
             onDock={(event, id, edge) => transfer.drop(event, { kind: "pane", id, edge })} onDetach={id => transfer.detach(open, id, tabLayout(open))}
@@ -1762,7 +1764,7 @@ export default function Home() {
           <TaskPanel
             tasks={taskItems}
             rows={tasks} priorities={taskPriorities}
-            decisions={decisionQueue} decisionItems={decisionItems} onDecision={chooseDecision} onReply={item=>embeddedReviews?.quote(titleQuote(`${item.title} · ${item.state.recommendation?.humanReason}`,{agentId:item.agentId,reviewId:item.reviewId,taskId:item.taskId,evidenceEntryIds:item.state.recommendation?.evidenceEntryIds}))}
+            decisions={decisionQueue} decisionItems={decisionItems} selectedDecision={decisionId??replyDecisionId} onDecision={chooseDecision} onReply={replyToDecision}
             onSource={item=>void run(async()=>{const entries=await api.citedEntries(item.state.recommendation?.evidenceEntryIds??[]);const source=entries.findLast(entry=>entry.agentId===item.agentId);if(source){chooseDecision(null);showAgent(source.agentId,source.id);if(window.innerWidth<640)setTasksOpen(false);}else chooseDecision(item.id);})}
             reviewingDecisions={[...Object.values(taskPriorities ?? {}),...Object.values(reviewPriorities??{})].some(state => state.stale || (state.needsReview && state.recommendation?.nextActor === "human"))}
             onDecisions={focusOpen ? () => { setAllTasks(value => !value); setTaskAt(0); } : undefined}

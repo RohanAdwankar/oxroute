@@ -9,6 +9,7 @@ import type { Agent, TaskItem, TaskNote, TaskStatus, Snapshot } from "../lib/typ
 import { clock } from "../lib/format";
 import { Icon } from "./Icon";
 import { TaskApproval } from "./TaskApproval";
+import {QuoteTitle} from "./QuoteTitle";
 
 const STATES: { value: TaskStatus; label: string }[] = [
   { value: "incomplete", label: "Incomplete" },
@@ -42,6 +43,7 @@ function TaskSelect({ label, children, ...props }: Omit<ComponentProps<"select">
 /** One task, and whether the keyboard is on it. */
 function Row({
   focused,
+  selected = false,
   shown,
   children,
   depth,
@@ -50,6 +52,7 @@ function Row({
   depth: number;
   onContextMenu: (event: React.MouseEvent) => void;
   focused: boolean;
+  selected?: boolean;
   /// Just filed, somewhere down a long list: bring it where it can be seen.
   shown: boolean;
   children: React.ReactNode;
@@ -62,11 +65,12 @@ function Row({
     <div
       ref={row}
       data-task-row
+      data-selected={selected || undefined}
       onContextMenu={onContextMenu}
       style={{ paddingLeft: 17 + depth * 18 }}
       aria-current={focused ? "true" : undefined}
       className={`group flex items-start gap-3 border-b border-hair border-l-[3px] py-4 pr-5 pl-[17px] ${
-        focused ? "border-l-ink bg-wash" : "border-l-transparent"
+        focused ? "border-l-ink bg-wash" : selected ? "border-l-mid bg-band" : "border-l-transparent"
       }`}
     >
       {children}
@@ -132,6 +136,7 @@ export const TaskPanel = memo(function TaskPanel({
   priorities,
   decisions = false,
   decisionItems = [],
+  selectedDecision,
   onDecision,
   onReply,
   onSource,
@@ -166,8 +171,9 @@ export const TaskPanel = memo(function TaskPanel({
   priorities?: Snapshot["taskPriorities"];
   decisions?: boolean;
   decisionItems?: FocusDecision[];
+  selectedDecision?: string|null;
   onDecision?: (id:string)=>void;
-  onReply?: (item:FocusDecision)=>void;
+  onReply?: (item:FocusDecision,text?:string)=>void;
   onSource?: (item:FocusDecision)=>void;
   reviewingDecisions?: boolean;
   onDecisions?: () => void;
@@ -427,9 +433,9 @@ export const TaskPanel = memo(function TaskPanel({
               className="max-h-[270px] w-full object-contain"
             />
           </div>}
-          {decisions ? decisionItems.map((item,at)=><Row key={item.id} depth={0} focused={active&&at===cursor} shown={false} onContextMenu={()=>{}}>
+          {decisions ? decisionItems.map((item,at)=><Row key={item.id} depth={0} selected={item.id===selectedDecision} focused={active&&at===cursor} shown={false} onContextMenu={()=>{}}>
             <div data-decision={item.id} className="min-w-0 flex-1">
-              <button type="button" data-task-open data-decision-open title="Open decision context" onClick={()=>onDecision?.(item.id)} className="flex w-full cursor-pointer items-start gap-2 text-left text-[13px] leading-[1.45] text-ink"><span className="min-w-0 flex-1">{item.title}</span><Icon name="open" size={14}/></button>
+              <button type="button" data-task-open data-decision-open aria-pressed={selectedDecision===item.id} title="Open decision context" onClick={event=>{const selection=window.getSelection();if(selection?.rangeCount&&!selection.isCollapsed&&event.currentTarget.contains(selection.getRangeAt(0).commonAncestorContainer))return;onDecision?.(item.id);}} className="flex w-full cursor-pointer items-start gap-2 text-left text-[13px] leading-[1.45] text-ink"><span className="min-w-0 flex-1 select-text"><QuoteTitle text={item.title} onQuote={text=>onReply?.(item,text)}/></span><Icon name="open" size={14}/></button>
               <p data-task-next-action className="mt-1 text-[11px] leading-[1.4] text-mid" title={item.state.recommendation?.reason}>{item.state.recommendation?.humanReason} · Unblocks {item.state.recommendation?.unblocks}{item.state.needsReview&&<> · Checking latest context</>}</p>
               <div className="mt-1 flex items-center gap-3 text-mid">
                 <button type="button" data-decision-reply aria-label="Reply" title="Reply in Focus" onClick={()=>onReply?.(item)} className="cursor-pointer p-1 hover:text-ink"><Icon name="quote" size={14}/></button>
