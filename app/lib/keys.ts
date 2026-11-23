@@ -203,3 +203,10 @@ export const nextActionLayout = choice("oxroute.nextActionLayout", "nextActionLa
 
 /** Default task scope; individual windows can override it. */
 export const defaultWindowTasks = choice("oxroute.defaultWindowTasks", "defaultWindowTasks", ["on", "off"] as const);
+
+const textSize = choice("oxroute.textScale", "textScale", ["100", ...Array.from({length:476},(_,index)=>String(index+25))]);
+export const textScale = {
+  ...textSize,
+  get(){const value=textSize.get();document.documentElement.style.setProperty('--text-scale',String(Number(value)/100));return value;},
+  set(value:string){document.documentElement.style.setProperty('--text-scale',String(Number(value)/100));textSize.set(value);},
+};

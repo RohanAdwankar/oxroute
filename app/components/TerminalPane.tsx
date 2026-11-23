@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "../lib/types";
 import { Icon } from "./Icon";
-import { terminalFontScale } from "../lib/keys";
+import { terminalFontScale, textScale } from "../lib/keys";
 
 export interface TerminalInfo { id: string; name: string; pending: string[]; granted: string[]; agentId?: string; sharedShell?: boolean; following?: boolean; followAgentId?: string }
 export async function terminalApi<T>(path: string, body?: object, method = "POST", signal?: AbortSignal): Promise<T> {
@@ -137,12 +137,13 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         // Keep xterm's mouse coordinates unzoomed and scale its font instead.
         const scale = Number(getComputedStyle(element.parentElement!).zoom);
         element.style.zoom = String(1 / scale);
-        terminal.options.fontSize = history.options.fontSize = 13 * scale * Number(terminalFontScale.get()) / 100;
+        terminal.options.fontSize = history.options.fontSize = 13 * scale * Number(terminalFontScale.get()) / 100 * Number(textScale.get()) / 100;
         fit.fit();
         history.resize(terminal.cols, terminal.rows);
         if (token()) void terminalApi(`/${id}/resize`, { controller: token(), rows: terminal.rows, cols: terminal.cols }).catch(error => setStreamError(String(error)));
       };
       const unsubscribeFont = terminalFontScale.subscribe(resize);
+      const unsubscribeText = textScale.subscribe(resize);
       const observer = new ResizeObserver(resize);
       observer.observe(host.current);
       observer.observe(host.current.parentElement!);
@@ -168,7 +169,7 @@ export function TerminalPane({ id, agents, handle, onEnd }: { id: string; agents
         } catch (error) { if (live) { setStreamError(String(error)); timer = setTimeout(poll, 200); } }
       };
       void poll();
-      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); unsubscribeFont(); input.dispose(); binary.dispose(); historyInput.dispose(); historyScroll.dispose(); terminal.dispose(); history.dispose(); liveElement.remove(); historyElement.remove(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
+      dispose = () => { clearTimeout(timer); theme.disconnect(); observer.disconnect(); unsubscribeFont(); unsubscribeText(); input.dispose(); binary.dispose(); historyInput.dispose(); historyScroll.dispose(); terminal.dispose(); history.dispose(); liveElement.remove(); historyElement.remove(); for (const event of inputEvents) element.removeEventListener(event, markInput, true); };
     })().catch(error => setError(String(error)));
     return () => { live = false; controller.abort(); dispose(); };
   }, [id, token]);
