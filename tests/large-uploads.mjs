@@ -12,7 +12,7 @@ import { chromium } from 'playwright';
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'oxroute-upload-'));
 await symlink(join(repository, 'node_modules'), join(directory, 'node_modules'));
-for (const name of ['app', 'public']) await cp(join(repository, name), join(directory, name), { recursive: true });
+for (const name of ['app', 'public', 'scripts']) await cp(join(repository, name), join(directory, name), { recursive: true });
 for (const name of ['next.config.ts', 'tsconfig.json', 'package.json', 'package-lock.json', 'postcss.config.mjs']) await cp(join(repository, name), join(directory, name));
 const bytes = Buffer.alloc(100 * 1024 * 1024);
 for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;
