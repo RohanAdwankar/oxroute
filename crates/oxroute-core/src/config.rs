@@ -353,7 +353,7 @@ impl Config {
             inbox: crate::inbox::Config {
                 slack_app_token_file: from_env(&["OXROUTE_SLACK_INBOX_APP_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_app_token_file.map(|p|expand(&p.to_string_lossy()))),
                 slack_channels: file.inbox.slack_channels,
-                slack_arrivals_since: file.inbox.slack_arrivals_since,
+                slack_arrivals_since: from_env(&["OXROUTE_SLACK_INBOX_ARRIVALS_SINCE"]).map(|value|value.parse::<f64>().context("invalid Slack arrival source cutoff")).transpose()?.or(file.inbox.slack_arrivals_since),
                 outlook_token_file: from_env(&["OXROUTE_OUTLOOK_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.outlook_token_file.map(|p|expand(&p.to_string_lossy()))),
                 slack_token_file: from_env(&["OXROUTE_SLACK_INBOX_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_token_file.map(|p|expand(&p.to_string_lossy()))),
             },
@@ -593,6 +593,7 @@ mod tests {
             "OXROUTE_SLACK_APP_TOKEN",
             "SLACK_APP_TOKEN",
             "OXROUTE_DIAGRAM_PATH",
+            "OXROUTE_SLACK_INBOX_ARRIVALS_SINCE",
         ] {
             std::env::remove_var(name);
         }
@@ -605,6 +606,17 @@ mod tests {
         ));
         std::fs::write(&path, body).unwrap();
         path
+    }
+
+    #[test]
+    fn source_cutoff_keeps_file_and_environment_precision() {
+        let _guard=exclusive();
+        let path=write("source-cutoff","owner='reader'\n[inbox]\nslack_arrivals_since=70.123456\n");
+        assert_eq!(Config::load_from(&path).unwrap().inbox.slack_arrivals_since,Some(70.123456));
+        std::env::set_var("OXROUTE_SLACK_INBOX_ARRIVALS_SINCE","90.654321");
+        assert_eq!(Config::load_from(&path).unwrap().inbox.slack_arrivals_since,Some(90.654321));
+        std::env::set_var("OXROUTE_SLACK_INBOX_ARRIVALS_SINCE","invalid");assert!(Config::load_from(&path).is_err());
+        clear();std::fs::remove_file(path).unwrap();
     }
 
     #[test]
