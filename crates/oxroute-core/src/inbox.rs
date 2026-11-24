@@ -150,6 +150,7 @@ impl Reader {
 }
 
 pub fn start(hub: Arc<Hub>) {
+    if let Err(error)=hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since) {tracing::error!(%error,"Slack admission initialization failed");}
     if let Some(path)=hub.config.inbox.slack_token_file.clone() {identities::start(hub.clone(),path);}
     if let (Some(token), Some(app)) = (
         hub.config.inbox.slack_token_file.clone(),

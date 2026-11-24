@@ -22,6 +22,7 @@ mod focus;
 mod dm_inbox;
 mod inbox_display;
 mod inbox_arrivals;
+mod inbox_clear;
 pub(crate) use inbox_display::SlackName;
 mod intake;
 pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
@@ -130,6 +131,12 @@ CREATE INDEX IF NOT EXISTS signals_at ON signals (at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS signals_external
     ON signals (source, conversation, external_id);
 CREATE TABLE IF NOT EXISTS suppressed_intake_events (id TEXT PRIMARY KEY, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS inbox_dismissals (
+    request_id TEXT PRIMARY KEY,
+    through_sequence INTEGER NOT NULL,
+    entry_id INTEGER NOT NULL,
+    count INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS inbox_arrivals (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id TEXT NOT NULL UNIQUE,
@@ -1261,6 +1268,7 @@ impl Store {
             if signal.source==crate::inbox::SLACK {return Self::import_slack_arrival(tx,signal,url);}
             let fresh=!tx.query_row("SELECT EXISTS(SELECT 1 FROM inbox_messages WHERE source=?1 AND conversation=?2 AND external_id=?3)",params![signal.source,signal.conversation,signal.external_id],|r|r.get::<_,bool>(0))?;
             let changed=Self::put_inbox_context(&tx,signal)?;
+            if !fresh && tx.query_row("SELECT EXISTS(SELECT 1 FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id WHERE s.source=?1 AND s.conversation=?2 AND s.thread_key=?3 AND a.dismissed_by IS NOT NULL)",params![signal.source,signal.conversation,signal.thread_key],|r|r.get::<_,bool>(0))? {tx.commit()?;return Ok(None);}
             if changed==0 {return Ok(None);}
             let id:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![signal.source,signal.conversation,signal.thread_key],|r|r.get(0)).optional()?;
             let id=id.unwrap_or_else(||signal.id.clone());
@@ -1367,16 +1375,7 @@ impl Store {
     }
 
     pub fn inbox(&self, limit: usize) -> Result<Vec<InboxItem>> {
-        let mut items=self.with(|c| {
-            let mut stmt =
-                c.prepare("SELECT * FROM signals WHERE source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) ORDER BY at DESC, rowid DESC LIMIT ?1")?;
-            let mut out = Vec::new();
-            for row in stmt.query_map(params![limit as i64], read_item)? {
-                out.push(row?);
-            }
-            Ok(out)
-        })?;
-        self.decorate_inbox(&mut items)?;Ok(items)
+        Ok(self.inbox_snapshot(limit)?.0)
     }
 
     // -- timeline --------------------------------------------------------

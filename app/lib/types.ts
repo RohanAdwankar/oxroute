@@ -172,6 +172,8 @@ export interface Snapshot {
   paneLinks: Record<string, string>;
   quoteThreads?: QuoteThread[];
   inbox: InboxItem[];
+  inboxClearThrough?: number;
+  inboxWaiting?: number;
   inboxConnectors?: {source: string; configured: boolean; lastSync: number | null; error: string | null}[];
   tasks: TaskItem[];
   taskNotes: TaskNote[];

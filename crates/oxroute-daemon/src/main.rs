@@ -239,6 +239,7 @@ async fn serve() -> Result<()> {
         .route("/api/native-preview", get(native_preview))
         .route("/api/signal", post(ingest))
         .route("/api/route", post(route))
+        .route("/api/inbox/clear", post(clear_inbox))
         .route("/api/routing-recommendations/{id}", post(routing_recommendation))
         .route("/api/focus", get(focus_queue))
         .route("/api/focus/agent", post(open_focus))
@@ -688,6 +689,14 @@ async fn focus_queue(State(hub): Hubs) -> Result<Json<serde_json::Value>, Failed
         }
     }
     Ok(Json(json!({"suggestions":suggestions,"feedback":hub.store.recommendation_stats()?})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ClearInboxBody {request_id:String,through:i64}
+async fn clear_inbox(State(hub):Hubs,Json(body):Json<ClearInboxBody>)->Result<Json<oxroute_core::Snapshot>,Failed> {
+    hub.clear_inbox(&body.request_id,body.through).await?;
+    Ok(Json(hub.snapshot(INBOX_LIMIT)?))
 }
 
 async fn route(

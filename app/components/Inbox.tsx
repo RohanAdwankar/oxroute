@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef } from "react";
 
 import { clip, clock } from "../lib/format";
 import type { InboxRow } from "../lib/inbox";
@@ -22,11 +22,11 @@ export function Inbox({
   agents,
   selected,
   onSelect,
-  onNote,
+  onClear,
   busy,
+  waitingCount,
   cursor,
   active,
-  composeRef,
   onCollapse,
 }: {
   items: InboxItem[];
@@ -37,17 +37,16 @@ export function Inbox({
   agents: Agent[];
   selected: string | null;
   onSelect: (item: InboxItem) => void;
-  onNote: (text: string) => void;
+  onClear: () => void;
+  waitingCount?: number;
   busy: boolean;
   /// Which row the keyboard is on, as an index into `rows`.
   cursor: number;
   /// True when the keyboard is driving this column.
   active: boolean;
-  /// So a shortcut elsewhere can put the caret in the compose box.
-  composeRef: RefObject<HTMLTextAreaElement | null>;
   onCollapse: () => void;
 }) {
-  const waiting = items.filter((item) => item.state === "waiting");
+  const waiting = waitingCount ?? items.filter((item) => item.state === "waiting").length;
   const name = (id: string) => agents.find((a) => a.id === id)?.name ?? "an agent";
 
   return (
@@ -56,8 +55,9 @@ export function Inbox({
         <span className="text-[14px] font-semibold">Inbox</span>
         <span className="flex-1" />
         <span className="text-[11.5px] text-faint">
-          {waiting.length === 0 ? "all clear" : `${waiting.length} waiting`}
+          {waiting === 0 ? "all clear" : `${waiting} waiting`}
         </span>
+        <button type="button" onClick={onClear} disabled={busy || waiting === 0} aria-label="Clear all inbox arrivals" title="Clear all" className="ml-3 cursor-pointer text-faint hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="discard" size={14} /></button>
         <button
           type="button"
           onClick={onCollapse}
@@ -69,12 +69,10 @@ export function Inbox({
         </button>
       </div>
 
-      <Compose onNote={onNote} busy={busy} inputRef={composeRef} />
-
       <div className="quiet-scroll flex-1 overflow-y-auto">
         {items.length === 0 && (
           <p className="px-[18px] py-6 text-[11.5px] text-faint">
-            Nothing has arrived yet. Send yourself a Slack message.
+            New incoming messages and direct mentions appear here.
           </p>
         )}
 
@@ -104,61 +102,6 @@ export function Inbox({
         {source.source === "outlook-inbox" ? "Outlook" : "Slack"} · {source.error ? "sync interrupted" : source.lastSync ? "synced" : "loading"}
       </div>)}
     </aside>
-  );
-}
-
-/**
- * Something you thought of, typed straight in.
- *
- * It becomes an ordinary signal and queues with everything else, so an idea
- * of your own gets routed by exactly the same decision as a Slack message --
- * which is the point. There is no separate "new task" flow to maintain.
- */
-function Compose({
-  onNote,
-  busy,
-  inputRef,
-}: {
-  onNote: (text: string) => void;
-  busy: boolean;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
-}) {
-  const [draft, setDraft] = useState("");
-
-  const send = () => {
-    const text = draft.trim();
-    if (!text || busy) return;
-    setDraft("");
-    onNote(text);
-  };
-
-  return (
-    <div className="flex shrink-0 items-start gap-2 border-b border-rule px-[18px] py-3">
-      <textarea
-        ref={inputRef}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            send();
-          }
-        }}
-        rows={1}
-        placeholder="Something you thought of…  (i)"
-        className="max-h-24 min-h-[34px] flex-1 resize-y rounded-[3px] border border-rule bg-paper px-[9px] py-[7px] text-[11.5px] outline-none placeholder:text-faint focus:border-edge"
-      />
-      <button
-        type="button"
-        onClick={send}
-        disabled={busy || draft.trim().length === 0}
-        aria-label="add to the inbox"
-        title="Add to inbox"
-        className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-[3px] border border-edge text-ink disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        <Icon name="plus" size={15} />
-      </button>
-    </div>
   );
 }
 

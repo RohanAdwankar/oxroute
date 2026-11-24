@@ -20,7 +20,7 @@ const KEYS: [string, string][] = [
   ["n", "start a new agent for this signal"],
   ["d", "discard this signal"],
   ["f", "letters on everything; type one to go there"],
-  ["i", "read the selected pane, or add something to the inbox"],
+  ["i", "read the selected pane"],
   ["h j k l", "select a neighboring pane; j/k scroll when none is in that direction"],
   ["z", "zoom the selected pane; z again restores the layout"],
   ["m", "manual or automatic input routing"],

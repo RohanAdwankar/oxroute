@@ -3457,7 +3457,7 @@ impl Hub {
     pub fn snapshot_with_notes(&self, inbox_limit: usize, notes: bool) -> Result<Snapshot> {
         let agents = self.store.unarchived_agents()?;
         let archived = self.store.archived_agents()?;
-        let mut inbox = self.store.inbox(inbox_limit)?;
+        let (mut inbox,inbox_clear_through,inbox_waiting) = self.store.inbox_snapshot(inbox_limit)?;
         for item in &mut inbox {
             item.source_url=self.store.get(&format!("inbox-url:{}",item.signal.id))?.filter(|url|reqwest::Url::parse(url).is_ok_and(|url|matches!(url.scheme(),"https"|"http")));
             item.suggested = self
@@ -3495,6 +3495,8 @@ impl Hub {
             pane_links,
             quote_threads,
             inbox,
+            inbox_clear_through,
+            inbox_waiting,
             tasks: self.store.tasks()?,
             task_notes: if notes { self.store.task_notes()? } else { vec![] },
             task_notes_deferred: !notes,
@@ -4346,6 +4348,8 @@ pub struct Snapshot {
     pub pane_links: HashMap<String, String>,
     pub quote_threads: Vec<QuoteThread>,
     pub inbox: Vec<InboxItem>,
+    pub inbox_clear_through: i64,
+    pub inbox_waiting: usize,
     pub tasks: Vec<TaskItem>,
     /// Why each task is where it is, oldest first.
     pub task_notes: Vec<TaskNote>,

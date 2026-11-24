@@ -262,7 +262,6 @@ export default function Home() {
   const scaled = useSyncExternalStore(scalePanes.subscribe, scalePanes.get, scalePanes.fallback);
   const scaleFloor = useSyncExternalStore(minimumPaneScale.subscribe, minimumPaneScale.get, minimumPaneScale.fallback);
   const terminalScale = useSyncExternalStore(terminalFontScale.subscribe, terminalFontScale.get, terminalFontScale.fallback);
-  const compose = useRef<HTMLTextAreaElement>(null);
   const inboxWidthRef = useRef(340);
   const lastInboxWidth = useRef(340);
   const paneLinks = useRef<Record<string, string>>({});
@@ -593,15 +592,12 @@ export default function Home() {
           setInboxVisible(next.inbox.some((item) => item.state === "waiting"));
         }
         setReady(true);
-        // Something you just typed in is a decision you are about to make, so
-        // it opens as one: the enter that adds it lands on the routing
-        // question, and the agent's hint letter finishes the job.
+        // A routed decision hands keyboard focus to the next waiting item.
         const landed = inboxRows(next.inbox, false).findIndex(
           (row) => row.kind === "item" && row.item.signal.id === landOn.current,
         );
         if (landed < 0) return;
         landOn.current = null;
-        compose.current?.blur();
         setInboxAt(landed);
         const row = inboxRows(next.inbox, false)[landed];
         if (row.kind === "item" && row.item.state === "waiting") openRouting(row.item, next.agents);
@@ -1092,7 +1088,7 @@ export default function Home() {
       if (destination) {
         clearRouting();
         showAgent(destination);
-      }
+      } else if (["slack-inbox","outlook-inbox"].includes(item.signal.source)) openRouting(item, snapshot.agents);
       return;
     }
     openRouting(item, snapshot.agents);
@@ -1334,14 +1330,6 @@ export default function Home() {
           // remembered.
           stop();
           return setJump(true);
-        case "i":
-        case "/":
-          stop();
-          // The box may be behind a collapsed column; asking for it opens it.
-          setInboxVisible(true);
-          setFocus("inbox");
-          window.requestAnimationFrame(() => compose.current?.focus());
-          return;
         default:
           break;
       }
@@ -1510,7 +1498,7 @@ export default function Home() {
       <div className="relative flex min-h-0 flex-1">
         {inboxOpen ? (
           <>
-            <div className="shrink-0 overflow-hidden" style={{ width: inboxWidth }}>
+            <div className="shrink-0 overflow-hidden" style={{ width: `min(${inboxWidth}px, 100vw)` }}>
               <Inbox
                 connectors={snapshot.inboxConnectors}
                 items={snapshot.inbox}
@@ -1522,12 +1510,8 @@ export default function Home() {
                 busy={busy}
                 cursor={inboxAt}
                 active={focus === "inbox"}
-                composeRef={compose}
-                onNote={(text) =>
-                  void run(async () => {
-                    landOn.current = (await api.note(text)).signal;
-                  })
-                }
+                waitingCount={snapshot.inboxWaiting}
+                onClear={() => void run(() => api.clearInbox(snapshot.inboxClearThrough ?? 0), clearRouting)}
                 onCollapse={() => setInboxVisible(false)}
               />
             </div>

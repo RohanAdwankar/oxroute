@@ -93,8 +93,6 @@ export const api = {
   nativePreview: (backend: Backend, sessionId: string, signal?: AbortSignal) =>
     call<ConversationLine[]>(`/api/native-preview?backend=${encodeURIComponent(backend)}&sessionId=${encodeURIComponent(sessionId)}`, { signal }),
 
-  /** Put a thought of your own into the inbox, beside everything else. */
-  note: (text: string) => post<{ signal: string }>("/api/signal", { text, source: "you" }),
   searchContext: (id: string, entry: number, signal?: AbortSignal) =>
     call<Entry[]>(`/api/agents/${encodeURIComponent(id)}/context/${entry}`, { signal }),
   createAgent: (id: string): Promise<Agent> => {
@@ -122,6 +120,7 @@ export const api = {
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),
   routeSpawn: (signal: string, model?: string) =>
     post<Snapshot>("/api/route", { signal, action: "spawn", model }),
+  clearInbox: (through: number, requestId = crypto.randomUUID()) => call<Snapshot>("/api/inbox/clear", {method:"POST", body:JSON.stringify({through,requestId})}, 2),
   discard: (signal: string) => post<Snapshot>("/api/route", { signal, action: "discard" }),
 
   /// `queued` waits for the running turn instead of stopping it.

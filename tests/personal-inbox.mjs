@@ -61,8 +61,8 @@ try{
  await api('/api/automatic-titles',{enabled:false});await api('/api/next-action-suggestions',{enabled:false});
  await api('/api/mode',{mode:'auto'});await api('/api/next-action-mode',{mode:'ask'});
  for(const source of ['outlook-inbox','slack-inbox']) {
-  await api('/api/signal',{source,conversation:source,threadKey:'ongoing',label:source==='outlook-inbox'?'Capacity report':'Project discussion',text:'Review the current observations'});
-  await api('/api/signal',{source,conversation:source,threadKey:'ongoing',text:'Additional measurements are available'});
+  await api('/api/signal',{source,conversation:`workspace:reader:${source}`,threadKey:'ongoing',label:source==='outlook-inbox'?'Capacity report':'Project discussion',text:'<@reader> Review the current observations'});
+  if(source==='outlook-inbox')await api('/api/signal',{source,conversation:`workspace:reader:${source}`,threadKey:'ongoing',text:'Additional measurements are available'});
  }
  await until(async()=>(await api('/api/state')).inbox.every(item=>item.recommendation));
  let state=await api('/api/state');assert.equal(state.inbox.length,2);assert.equal(state.agents.length,0);assert.ok(state.inbox.every(item=>item.state==='waiting'));
@@ -85,13 +85,28 @@ try{
  assert.equal((await api('/api/state')).agents.length,1,'Discarding does not start another agent');assert.deepEqual(errors,[]);
  const recipients=await Promise.all([api('/api/agents',{}),api('/api/agents',{})]);
  for(const source of ['outlook-inbox','slack-inbox']) {
-  const text=`Additional context for both reviewers from ${source}`;
-  const item=await api('/api/signal',{source,conversation:'shared-review',threadKey:source,text});
+  const text=`<@reader> Additional context for both reviewers from ${source}`;
+  const item=await api('/api/signal',{source,conversation:'workspace:reader:shared-review',threadKey:source,text});
   await api('/api/route',{signal:item.signal,action:'existing',agentIds:recipients.map(agent=>agent.id)});
   await until(async()=>{const views=await Promise.all(recipients.map(agent=>api(`/api/agents/${agent.id}`)));return views.every(view=>view.agent.status==='complete'&&JSON.stringify(delivered.get(view.agent.sessionId)??[]).includes(text));});
  }
  assert.equal((await api('/api/state')).agents.length,3,'Manual fan-out retains both destinations without duplicating agents');
- console.log('Personal threads group in the Inbox; advice waits even in auto mode; source links, explicit new-agent routing and local dismissal work.');
+ assert.equal(await page.getByPlaceholder(/Something you thought/).count(),0,'The removed manual input and submit affordance stay absent');
+ const retainedTasks=(await api('/api/tasks')).map(task=>[task.id,task.status]);
+ const pending=await api('/api/signal',{source:'outlook-inbox',conversation:'mail-account',threadKey:'bulk-context',text:'Incoming context for local dismissal'});
+ await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled());
+ let raced=false,click;
+ await page.route('**/api/inbox/clear',async route=>{click=route.request().postDataJSON();if(!raced){raced=true;await api('/api/signal',{source:'outlook-inbox',conversation:'mail-account',threadKey:'concurrent-context',text:'Incoming after the clear snapshot'});}await route.continue();});
+ await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).click();
+ await until(async()=>(await api('/api/state')).inboxWaiting===1);
+ assert.equal((await api(`/api/intake/${pending.signal}`)).state,'done');
+ await api('/api/inbox/clear',click);assert.equal((await api('/api/state')).inboxWaiting,1,'Retry preserves the concurrent arrival');
+ assert.deepEqual((await api('/api/tasks')).map(task=>[task.id,task.status]),retainedTasks,'Bulk dismissal never completes linked work');
+ await page.reload();await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled());
+ await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).click();await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isDisabled());
+ await page.reload();await page.getByRole('button',{name:'inbox',exact:true}).click().catch(()=>{});
+ assert.equal((await api('/api/state')).inboxWaiting,0);
+ console.log('Incoming messages retain explicit routing; advice waits even in auto mode; source links, explicit new-agent routing and local dismissal and snapshot-bounded Clear all preserve concurrent arrivals, source context and tasks.');
 }finally{
  for(const context of browser?.contexts()??[])for(const page of context.pages())await page.unrouteAll({behavior:"wait"});
  await browser?.close();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));daemon.kill('SIGTERM');if(daemon.exitCode===null)await new Promise(done=>daemon.once('exit',done));
