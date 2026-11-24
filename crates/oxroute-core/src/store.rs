@@ -20,6 +20,8 @@ use crate::tags::Board;
 
 mod focus;
 mod dm_inbox;
+mod intake;
+pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
 mod focus_updates;
 mod task_priorities;
 pub use task_priorities::{TaskPriority, TaskPriorityOrder, TaskPriorityState, ReviewPriorityState, DecisionReference};
@@ -53,7 +55,7 @@ CREATE TABLE IF NOT EXISTS focus_inbox (
 );
 CREATE TABLE IF NOT EXISTS focus_turn_events (
  id TEXT PRIMARY KEY, focus_id TEXT NOT NULL, agent_id TEXT NOT NULL,
- outcome TEXT NOT NULL, at REAL NOT NULL, receipt TEXT
+ outcome TEXT NOT NULL, at REAL NOT NULL, receipt TEXT, payload TEXT
 );
 CREATE INDEX IF NOT EXISTS focus_turn_events_queue ON focus_turn_events(focus_id,receipt,at);
 CREATE TABLE IF NOT EXISTS focus_messages (
@@ -243,6 +245,8 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");
     if !has_revision {conn.execute("ALTER TABLE signals ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",[])?;}
     if !conn.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key='slack-thread-recovery')",[],|row|row.get::<_,bool>(0))? {

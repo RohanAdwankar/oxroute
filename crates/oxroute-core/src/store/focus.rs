@@ -7,6 +7,8 @@ pub struct FocusTurnEvent {
     pub id: String,
     pub agent_id: String,
     pub outcome: String,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub intake:Option<super::IntakeArrival>,
     pub at: f64,
 }
 
@@ -161,8 +163,8 @@ impl Store {
             let receipt = receipt.unwrap_or_else(|| crate::model::new_id("focus-event-batch"));
             tx.execute("UPDATE focus_turn_events SET receipt=?2 WHERE focus_id=?1 AND receipt IS NULL", params![focus, receipt])?;
             let events = {
-                let mut statement = tx.prepare("SELECT id,agent_id,outcome,at FROM focus_turn_events WHERE receipt=?1 ORDER BY at,id")?;
-                let rows = statement.query_map([&receipt], |row| Ok(FocusTurnEvent {id: row.get(0)?, agent_id: row.get(1)?, outcome: row.get(2)?, at: row.get(3)?}))?;
+                let mut statement = tx.prepare("SELECT id,agent_id,outcome,at,payload FROM focus_turn_events WHERE receipt=?1 ORDER BY at,id")?;
+                let rows = statement.query_map([&receipt], |row| Ok(FocusTurnEvent {id: row.get(0)?, agent_id: row.get(1)?, outcome: row.get(2)?, at: row.get(3)?,intake:row.get::<_,Option<String>>(4)?.map(|value|serde_json::from_str(&value).map_err(|error|rusqlite::Error::FromSqlConversionFailure(4,rusqlite::types::Type::Text,Box::new(error)))).transpose()?}))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
             tx.commit()?;

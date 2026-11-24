@@ -1,4 +1,4 @@
-//! Read-only personal inbox polling. Imported context never starts a turn.
+//! Read-only personal inbox collection with identity-scoped Focus intake.
 use crate::{
     model::{new_id, now, Event, Signal},
     Hub,
@@ -240,7 +240,7 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
         .context("Outlook profile has no id")?;
     let key = format!("inbox-cursor:{OUTLOOK}:{account}");
     let since = time::OffsetDateTime::now_utc() - time::Duration::days(7);
-    let initial=format!("v1.0/me/mailFolders/inbox/messages/delta?$select=id,conversationId,subject,from,body,receivedDateTime,webLink,hasAttachments&$top=100&$filter=receivedDateTime ge {}",since.format(&time::format_description::well_known::Rfc3339)?);
+    let initial=format!("v1.0/me/mailFolders/inbox/messages/delta?$select=id,conversationId,subject,from,body,receivedDateTime,lastModifiedDateTime,webLink,hasAttachments&$top=100&$filter=receivedDateTime ge {}",since.format(&time::format_description::well_known::Rfc3339)?);
     let mut url = hub.store.get(&key)?.unwrap_or_else(|| initial.clone());
     loop {
         let page = match reader.get(&url, &[]).await {
@@ -295,8 +295,10 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
                 at,
                 root: true,
             };
-            hub.import_inbox(signal, item["webLink"].as_str().unwrap_or_default())
-                .await?;
+            let sender=signal.author.clone();
+            let revision=item["lastModifiedDateTime"].as_str().unwrap_or(item["receivedDateTime"].as_str().unwrap_or(id));
+            let activity=time::OffsetDateTime::parse(revision,&time::format_description::well_known::Rfc3339).map(|at|at.unix_timestamp() as f64).unwrap_or(at);
+            hub.import_collected(signal,item["webLink"].as_str().unwrap_or_default(),&sender,revision,activity).await?;
         }
         hub.emit(Event::Sync);
         if let Some(next) = page["@odata.nextLink"].as_str() {
@@ -441,14 +443,9 @@ async fn slack_message(
         root: message["thread_ts"].is_null(),
     };
     if activity<baseline {hub.store.cache_inbox_context(&signal)?;return Ok(());}
-    hub.import_inbox(
-        signal,
-        &format!(
-            "https://app.slack.com/archives/{channel}/p{}",
-            ts.replace('.', "")
-        ),
-    )
-    .await?;
+    let sender=message["bot_id"].as_str().or(message["user"].as_str()).unwrap_or_default();
+    let revision=message["edited"]["ts"].as_str().unwrap_or(ts);
+    hub.import_collected(signal,&format!("https://app.slack.com/archives/{channel}/p{}",ts.replace('.',"")),sender,revision,activity).await?;
     Ok(())
 }
 
@@ -519,6 +516,49 @@ mod tests {
             _ => panic!("unexpected slack request"),
         };
         (axum::http::StatusCode::OK, Json(value))
+    }
+    #[tokio::test]
+    async fn collected_identity_wakes_only_delegated_revisions() -> Result<()> {
+        use crate::store::{IntakeMode,IntakePolicy};
+        use crate::model::{EntryKind,InboxState};
+        let scratch=std::env::temp_dir().join(new_id("intake-runtime"));
+        tokio::fs::create_dir_all(&scratch).await?;
+        let token=scratch.join("token");tokio::fs::write(&token,"fixture").await?;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base=format!("http://{}/",listener.local_addr()?);
+        let at=now();
+        let remote=Arc::new(Mutex::new(Remote{base:base.clone(),slack_at:at,..Default::default()}));
+        let app=Router::new().route("/auth.test",get(slack_api)).route("/users.conversations",get(slack_api)).route("/search.messages",get(slack_api)).route("/conversations.history",get(slack_api)).route("/conversations.replies",get(slack_api)).route("/v1.0/me/mailFolders/inbox",get(graph)).route("/v1.0/me/mailFolders/inbox/messages/delta",get(graph)).route("/page",get(graph)).route("/delta",get(graph)).with_state(remote);
+        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+        let mut config=crate::Config::load()?;config.inbox=Config::default();config.min_free_bytes=0;
+        let path=scratch.join("state.sqlite3");let hub=Hub::new(config.clone(),crate::Store::open(&path)?);
+        hub.store.set("focus.agent","coordinator")?;
+        let delegation=hub.store.add_entry("coordinator",at,EntryKind::You,"Delegate scoped requests","","")?;
+        let mut policy=IntakePolicy{source:SLACK.into(),account:"team".into(),sender:"sender".into(),label:"Selected source".into(),mode:IntakeMode::Immediate,delegation_entry_id:delegation.id,effective_at:at-1.0};
+        hub.store.save_intake_policy(&policy)?;
+        let reader=Reader::new(&base,token)?;slack(&hub,&reader).await?;outlook(&hub,&reader).await?;
+        let batch=hub.store.claim_focus_events("coordinator")?.unwrap();assert_eq!(batch.events.len(),1,"HTTP collection wakes only the selected sender; email and owner replies retain standard triage");
+        let intake=batch.events[0].intake.as_ref().unwrap();assert_eq!(intake.sender,"sender");assert_eq!(intake.delegation_entry_id,delegation.id);
+        hub.store.accept_turn_receipt(&batch.receipt,now())?;
+        hub.store.set("inbox-dm:team:direct","1")?;
+        let original=json!({"ts":format!("{:.6}",at+2.0),"user":"sender","text":"Review the changed requirement"});
+        for _ in 0..2 {slack_message(&hub,&original,"team:owner:direct","Direct source","direct").await?;}
+        // A connector bot cannot borrow a selected human identity, even with the same user field.
+        let bot=json!({"ts":format!("{:.6}",at+3.0),"user":"sender","bot_id":"bot-source","text":"Forwarded context"});
+        slack_message(&hub,&bot,"team:owner:direct","Direct source","direct").await?;
+        let mut edited=original.clone();edited["text"]=json!("Use the corrected requirement");edited["edited"]=json!({"ts":format!("{:.6}",at+4.0)});
+        slack_message(&hub,&edited,"team:owner:direct","Direct source","direct").await?;
+        slack_message(&hub,&original,"team:owner:direct","Direct source","direct").await?;
+        drop(hub);let hub=Hub::new(config,crate::Store::open(&path)?);
+        let batch=hub.store.claim_focus_events("coordinator")?.unwrap();assert_eq!(batch.events.len(),2,"New DM and edited revision survive restart; duplicates, stale history and bot content do not create work");
+        for event in &batch.events {let item=hub.store.inbox_item(&event.intake.as_ref().unwrap().signal_id)?.unwrap();assert!(item.signal.text.contains("corrected requirement"));assert!(!item.signal.text.contains("sender: Review the changed requirement"));}
+        hub.store.accept_turn_receipt(&batch.receipt,now())?;
+        policy.mode=IntakeMode::Standard;hub.store.save_intake_policy(&policy)?;
+        let next=json!({"ts":format!("{:.6}",at+5.0),"user":"sender","text":"Standard source request"});
+        slack_message(&hub,&next,"team:owner:direct","Direct source","direct").await?;
+        assert!(!hub.store.pending_focus_events("coordinator")?);
+        assert!(hub.store.inbox(20)?.iter().all(|item|item.state==InboxState::Waiting),"Collection and wake acceptance preserve manual controls");
+        server.abort();drop(hub);tokio::fs::remove_dir_all(scratch).await?;Ok(())
     }
     #[tokio::test]
     async fn polling_groups_pages_survives_restart_and_never_runs_imported_context() -> Result<()> {

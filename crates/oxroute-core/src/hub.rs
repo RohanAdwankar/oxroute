@@ -39,6 +39,8 @@ use crate::store::{ActiveTurn, Store};
 use crate::tags::{self, Arranged, Board};
 
 mod focus;
+mod intake;
+pub use intake::IntakePolicyChoice;
 pub mod tools;
 
 const ERROR_REPLY: &str = "That request could not be completed.";

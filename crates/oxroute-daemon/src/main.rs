@@ -247,6 +247,8 @@ async fn serve() -> Result<()> {
         .route("/api/focus/task-priorities", get(task_priorities).put(prioritize_tasks))
         .route("/api/agent-tools/{id}", post(agent_tools::call))
         .route("/api/focus/inbox", get(focus_inbox).put(update_focus_inbox))
+        .route("/api/intake/policies",get(intake_policies).put(set_intake_policy))
+        .route("/api/intake/{id}",get(intake_item))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -643,6 +645,16 @@ async fn focus_message(State(hub):Hubs,Json(body):Json<FocusMessageBody>)->Resul
     hub.send_focus_message(&body.agent_id,&body.target_id,&body.text,&body.request_id,body.urgent,body.title.as_deref()).await?;
     let delivery=hub.focus_message_delivery(&body.request_id,&body.target_id)?;
     Ok(Json(json!({"queued":matches!(delivery["state"].as_str(),Some("queued"|"unconfirmed")),"delivery":delivery})))
+}
+
+async fn intake_item(State(hub):Hubs,Path(id):Path<String>)->Result<Json<oxroute_core::model::InboxItem>,Failed> {
+    Ok(Json(hub.store.inbox_item(&id)?.context("no such intake item")?))
+}
+async fn intake_policies(State(hub):Hubs)->Result<Json<serde_json::Value>,Failed> {
+    Ok(Json(json!({"policies":hub.store.intake_policies()?,"connectors":oxroute_core::inbox::statuses(&hub),"defaultMode":"standard","standardIntervalSeconds":1200})))
+}
+async fn set_intake_policy(State(hub):Hubs,Json(body):Json<oxroute_core::hub::IntakePolicyChoice>)->Result<Json<serde_json::Value>,Failed> {
+    hub.set_intake_policy(body).await?;Ok(Json(json!({"saved":true})))
 }
 
 #[derive(Deserialize)]

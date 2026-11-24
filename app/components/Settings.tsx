@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import {IntakeSettings} from "./IntakeSettings";
 
 import { type Graph, type Theme, type Verbose } from "../lib/keys";
 
@@ -105,6 +106,7 @@ export function Settings({
         className="max-h-full w-full max-w-[420px] overflow-y-auto border border-edge bg-card px-6 py-5"
       >
         <p className="mb-4 text-[13px] font-semibold">Settings</p>
+        <IntakeSettings/>
         <Choice title="Learn from choices" detail="Improve next-action and input-routing guidance from choices you see and the alternatives you choose."
           options={[{ value: true, label: "On", detail: "Adapt recommendations over time" }, { value: false, label: "Off", detail: "Keep current guidance without learning" }]}
           chosen={recommendationLearning} onChoose={onRecommendationLearning} />

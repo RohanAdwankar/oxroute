@@ -97,7 +97,7 @@ try{
  await until(()=>focusTurns().length===2,'Pending events did not survive restart');
  await api('/api/focus/messages',urgent);await api('/api/focus/messages',uncertain);assert.equal(steers.length,2,'Accepted and unconfirmed steering receipts survive daemon restart');
  assert.equal((await api(`/api/agents/${workers[0].agent.id}`)).agent.name,'Human selected title','Title protection and retry identity survive restart');
- const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Other conversation turns ended.')).text;
+ const eventInput=JSON.stringify(focusTurns()[1].input),eventText=focusTurns()[1].input.find(input=>input.text?.startsWith('Conversation or intake events arrived.')).text;
  const events=JSON.parse(eventText.slice(eventText.indexOf('[{"')));
  assert.deepEqual(events.map(event=>event.outcome).sort(),['completed','failed','stopped']);
  assert.deepEqual(new Set(events.map(event=>event.agentId)),new Set(workers.map(worker=>worker.agent.id)),'No historical or self event replay');
@@ -147,6 +147,10 @@ try{
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
  const responseLine=source.split('\n').find(line=>line.startsWith('const CONSENT_RESPONSE_GUIDANCE:'));
  const responsePolicy=JSON.parse(responseLine.slice(responseLine.indexOf('=')+1).trim().slice(0,-1));
+ const intakeSource=await readFile(new URL('../crates/oxroute-core/src/hub/intake.rs',import.meta.url),'utf8');
+ const intakeLine=intakeSource.split('\n').find(line=>line.startsWith('pub const INTAKE_GUIDANCE:'));
+ const intakePolicy=JSON.parse(intakeLine.slice(intakeLine.indexOf('=')+1).trim().slice(0,-1));
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(intakePolicy)),`${scope} turns receive canonical scoped intake guidance`);
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(responsePolicy)),`${scope} turns receive canonical consent response controls and scope guidance`);
  console.log(`Canonical inbox and decision policy captured unchanged in automatic, event and direct turns (${focusTurns().length} total).`);
  console.log('Direct requests take priority across a gated runtime resume, retain visible responses and scoped input, then resume durable background events without false fleet labels.');
