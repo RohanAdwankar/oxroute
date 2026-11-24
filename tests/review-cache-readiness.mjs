@@ -25,6 +25,13 @@ try{
    }finally{release();}
    await new Promise(done=>setTimeout(done,20));
   }
+  const release=lock('readwrite'),fetch=window.fetch,start=performance.now();
+  window.fetch=()=>Promise.reject(new TypeError('Network unavailable'));
+  setTimeout(release,900);
+  try{
+   const blob=await api.loadReviewImage('/cache-image');
+   results.push({mode:'offline recovery',elapsed:performance.now()-start,bytes:blob.size});
+  }finally{release();window.fetch=fetch;}
   db.close();return results;
  });
  for(const result of results){assert.ok(result.bytes>0);assert.ok(result.elapsed<2000);}

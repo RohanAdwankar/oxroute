@@ -34,12 +34,20 @@ function stored<T>(key: string, value?: StoredResponse): Promise<T> {
 
 async function storedResponse(url: string, refresh: boolean, priority: RequestPriority): Promise<Response> {
   let timeout: number | undefined;
-  const saved = !refresh && await Promise.race([
-    stored<StoredResponse | undefined>(url).catch(() => undefined),
+  const cached = refresh ? Promise.resolve(undefined) : stored<StoredResponse | undefined>(url).catch(() => undefined);
+  const saved = await Promise.race([
+    cached,
     new Promise<undefined>(resolve => { timeout = setTimeout(resolve, 500); }),
   ]).finally(() => clearTimeout(timeout));
   if (saved) return new Response(saved.body, { headers: saved.headers, status: saved.status });
-  const response = await fetch(url, { cache: refresh ? "no-store" : "default", priority, headers: priority === "low" ? { "x-oxroute-prefetch": "1" } : {} });
+  let response: Response;
+  try {
+    response = await fetch(url, { cache: refresh ? "no-store" : "default", priority, headers: priority === "low" ? { "x-oxroute-prefetch": "1" } : {} });
+  } catch (error) {
+    const saved = await cached;
+    if (saved) return new Response(saved.body, { headers: saved.headers, status: saved.status });
+    throw error;
+  }
   if (response.ok) void response.clone().arrayBuffer().then(body => stored(url, { body, headers: [...response.headers], status: response.status })).catch(() => {});
   return response;
 }
