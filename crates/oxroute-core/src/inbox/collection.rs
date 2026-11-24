@@ -120,25 +120,29 @@ async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
         );
     }
     let enumerated = gaps.is_empty();
-    // Search can discover indexed conversations under history/search-only access.
-    // It never establishes enumeration coverage or a global ingestion checkpoint.
-    if let Err(error) = discover(hub, reader, team, user, at, &mut channels).await {
-        gaps.push(format!("Indexed discovery incomplete: {error}"));
-    }
-    hub.store.set(&key, &serde_json::to_string(&channels)?)?;
     for id in &hub.config.inbox.slack_channels {
-        channels
-            .entry(id.clone())
-            .or_insert_with(|| serde_json::json!({"id":id,"name":id}));
+        channels.entry(id.clone()).or_insert_with(|| serde_json::json!({"id":id,"name":id,"is_im":id.starts_with('D')}));
     }
-    for (id, channel) in &channels {
-        let conversation = format!("{team}:{user}:{id}");
-        if channel["is_im"] == true || channel["is_mpim"] == true {
-            hub.store.set(&format!("inbox-dm:{team}:{id}"), "true")?;
+    let mut collected = HashSet::new();
+    // Established sources collect before indexed discovery, which cannot certify coverage.
+    for discover_new in [false, true] {
+        if discover_new {
+            if let Err(error) = discover(hub, reader, team, user, at, &mut channels).await {
+                gaps.push(format!("Indexed discovery incomplete: {error}"));
+            }
         }
-        let label = channel["name"].as_str().unwrap_or("Direct message");
-        if let Err(error) = collect(hub, reader, &conversation, label, id, at).await {
-            gaps.push(format!("History {id}: {error}"));
+        hub.store.set(&key, &serde_json::to_string(&channels)?)?;
+        for id in hub.config.inbox.slack_channels.iter().chain(channels.keys()) {
+            if !collected.insert(id.clone()) { continue; }
+            let channel = &channels[id];
+            let conversation = format!("{team}:{user}:{id}");
+            if channel["is_im"] == true || channel["is_mpim"] == true {
+                hub.store.set(&format!("inbox-dm:{team}:{id}"), "true")?;
+            }
+            let label = channel["name"].as_str().unwrap_or("Direct message");
+            if let Err(error) = collect(hub, reader, &conversation, label, id, at).await {
+                gaps.push(format!("History {id}: {error}"));
+            }
         }
     }
     if let Err(error) = slack_mentions(hub, reader, team, user).await {

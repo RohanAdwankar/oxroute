@@ -54,16 +54,12 @@ pub fn statuses(hub: &Hub) -> Vec<Status> {
             .unwrap_or_default();
         status.source = source.into();
         status.configured = path.is_some();
-        if source == SLACK && status.configured && status.error.is_none() {
-            status.error = if hub.config.inbox.slack_app_token_file.is_none() {
-                Some("Live updates need the dedicated Slack app token file".into())
-            } else {
-                hub.store
+        if source == SLACK && status.configured && status.error.is_none() && hub.config.inbox.slack_app_token_file.is_some() {
+            status.error = hub.store
                     .get("inbox-events-error")
                     .ok()
                     .flatten()
-                    .filter(|value| !value.is_empty())
-            };
+                    .filter(|value| !value.is_empty());
         }
         status
     })
@@ -466,6 +462,7 @@ mod tests {
         round: usize,
         slack_at:f64,
         fail: bool,
+        enumeration_gap: bool,
         reads: Vec<String>,
     }
     async fn graph(State(state): State<Arc<Mutex<Remote>>>, uri: axum::http::Uri) -> Json<Value> {
@@ -502,7 +499,7 @@ mod tests {
         let value = match uri.path() {
             "/auth.test" => json!({"ok":true,"team_id":"team","user_id":"owner"}),
             "/users.conversations" => {
-                json!({"ok":true,"channels":[{"id":"channel","name":"ongoing-work"}]})
+                if remote.enumeration_gap {json!({"ok":false,"error":"missing_scope","needed":"im:read"})}else{json!({"ok":true,"channels":[{"id":"channel","name":"ongoing-work"}]})}
             }
             "/search.messages" => {
                 json!({"ok":true,"messages":{"matches":[],"pagination":{"page_count":1,"total_count":0}}})
@@ -516,6 +513,27 @@ mod tests {
             _ => panic!("unexpected slack request"),
         };
         (axum::http::StatusCode::OK, Json(value))
+    }
+    #[tokio::test]
+    async fn known_direct_history_collects_without_discovery_or_push_access() -> Result<()> {
+        let scratch=std::env::temp_dir().join(new_id("history-access"));tokio::fs::create_dir_all(&scratch).await?;
+        let token=scratch.join("token");tokio::fs::write(&token,"fixture").await?;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;let base=format!("http://{}/",listener.local_addr()?);
+        let remote=Arc::new(Mutex::new(Remote{base:base.clone(),slack_at:now()-3600.0,enumeration_gap:true,..Default::default()}));
+        let app=Router::new().route("/auth.test",get(slack_api)).route("/users.conversations",get(slack_api)).route("/search.messages",get(slack_api)).route("/conversations.history",get(slack_api)).route("/conversations.replies",get(slack_api)).with_state(remote.clone());
+        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+        let mut config=crate::Config::load()?;config.inbox=Config{slack_token_file:Some(token.clone()),slack_channels:vec!["D-fixture-source".into()],..Default::default()};config.min_free_bytes=0;
+        let hub=Hub::new(config,crate::Store::open(&scratch.join("state.sqlite3"))?);
+        hub.store.set("inbox-events-error","Previous push transport disconnected")?;
+        let status=statuses(&hub).into_iter().find(|status|status.source==SLACK).unwrap();assert!(status.configured);assert!(status.error.is_none(),"Optional push transport cannot turn configured polling into missing read access");
+        assert!(slack(&hub,&Reader::new(&base,token)?).await.is_err(),"The discovery coverage gap remains visible");
+        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(items[0].signal.text.contains("Context from the owner"));
+        assert!(hub.store.get("inbox-cursor:slack-inbox:team:owner:D-fixture-source")?.is_some(),"Known history checkpoints advance independently of missing listing access");
+        let coverage:Value=serde_json::from_str(&hub.store.get("inbox-coverage:slack")?.unwrap())?;assert_eq!(coverage["enumerated"],false);assert_eq!(coverage["knownConversations"],1);assert!(coverage["forwardHistoryThrough"].is_null());assert!(!coverage["gaps"].as_array().unwrap().is_empty());
+        assert_eq!(hub.store.focus_inbox(Some("slack"),None)?.items.len(),1,"Configured DM history retains response reconciliation");
+        let reads=&remote.lock().unwrap().reads;
+        assert!(reads.iter().position(|path|path.starts_with("/conversations.history")).unwrap()<reads.iter().position(|path|path.starts_with("/search.messages")).unwrap(),"Known source collection cannot wait for indexed discovery");
+        server.abort();drop(hub);tokio::fs::remove_dir_all(scratch).await?;Ok(())
     }
     #[tokio::test]
     async fn collected_identity_wakes_only_delegated_revisions() -> Result<()> {
