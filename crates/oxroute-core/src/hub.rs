@@ -1077,6 +1077,7 @@ impl Hub {
     }
 
     pub async fn import_inbox(self:&Arc<Self>, signal:Signal, url:&str)->Result<()> {
+        if signal.source==crate::inbox::SLACK {self.store.slack_arrival_cutoff(self.config.inbox.slack_arrivals_since)?;}
         let lock=self.lock_for(&format!("inbox-thread:{}:{}:{}",signal.source,signal.conversation,signal.thread_key)).await;
         let _held=lock.lock().await;
         self.store.import_inbox(&signal,url)?;

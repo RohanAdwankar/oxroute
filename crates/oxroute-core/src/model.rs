@@ -639,6 +639,7 @@ impl InboxState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxDisplay {
+    pub preview: String,
     pub label: String,
     pub text: String,
 }

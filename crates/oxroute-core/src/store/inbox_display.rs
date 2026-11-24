@@ -66,7 +66,7 @@ impl Store {
                         .unwrap_or_else(||signal.label.clone())
                 }else {signal.label.clone()};
                 let text=if messages.is_empty(){signal.text.clone()}else{messages.iter().map(|(author,text)|format!("{}: {text}",display_name(author))).collect::<Vec<_>>().join("\n\n")};
-                item.display=Some(crate::model::InboxDisplay{label,text});
+                item.display=Some(crate::model::InboxDisplay{preview:format!("{}: {}",display_name(&signal.author),signal.text),label,text});
             }
             Ok(())
         })

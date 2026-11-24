@@ -151,19 +151,25 @@ impl Store {
         })
     }
 
+    fn suppress_ineligible_intake(&self)->Result<()> {
+        self.with(|c|{c.execute("INSERT OR IGNORE INTO suppressed_intake_events SELECT e.id,'Source event is context only or already dismissed' FROM focus_turn_events e WHERE e.outcome='intake' AND json_extract(e.payload,'$.source')='slack-inbox' AND NOT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=json_extract(e.payload,'$.signalId') AND a.dismissed_by IS NULL AND s.state='waiting')",[])?;Ok(())})
+    }
+
     pub fn pending_focus_events(&self, focus: &str) -> Result<bool> {
-        self.read(|c| Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM focus_turn_events e WHERE focus_id=?1 AND NOT EXISTS(SELECT 1 FROM kv WHERE key=e.receipt))", [focus], |row| row.get(0))?))
+        self.suppress_ineligible_intake()?;
+        self.read(|c| Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM focus_turn_events e WHERE focus_id=?1 AND NOT EXISTS(SELECT 1 FROM suppressed_intake_events WHERE id=e.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key=e.receipt))", [focus], |row| row.get(0))?))
     }
 
     /// A retry retains its receipt and coalesces any events not yet accepted by the harness.
     pub fn claim_focus_events(&self, focus: &str) -> Result<Option<FocusEventBatch>> {
+        self.suppress_ineligible_intake()?;
         self.with(|c| {
             let tx = c.unchecked_transaction()?;
-            let receipt: Option<String> = tx.query_row("SELECT receipt FROM focus_turn_events e WHERE focus_id=?1 AND receipt IS NOT NULL AND NOT EXISTS(SELECT 1 FROM kv WHERE key=e.receipt) ORDER BY at,id LIMIT 1", [focus], |row| row.get(0)).optional()?;
+            let receipt: Option<String> = tx.query_row("SELECT receipt FROM focus_turn_events e WHERE focus_id=?1 AND NOT EXISTS(SELECT 1 FROM suppressed_intake_events WHERE id=e.id) AND receipt IS NOT NULL AND NOT EXISTS(SELECT 1 FROM kv WHERE key=e.receipt) ORDER BY at,id LIMIT 1", [focus], |row| row.get(0)).optional()?;
             let receipt = receipt.unwrap_or_else(|| crate::model::new_id("focus-event-batch"));
             tx.execute("UPDATE focus_turn_events SET receipt=?2 WHERE focus_id=?1 AND receipt IS NULL", params![focus, receipt])?;
             let events = {
-                let mut statement = tx.prepare("SELECT id,agent_id,outcome,at,payload FROM focus_turn_events WHERE receipt=?1 ORDER BY at,id")?;
+                let mut statement = tx.prepare("SELECT id,agent_id,outcome,at,payload FROM focus_turn_events e WHERE receipt=?1 AND NOT EXISTS(SELECT 1 FROM suppressed_intake_events WHERE id=e.id) ORDER BY at,id")?;
                 let rows = statement.query_map([&receipt], |row| Ok(FocusTurnEvent {id: row.get(0)?, agent_id: row.get(1)?, outcome: row.get(2)?, at: row.get(3)?,intake:row.get::<_,Option<String>>(4)?.map(|value|serde_json::from_str(&value).map_err(|error|rusqlite::Error::FromSqlConversionFailure(4,rusqlite::types::Type::Text,Box::new(error)))).transpose()?}))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
             };

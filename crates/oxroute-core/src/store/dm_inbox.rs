@@ -59,8 +59,9 @@ impl Store {
                 let current:f64=tx.query_row("SELECT activity FROM slack_inbox_messages WHERE conversation=?1 AND ts=?2",params![conversation,ts],|r|r.get(0))?;
                 return Ok(activity>=current);
             }
+            if sender==owner && thread.is_empty() {tx.commit()?;return Ok(true);}
             let target=if sender==owner {None}else{Some(ts)};
-            let mut query=tx.prepare("SELECT m.ts,m.revision,m.activity,m.text,EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.sender=?2 AND r.at>m.activity AND (r.thread=m.thread OR (m.thread='' AND r.thread=m.ts))) FROM slack_inbox_messages m WHERE m.conversation=?1 AND m.human=1 AND m.sender!=?2 AND (?3 IS NULL OR m.ts=?3) AND m.activity>=?4")?;
+            let mut query=tx.prepare("SELECT m.ts,m.revision,m.activity,m.text,EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.sender=?2 AND r.at>m.activity AND (r.thread=m.ts OR (m.thread!='' AND r.thread=m.thread))) FROM slack_inbox_messages m WHERE m.conversation=?1 AND m.human=1 AND m.sender!=?2 AND (?3 IS NULL OR m.ts=?3) AND m.activity>=?4")?;
             let incoming=query.query_map(params![conversation,owner,target,baseline],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,f64>(2)?,r.get::<_,String>(3)?,r.get::<_,bool>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             drop(query);
             for (ts,revision,activity,text,replied) in incoming {
@@ -89,7 +90,7 @@ impl Store {
         let Some((channel, ts)) = id.split_once(':') else {
             return Ok(None);
         };
-        Ok(c.query_row("SELECT m.revision,m.activity,NOT EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.sender=m.owner AND r.at>m.activity) FROM slack_inbox_messages m WHERE m.channel=?1 AND m.ts=?2 AND m.human=1 AND m.sender!=m.owner",params![channel,ts],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?)
+        Ok(c.query_row("SELECT m.revision,m.activity,NOT EXISTS(SELECT 1 FROM slack_inbox_messages r WHERE r.conversation=m.conversation AND r.human=1 AND r.sender=m.owner AND r.at>m.activity AND (r.thread=m.ts OR (m.thread!='' AND r.thread=m.thread))) FROM slack_inbox_messages m WHERE m.channel=?1 AND m.ts=?2 AND m.human=1 AND m.sender!=m.owner",params![channel,ts],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?)
     }
 }
 
@@ -136,7 +137,7 @@ mod tests {
         assert!(store.update_focus_inbox(&update,214.5).is_err(),"Another participant's acknowledgment cannot authorize closure");
         store.observe_slack_dm(
             conv,
-            &message("103.0", "owner", "Response delivered"),
+            &json!({"ts":"103.0","thread_ts":"100.1","user":"owner","text":"Response delivered"}),
             215.0,
         )?;
         assert_eq!(
@@ -187,6 +188,7 @@ mod tests {
             .items
             .remove(0);
         reviewed.state = "resolved".into();
+        reviewed.resolution_entries.push(store.add_entry("coordinator",217.4,EntryKind::Said,"Source request handled within its owning outcome","","")?.id);
         store.update_focus_inbox(
             &FocusInboxUpdate {
                 items: vec![reviewed],
@@ -340,6 +342,7 @@ mod tests {
             at: 80.0,
             root: true,
         };
+        store.set("inbox-dm:workspace:direct","1")?;
         store.cache_inbox_context(&signal)?;
         assert!(store.inbox(10)?.is_empty());
         signal.external_id = "100".into();
@@ -349,8 +352,9 @@ mod tests {
         let items = store.inbox(10)?;
         assert_eq!(items.len(), 1);
         assert!(
-            items[0].signal.text.contains("Earlier source context")
+            !items[0].signal.text.contains("Earlier source context")
                 && items[0].signal.text.contains("New source follow-up")
+                && items[0].display.as_ref().unwrap().text.contains("Earlier source context")
         );
         drop(store);
         std::fs::remove_dir_all(root)?;

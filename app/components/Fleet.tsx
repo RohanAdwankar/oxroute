@@ -87,7 +87,7 @@ export function Fleet({
             {routing.sourceUrl && <a href={routing.sourceUrl} target="_blank" rel="noreferrer" aria-label="Open source message" title="Open source message" className="text-faint hover:text-ink"><Icon name="external" size={14} /></a>}
             <span className="truncate text-[14px]">
               {routing.signal.text
-                ? `“${clip(routing.display?.text ?? routing.signal.text, 120)}”`
+                ? `“${clip(routing.display?.preview ?? routing.signal.text, 120)}”`
                 : `${routing.signal.attachments.length} attachment(s)`}
             </span>
             {routing.recommendation && <span className="ml-auto truncate text-[11.5px] text-faint" title={routing.recommendation.reason} aria-label="Suggested route">

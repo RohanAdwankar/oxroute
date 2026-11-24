@@ -30,6 +30,7 @@ pub(super) async fn poll(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
 }
 
 async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
+    hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since)?;
     let profile = reader.get("auth.test", &[]).await?;
     let team = profile["team_id"]
         .as_str()
@@ -37,6 +38,7 @@ async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
     let user = profile["user_id"]
         .as_str()
         .context("Slack profile has no user")?;
+    hub.store.recover_cached_arrivals(&format!("{team}:{user}:"),hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since)?)?;
     let key = format!("inbox-conversations:{team}:{user}");
     let mut channels: BTreeMap<String, Value> = hub
         .store
@@ -186,6 +188,7 @@ async fn discover(
         .transpose()?
         .unwrap_or(at - INITIAL)
         .min(at - INITIAL)
+        .min(hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since)?)
         - OVERLAP;
     // Date filters use a deliberately wider UTC calendar envelope. Exact bounds
     // are applied to numeric timestamps locally, independent of Slack timezone.
@@ -264,7 +267,7 @@ async fn collect(
         .get(&baseline_key)?
         .map(|s| s.parse::<f64>())
         .transpose()?
-        .unwrap_or(previous.unwrap_or(at - INITIAL).min(at - INITIAL));
+        .unwrap_or(previous.unwrap_or(at - INITIAL).min(at - INITIAL).min(hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since)?));
     hub.store.set(&baseline_key, &baseline.to_string())?;
     let oldest = previous
         .map(|n| (n - OVERLAP).max(baseline))
@@ -455,7 +458,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let mut config = crate::Config::load()?;
-        config.inbox = Config::default();
+        config.inbox = Config {slack_arrivals_since:Some(1.0),..Default::default()};
         config.min_free_bytes = 0;
         let path = root.join("state.sqlite3");
         let hub = Hub::new(config.clone(), crate::Store::open(&path)?);
@@ -472,7 +475,7 @@ mod tests {
         assert!(snapshot
             .items
             .iter()
-            .any(|i| i.item_id.starts_with("direct:") && i.state == "resolved"));
+            .any(|i| i.item_id.starts_with("direct:") && i.state == "response_needed"));
         assert!(snapshot
             .items
             .iter()
@@ -562,7 +565,7 @@ mod tests {
         let root = PathBuf::from(std::env::var("OXROUTE_VALIDATION_INBOX_ROOT")?);
         std::fs::create_dir_all(&root)?;
         let mut config = crate::Config::load()?;
-        config.inbox = Config::default();
+        config.inbox = Config {slack_arrivals_since:Some(1.0),..Default::default()};
         config.min_free_bytes = 0;
         let hub = Hub::new(config, crate::Store::open(&root.join("state.sqlite3"))?);
         let reader = Reader::new("https://slack.com/api/", token)?;

@@ -78,7 +78,7 @@ export interface TaskItem {
 }
 
 export interface InboxItem {
-  display?: {label: string; text: string};
+  display?: {label: string; text: string; preview?: string};
   sourceUrl?: string;
   signal: Signal;
   state: InboxState;

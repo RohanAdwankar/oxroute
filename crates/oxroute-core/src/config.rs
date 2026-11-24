@@ -353,6 +353,7 @@ impl Config {
             inbox: crate::inbox::Config {
                 slack_app_token_file: from_env(&["OXROUTE_SLACK_INBOX_APP_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_app_token_file.map(|p|expand(&p.to_string_lossy()))),
                 slack_channels: file.inbox.slack_channels,
+                slack_arrivals_since: file.inbox.slack_arrivals_since,
                 outlook_token_file: from_env(&["OXROUTE_OUTLOOK_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.outlook_token_file.map(|p|expand(&p.to_string_lossy()))),
                 slack_token_file: from_env(&["OXROUTE_SLACK_INBOX_TOKEN_FILE"]).map(|p|expand(&p)).or(file.inbox.slack_token_file.map(|p|expand(&p.to_string_lossy()))),
             },

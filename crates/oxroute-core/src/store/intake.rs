@@ -33,7 +33,7 @@ impl Store {
         self.read(|c|c.query_row("SELECT at FROM entries WHERE id=?1 AND kind='you'",[entry],|r|r.get(0)).context("policy delegation must cite an actual human entry"))
     }
     pub(crate) fn collected_signal_id(&self,signal:&Signal)->Result<Option<String>> {
-        self.read(|c|Ok(c.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![signal.source,signal.conversation,signal.thread_key],|r|r.get(0)).optional()?))
+        self.read(|c|Ok(c.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND ((source='slack-inbox' AND external_id=?3) OR (source!='slack-inbox' AND thread_key=?4))",params![signal.source,signal.conversation,signal.external_id,signal.thread_key],|r|r.get(0)).optional()?))
     }
     pub fn intake_policies(&self)->Result<Vec<IntakePolicy>> {
         Ok(self.get("intake.policies")?.map(|value|serde_json::from_str(&value)).transpose()?.unwrap_or_default())
@@ -58,8 +58,8 @@ impl Store {
     }
     pub fn intake_context(&self)->Result<serde_json::Value> {
         let (pending,total)=self.read(|c|{
-            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting'",[],|r|r.get(0))?;
-            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' ORDER BY at DESC,rowid DESC LIMIT 50")?;
+            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id))",[],|r|r.get(0))?;
+            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)) ORDER BY at DESC,rowid DESC LIMIT 50")?;
             let items=query.query_map([],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok((items,total))
         })?;
@@ -68,6 +68,7 @@ impl Store {
     }
     pub(crate) fn queue_intake_arrival(&self,signal_id:&str,signal:&Signal,sender:&str,revision:&str,activity:f64)->Result<bool> {
         if sender.is_empty(){return Ok(false)}
+        if signal.source==crate::inbox::SLACK && !self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=?1 AND s.state='waiting' AND a.dismissed_by IS NULL)",[signal_id],|r|r.get::<_,bool>(0))?))? {return Ok(false)}
         let account=if signal.source==crate::inbox::SLACK {signal.conversation.split(':').next().unwrap_or_default()}else{&signal.conversation};
         let Some(policy)=self.intake_policy(&signal.source,account,sender)? else{return Ok(false)};
         if policy.mode!=IntakeMode::Immediate||activity<policy.effective_at{return Ok(false)}
@@ -92,6 +93,7 @@ mod tests {
         let mut policy=IntakePolicy{source:crate::inbox::SLACK.into(),account:"workspace-a".into(),sender:"provider-author".into(),label:"Selected source".into(),mode:IntakeMode::Immediate,delegation_entry_id:user.id,effective_at:20.0};
         store.save_intake_policy(&policy)?;
         let signal=Signal{id:"intake-item".into(),source:policy.source.clone(),conversation:"workspace-a:reader:direct".into(),thread_key:"conversation".into(),external_id:"25.1".into(),author:policy.sender.clone(),label:"Untrusted display label".into(),text:"Prepare the revised artifact within the existing scope".into(),attachments:vec![],at:25.1,root:true};
+        store.set("inbox-dm:workspace-a:direct","1")?;
         store.import_inbox(&signal,"https://example.invalid/message")?;
         assert!(!store.pending_focus_events("coordinator")?,"Unverified ingestion alone never inherits collector authority");
         assert!(!store.queue_intake_arrival(&signal.id,&signal,"another-author","25.1",25.1)?);

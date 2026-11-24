@@ -21,6 +21,7 @@ use crate::tags::Board;
 mod focus;
 mod dm_inbox;
 mod inbox_display;
+mod inbox_arrivals;
 pub(crate) use inbox_display::SlackName;
 mod intake;
 pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
@@ -128,6 +129,13 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE INDEX IF NOT EXISTS signals_at ON signals (at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS signals_external
     ON signals (source, conversation, external_id);
+CREATE TABLE IF NOT EXISTS suppressed_intake_events (id TEXT PRIMARY KEY, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS inbox_arrivals (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id TEXT NOT NULL UNIQUE,
+    message_id TEXT NOT NULL,
+    dismissed_by INTEGER
+);
 CREATE TABLE IF NOT EXISTS inbox_messages (
     source TEXT NOT NULL, conversation TEXT NOT NULL, external_id TEXT NOT NULL,
     thread_key TEXT NOT NULL, author TEXT NOT NULL, text TEXT NOT NULL, at REAL NOT NULL,
@@ -247,6 +255,7 @@ pub struct Store {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
+    conn.execute("INSERT OR IGNORE INTO inbox_arrivals(signal_id,message_id) SELECT id,external_id FROM signals WHERE source!='slack-inbox'",[])?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");
@@ -1249,6 +1258,8 @@ impl Store {
     pub fn import_inbox(&self, signal: &Signal, url: &str) -> Result<Option<String>> {
         self.with(|c| {
             let tx=c.unchecked_transaction()?;
+            if signal.source==crate::inbox::SLACK {return Self::import_slack_arrival(tx,signal,url);}
+            let fresh=!tx.query_row("SELECT EXISTS(SELECT 1 FROM inbox_messages WHERE source=?1 AND conversation=?2 AND external_id=?3)",params![signal.source,signal.conversation,signal.external_id],|r|r.get::<_,bool>(0))?;
             let changed=Self::put_inbox_context(&tx,signal)?;
             if changed==0 {return Ok(None);}
             let id:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![signal.source,signal.conversation,signal.thread_key],|r|r.get(0)).optional()?;
@@ -1260,6 +1271,7 @@ impl Store {
             let at=messages.last().map(|(_,_,at)|*at).unwrap_or(signal.at);
             tx.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES (?1,?2,?3,?4,?4,?5,?6,?7,?8,1) ON CONFLICT(id) DO UPDATE SET text=excluded.text,author=excluded.author,label=CASE WHEN excluded.label='' THEN signals.label ELSE excluded.label END,at=excluded.at,state='waiting',outcome='',agent_ids='[]',revision=signals.revision+1",params![id,signal.source,signal.conversation,signal.thread_key,signal.author,signal.label,text,at])?;
             tx.execute("INSERT INTO kv(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-url:{id}"),url])?;
+            if fresh {Self::advance_arrival(&tx,&id,&signal.external_id)?;}
             tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;
             tx.commit()?;
             Ok(Some(id))
@@ -1267,7 +1279,7 @@ impl Store {
     }
 
     pub fn pending_imports(&self)->Result<Vec<String>> {
-        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM bindings WHERE source=signals.source AND conversation=signals.conversation AND thread_key=signals.thread_key) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM bindings WHERE source=signals.source AND conversation=signals.conversation AND thread_key=signals.thread_key) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
 
     pub fn save_routing_advice(&self,id:&str,expected:i64,context:&serde_json::Value,choice:crate::recommendations::RoutePrediction,revision:i64)->Result<Option<crate::recommendations::RoutingAdvice>> {
@@ -1306,6 +1318,7 @@ impl Store {
                     signal.root as i64,
                 ],
             )?;
+            if changed>0 {Self::advance_arrival(c,&signal.id,&signal.external_id)?;}
             Ok(changed > 0)
         })
     }
@@ -1356,7 +1369,7 @@ impl Store {
     pub fn inbox(&self, limit: usize) -> Result<Vec<InboxItem>> {
         let mut items=self.with(|c| {
             let mut stmt =
-                c.prepare("SELECT * FROM signals ORDER BY at DESC, rowid DESC LIMIT ?1")?;
+                c.prepare("SELECT * FROM signals WHERE source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) ORDER BY at DESC, rowid DESC LIMIT ?1")?;
             let mut out = Vec::new();
             for row in stmt.query_map(params![limit as i64], read_item)? {
                 out.push(row?);
@@ -2371,10 +2384,11 @@ mod tests {
     fn routing_advice_cannot_overwrite_a_newer_thread_revision_even_after_text_reverts() {
         for source in [crate::inbox::OUTLOOK,crate::inbox::SLACK] {
             let store=Store::in_memory().unwrap();
-            let mut signal=Signal {id:crate::model::new_id("sig"),source:source.into(),conversation:"account".into(),thread_key:"thread".into(),external_id:"message".into(),author:"sender".into(),label:"Subject".into(),text:"Initial context".into(),attachments:vec![],at:1.0,root:true};
+            store.set("inbox-dm:workspace:direct","1").unwrap();
+            let mut signal=Signal {id:crate::model::new_id("sig"),source:source.into(),conversation:"workspace:owner:direct".into(),thread_key:"thread".into(),external_id:"message".into(),author:"sender".into(),label:"Subject".into(),text:"Initial context".into(),attachments:vec![],at:1.0,root:true};
             store.import_inbox(&signal,"").unwrap();let (item,revision)=store.inbox_version(&signal.id).unwrap().unwrap();
             signal.text="Updated context".into();store.import_inbox(&signal,"").unwrap();
-            signal.text=item.signal.text.strip_prefix("sender: ").unwrap().into();store.import_inbox(&signal,"").unwrap();
+            signal.text=if source==crate::inbox::SLACK {item.signal.text.clone()}else{item.signal.text.strip_prefix("sender: ").unwrap().into()};store.import_inbox(&signal,"").unwrap();
             let choice=crate::recommendations::RoutePrediction {action:"spawn".into(),agent_ids:vec![],reason:"New work".into()};
             assert!(store.save_routing_advice(&signal.id,revision,&serde_json::json!({}),choice.clone(),0).unwrap().is_none());
             let (_,current)=store.inbox_version(&signal.id).unwrap().unwrap();assert!(current>revision);

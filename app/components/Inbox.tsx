@@ -251,7 +251,7 @@ function Row({
       ].join(" ")}
     >
       <span className="flex items-center gap-[7px]">
-        <span className="tnum text-[9.5px] text-faint">{clock(signal.at)}</span>
+        <time dateTime={new Date(signal.at * 1000).toISOString()} title={new Date(signal.at * 1000).toLocaleString()} className="tnum text-[9.5px] text-faint">{new Date(signal.at * 1000).toDateString() === new Date().toDateString() ? clock(signal.at) : new Date(signal.at * 1000).toLocaleDateString(undefined, {month:"short", day:"numeric"})}</time>
         <span className="tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
           {signal.source === "outlook-inbox" ? "Outlook" : signal.source === "slack-inbox" ? "Slack" : signal.source}
         </span>
@@ -261,7 +261,7 @@ function Row({
       </span>
 
       <span className={`text-[11.5px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
-        {signal.text ? clip(item.display?.text ?? signal.text, 130) : `${signal.attachments.length} attachment(s)`}
+        {signal.text ? clip(item.display?.preview ?? signal.text, 130) : `${signal.attachments.length} attachment(s)`}
       </span>
 
       <span title={waiting ? item.recommendation?.reason : undefined} className={`tnum text-[10px] ${footerTone}`}>{footer}</span>

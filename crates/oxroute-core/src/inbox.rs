@@ -25,6 +25,7 @@ pub struct Config {
     pub slack_app_token_file: Option<PathBuf>,
     #[serde(default)]
     pub slack_channels: Vec<String>,
+    pub slack_arrivals_since: Option<f64>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,6 +237,9 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
     let account = profile["id"]
         .as_str()
         .context("Outlook profile has no id")?;
+    // Profile discovery is optional metadata; its scopes do not gate existing mail reads.
+    let identity=reader.get("v1.0/me",&[("$select","id,mail,userPrincipalName")]).await;
+    let owner=identity.ok().map(|profile|["mail","userPrincipalName"].into_iter().filter_map(|key|profile[key].as_str().filter(|value|!value.is_empty()).map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
     let key = format!("inbox-cursor:{OUTLOOK}:{account}");
     let since = time::OffsetDateTime::now_utc() - time::Duration::days(7);
     let initial=format!("v1.0/me/mailFolders/inbox/messages/delta?$select=id,conversationId,subject,from,body,receivedDateTime,lastModifiedDateTime,webLink,hasAttachments&$top=100&$filter=receivedDateTime ge {}",since.format(&time::format_description::well_known::Rfc3339)?);
@@ -293,6 +297,7 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
                 at,
                 root: true,
             };
+            if owner.iter().any(|address|address.eq_ignore_ascii_case(&signal.author)) {hub.store.cache_inbox_context(&signal)?;continue;}
             let sender=signal.author.clone();
             let revision=item["lastModifiedDateTime"].as_str().unwrap_or(item["receivedDateTime"].as_str().unwrap_or(id));
             let activity=time::OffsetDateTime::parse(revision,&time::format_description::well_known::Rfc3339).map(|at|at.unix_timestamp() as f64).unwrap_or(at);
@@ -415,8 +420,10 @@ async fn slack_message(
         ))?
         .is_some();
     if dm && !hub.store.observe_slack_dm(conversation,message,now())? {return Ok(());}
-    let baseline=hub.store.get(&format!("inbox-baseline:{SLACK}:{conversation}"))?.map(|s|s.parse::<f64>()).transpose()?.unwrap_or(now()-collection::INITIAL);
+    let cutoff=hub.store.slack_arrival_cutoff(hub.config.inbox.slack_arrivals_since)?;
+    let at=ts.parse::<f64>().context("invalid Slack source timestamp")?;
     let activity=message["edited"]["ts"].as_str().unwrap_or(ts).parse::<f64>().context("invalid Slack message timestamp")?;
+    ensure!(at.is_finite()&&activity.is_finite(),"invalid Slack source time");
     if text.is_empty() {return Ok(());}
     let thread = if dm {
         "conversation"
@@ -437,10 +444,14 @@ async fn slack_message(
         label: label.into(),
         text,
         attachments: vec![],
-        at: ts.parse().unwrap_or_else(|_| now()),
+        at,
         root: message["thread_ts"].is_null(),
     };
-    if activity<baseline {hub.store.cache_inbox_context(&signal)?;return Ok(());}
+    let owner=conversation.split(':').nth(1).unwrap_or_default();
+    let targeted=message["text"].as_str().is_some_and(|text|text.contains(&format!("<@{owner}>")));
+    if signal.at<=cutoff || signal.author==owner || (!dm&&!targeted) {
+        hub.store.cache_inbox_context(&signal)?;return Ok(());
+    }
     let sender=message["bot_id"].as_str().or(message["user"].as_str()).unwrap_or_default();
     let revision=message["edited"]["ts"].as_str().unwrap_or(ts);
     hub.import_collected(signal,&format!("https://app.slack.com/archives/{channel}/p{}",ts.replace('.',"")),sender,revision,activity).await?;
@@ -472,6 +483,7 @@ mod tests {
         remote.reads.push(uri.to_string());
         let message = |id: &str, text: &str| json!({"id":id,"conversationId":"thread","subject":"Capacity report","from":{"emailAddress":{"address":"sender@example.test"}},"body":{"content":text},"receivedDateTime":"2026-11-12T10:00:00Z","webLink":"https://outlook.example.test/message"});
         Json(match uri.path() {
+            "/v1.0/me" => json!({"id":"mail-account","mail":"owner@example.test"}),
             "/v1.0/me/mailFolders/inbox" => json!({"id":"mailbox"}),
             "/v1.0/me/mailFolders/inbox/messages/delta" => {
                 json!({"value":[message("first","Current observations")],"@odata.nextLink":format!("{}page",remote.base)})
@@ -508,10 +520,10 @@ mod tests {
                 json!({"ok":true,"messages":{"matches":[],"pagination":{"page_count":1,"total_count":0}}})
             }
             "/conversations.history" => {
-                json!({"ok":true,"messages":if remote.round==0{vec![json!({"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"Current observations","reply_count":1})]}else{vec![]}})
+                json!({"ok":true,"messages":if remote.round==0{vec![json!({"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"<@owner> Current observations","reply_count":1})]}else{vec![]}})
             }
             "/conversations.replies" => {
-                json!({"ok":true,"messages":[{"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"Current observations"},{"ts":format!("{:.6}",remote.slack_at+1.0),"thread_ts":format!("{:.6}",remote.slack_at),"user":"owner","text":"Context from the owner"}]})
+                json!({"ok":true,"messages":[{"ts":format!("{:.6}",remote.slack_at),"user":"sender","text":"<@owner> Current observations"},{"ts":format!("{:.6}",remote.slack_at+1.0),"thread_ts":format!("{:.6}",remote.slack_at),"user":"owner","text":"Context from the owner"}]})
             }
             _ => panic!("unexpected slack request"),
         };
@@ -524,9 +536,10 @@ mod tests {
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;let base=format!("http://{}/",listener.local_addr()?);
         let remote=Arc::new(Mutex::new(Remote::default()));let app=Router::new().route("/auth.test",get(slack_api)).route("/users.info",get(slack_api)).with_state(remote.clone());
         let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
-        let mut config=crate::Config::load()?;config.inbox=Config::default();config.min_free_bytes=0;
+        let mut config=crate::Config::load()?;config.inbox=Config{slack_arrivals_since:Some(1.0),..Default::default()};config.min_free_bytes=0;
         let hub=Hub::new(config,crate::Store::open(&scratch.join("state.sqlite3"))?);
         hub.store.set("inbox-conversations:team:owner",&json!({"direct":{"id":"direct","is_im":true,"user":"sender","name":"sender"},"group":{"id":"group","is_mpim":true,"name":"mpdm-generated"}}).to_string())?;
+        hub.store.set("inbox-dm:team:direct","1")?;hub.store.set("inbox-dm:team:group","1")?;
         let mut signal=Signal{id:"identity-row".into(),source:SLACK.into(),conversation:"team:owner:direct".into(),thread_key:"conversation".into(),external_id:"100.1".into(),author:"sender".into(),label:"sender".into(),text:"Source request".into(),attachments:vec![],at:100.1,root:true};
         hub.store.import_inbox(&signal,"")?;signal.external_id="101.1".into();signal.author="owner".into();signal.text="Source response".into();signal.at=101.1;hub.store.import_inbox(&signal,"")?;
         let before=hub.store.inbox_version("identity-row")?.unwrap();let raw=serde_json::to_value(&before.0.signal)?;
@@ -551,12 +564,12 @@ mod tests {
         let remote=Arc::new(Mutex::new(Remote{base:base.clone(),slack_at:now()-3600.0,enumeration_gap:true,..Default::default()}));
         let app=Router::new().route("/auth.test",get(slack_api)).route("/users.conversations",get(slack_api)).route("/search.messages",get(slack_api)).route("/conversations.history",get(slack_api)).route("/conversations.replies",get(slack_api)).with_state(remote.clone());
         let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
-        let mut config=crate::Config::load()?;config.inbox=Config{slack_token_file:Some(token.clone()),slack_channels:vec!["D-fixture-source".into()],..Default::default()};config.min_free_bytes=0;
+        let mut config=crate::Config::load()?;config.inbox=Config{slack_token_file:Some(token.clone()),slack_arrivals_since:Some(1.0),slack_channels:vec!["D-fixture-source".into()],..Default::default()};config.min_free_bytes=0;
         let hub=Hub::new(config,crate::Store::open(&scratch.join("state.sqlite3"))?);
         hub.store.set("inbox-events-error","Previous push transport disconnected")?;
         let status=statuses(&hub).into_iter().find(|status|status.source==SLACK).unwrap();assert!(status.configured);assert!(status.error.is_none(),"Optional push transport cannot turn configured polling into missing read access");
         assert!(slack(&hub,&Reader::new(&base,token)?).await.is_err(),"The discovery coverage gap remains visible");
-        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(items[0].signal.text.contains("Context from the owner"));
+        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(!items[0].signal.text.contains("Context from the owner"));assert!(items[0].display.as_ref().unwrap().text.contains("Context from the owner"));
         assert!(hub.store.get("inbox-cursor:slack-inbox:team:owner:D-fixture-source")?.is_some(),"Known history checkpoints advance independently of missing listing access");
         let coverage:Value=serde_json::from_str(&hub.store.get("inbox-coverage:slack")?.unwrap())?;assert_eq!(coverage["enumerated"],false);assert_eq!(coverage["knownConversations"],1);assert!(coverage["forwardHistoryThrough"].is_null());assert!(!coverage["gaps"].as_array().unwrap().is_empty());
         assert_eq!(hub.store.focus_inbox(Some("slack"),None)?.items.len(),1,"Configured DM history retains response reconciliation");
@@ -575,9 +588,9 @@ mod tests {
         let base=format!("http://{}/",listener.local_addr()?);
         let at=now();
         let remote=Arc::new(Mutex::new(Remote{base:base.clone(),slack_at:at,..Default::default()}));
-        let app=Router::new().route("/auth.test",get(slack_api)).route("/users.conversations",get(slack_api)).route("/search.messages",get(slack_api)).route("/conversations.history",get(slack_api)).route("/conversations.replies",get(slack_api)).route("/v1.0/me/mailFolders/inbox",get(graph)).route("/v1.0/me/mailFolders/inbox/messages/delta",get(graph)).route("/page",get(graph)).route("/delta",get(graph)).with_state(remote);
+        let app=Router::new().route("/auth.test",get(slack_api)).route("/users.conversations",get(slack_api)).route("/search.messages",get(slack_api)).route("/conversations.history",get(slack_api)).route("/conversations.replies",get(slack_api)).route("/v1.0/me",get(graph)).route("/v1.0/me/mailFolders/inbox",get(graph)).route("/v1.0/me/mailFolders/inbox/messages/delta",get(graph)).route("/page",get(graph)).route("/delta",get(graph)).with_state(remote);
         let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
-        let mut config=crate::Config::load()?;config.inbox=Config::default();config.min_free_bytes=0;
+        let mut config=crate::Config::load()?;config.inbox=Config{slack_arrivals_since:Some(1.0),..Default::default()};config.min_free_bytes=0;
         let path=scratch.join("state.sqlite3");let hub=Hub::new(config.clone(),crate::Store::open(&path)?);
         hub.store.set("focus.agent","coordinator")?;
         let delegation=hub.store.add_entry("coordinator",at,EntryKind::You,"Delegate scoped requests","","")?;
@@ -627,7 +640,7 @@ mod tests {
                     Json(json!({"ok":true,"url":remote.lock().unwrap().socket}))
                 }),
             )
-            .route("/v1.0/me/mailFolders/inbox", get(graph))
+            .route("/v1.0/me",get(graph)).route("/v1.0/me/mailFolders/inbox", get(graph))
             .route("/v1.0/me/mailFolders/inbox/messages/delta", get(graph))
             .route("/page", get(graph))
             .route("/delta", get(graph))
@@ -641,7 +654,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let mut config = crate::Config::load()?;
-        config.inbox = Config::default();
+        config.inbox = Config{slack_arrivals_since:Some(1.0),..Default::default()};
         config.min_free_bytes = 0;
         let database = scratch.join("inbox.sqlite3");
         let hub = Hub::new(config.clone(), crate::Store::open(&database)?);
@@ -658,7 +671,7 @@ mod tests {
             .iter()
             .find(|i| i.signal.source == SLACK)
             .unwrap()
-            .signal
+            .display.as_ref().unwrap()
             .text
             .contains("Context from the owner"));
         assert!(
@@ -714,7 +727,7 @@ mod tests {
                 socket.send(Message::Text(json!({"envelope_id":id,"payload":{"event":event}}).to_string())).await.unwrap();
                 let ack=socket.next().await.unwrap().unwrap();
                 assert_eq!(serde_json::from_str::<Value>(ack.to_text().unwrap()).unwrap()["envelope_id"],id);
-                if number<2 {assert!(persisted.store.inbox(10).unwrap().iter().any(|item|item.signal.text.contains(if number==0 {"A new direct conversation"}else{"Additional context"})),"Acknowledged source data must already be durable");}
+                if number<2 {assert!(persisted.store.inbox(10).unwrap().iter().any(|item|item.display.as_ref().unwrap().text.contains(if number==0 {"A new direct conversation"}else{"Additional context"})),"Acknowledged source data must already be durable as arrival or reply context");}
             }
             socket.close(None).await.unwrap();
         });
@@ -730,11 +743,11 @@ mod tests {
             .into_iter()
             .find(|item| item.signal.conversation.ends_with(":direct"))
             .unwrap();
-        assert!(direct.signal.text.contains("Additional context"));
+        assert!(!direct.signal.text.contains("Additional context"));assert!(direct.display.as_ref().unwrap().text.contains("Additional context"));
         assert_eq!(
             hub.store.inbox(10)?.len(),
             3,
-            "DM events group together; unselected channel events are excluded"
+            "Own replies and unselected chatter never create another arrival"
         );
         assert!(hub.store.unarchived_agents()?.is_empty());
         server.abort();
@@ -765,7 +778,7 @@ mod tests {
                 }
             }
             "/search.messages" => {
-                json!({"ok":true,"messages":{"matches":if remote.phase==0 {vec![json!({"ts":remote.roots[0],"thread_ts":remote.roots[0],"user":"sender","text":"Opening observation 0","channel":{"id":"mentioned","name":"Context review"}})]}else{vec![]},"pagination":{"page_count":1,"total_count":1}}})
+                json!({"ok":true,"messages":{"matches":if remote.phase==0 {vec![json!({"ts":remote.roots[0],"thread_ts":remote.roots[0],"user":"sender","text":"<@owner> Opening observation 0","channel":{"id":"mentioned","name":"Context review"}})]}else{vec![]},"pagination":{"page_count":1,"total_count":1}}})
             }
             "/conversations.history" => {
                 let offset = query
@@ -847,7 +860,7 @@ mod tests {
             });
             let mut config = crate::Config::load()?;
             config.inbox = Config {
-                slack_channels: vec!["work".into()],
+                slack_arrivals_since:Some(1.0),slack_channels: vec!["work".into()],
                 ..Default::default()
             };
             let database = scratch.join("inbox.sqlite3");
@@ -856,11 +869,11 @@ mod tests {
             slack(&hub, &reader).await?;
             let original: std::collections::HashSet<_> = hub
                 .store
-                .inbox(100)?
+                .inbox(10000)?
                 .into_iter()
                 .map(|item| item.signal.id)
                 .collect();
-            assert_eq!(original.len(), roots + 3);
+            assert_eq!(original.len(), roots * 2 + 1,"Only direct and group-direct source messages and the actual targeted mention arrive");
             let before = hub
                 .store
                 .slack_recovery("workspace:owner:direct", 100)?
@@ -908,21 +921,19 @@ mod tests {
                     );
                 }
             }
-            let items = hub.store.inbox(100)?;
-            assert_eq!(
-                items
-                    .iter()
-                    .map(|item| item.signal.id.clone())
-                    .collect::<std::collections::HashSet<_>>(),
-                original
-            );
-            assert_eq!(
-                items
-                    .iter()
-                    .map(|item| item.signal.text.matches("Delta ").count())
-                    .sum::<usize>(),
-                roots * 3 * 3 + 3
-            );
+            let items = hub.store.inbox(10000)?;
+            assert!(original.iter().all(|id|items.iter().any(|item|&item.signal.id==id)),"Recovered arrivals retain their stable identities");
+            assert_eq!(items.len(),original.len()+roots*6,"New direct/group replies arrive individually; unmentioned channel replies stay context only");
+            for channel in ["direct","group","work","mentioned"] {
+                let conversation=format!("workspace:owner:{channel}");
+                let imported=hub.store.imported_conversations(SLACK,"workspace:owner:")?;assert!(imported.contains(&conversation));
+                let roots=remote.lock().unwrap().roots.clone();
+                for root in &roots {
+                    let mut context=Signal{id:String::new(),source:SLACK.into(),conversation:conversation.clone(),thread_key:if matches!(channel,"direct"|"group") {"conversation".into()}else{root.clone()},external_id:String::new(),author:String::new(),label:String::new(),text:String::new(),attachments:vec![],at:0.0,root:false};
+                    context.text=hub.store.routing_text(&context,100000)?;
+                    if channel!="mentioned"||root==&roots[0] {assert!(context.text.contains("Delta "),"Recovered source context is durable even when it is not an arrival");}
+                }
+            }
             for item in &items {
                 hub.store
                     .resolve_signal(&item.signal.id, "discarded", &[])?;
@@ -930,7 +941,7 @@ mod tests {
             slack(&hub, &reader).await?;
             assert!(hub
                 .store
-                .inbox(100)?
+                .inbox(10000)?
                 .iter()
                 .all(|item| item.state == crate::model::InboxState::Done));
             assert!(hub.store.unarchived_agents()?.is_empty());
