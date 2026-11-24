@@ -145,7 +145,7 @@ try{
  const policy=JSON.parse(policyLine.slice(policyLine.indexOf('=')+1).trim().slice(0,-1));
  assert.ok(focusTurns().every(turn=>turn.input.some(input=>input.text?.includes(policy))),'Every Focus turn receives the maintained canonical inbox and decision policy unchanged');
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
- for(const name of ['BEHAVIOR_MAINTENANCE_GUIDANCE','ARTIFACT_CONTEXT_GUIDANCE','INTERFACE_GUIDANCE','PUBLICATION_EVIDENCE_GUIDANCE','OUTCOME_VALIDATION_GUIDANCE']){
+ for(const name of ['BEHAVIOR_MAINTENANCE_GUIDANCE','ARTIFACT_CONTEXT_GUIDANCE','INTERFACE_GUIDANCE','PUBLICATION_EVIDENCE_GUIDANCE','OUTCOME_VALIDATION_GUIDANCE','OUTCOME_OWNERSHIP_GUIDANCE']){
   const line=source.split('\n').find(line=>line.startsWith(`const ${name}:`));const instruction=JSON.parse(line.slice(line.indexOf('=')+1).trim().slice(0,-1));
   if(name==='INTERFACE_GUIDANCE')assert.ok((await readFile(new URL('../AGENTS.md',import.meta.url),'utf8')).includes(instruction.trim()),'Runtime interface guidance matches the maintained repository instructions');
   for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(instruction)),`${scope} turns retain canonical ${name}`);
