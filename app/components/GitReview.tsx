@@ -225,9 +225,9 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   };
 
   return <section aria-label="Change review" className="@container flex min-h-0 flex-1 flex-col" onClick={() => setMenu(null)}>
-    <div className="flex items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
+    <div className="flex flex-wrap items-center gap-3 border-b border-rule px-4 py-2 text-[13px]">
       <button aria-label="Back to conversation" title="Back to conversation" onClick={onClose} className="cursor-pointer"><Icon name="back" /></button>
-      <span className="min-w-0 flex-1 font-semibold">{review?<QuoteTitle text={review.title} onQuote={text=>onQuote({...titleQuote(text,{agentId,reviewId:review.id}),decision})}/>:error?"Review unavailable":"Reading review…"}
+      <span className="min-w-[12ch] flex-1 break-words font-semibold">{review?<QuoteTitle text={review.title} onQuote={text=>onQuote({...titleQuote(text,{agentId,reviewId:review.id}),decision})}/>:error?"Review unavailable":"Reading review…"}
         {review?.status === "stale" && <button type="button" aria-label="Snapshot changed"
           title={review.staleNotified ? "The agent has been asked to prepare an updated review. This saved snapshot remains readable." : "This snapshot no longer matches the repository or publication target. A fresh snapshot is needed for approval."}
           className="ml-2 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-hold align-middle text-[11px] font-normal text-hold">!</button>}
@@ -235,7 +235,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
       {review && <>
         {snapshot?.reviewBaseCommit && <button className="cursor-pointer text-faint hover:text-ink" title={full ? "Show only changes since the previous approval" : "Show the complete PR diff"}
           onClick={() => { setMenu(null); setReview(null); setFull(!full); }}>{full ? "Full PR" : "Since approval"}</button>}
-        <span className="text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "changes_requested" ? "Changes requested" : review.status === "stale" ? review.staleNotified ? "Update requested" : "Revision changed" : "Awaiting approval"}</span>
+        <span className="shrink-0 text-faint">{review.status === "approved" ? "Approved for publication" : review.status === "changes_requested" ? "Changes requested" : review.status === "stale" ? review.staleNotified ? "Update requested" : "Revision changed" : "Awaiting approval"}</span>
         <button type="button" aria-label="Request changes" title="Request changes" aria-expanded={feedbackOpen} onClick={()=>setFeedbackOpen(value=>!value)} className="cursor-pointer p-2 hover:bg-band"><Icon name="thumbDown"/></button>
         <button aria-label="Approve publication" title="Approve this revision for push and PR creation" onClick={approve}
           disabled={approving || !["pending","changes_requested"].includes(review.status)}

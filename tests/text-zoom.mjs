@@ -13,6 +13,8 @@ try{
  const inspect=()=>page.evaluate(()=>{const header=document.querySelector('[data-app-header]'),settings=document.querySelector('button[aria-label="Settings"]'),content=document.querySelector('[data-entry="1"] p');return{font:parseFloat(getComputedStyle(content).fontSize),line:parseFloat(getComputedStyle(content).lineHeight),bar:header.getBoundingClientRect().height,cell:settings.getBoundingClientRect().height,icon:settings.querySelector('svg').getBoundingClientRect().height,overflow:document.documentElement.scrollWidth>innerWidth};});
  for(const width of[1280,390]){
   await page.setViewportSize({width,height:850});await page.keyboard.press('Meta+0');const before=await inspect();
+  for(let i=0;i<5;i++)await page.keyboard.press('Meta+-');
+  const smaller=await inspect();assert.ok(Math.abs(smaller.font-before.font*.5)<.1);assert.ok(Math.abs(smaller.icon-before.icon*.5)<.1&&Math.abs(smaller.cell-before.cell*.5)<.1,'Zoom-out controls retain their proportion to reading text');assert.ok(!smaller.overflow);await page.keyboard.press('Meta+0');
   for(let i=0;i<5;i++)await page.keyboard.press('Meta+=');
   let after=await inspect();assert.ok(Math.abs(after.font-before.font*1.5)<.1);assert.deepEqual([after.bar,after.cell,after.icon],[before.bar,before.cell,before.icon],'Text growth retains toolbar and icon geometry');assert.ok(after.line>=after.font&&!after.overflow,'Larger text has line space and reflows within the viewport');
   for(let i=0;i<5;i++)await page.keyboard.press('Meta+-');assert.equal((await inspect()).font,before.font);

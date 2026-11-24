@@ -289,20 +289,11 @@ function Card({
             onClick={onToggle}
             className={[
               "flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px]",
-              ticked ? "bg-ink" : "border-[1.5px] border-edge",
+              ticked ? "bg-ink text-paper" : "border-[1.5px] border-edge",
             ].join(" ")}
           >
             {ticked && (
-              <svg width="12" height="12" viewBox="0 0 10 10" aria-hidden>
-                <path
-                  d="M1.5,5.2 L3.9,7.6 L8.5,2.6"
-                  fill="none"
-                  stroke="var(--color-paper)"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <Icon name="tick" size={12} />
             )}
           </button>
         )}

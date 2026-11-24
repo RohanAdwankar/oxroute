@@ -1,4 +1,5 @@
 export type IconName =
+  | "arrowUp"
   | "archive"
   | "ask"
   | "attach"
@@ -44,6 +45,7 @@ export type IconName =
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     diff: <><path d="M3 1h7l3 3v11H3zM10 1v4h3M5 8h6M8 6v4M5 12h6" /></>,
+    arrowUp: <path d="M8 14V2M3 7l5-5 5 5" />,
     archive: <><path d="M3 6h10v8H3z" /><path d="M2 3h12v3H2zM6 9h4" /></>,
     ask: <><circle cx="8" cy="8" r="6" /><path d="M6.5 6a1.5 1.5 0 0 1 3 0c0 1.5-1.5 1.5-1.5 3M8 11v.5" /></>,
     attach: <path d="M6 8.5 10.5 4a2.1 2.1 0 0 1 3 3L7 13.5a3.2 3.2 0 0 1-4.5-4.5L9 2.5" />,
@@ -96,6 +98,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
       aria-hidden
       width={size}
       height={size}
+      style={{width:`calc(${size}px * var(--ui-scale, 1))`,height:`calc(${size}px * var(--ui-scale, 1))`}}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"

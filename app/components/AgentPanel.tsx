@@ -1050,7 +1050,7 @@ export function AgentPanel({
         {pinned.messages.length > 0 && <ol aria-label="Pinned messages" className="quiet-scroll max-h-48 overflow-auto px-[var(--pane-x)] py-2">
           {pinned.messages.map(message => <li key={message.id} data-pinned-message={message.id} className="flex items-center gap-2 py-1 text-[12px] text-mid">
             <div className="min-w-0 flex-1"><p className="line-clamp-3 whitespace-pre-wrap">{message.text || (message.edits ? "Drawn change" : "Attached files")}</p>{message.files.length > 0 && <p className="truncate text-[11px] text-faint">{message.files.map(file => file.name).join(", ")}</p>}</div>
-            <button type="button" aria-label="Send pinned message now" title="Send now" disabled={busy || pinPending !== null} onClick={() => void sendPinned(message)} className="cursor-pointer p-1 text-mid hover:text-ink disabled:opacity-30"><svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 14V2M3 7l5-5 5 5" /></svg></button>
+            <button type="button" aria-label="Send pinned message now" title="Send now" disabled={busy || pinPending !== null} onClick={() => void sendPinned(message)} className="cursor-pointer p-1 text-mid hover:text-ink disabled:opacity-30"><Icon name="arrowUp" size={16} /></button>
             <button type="button" aria-label="Discard pinned message" title="Discard" disabled={pinPending !== null} onClick={() => pinned.remove(message.id)} className="cursor-pointer p-1 text-faint hover:text-ink disabled:opacity-30"><Icon name="discard" size={14} /></button>
           </li>)}
         </ol>}
