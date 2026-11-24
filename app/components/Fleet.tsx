@@ -87,7 +87,7 @@ export function Fleet({
             {routing.sourceUrl && <a href={routing.sourceUrl} target="_blank" rel="noreferrer" aria-label="Open source message" title="Open source message" className="text-faint hover:text-ink"><Icon name="external" size={14} /></a>}
             <span className="truncate text-[14px]">
               {routing.signal.text
-                ? `“${clip(routing.signal.text, 120)}”`
+                ? `“${clip(routing.display?.text ?? routing.signal.text, 120)}”`
                 : `${routing.signal.attachments.length} attachment(s)`}
             </span>
             {routing.recommendation && <span className="ml-auto truncate text-[11.5px] text-faint" title={routing.recommendation.reason} aria-label="Suggested route">
@@ -117,7 +117,7 @@ export function Fleet({
         )}
       </div>
 
-      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{routing.signal.text}</div>}
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{routing.display?.text ?? routing.signal.text}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

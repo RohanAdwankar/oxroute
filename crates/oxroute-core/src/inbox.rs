@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod collection;
+mod identities;
 
 pub const OUTLOOK: &str = "outlook-inbox";
 pub const SLACK: &str = "slack-inbox";
@@ -148,6 +149,7 @@ impl Reader {
 }
 
 pub fn start(hub: Arc<Hub>) {
+    if let Some(path)=hub.config.inbox.slack_token_file.clone() {identities::start(hub.clone(),path);}
     if let (Some(token), Some(app)) = (
         hub.config.inbox.slack_token_file.clone(),
         hub.config.inbox.slack_app_token_file.clone(),
@@ -486,7 +488,7 @@ mod tests {
     async fn slack_api(
         State(state): State<Arc<Mutex<Remote>>>,
         uri: axum::http::Uri,
-        Query(_query): Query<HashMap<String, String>>,
+        Query(query): Query<HashMap<String, String>>,
     ) -> (axum::http::StatusCode, Json<Value>) {
         let mut remote = state.lock().unwrap();
         remote.reads.push(uri.to_string());
@@ -497,6 +499,7 @@ mod tests {
             );
         }
         let value = match uri.path() {
+            "/users.info" => if remote.fail {json!({"ok":false,"error":"missing_scope","needed":"users:read"})}else{json!({"ok":true,"user":{"id":query["user"],"profile":{"display_name":format!("Source {} {}",query["user"],remote.round)}}})},
             "/auth.test" => json!({"ok":true,"team_id":"team","user_id":"owner"}),
             "/users.conversations" => {
                 if remote.enumeration_gap {json!({"ok":false,"error":"missing_scope","needed":"im:read"})}else{json!({"ok":true,"channels":[{"id":"channel","name":"ongoing-work"}]})}
@@ -513,6 +516,32 @@ mod tests {
             _ => panic!("unexpected slack request"),
         };
         (axum::http::StatusCode::OK, Json(value))
+    }
+    #[tokio::test]
+    async fn identity_metadata_changes_only_display() -> Result<()> {
+        let scratch=std::env::temp_dir().join(new_id("identity-display"));tokio::fs::create_dir_all(&scratch).await?;
+        let token=scratch.join("token");tokio::fs::write(&token,"fixture").await?;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;let base=format!("http://{}/",listener.local_addr()?);
+        let remote=Arc::new(Mutex::new(Remote::default()));let app=Router::new().route("/auth.test",get(slack_api)).route("/users.info",get(slack_api)).with_state(remote.clone());
+        let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+        let mut config=crate::Config::load()?;config.inbox=Config::default();config.min_free_bytes=0;
+        let hub=Hub::new(config,crate::Store::open(&scratch.join("state.sqlite3"))?);
+        hub.store.set("inbox-conversations:team:owner",&json!({"direct":{"id":"direct","is_im":true,"user":"sender","name":"sender"},"group":{"id":"group","is_mpim":true,"name":"mpdm-generated"}}).to_string())?;
+        let mut signal=Signal{id:"identity-row".into(),source:SLACK.into(),conversation:"team:owner:direct".into(),thread_key:"conversation".into(),external_id:"100.1".into(),author:"sender".into(),label:"sender".into(),text:"Source request".into(),attachments:vec![],at:100.1,root:true};
+        hub.store.import_inbox(&signal,"")?;signal.external_id="101.1".into();signal.author="owner".into();signal.text="Source response".into();signal.at=101.1;hub.store.import_inbox(&signal,"")?;
+        let before=hub.store.inbox_version("identity-row")?.unwrap();let raw=serde_json::to_value(&before.0.signal)?;
+        let reader=Reader::new(&base,token)?;identities::refresh(&hub,&reader).await?;
+        let after=hub.store.inbox_version("identity-row")?.unwrap();assert_eq!(serde_json::to_value(&after.0.signal)?,raw);assert_eq!(before.1,after.1);assert_eq!(before.0.state,after.0.state);
+        let display=after.0.display.unwrap();assert_eq!(display.label,"Source sender 0");assert!(display.text.contains("Source sender 0: Source request")&&display.text.contains("Source owner 0: Source response"));
+        signal.id="group-row".into();signal.conversation="team:owner:group".into();signal.author="sender".into();signal.label="mpdm-generated".into();hub.store.import_inbox(&signal,"")?;
+        assert_eq!(hub.store.inbox_item("group-row")?.unwrap().display.unwrap().label,"Group · Source sender 0");
+        let reads=remote.lock().unwrap().reads.len();identities::refresh(&hub,&reader).await?;assert_eq!(remote.lock().unwrap().reads.len(),reads+1,"Verified profiles are cached independently of collection");
+        hub.store.save_slack_name(&crate::store::SlackName{team:"other-team".into(),user:"sender".into(),name:"Other source".into(),checked_at:now(),retry_at:now()+86400.0})?;
+        assert_eq!(hub.store.inbox_item("identity-row")?.unwrap().display.unwrap().label,"Source sender 0","Display identity stays account-scoped");
+        let mut saved=hub.store.slack_names("team")?.remove("sender").unwrap();saved.retry_at=0.0;hub.store.save_slack_name(&saved)?;remote.lock().unwrap().fail=true;identities::refresh(&hub,&reader).await?;
+        assert_eq!(hub.store.slack_names("team")?["sender"].name,"Source sender 0","Temporary profile failures retain the last verified name");
+        assert!(!hub.store.pending_focus_events("coordinator")?,"Name enrichment never starts work or rewrites source provenance");
+        server.abort();drop(hub);tokio::fs::remove_dir_all(scratch).await?;Ok(())
     }
     #[tokio::test]
     async fn known_direct_history_collects_without_discovery_or_push_access() -> Result<()> {

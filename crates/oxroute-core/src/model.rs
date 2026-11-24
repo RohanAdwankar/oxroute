@@ -635,10 +635,20 @@ impl InboxState {
     }
 }
 
+/// Authoritative display names projected over unchanged provider data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxDisplay {
+    pub label: String,
+    pub text: String,
+}
+
 /// A signal plus what happened to it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<InboxDisplay>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     pub signal: Signal,
@@ -824,6 +834,7 @@ mod tests {
         assert_eq!(encoded["agentId"], "a");
 
         let item = InboxItem {
+            display: None,
             signal,
             state: InboxState::Waiting,
             outcome: String::new(),

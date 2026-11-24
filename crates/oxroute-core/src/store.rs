@@ -20,6 +20,8 @@ use crate::tags::Board;
 
 mod focus;
 mod dm_inbox;
+mod inbox_display;
+pub(crate) use inbox_display::SlackName;
 mod intake;
 pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
 mod focus_updates;
@@ -1324,7 +1326,8 @@ impl Store {
     }
 
     pub fn inbox_version(&self,id:&str)->Result<Option<(InboxItem,i64)>> {
-        self.with(|c| Ok(c.query_row("SELECT * FROM signals WHERE id=?1",[id],|row|Ok((read_item(row)?,row.get("revision")?))).optional()?))
+        let mut item=self.with(|c| Ok(c.query_row("SELECT * FROM signals WHERE id=?1",[id],|row|Ok((read_item(row)?,row.get("revision")?))).optional()?))?;
+        if let Some((item,_))=&mut item {self.decorate_inbox(std::slice::from_mut(item))?;}Ok(item)
     }
 
     pub fn routing_text(&self,signal:&Signal,budget:usize)->Result<String> {
@@ -1343,14 +1346,15 @@ impl Store {
     }
 
     pub fn inbox_item(&self, id: &str) -> Result<Option<InboxItem>> {
-        self.with(|c| {
+        let mut item=self.with(|c| {
             Ok(c.query_row("SELECT * FROM signals WHERE id = ?1", params![id], read_item)
                 .optional()?)
-        })
+        })?;
+        if let Some(item)=&mut item {self.decorate_inbox(std::slice::from_mut(item))?;}Ok(item)
     }
 
     pub fn inbox(&self, limit: usize) -> Result<Vec<InboxItem>> {
-        self.with(|c| {
+        let mut items=self.with(|c| {
             let mut stmt =
                 c.prepare("SELECT * FROM signals ORDER BY at DESC, rowid DESC LIMIT ?1")?;
             let mut out = Vec::new();
@@ -1358,7 +1362,8 @@ impl Store {
                 out.push(row?);
             }
             Ok(out)
-        })
+        })?;
+        self.decorate_inbox(&mut items)?;Ok(items)
     }
 
     // -- timeline --------------------------------------------------------
@@ -2178,6 +2183,7 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
     let agent_ids: Vec<String> =
         serde_json::from_str(&row.get::<_, String>("agent_ids")?).unwrap_or_default();
     Ok(InboxItem {
+        display: None,
         signal: Signal {
             id: row.get("id")?,
             source: row.get("source")?,

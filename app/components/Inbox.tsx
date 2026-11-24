@@ -255,13 +255,13 @@ function Row({
         <span className="tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
           {signal.source === "outlook-inbox" ? "Outlook" : signal.source === "slack-inbox" ? "Slack" : signal.source}
         </span>
-        {signal.label && (
-          <span className="tnum truncate text-[9.5px] text-faint">{signal.label}</span>
+        {(item.display?.label ?? signal.label) && (
+          <span title={signal.label} className="tnum truncate text-[9.5px] text-faint">{item.display?.label ?? signal.label}</span>
         )}
       </span>
 
       <span className={`text-[11.5px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
-        {signal.text ? clip(signal.text, 130) : `${signal.attachments.length} attachment(s)`}
+        {signal.text ? clip(item.display?.text ?? signal.text, 130) : `${signal.attachments.length} attachment(s)`}
       </span>
 
       <span title={waiting ? item.recommendation?.reason : undefined} className={`tnum text-[10px] ${footerTone}`}>{footer}</span>
