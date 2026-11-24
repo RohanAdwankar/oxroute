@@ -73,4 +73,5 @@ try {
 } finally { await browser.close(); }
 
 await import('./gif-comparison.mjs');
+await import('./review-cache-readiness.mjs');
 await import('./gif-pixels.mjs');
