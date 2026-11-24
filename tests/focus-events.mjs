@@ -145,6 +145,10 @@ try{
  const policy=JSON.parse(policyLine.slice(policyLine.indexOf('=')+1).trim().slice(0,-1));
  assert.ok(focusTurns().every(turn=>turn.input.some(input=>input.text?.includes(policy))),'Every Focus turn receives the maintained canonical inbox and decision policy unchanged');
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
+ for(const name of ['BEHAVIOR_MAINTENANCE_GUIDANCE','ARTIFACT_CONTEXT_GUIDANCE']){
+  const line=source.split('\n').find(line=>line.startsWith(`const ${name}:`));const instruction=JSON.parse(line.slice(line.indexOf('=')+1).trim().slice(0,-1));
+  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(instruction)),`${scope} turns retain canonical ${name}`);
+ }
  const responseLine=source.split('\n').find(line=>line.startsWith('const CONSENT_RESPONSE_GUIDANCE:'));
  const responsePolicy=JSON.parse(responseLine.slice(responseLine.indexOf('=')+1).trim().slice(0,-1));
  const linkLine=source.split('\n').find(line=>line.startsWith('const SOURCE_LINK_GUIDANCE:'));
