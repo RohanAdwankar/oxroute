@@ -59,7 +59,8 @@ try{
  await stop();finish(focusThread,'completed',false);
  // Collector production is exercised through HTTP and DM ingestion in Rust. Seed its durable boundary here to test actual runtime acceptance and restart, without test-only product endpoints.
  db=new DatabaseSync(join(root,'state.sqlite3'));
- db.prepare("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?,?,?,?,?,?,?,?,?,1)").run('source-signal','slack-inbox','workspace-a:reader:direct','conversation','conversation','provider-author','Selected source','Corrected source requirement',Date.now()/1000);
+ db.prepare("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?,?,?,?,?,?,?,?,?,1)").run('source-signal','slack-inbox','workspace-a:reader:direct','conversation','message-a','provider-author','Selected source','Corrected source requirement',Date.now()/1000);
+ db.prepare('INSERT INTO inbox_arrivals(signal_id,message_id) VALUES(?,?)').run('source-signal','message-a');
  const eventId=JSON.stringify(['slack-inbox','workspace-a:reader:direct','message-a','revision-b']);
  const payload={requestId:crypto.randomUUID(),signalId:'source-signal',source:'slack-inbox',account:'workspace-a',sender:'provider-author',itemId:'message-a',revision:'revision-b',delegationEntryId:saved.delegationEntryId};
  db.prepare('INSERT INTO focus_turn_events(id,focus_id,agent_id,outcome,at,payload) VALUES(?,?,?,?,?,?)').run(eventId,focus.id,focus.id,'intake',Date.now()/1000,JSON.stringify(payload));db.close();db=null;

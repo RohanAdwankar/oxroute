@@ -53,6 +53,7 @@ impl Store {
         if changed>0 {tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;}
         tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-url:{id}"),url])?;
         tx.execute("UPDATE focus_turn_events SET payload=json_set(payload,'$.signalId',?1) WHERE outcome='intake' AND json_extract(payload,'$.source')=?2 AND json_extract(payload,'$.itemId')=?3 AND NOT EXISTS(SELECT 1 FROM kv WHERE key=focus_turn_events.receipt) AND EXISTS(SELECT 1 FROM signals old WHERE old.id=json_extract(payload,'$.signalId') AND old.conversation=?4)",params![id,signal.source,signal.external_id,signal.conversation])?;
+        tx.execute("DELETE FROM suppressed_intake_events WHERE id IN (SELECT e.id FROM focus_turn_events e JOIN signals s ON s.id=json_extract(e.payload,'$.signalId') WHERE s.id=?1 AND s.state='waiting' AND NOT EXISTS(SELECT 1 FROM kv WHERE key=e.receipt))",[&id])?;
         tx.commit()?;Ok((!admitted).then_some(id))
     }
 }
@@ -60,6 +61,24 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_recovery_retains_pending_delivery_identity()->Result<()> {
+        let store=Store::in_memory()?;store.slack_arrival_cutoff(Some(100.0))?;store.set("focus.agent","coordinator")?;store.set("inbox-dm:workspace:direct","1")?;
+        let message=Signal{id:"source-message".into(),source:crate::inbox::SLACK.into(),conversation:"workspace:reader:direct".into(),thread_key:"conversation".into(),external_id:"101.1".into(),author:"participant".into(),label:"Direct source".into(),text:"New incoming request collected before activation".into(),attachments:vec![],at:101.1,root:true};
+        store.cache_inbox_context(&message)?;
+        store.with(|c|{c.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,text,at) VALUES('legacy-aggregate','slack-inbox',?1,'conversation','conversation','Combined source history',102)",[&message.conversation])?;
+            let payload=serde_json::json!({"requestId":"original-delivery","signalId":"legacy-aggregate","source":"slack-inbox","account":"workspace","sender":"participant","itemId":"101.1","revision":"101.1","delegationEntryId":10});
+            c.execute("INSERT INTO focus_turn_events(id,focus_id,agent_id,outcome,at,payload) VALUES('source-event','coordinator','coordinator','intake',102,?1)",[payload.to_string()])?;Ok(())})?;
+        assert!(!store.pending_focus_events("coordinator")?,"A history aggregate cannot arrive as a new request");
+        store.recover_cached_arrivals("workspace:reader:",100.0)?;
+        assert!(store.pending_focus_events("coordinator")?,"Startup ordering cannot lose a genuinely post-cutoff incoming delivery");
+        let batch=store.claim_focus_events("coordinator")?.unwrap();assert_eq!(batch.events.len(),1);
+        let arrival=batch.events[0].intake.as_ref().unwrap();assert_eq!(arrival.request_id,"original-delivery");assert_eq!(arrival.item_id,"101.1");
+        assert_eq!(store.inbox_item(&arrival.signal_id)?.unwrap().signal.text,message.text);
+        store.accept_turn_receipt(&batch.receipt,103.0)?;store.recover_cached_arrivals("workspace:reader:",100.0)?;assert!(!store.pending_focus_events("coordinator")?);
+        Ok(())
+    }
+
     #[test]
     fn admission_uses_source_time_and_preserves_context_across_restart()->Result<()> {
         for (account,owner,peer) in [("provider-one","reader-a","author-a"),("provider-two","reader-b","author-b")] {

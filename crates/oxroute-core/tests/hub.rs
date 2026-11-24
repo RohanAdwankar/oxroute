@@ -3866,12 +3866,14 @@ async fn personal_inbox_context_waits_in_both_modes_despite_bindings_and_directi
     for mode in [Mode::Ask,Mode::Auto] {
         let w=world(mode,false).await;
         let agent=w.hub.create_agent(None).unwrap();
+        w.hub.store.slack_arrival_cutoff(Some(1.0)).unwrap();w.hub.store.set("inbox-dm:workspace:direct","1").unwrap();
         for source in ["outlook-inbox","slack-inbox"] {
-            w.hub.store.bind(source,"D1","thread",&agent.id).unwrap();
-            let incoming=signal_from(source,"thread","first","rename remote topic");
+            let before=w.calls.lock().unwrap().started.len();
+            w.hub.store.bind(source,"workspace:reader:direct","thread",&agent.id).unwrap();
+            let mut incoming=signal_from(source,"thread","first","rename remote topic");incoming.conversation="workspace:reader:direct".into();
             w.hub.accept(incoming.clone()).await.unwrap();
             w.hub.accept(incoming).await.unwrap();
-            assert!(w.calls.lock().unwrap().started.is_empty());
+            assert_eq!(w.calls.lock().unwrap().started.len(),before);
             assert!(w.posts.lock().unwrap().replies.is_empty());
             assert_eq!(w.hub.store.agent(&agent.id).unwrap().unwrap().name,agent.name);
             let item=w.hub.store.inbox(10).unwrap().into_iter().find(|item|item.signal.source==source).unwrap();
@@ -3880,9 +3882,11 @@ async fn personal_inbox_context_waits_in_both_modes_despite_bindings_and_directi
             assert!(settle(||w.hub.store.agent(&agent.id).unwrap().unwrap().status==AgentStatus::Complete).await);
             assert_eq!(w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().state,InboxState::Done);
             let count=w.calls.lock().unwrap().started.len();
-            w.hub.accept(signal_from(source,"thread","second","More external context")).await.unwrap();
+            let mut next=signal_from(source,"thread","second","More external context");next.conversation="workspace:reader:direct".into();w.hub.accept(next).await.unwrap();
             assert_eq!(w.calls.lock().unwrap().started.len(),count);
-            assert_eq!(w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().state,InboxState::Waiting);
+            let fresh=w.hub.store.inbox(10).unwrap().into_iter().find(|row|row.signal.source==source&&row.state==InboxState::Waiting).unwrap();
+            if source=="slack-inbox" {assert_ne!(fresh.signal.id,item.signal.id);assert_eq!(w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().state,InboxState::Done,"A later incoming message must not reopen the earlier routed arrival");}else{assert_eq!(fresh.signal.id,item.signal.id);}
+
         }
     }
 }
