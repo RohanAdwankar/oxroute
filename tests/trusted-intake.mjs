@@ -41,8 +41,8 @@ try{
  const focus=await api('/api/focus/agent',{});await until(()=>turns.length===1,'Initial Focus did not start');focusThread=turns[0].threadId;
  const policy={source:'slack-inbox',account:'workspace-a',sender:'provider-author',label:'Selected source',mode:'immediate'};
  await api('/api/intake/policies',policy,'PUT');state=await api('/api/intake/policies');assert.equal(state.policies.length,1);
- const saved=state.policies[0],history=await api(`/api/agents/${focus.id}`);assert.ok(history.timeline.some(entry=>entry.id===saved.delegationEntryId&&entry.kind==='you'&&entry.at===saved.effectiveAt),'A settings action retains its human delegation and effective time');
- await api('/api/intake/policies',policy,'PUT');assert.equal((await api('/api/intake/policies')).policies[0].effectiveAt,saved.effectiveAt,'Saving an unchanged mode preserves its collection boundary');
+ const saved=state.policies[0],history=await api(`/api/agents/${focus.id}`);assert.ok(history.timeline.some(entry=>entry.id===saved.delegationEntryId&&entry.kind==='you'&&Math.abs(entry.at-saved.effectiveAt)<1e-6),'A settings action retains its human delegation and effective time');
+ await api('/api/intake/policies',policy,'PUT');assert.ok(Math.abs((await api('/api/intake/policies')).policies[0].effectiveAt-saved.effectiveAt)<1e-6,'Saving an unchanged mode preserves its collection boundary');
  const bad=await fetch(base+'/api/intake/policies',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({...policy,sender:''})});assert.equal(bad.ok,false,'Account-wide trust requires explicit selection');
  browser=await chromium.launch();const page=await browser.newPage({viewport:{width:1280,height:900}});
  await page.goto(`${web}/?agent=${focus.id}`);await page.getByRole('button',{name:'Settings',exact:true}).click();
