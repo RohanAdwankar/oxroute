@@ -147,6 +147,9 @@ try{
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(policy)),`${scope} turns retain the same canonical policy`);
  const responseLine=source.split('\n').find(line=>line.startsWith('const CONSENT_RESPONSE_GUIDANCE:'));
  const responsePolicy=JSON.parse(responseLine.slice(responseLine.indexOf('=')+1).trim().slice(0,-1));
+ const linkLine=source.split('\n').find(line=>line.startsWith('const SOURCE_LINK_GUIDANCE:'));
+ const linkPolicy=JSON.parse(linkLine.slice(linkLine.indexOf('=')+1).trim().slice(0,-1));
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(linkPolicy)),`${scope} turns receive the maintained source-link grounding policy unchanged`);
  const intakeSource=await readFile(new URL('../crates/oxroute-core/src/hub/intake.rs',import.meta.url),'utf8');
  const intakeLine=intakeSource.split('\n').find(line=>line.startsWith('pub const INTAKE_GUIDANCE:'));
  const intakePolicy=JSON.parse(intakeLine.slice(intakeLine.indexOf('=')+1).trim().slice(0,-1));
