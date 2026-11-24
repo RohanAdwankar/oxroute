@@ -185,7 +185,7 @@ function Row({
       data-inbox-item
       aria-current={selected || focused}
       className={[
-        "flex w-full cursor-pointer flex-col gap-[5px] border-b border-hair border-l-[3px] py-[13px] pr-[18px] pl-[15px] text-left",
+        "flex min-w-0 w-full cursor-pointer flex-col gap-[5px] border-b border-hair border-l-[3px] py-[13px] pr-[18px] pl-[15px] text-left",
         selected
           ? "border-l-ink bg-wash"
           : focused
@@ -194,12 +194,12 @@ function Row({
       ].join(" ")}
     >
       <span className="flex items-center gap-[7px]">
-        <time dateTime={new Date(signal.at * 1000).toISOString()} title={new Date(signal.at * 1000).toLocaleString()} className="tnum text-[9.5px] text-faint">{new Date(signal.at * 1000).toDateString() === new Date().toDateString() ? clock(signal.at) : new Date(signal.at * 1000).toLocaleDateString(undefined, {month:"short", day:"numeric"})}</time>
-        <span className="tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
+        <time dateTime={new Date(signal.at * 1000).toISOString()} title={new Date(signal.at * 1000).toLocaleString()} className="shrink-0 tnum text-[9.5px] text-faint">{new Date(signal.at * 1000).toDateString() === new Date().toDateString() ? clock(signal.at) : new Date(signal.at * 1000).toLocaleDateString(undefined, {month:"short", day:"numeric"})}</time>
+        <span className="shrink-0 tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
           {signal.source === "outlook-inbox" ? "Outlook" : signal.source === "slack-inbox" ? "Slack" : signal.source}
         </span>
         {(item.display?.label ?? signal.label) && (
-          <span title={signal.label} className="tnum truncate text-[9.5px] text-faint">{item.display?.label ?? signal.label}</span>
+          <span title={item.display?.label ?? signal.label} className="tnum truncate text-[9.5px] text-faint">{item.display?.label ?? signal.label}</span>
         )}
       </span>
 

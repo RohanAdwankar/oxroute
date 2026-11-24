@@ -541,12 +541,13 @@ mod tests {
         let hub=Hub::new(config,crate::Store::open(&scratch.join("state.sqlite3"))?);
         hub.store.set("inbox-conversations:team:owner",&json!({"direct":{"id":"direct","is_im":true,"user":"sender","name":"sender"},"group":{"id":"group","is_mpim":true,"name":"mpdm-generated"}}).to_string())?;
         hub.store.set("inbox-dm:team:direct","1")?;hub.store.set("inbox-dm:team:group","1")?;
-        let mut signal=Signal{id:"identity-row".into(),source:SLACK.into(),conversation:"team:owner:direct".into(),thread_key:"conversation".into(),external_id:"100.1".into(),author:"sender".into(),label:"sender".into(),text:"Source request".into(),attachments:vec![],at:100.1,root:true};
+        let mut signal=Signal{id:"identity-row".into(),source:SLACK.into(),conversation:"team:owner:direct".into(),thread_key:"conversation".into(),external_id:"100.1".into(),author:"sender".into(),label:"sender".into(),text:"Source request for <@observer>".into(),attachments:vec![],at:100.1,root:true};
         hub.store.import_inbox(&signal,"")?;signal.external_id="101.1".into();signal.author="owner".into();signal.text="Source response".into();signal.at=101.1;hub.store.import_inbox(&signal,"")?;
         let before=hub.store.inbox_version("identity-row")?.unwrap();let raw=serde_json::to_value(&before.0.signal)?;
+        assert_eq!(before.0.display.as_ref().unwrap().label,"Direct message");assert!(before.0.display.as_ref().unwrap().preview.starts_with("Participant:"));assert!(!before.0.display.as_ref().unwrap().preview.contains("observer"));
         let reader=Reader::new(&base,token)?;identities::refresh(&hub,&reader).await?;
         let after=hub.store.inbox_version("identity-row")?.unwrap();assert_eq!(serde_json::to_value(&after.0.signal)?,raw);assert_eq!(before.1,after.1);assert_eq!(before.0.state,after.0.state);
-        let display=after.0.display.unwrap();assert_eq!(display.label,"Source sender 0");assert!(display.text.contains("Source sender 0: Source request")&&display.text.contains("Source owner 0: Source response"));
+        let display=after.0.display.unwrap();assert_eq!(display.label,"Source sender 0");assert!(display.preview.contains("@Source observer 0"));assert!(display.text.contains("Source sender 0: Source request")&&display.text.contains("Source owner 0: Source response"));
         signal.id="group-row".into();signal.conversation="team:owner:group".into();signal.author="sender".into();signal.label="mpdm-generated".into();hub.store.import_inbox(&signal,"")?;
         assert_eq!(hub.store.inbox_item("group-row")?.unwrap().display.unwrap().label,"Group · Source sender 0");
         let reads=remote.lock().unwrap().reads.len();identities::refresh(&hub,&reader).await?;assert_eq!(remote.lock().unwrap().reads.len(),reads+1,"Verified profiles are cached independently of collection");

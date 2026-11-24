@@ -74,7 +74,7 @@ mod tests {
             let own=message("direct","reply",owner,102.0,"Own reply context");store.import_inbox(&own,"")?;
             let mut own_edit=own.clone();own_edit.text="Own unrelated follow-up".into();store.import_inbox(&own_edit,"")?;
             let after=store.inbox_version(&incoming.id)?.unwrap();assert_eq!(serde_json::to_value(&before.0.signal)?,serde_json::to_value(&after.0.signal)?);assert_eq!(before.1,after.1);
-            assert_eq!(after.0.display.unwrap().preview,format!("{peer}: Current incoming request"));
+            let preview=after.0.display.unwrap().preview;assert!(preview.contains("Current incoming request")&&!preview.contains(peer),"Unavailable names use an honest role instead of opaque provider IDs");
             store.import_inbox(&message("channel","chatter",peer,103.0,"Ordinary channel discussion"),"")?;
             store.import_inbox(&message("channel","other",peer,104.0,"<@different-reader> Requested context"),"")?;
             let mention=message("channel","targeted",peer,105.0,&format!("<@{owner}> Requested follow-up"));store.import_inbox(&mention,"")?;

@@ -104,7 +104,7 @@ try{
  assert.deepEqual((await api('/api/tasks')).map(task=>[task.id,task.status]),retainedTasks,'Bulk dismissal never completes linked work');
  await page.reload();await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled());
  await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).click();await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isDisabled());
- await page.reload();await page.getByRole('button',{name:'inbox',exact:true}).click().catch(()=>{});
+ await page.reload();await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click().catch(()=>{});
  assert.equal((await api('/api/state')).inboxWaiting,0);
  console.log('Incoming messages retain explicit routing; advice waits even in auto mode; source links, explicit new-agent routing and local dismissal and snapshot-bounded Clear all preserve concurrent arrivals, source context and tasks.');
 }finally{

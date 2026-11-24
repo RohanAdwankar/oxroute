@@ -91,7 +91,7 @@ export function Fleet({
                 : `${routing.signal.attachments.length} attachment(s)`}
             </span>
             {routing.recommendation && <span className="ml-auto truncate text-[11.5px] text-faint" title={routing.recommendation.reason} aria-label="Suggested route">
-              {routing.recommendation.action === "existing" ? routing.recommendation.agentIds.map(id => agents.find(agent => agent.id === id)?.name ?? id).join(", ") : routing.recommendation.action === "spawn" ? "New agent" : "Dismiss"}
+              {routing.recommendation.action === "existing" ? routing.recommendation.agentIds.map(id => agents.find(agent => agent.id === id)?.name ?? "Conversation").join(", ") : routing.recommendation.action === "spawn" ? "New agent" : "Dismiss"}
             </span>}
           </>
         ) : (
