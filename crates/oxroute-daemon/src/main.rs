@@ -488,9 +488,15 @@ async fn recent_messages(State(hub): Hubs, Path(id): Path<String>) -> Result<Jso
 #[derive(Deserialize)]
 struct CitedEntriesQuery { ids: String }
 
-async fn cited_entries(State(hub): Hubs, Query(query): Query<CitedEntriesQuery>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
+async fn cited_entries(State(hub): Hubs, Query(query): Query<CitedEntriesQuery>) -> Result<Json<Vec<serde_json::Value>>, Failed> {
     let ids = query.ids.split(',').map(str::parse).collect::<std::result::Result<Vec<i64>, _>>().map_err(anyhow::Error::from)?;
-    Ok(Json(hub.store.cited_entries(&ids)?))
+    let entries=hub.store.cited_entries(&ids)?;
+    let publications=hub.store.cited_publication_kinds(&ids)?;
+    Ok(Json(entries.into_iter().map(|entry| {
+        let kind=publications.get(&entry.id);let mut value=serde_json::to_value(entry).expect("Entry serializes");
+        if let Some(kind)=kind {value["publicationKind"]=serde_json::json!(kind);}
+        value
+    }).collect()))
 }
 
 async fn search_context(State(hub): Hubs, Path((id, entry)): Path<(String, i64)>) -> Result<Json<Vec<oxroute_core::model::Entry>>, Failed> {
@@ -724,7 +730,11 @@ struct SayBody {
 }
 
 #[derive(serde::Serialize, Deserialize)]
-struct DiffQuote { text: String, path: String, rows: Vec<DiffRow>, #[serde(default,skip_serializing_if="Option::is_none")] decision:Option<oxroute_core::store::DecisionReference> }
+#[serde(rename_all="camelCase")]
+struct QuoteReference { agent_id:String, title:String, #[serde(default,skip_serializing_if="Option::is_none")] context_agent_id:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] review_id:Option<String>, #[serde(default,skip_serializing_if="Option::is_none")] task_id:Option<String>, #[serde(default,skip_serializing_if="Vec::is_empty")] evidence_entry_ids:Vec<i64> }
+
+#[derive(serde::Serialize, Deserialize)]
+struct DiffQuote { #[serde(default,skip_serializing_if="Option::is_none")] reference:Option<QuoteReference>, text: String, path: String, rows: Vec<DiffRow>, #[serde(default,skip_serializing_if="Option::is_none")] decision:Option<oxroute_core::store::DecisionReference> }
 
 #[derive(serde::Serialize, Deserialize)]
 struct DiffRow { text: String, old: Option<u32>, next: Option<u32> }

@@ -331,12 +331,12 @@ try {
   await page.setViewportSize({width,height:850});await deck.getByRole('button',{name:'Close decision',exact:true}).click();
   const row=panel.locator(`[data-decision="${scopedTasks[0].id}"]`),title=row.locator('[data-quote-title]');
   const selected=await quoteTitle(page,title,1,scopedTasks[0].text.length-1);
-  const attachment=page.getByRole('region',{name:'Attached diff Decision title',exact:true});await attachment.waitFor();
-  assert.deepEqual(await attachment.locator('[data-quoted-diff-line]').allInnerTexts(),[selected]);
+  const attachment=page.getByRole('region',{name:'Quoted decision',exact:true});await attachment.waitFor();
+  assert.ok((await attachment.innerText()).includes(selected),'Selected decision text remains visible in its reference card');assert.equal(await attachment.locator('pre').count(),0,'Decision references use prose instead of code formatting');
   if(width===390)await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
   assert.equal(await row.locator('[data-decision-open]').getAttribute('aria-pressed'),'true','Selected task reply keeps its contextual selection');
   if(process.env.SELECTION_SCREENSHOT)await page.screenshot({path:process.env.SELECTION_SCREENSHOT.replace('.png',`-task-${width}.png`)});
-  await page.getByRole('button',{name:'Remove diff Decision title',exact:true}).click();
+  await page.getByRole('button',{name:'Remove quoted decision',exact:true}).click();
   await row.locator('[data-decision-open]').click();deck=page.locator('[data-focus-decisions]');await scopedReply(0).waitFor();
  }
  const beforeNavigation=await api('/api/tasks');
@@ -360,7 +360,7 @@ try {
  assert.equal(await panel.count(),0,'Mobile reply dismisses the sidebar while retaining access through its toggle');
  assert.equal(db.prepare("SELECT count(*) AS n FROM entries WHERE kind='you'").get().n,humanCount,'Preparing a scoped reply never submits consent');
  if(process.env.RESPONSE_SCREENSHOT)await page.screenshot({path:process.env.RESPONSE_SCREENSHOT.replace('.png','-mobile-reply.png')});
- await page.getByRole('button',{name:'Remove diff Decision title',exact:true}).click();
+ await page.getByRole('button',{name:'Remove quoted decision',exact:true}).click();
  await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();await panel.getByText(scopedTasks[0].text,{exact:true}).click();deck=page.locator('[data-focus-decisions]');await scopedReply(0).waitFor();
  assert.deepEqual(await api('/api/tasks'),beforeNavigation,'Opening decision sources preserves task ownership and state');
  await scopedReply(0).press('Enter');
@@ -368,12 +368,12 @@ try {
  const submitted=db.prepare("SELECT text FROM entries WHERE agent_id=? AND kind='you' AND instr(text,?)>0").get(focus.id,`Regarding task ${scopedTasks[0].id}`)?.text;
  assert.ok(submitted?.includes(`${focus.id}/${sourceIds[0]}`)&&submitted.includes('Use the first option.')&&!submitted.includes(scopedTasks[1].id),'Actual reply retains selected task, cited source and destination');
  await page.setViewportSize({width:1280,height:850});const decisionTitle=deck.locator('header [data-quote-title]');await quoteTitle(page,decisionTitle,0,scopedTasks[0].text.length);
- await page.getByRole('region',{name:'Attached diff Decision title',exact:true}).waitFor();await page.locator('[data-composer]').fill('Inspect this decision heading.');await page.locator('[data-composer]').press('Enter');
+ await page.getByRole('region',{name:'Quoted decision',exact:true}).waitFor();await page.locator('[data-composer]').fill('Inspect this decision heading.');await page.locator('[data-composer]').press('Enter');
  for(let i=0;i<60&&!db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id);i++)await new Promise(done=>setTimeout(done,100));
  const decisionQuote=db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[0].id)?.detail;
  assert.ok(decisionQuote?.includes(String(sourceIds[0]))&&decisionQuote.includes(scopedTasks[0].text),'Decision title quotes retain task and evidence provenance');
  await panel.locator(`[data-decision="${scopedTasks[1].id}"]`).getByRole('button',{name:'Reply',exact:true}).click();
- await page.getByRole('region',{name:'Attached diff Decision title',exact:true}).last().waitFor();await page.locator('[data-composer]').fill('Go with the second option.');await page.locator('[data-composer]').press('Enter');
+ await page.getByRole('region',{name:'Quoted decision',exact:true}).last().waitFor();await page.locator('[data-composer]').fill('Go with the second option.');await page.locator('[data-composer]').press('Enter');
  for(let i=0;i<60&&!db.prepare("SELECT id FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0 AND instr(text,?)>0").get(focus.id,scopedTasks[1].id,'Go with the second option.');i++)await new Promise(done=>setTimeout(done,100));
  assert.ok(db.prepare("SELECT detail FROM entries WHERE agent_id=? AND kind='you' AND instr(detail,?)>0").get(focus.id,scopedTasks[1].id)?.detail.includes(scopedTasks[1].text),'A decision Reply quotes the card into the Focus thread');
  assert.deepEqual(errors,[]);

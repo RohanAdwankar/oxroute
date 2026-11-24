@@ -42,6 +42,14 @@ impl Store {
     }
 
     /// Resolve narrative evidence by publication identity, never by the latest reply.
+    pub fn cited_publication_kinds(&self, ids:&[i64])->Result<HashMap<i64,String>> {
+        self.read(|c| {
+            let mut query=c.prepare("SELECT entry_id,kind FROM focus_updates WHERE entry_id IN (SELECT value FROM json_each(?1)) ORDER BY rowid")?;
+            let rows=query.query_map([serde_json::to_string(ids)?],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            Ok(rows)
+        })
+    }
+
     pub fn focus_publication_sources(&self,entry:i64)->Result<HashMap<String,i64>> {
         self.read(|c| {
             let mut q=c.prepare("SELECT e.agent_id,MAX(e.id) FROM focus_updates u JOIN json_each(u.payload,'$.evidenceEntryIds') evidence JOIN entries e ON e.id=evidence.value AND e.agent_id=u.source_agent AND e.kind='said' WHERE u.entry_id=?1 GROUP BY e.agent_id")?;
@@ -239,6 +247,9 @@ mod tests {
         let mut question=update("decision","source",request);question.supersedes=vec![original.request_id];
         let replacement=store.publish_focus_update("focus",&question,now()).unwrap().0;
         assert_ne!(replacement["entryId"],original_receipt["entryId"],"Explicit replacement publishes the current decision rather than deduplicating to the obsolete question");
+        let published=store.cited_publication_kinds(&[request,original_receipt["entryId"].as_i64().unwrap(),replacement["entryId"].as_i64().unwrap()]).unwrap();
+        assert!(!published.contains_key(&request));
+        assert_eq!(published.len(),2);assert!(published.values().all(|kind|kind=="decision"),"Historical and current decision contexts retain their authoritative publication kind");
         assert_eq!(store.focus_update_context("focus").unwrap()["unansweredDecisions"],1);
         let evidence=add(&store,"source",EntryKind::Said);let mut completion=update("completion","source",request);completion.evidence_entry_ids=vec![evidence];
         store.publish_focus_update("focus",&completion,now()).unwrap();

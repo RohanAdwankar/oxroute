@@ -64,3 +64,5 @@ try {
   assert.ok(await visible(10), 'An explicit second navigation can jump to the same message again');
   console.log('Entry links jump once after history loads, preserve reading position, and allow later messages to follow normally.');
 } finally { await browser.close(); }
+
+await import("./quote-reference-cards.mjs");

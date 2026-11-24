@@ -1284,13 +1284,13 @@ function ToolCall({ entry, output }: { entry: Entry; output?: string }) {
 }
 
 /// Anything anyone said: the words, and whatever came with them.
-function Said({ text, detail }: { text: string; detail: string }) {
+function Said({ text, detail, owner }: { text: string; detail: string; owner:{agentId:string;entryId:number} }) {
   const diffs: DiffQuote[] = detail.startsWith("diff-attachments:") ? JSON.parse(detail.slice("diff-attachments:".length)) : [];
   for (const quote of diffs) text = text.slice(quote.text.trim().length).trimStart();
   const { body, names } = splitAttached(text);
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
-      {diffs.map((quote, index) => <DiffAttachment key={index} quote={quote} />)}
+      {diffs.map((quote, index) => <DiffAttachment key={index} quote={quote} owner={owner} />)}
       {body.trim() && (body.includes("```mermaid") ? <DiagramMessage text={body} /> : <Markdown>{body}</Markdown>)}
       {names.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -1363,7 +1363,7 @@ const Message = memo(function Message({
                   {entry.kind === "coordination" && entry.origin && <CoordinationSource origin={entry.origin} onOpen={onOpenAgent} />}
                 </span>
               )}
-              <ConversationPublication.Provider value={{before:entry.id,results:entry.sourceResults}}><Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} /></ConversationPublication.Provider>
+              <ConversationPublication.Provider value={{before:entry.id,results:entry.sourceResults}}><Said text={delegated ? entry.text.slice(0, -workerSuffix.length) : entry.text} detail={entry.detail} owner={{agentId:entry.agentId,entryId:entry.id}} /></ConversationPublication.Provider>
               {delegated && <button type="button" onClick={() => onOpenAgent(entry.detail)}
                 aria-label="Open delegated conversation" title="Open delegated conversation"
                 className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-faint hover:text-ink">
