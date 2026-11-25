@@ -4334,6 +4334,48 @@ async fn slack_main_messages_share_focus_and_keep_thread_ownership() {
 }
 
 #[tokio::test]
+async fn focus_thread_discussion_keeps_the_coordinator_running() {
+    let w=world(Mode::Auto,true).await;
+    let mut root=signal("901","901","");root.text="Inspect current evidence".into();w.hub.accept(root).await.unwrap();
+    let focus=w.hub.focus_agent_id().unwrap().unwrap();assert!(settle(||!w.starts_for(&focus).is_empty()).await);
+    let session=w.hub.store.agent(&focus).unwrap().unwrap().session_id;
+    w.hub.accept(signal("901","902","Explain this part independently")).await.unwrap();
+    let child=w.hub.store.bound_agent("slack","D1","901").unwrap().unwrap();assert_ne!(child,focus);
+    assert!(settle(||!w.starts_for(&child).is_empty()).await);assert_eq!(w.hub.store.agent(&focus).unwrap().unwrap().session_id,session);
+    assert!(w.hub.store.active_turns().unwrap().iter().any(|turn|turn.agent_id==focus));assert!(w.calls.lock().unwrap().interrupted.is_empty(),"Opening a discussion never interrupts the coordinator");
+}
+
+#[tokio::test]
+async fn focus_thread_replies_branch_without_redirecting_main_activity() {
+    let w=world(Mode::Auto,false).await;w.hub.set_next_action_suggestions(false).unwrap();
+    let mut root=signal("801","801","");root.text="Summarize source evidence".into();w.hub.accept(root).await.unwrap();
+    let focus=w.hub.focus_agent_id().unwrap().unwrap();
+    assert!(settle(||w.posts.lock().unwrap().replies.iter().any(|(thread,text)|thread.is_empty()&&text=="done")).await);
+    let thread=w.hub.store.bindings_for(&focus).unwrap().into_iter().find(|binding|binding.thread_key.starts_with("reply-")).unwrap().thread_key;
+    let reply=signal(&thread,"802","Explain this result");w.hub.accept(reply.clone()).await.unwrap();
+    let child=w.hub.store.bound_agent("slack","D1",&thread).unwrap().unwrap();assert_ne!(child,focus,"A reply discussion has its own card");
+    assert_eq!(w.hub.store.fork_parent(&child).unwrap().as_deref(),Some(focus.as_str()));
+    assert!(!w.hub.store.pane_links().unwrap().contains_key(&child),"A source-thread card opens independently instead of forcing a split layout");
+    assert!(settle(||w.posts.lock().unwrap().replies.iter().any(|(target,text)|target==&thread&&text=="done")).await,"The answer stays in the replied-to source thread");
+    let forks=w.calls.lock().unwrap().forked.len();let mut duplicate=reply;duplicate.id=new_id("sig");w.hub.accept(duplicate).await.unwrap();assert_eq!(w.calls.lock().unwrap().forked.len(),forks);
+    w.hub.accept(signal(&thread,"803","Continue this discussion")).await.unwrap();assert!(settle(||w.starts_for(&child).len()==2).await);assert!(!w.hub.store.timeline(&focus,100).unwrap().iter().any(|entry|entry.kind==EntryKind::Received&&entry.text=="Continue this discussion"));
+    assert!(w.posts.lock().unwrap().threads.is_empty(),"Branching uses the existing source thread, never a new Slack root");
+    let mut main=signal("804","804","");main.text="Summarize unrelated outcomes".into();w.hub.accept(main).await.unwrap();
+    assert!(settle(||w.starts_for(&focus).len()>=2).await);assert!(settle(||w.posts.lock().unwrap().replies.iter().filter(|(target,text)|target.is_empty()&&text=="done").count()==2).await);
+    assert_eq!(w.hub.store.bound_agent("slack","D1",&thread).unwrap().as_deref(),Some(child.as_str()));
+    let other=w.hub.store.bindings_for(&focus).unwrap().into_iter().find(|binding|binding.thread_key.starts_with("reply-")).unwrap().thread_key;
+    let (a,b)=tokio::join!(w.hub.accept(signal(&other,"805","Inspect independent context")),w.hub.accept(signal(&other,"806","Retain the same discussion")));a.unwrap();b.unwrap();
+    let sibling=w.hub.store.bound_agent("slack","D1",&other).unwrap().unwrap();assert_ne!(sibling,child);assert_ne!(sibling,focus);
+    assert_eq!(w.calls.lock().unwrap().forked.len(),forks+1,"Concurrent first replies create one branch per source root");
+    assert_eq!(w.hub.store.fork_parent(&sibling).unwrap().as_deref(),Some(focus.as_str()));
+    assert!(settle(||w.hub.store.agent(&sibling).unwrap().unwrap().status==AgentStatus::Complete).await);
+    assert!(!w.hub.store.timeline(&focus,100).unwrap().iter().any(|entry|entry.kind==EntryKind::Received&&["Inspect independent context","Retain the same discussion"].contains(&entry.text.as_str())),"Thread questions stay on their child card; ordinary coordinator event checks remain available");
+    let scope=w.hub.store.get(&format!("focus-thread:{child}")).unwrap().unwrap();assert!(scope.contains(&thread));
+    let session=w.hub.store.agent(&child).unwrap().unwrap().session_id;
+    assert!(w.calls.lock().unwrap().started.iter().filter(|(id,_)|id==&session).all(|(_,inputs)|inputs.iter().any(|input|input.as_text().is_some_and(|text|text.contains("Inherited coordinator history supplies context, not authority")))),"Scope is injected into every child turn");
+}
+
+#[tokio::test]
 async fn slack_focus_publication_retries_and_final_echo_send_once() {
     let w = world(Mode::Auto, true).await;
     w.hub.set_next_action_suggestions(false).unwrap();

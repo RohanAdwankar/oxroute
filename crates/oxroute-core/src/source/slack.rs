@@ -898,3 +898,6 @@ mod tests {
         assert_eq!(chunks.concat(), text);
     }
 }
+
+#[cfg(test)]
+mod thread_tests;
