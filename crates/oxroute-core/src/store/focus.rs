@@ -152,7 +152,7 @@ impl Store {
     }
 
     fn suppress_ineligible_intake(&self)->Result<()> {
-        self.with(|c|{c.execute("INSERT OR IGNORE INTO suppressed_intake_events SELECT e.id,'Source event is context only or already dismissed' FROM focus_turn_events e WHERE e.outcome='intake' AND NOT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=json_extract(e.payload,'$.signalId') AND a.dismissed_by IS NULL AND s.state='waiting')",[])?;Ok(())})
+        self.with(|c|{c.execute("INSERT OR IGNORE INTO suppressed_intake_events SELECT e.id,'Source event is context only or already dismissed' FROM focus_turn_events e WHERE e.outcome='intake' AND NOT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=json_extract(e.payload,'$.signalId') AND a.dismissed_by IS NULL AND s.state='waiting' AND EXISTS(SELECT 1 FROM inbox_attention v WHERE v.id=s.id AND v.state IN ('response_needed','unreviewed')))",[])?;Ok(())})
     }
 
     pub fn pending_focus_events(&self, focus: &str) -> Result<bool> {

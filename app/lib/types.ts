@@ -80,7 +80,7 @@ export interface TaskItem {
 export interface InboxItem {
   revision?: number;
   contextRevision?: number;
-  review?: {revision:number;state:string;reason:string;draft:string|null;resolvedBy:number|null};
+  review?: {revision:number;contextRevision?:number;draftRevision?:number|null;draftContextRevision?:number|null;state:string;reason:string;draft:string|null;resolvedBy:number|null};
   display?: {label: string; text: string; preview?: string};
   sourceUrl?: string;
   signal: Signal;

@@ -1507,6 +1507,7 @@ export default function Home() {
                 agents={snapshot.agents}
                 selected={routing}
                 onSelect={pick}
+                onAction={async(item,action,draft)=>{const review=await api.inboxAction(item,action,draft);reload();return review;}}
                 busy={busy}
                 cursor={inboxAt}
                 active={focus === "inbox"}

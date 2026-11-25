@@ -250,6 +250,7 @@ async fn serve() -> Result<()> {
         .route("/api/focus/inbox", get(focus_inbox).put(update_focus_inbox))
         .route("/api/intake/policies",get(intake_policies).put(set_intake_policy))
         .route("/api/intake/{id}",get(intake_item))
+        .route("/api/intake/{id}/action",post(inbox_action))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -622,6 +623,10 @@ struct RouteBody {
     signal: String,
     #[serde(flatten)]
     routing: Routing,
+}
+
+async fn inbox_action(State(hub):Hubs,Path(id):Path<String>,Json(body):Json<oxroute_core::store::InboxAction>)->Result<Json<oxroute_core::store::InboxReview>,Failed> {
+    hub.inbox_action(&id,&body).await?;Ok(Json(hub.store.inbox_review(&id)?))
 }
 
 async fn routing_recommendation(State(hub): Hubs, Path(id): Path<String>) -> Result<Json<Option<oxroute_core::recommendations::RoutingAdvice>>, Failed> {

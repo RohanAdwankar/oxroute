@@ -86,8 +86,8 @@ impl Store {
     }
     pub fn intake_context(&self)->Result<serde_json::Value> {
         let (pending,total)=self.read(|c|{
-            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)",[],|r|r.get(0))?;
-            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) ORDER BY at DESC,rowid DESC LIMIT 50")?;
+            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_attention v WHERE v.id=signals.id AND v.state IN ('response_needed','unreviewed')) AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)",[],|r|r.get(0))?;
+            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_attention v WHERE v.id=signals.id AND v.state IN ('response_needed','unreviewed')) AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) ORDER BY at DESC,rowid DESC LIMIT 50")?;
             let items=query.query_map([],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok((items,total))
         })?;
@@ -96,7 +96,7 @@ impl Store {
     }
     pub(crate) fn queue_intake_arrival(&self,signal_id:&str,signal:&Signal,sender:&str,revision:&str,activity:f64)->Result<bool> {
         if sender.is_empty(){return Ok(false)}
-        if !self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=?1 AND s.state='waiting' AND a.dismissed_by IS NULL)",[signal_id],|r|r.get::<_,bool>(0))?))? {return Ok(false)}
+        if !self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=?1 AND s.state='waiting' AND a.dismissed_by IS NULL AND EXISTS(SELECT 1 FROM inbox_attention v WHERE v.id=s.id AND v.state IN ('response_needed','unreviewed')))",[signal_id],|r|r.get::<_,bool>(0))?))? {return Ok(false)}
         let account=if signal.source==crate::inbox::SLACK {signal.conversation.split(':').next().unwrap_or_default()}else{&signal.conversation};
         let Some(policy)=self.intake_policy(&signal.source,account,sender)? else{return Ok(false)};
         if policy.mode!=IntakeMode::Immediate||activity<policy.effective_at{return Ok(false)}

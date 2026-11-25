@@ -178,6 +178,10 @@ pub fn start(hub: Arc<Hub>) {
             }
         });
     }
+    let routes=hub.clone();tokio::spawn(async move {loop {
+        if let Err(error)=routes.dispatch_inbox_routes().await {tracing::warn!(%error,"Internal Inbox route dispatch failed");}
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }});
     let advisor = hub.clone();
     tokio::spawn(async move {
         loop {

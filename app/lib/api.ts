@@ -116,6 +116,7 @@ export const api = {
     call<Record<string, string>>(`/api/agents/${encodeURIComponent(id)}/outputs?${new URLSearchParams({ first: String(first), last: String(last) })}`, { signal, priority: "high" }),
 
   inboxItem: (id: string) => call<InboxItem>(`/api/intake/${encodeURIComponent(id)}`),
+  inboxAction: (item:InboxItem,action:string,draft?:string,requestId=crypto.randomUUID()) => post<NonNullable<InboxItem["review"]>>(`/api/intake/${encodeURIComponent(item.signal.id)}/action`, {requestId,revision:item.revision??0,contextRevision:item.contextRevision??0,action,target:item.suggested,recommendationId:item.recommendation?.recommendationId,draft}),
   routingRecommendation: (signal: string) => post<InboxItem["recommendation"] | null>(`/api/routing-recommendations/${encodeURIComponent(signal)}`, {}),
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),

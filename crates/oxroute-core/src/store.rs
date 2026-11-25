@@ -24,7 +24,7 @@ mod inbox_display;
 mod inbox_arrivals;
 mod inbox_clear;
 mod inbox_review;
-pub use inbox_review::InboxReview;
+pub use inbox_review::{InboxReview,InboxAction,InboxRoute};
 pub(crate) use inbox_display::SlackName;
 mod intake;
 pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
@@ -268,7 +268,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     // Repair admitted legacy refresh times from the durable provider message, without a new arrival.
     conn.execute("UPDATE signals AS s SET at=m.at FROM inbox_messages m,inbox_arrivals a WHERE a.signal_id=s.id AND s.source='slack-inbox' AND m.source=s.source AND m.conversation=s.conversation AND m.external_id=s.external_id AND s.at!=m.at",[])?;
     Store::reconcile_intake_exclusions(conn)?;
-    conn.execute_batch("CREATE VIEW IF NOT EXISTS inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN 'resolved' WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id")?;
+    conn.execute_batch("CREATE VIEW IF NOT EXISTS inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state') IN ('answered','no_response_needed') THEN json_extract(r.value,'$.state') WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id")?;
     conn.execute("DELETE FROM kv WHERE key LIKE 'routing-advice:%' AND json_type(value,'$.attention') IS NULL",[])?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
@@ -1300,7 +1300,7 @@ impl Store {
     }
 
     pub fn pending_imports(&self)->Result<Vec<String>> {
-        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='inbox-review:'||signals.id AND json_extract(value,'$.revision')=signals.revision AND (json_extract(value,'$.resolvedBy') IS NOT NULL OR json_extract(value,'$.state') IN ('answered','no_response_needed'))) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
 
     pub fn save_routing_advice(&self,id:&str,expected:i64,context:&serde_json::Value,choice:crate::recommendations::RoutePrediction,revision:i64)->Result<Option<crate::recommendations::RoutingAdvice>> {
@@ -1313,6 +1313,12 @@ impl Store {
             tx.execute("INSERT INTO recommendations(domain,owner,context,offered,prompt_revision) VALUES (?1,?2,?3,?4,?5)",params![crate::recommendations::ROUTING,id,context.to_string(),serde_json::to_string(&choice)?,revision])?;
             let advice=crate::recommendations::RoutingAdvice {recommendation_id:tx.last_insert_rowid(),choice};
             tx.execute("INSERT INTO kv(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("routing-advice:{id}"),serde_json::to_string(&advice)?])?;
+            let saved:Option<String>=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("inbox-review:{id}")],|r|r.get(0)).optional()?;
+            let mut review=saved.map(|s|serde_json::from_str::<InboxReview>(&s)).transpose()?.unwrap_or_default();
+            if review.revision!=expected||review.resolved_by.is_none() {
+                review.revision=expected;review.context_revision=source_revision;review.state=advice.choice.attention.clone();review.reason=advice.choice.reason.clone();review.resolved_by=None;
+                tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-review:{id}"),serde_json::to_string(&review)?])?;
+            }
             tx.commit()?;Ok(Some(advice))
         })
     }
