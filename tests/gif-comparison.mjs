@@ -1,9 +1,14 @@
 // Real browser pixels, unequal animation lengths and delayed asset readiness.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFile} from 'node:fs/promises';
 import {chromium} from 'playwright';
-const fixtures=process.env.REAL_GIFS?await Promise.all(['before','after'].map(async side=>(await readFile(`/tmp/oxroute-comparison-${side}.gif`)).toString('base64'))):JSON.parse(execFileSync('uv',['run','--no-project','--with','pillow','python','-c',`
+// Real-source checks bind both sides to the current review snapshot, never a stale download name.
+const source=process.env.TEST_REVIEW_URL;
+const readSource=async()=>{const response=await fetch(source);assert.ok(response.ok);return response.json();};
+const reviewed=source?await readSource():null;
+const file=reviewed?.snapshot.files.find(file=>file.path.endsWith('.gif')&&file.image?.before&&file.image?.after);
+if(source)assert.ok(file,'The source review contains both GIF revisions');
+const fixtures=source?await Promise.all(['before','after'].map(async side=>{const url=new URL(source);url.pathname+='/image';url.search=new URLSearchParams({path:file.path,side}).toString();const response=await fetch(url);assert.ok(response.ok);const bytes=Buffer.from(await response.arrayBuffer());console.log(JSON.stringify({side,bytes:bytes.length,snapshot:reviewed.snapshot.headCommit}));return bytes.toString('base64');})):JSON.parse(execFileSync('uv',['run','--no-project','--with','pillow','python','-c',`
 from PIL import Image
 import io,json,base64
 result=[]
@@ -30,7 +35,7 @@ try{
  await container.waitFor();await container.getByRole('alert').waitFor();await container.getByRole('button',{name:'Retry comparison',exact:true}).click();await page.waitForTimeout(350);
  assert.equal(await container.getByRole('img').count(),0,'Neither animation starts while its peer is still loading');
  release();await container.getByRole('img').first().waitFor();await container.getByRole('img').last().waitFor();
- if(!process.env.REAL_GIFS){
+ if(!source){
  const samples=await container.evaluate(async element=>{
   const samples=[],start=performance.now();
   await new Promise(done=>{const sample=()=>{const t=performance.now()-start;const colors=[...element.querySelectorAll('canvas[role=img]')].map(canvas=>[...canvas.getContext('2d').getImageData(0,0,1,1).data].slice(0,3).join(','));samples.push({t,colors});if(t<1450)requestAnimationFrame(sample);else done();};sample();});return samples;
@@ -44,7 +49,7 @@ try{
  await container.getByRole('button',{name:'Replay comparison',exact:true}).dblclick();
  await page.waitForFunction(()=>{const canvases=[...document.querySelectorAll('canvas[role=img]')];return canvases.length===2&&canvases.map(c=>[...c.getContext('2d').getImageData(0,0,1,1).data].slice(0,3).join(',')).join(';')==='255,0,0;0,0,255';});
  }
- if(process.env.REAL_GIFS){
+ if(source){
   assert.deepEqual(await container.locator('canvas').evaluateAll(items=>items.map(c=>[c.width,c.height])),[[1280,720],[1280,720]]);await page.waitForTimeout(2500);
   if(process.env.ACTUAL_LOOP){
    const hashes=()=>container.locator('canvas').evaluateAll(async items=>Promise.all(items.map(async canvas=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data))].join(','))));
@@ -53,5 +58,6 @@ try{
  }
  for(const width of[1280,390]){await page.setViewportSize({width,height:900});if(process.env.SCREENSHOT)await page.screenshot({path:`${process.env.SCREENSHOT}-${width}.png`});}
  await page.reload();await container.getByRole('img').first().waitFor();await container.getByRole('img').last().waitFor();
+ if(source)assert.deepEqual((await readSource()).snapshot,reviewed.snapshot,'Source snapshot remains exact through playback');
  console.log('Both GIFs wait for readiness, retain individual frame timing, hold the shorter final frame and replay jointly; shared replay and desktop/mobile rendering pass.');
 }finally{await browser.close();}
