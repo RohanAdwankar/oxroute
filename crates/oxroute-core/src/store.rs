@@ -1350,7 +1350,7 @@ impl Store {
 
     pub fn inbox_version(&self,id:&str)->Result<Option<(InboxItem,i64)>> {
         let mut item=self.with(|c| Ok(c.query_row("SELECT * FROM signals WHERE id=?1",[id],|row|Ok((read_item(row)?,row.get("revision")?))).optional()?))?;
-        if let Some((item,_))=&mut item {self.decorate_inbox(std::slice::from_mut(item))?;}Ok(item)
+        if let Some((item,_))=&mut item {self.decorate_inbox(std::slice::from_mut(item),true)?;}Ok(item)
     }
 
     pub fn routing_text(&self,signal:&Signal,budget:usize)->Result<String> {
@@ -1373,7 +1373,7 @@ impl Store {
             Ok(c.query_row("SELECT * FROM signals WHERE id = ?1", params![id], read_item)
                 .optional()?)
         })?;
-        if let Some(item)=&mut item {self.decorate_inbox(std::slice::from_mut(item))?;}Ok(item)
+        if let Some(item)=&mut item {self.decorate_inbox(std::slice::from_mut(item),true)?;}Ok(item)
     }
 
     pub fn inbox(&self, limit: usize) -> Result<Vec<InboxItem>> {

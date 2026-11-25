@@ -571,7 +571,7 @@ mod tests {
         hub.store.set("inbox-events-error","Previous push transport disconnected")?;
         let status=statuses(&hub).into_iter().find(|status|status.source==SLACK).unwrap();assert!(status.configured);assert!(status.error.is_none(),"Optional push transport cannot turn configured polling into missing read access");
         assert!(slack(&hub,&Reader::new(&base,token)?).await.is_err(),"The discovery coverage gap remains visible");
-        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(!items[0].signal.text.contains("Context from the owner"));assert!(items[0].display.as_ref().unwrap().text.contains("Context from the owner"));
+        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(!items[0].signal.text.contains("Context from the owner"));assert!(hub.store.inbox_item(&items[0].signal.id)?.unwrap().display.unwrap().text.contains("Context from the owner"));
         assert!(hub.store.get("inbox-cursor:slack-inbox:team:owner:D-fixture-source")?.is_some(),"Known history checkpoints advance independently of missing listing access");
         let coverage:Value=serde_json::from_str(&hub.store.get("inbox-coverage:slack")?.unwrap())?;assert_eq!(coverage["enumerated"],false);assert_eq!(coverage["knownConversations"],1);assert!(coverage["forwardHistoryThrough"].is_null());assert!(!coverage["gaps"].as_array().unwrap().is_empty());
         assert_eq!(hub.store.focus_inbox(Some("slack"),None)?.items.len(),1,"Configured DM history retains response reconciliation");
@@ -669,13 +669,7 @@ mod tests {
         assert!(items
             .iter()
             .all(|i| i.state == crate::model::InboxState::Waiting));
-        assert!(items
-            .iter()
-            .find(|i| i.signal.source == SLACK)
-            .unwrap()
-            .display.as_ref().unwrap()
-            .text
-            .contains("Context from the owner"));
+        assert!(hub.store.inbox_item(&items.iter().find(|i|i.signal.source==SLACK).unwrap().signal.id)?.unwrap().display.unwrap().text.contains("Context from the owner"));
         assert!(
             hub.store.unarchived_agents()?.is_empty(),
             "Import does not start an agent even in automatic mode"
@@ -729,7 +723,7 @@ mod tests {
                 socket.send(Message::Text(json!({"envelope_id":id,"payload":{"event":event}}).to_string())).await.unwrap();
                 let ack=socket.next().await.unwrap().unwrap();
                 assert_eq!(serde_json::from_str::<Value>(ack.to_text().unwrap()).unwrap()["envelope_id"],id);
-                if number<2 {assert!(persisted.store.inbox(10).unwrap().iter().any(|item|item.display.as_ref().unwrap().text.contains(if number==0 {"A new direct conversation"}else{"Additional context"})),"Acknowledged source data must already be durable as arrival or reply context");}
+                if number<2 {assert!(persisted.store.inbox(10).unwrap().iter().any(|item|persisted.store.inbox_item(&item.signal.id).unwrap().unwrap().display.unwrap().text.contains(if number==0 {"A new direct conversation"}else{"Additional context"})),"Acknowledged source data must already be durable as arrival or reply context");}
             }
             socket.close(None).await.unwrap();
         });
@@ -745,7 +739,7 @@ mod tests {
             .into_iter()
             .find(|item| item.signal.conversation.ends_with(":direct"))
             .unwrap();
-        assert!(!direct.signal.text.contains("Additional context"));assert!(direct.display.as_ref().unwrap().text.contains("Additional context"));
+        assert!(!direct.signal.text.contains("Additional context"));assert!(hub.store.inbox_item(&direct.signal.id)?.unwrap().display.unwrap().text.contains("Additional context"));
         assert_eq!(
             hub.store.inbox(10)?.len(),
             3,

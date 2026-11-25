@@ -11,7 +11,7 @@ impl Store {
             let items=query.query_map(params![through,limit as i64],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;drop(query);
             tx.commit()?;Ok((items,through,waiting))
         })?;
-        self.decorate_inbox(&mut items)?;Ok((items,through,waiting))
+        self.decorate_inbox(&mut items,false)?;Ok((items,through,waiting))
     }
 
     pub fn clear_inbox(&self,request:&str,through:i64,focus:&str)->Result<usize> {

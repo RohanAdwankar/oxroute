@@ -354,7 +354,8 @@ mod tests {
         assert!(
             !items[0].signal.text.contains("Earlier source context")
                 && items[0].signal.text.contains("New source follow-up")
-                && items[0].display.as_ref().unwrap().text.contains("Earlier source context")
+                && items[0].display.as_ref().unwrap().text.is_empty()
+                && store.inbox_item(&items[0].signal.id)?.unwrap().display.unwrap().text.contains("Earlier source context")
         );
         drop(store);
         std::fs::remove_dir_all(root)?;

@@ -11,6 +11,9 @@ try{
  await page.route('**/api/**',route=>route.fulfill({json:[]}));
  await page.route('**/api/version',route=>route.continue());
  await page.route('**/api/state',route=>route.fulfill({json:{mode:'ask',agents:[],archived:[],messages:{},tasks:[],taskNotes:[],inbox:items,inboxWaiting:items.length,inboxClearThrough:25,paneLinks:{},quoteThreads:[],tags:{},boards:[],sources:[],models:[],backends:[]}}));
+ const contexts=new Map(items.map(item=>[item.signal.id,item.display.text]));let contextReads=0;
+ for(const item of items)item.display.text="";
+ await page.route('**/api/intake/*',route=>{contextReads++;const id=new URL(route.request().url()).pathname.split('/').at(-1),item=items.find(item=>item.signal.id===id);return route.fulfill({json:{...item,display:{...item.display,text:contexts.get(id)}}});});
  const session=await page.context().newCDPSession(page);
  for(const width of [1280,390])for(const zoom of [.8,1,1.25]){
   // Browser zoom changes effective CSS viewport and device pixel ratio together.
@@ -26,6 +29,7 @@ try{
   if(width===1280&&zoom===1){const divider=page.getByRole('separator',{name:'resize inbox',exact:true});const initial=await divider.boundingBox();await page.mouse.move(initial.x+2,initial.y+initial.height/2);await page.mouse.down();await page.mouse.move(initial.x-30,initial.y+initial.height/2);await page.mouse.up();assert.ok((await divider.boundingBox()).x<initial.x,'Existing sidebar resizing is retained');}
   await inbox.locator('[data-inbox-item]').last().click();await inbox.getByRole('button',{name:'collapse inbox',exact:true}).click();await page.getByLabel('Conversation context',{exact:true}).getByText('Earlier relevant context',{exact:false}).waitFor();assert.equal(await page.getByRole('link',{name:'Open source message',exact:true}).getAttribute('href'),'https://example.invalid/source');
  }
+ assert.ok(contextReads>0,'Opening an arrival retrieves its retained full conversation separately from list previews');
  items=[];await page.goto(process.env.TEST_URL);const button=page.getByRole('button',{name:'Show or hide the inbox',exact:true});await button.click();await page.getByText('New incoming messages and direct mentions appear here.',{exact:true}).waitFor();assert.ok(await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isDisabled());
  if(process.env.SCREENSHOT)await page.screenshot({path:`${process.env.SCREENSHOT}-empty.png`});
  assert.deepEqual(errors,[]);console.log('Inbox desktop/narrow rendering passes at 80%, 100% and 125% browser zoom metrics: readable source names, accurate source time, keyboard-reachable Clear all, preserved resizing/context/source navigation, empty state and removed manual input.');

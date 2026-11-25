@@ -115,6 +115,7 @@ export const api = {
   toolOutputs: (id: string, first: number, last: number, signal: AbortSignal) =>
     call<Record<string, string>>(`/api/agents/${encodeURIComponent(id)}/outputs?${new URLSearchParams({ first: String(first), last: String(last) })}`, { signal, priority: "high" }),
 
+  inboxItem: (id: string) => call<InboxItem>(`/api/intake/${encodeURIComponent(id)}`),
   routingRecommendation: (signal: string) => post<InboxItem["recommendation"] | null>(`/api/routing-recommendations/${encodeURIComponent(signal)}`, {}),
   routeExisting: (signal: string, agentIds: string[]) =>
     post<Snapshot>("/api/route", { signal, action: "existing", agentIds }),

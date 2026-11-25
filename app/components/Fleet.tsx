@@ -3,6 +3,7 @@
 import {useRecommendationExposure} from "../lib/recommendation-exposure";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import {api} from "../lib/api";
 import { clip, since } from "../lib/format";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -68,6 +69,16 @@ export function Fleet({
   // belongs to exactly one.
   const recommendationElement = useRef<HTMLDivElement>(null);
   useRecommendationExposure(routing?.recommendation?.recommendationId, recommendationElement);
+  const [context,setContext]=useState<{id:string;text?:string;error?:string}|null>(null);
+  const [contextRetry,setContextRetry]=useState(0);
+  const contextId=routing&&["outlook-inbox","slack-inbox"].includes(routing.signal.source)?routing.signal.id:null;
+  useEffect(()=>{
+    if(!contextId||routing?.display?.text)return;
+    let live=true;setContext({id:contextId});
+    api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextId,text:item.display?.text||item.signal.text});},()=>{if(live)setContext({id:contextId,error:"Could not load conversation."});});
+    return()=>{live=false;};
+  },[routing,contextId,contextRetry]);
+  const contextText=routing?.display?.text||(context?.id===contextId?context.text:undefined);
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
   const [order,setOrder]=useState<string[]|null>(null);
@@ -117,7 +128,7 @@ export function Fleet({
         )}
       </div>
 
-      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{routing.display?.text ?? routing.signal.text}</div>}
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextId&&context.error?<span>{context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>:"Loading conversation…")}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

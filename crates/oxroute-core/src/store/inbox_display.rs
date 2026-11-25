@@ -39,7 +39,7 @@ impl Store {
         })
     }
 
-    pub(crate) fn decorate_inbox(&self,items:&mut[InboxItem])->Result<()> {
+    pub(crate) fn decorate_inbox(&self,items:&mut[InboxItem],context:bool)->Result<()> {
         self.read(|c|{
             let mut names=HashMap::new();
             let mut channels=HashMap::new();
@@ -55,8 +55,8 @@ impl Store {
                     channels.insert(account.clone(),value.map(|value|serde_json::from_str::<serde_json::Value>(&value)).transpose()?.unwrap_or_default());
                 }
                 let profiles=&names[*team];let metadata=&channels[&account][*channel];
-                let mut query=c.prepare("SELECT author,text FROM inbox_messages WHERE source=?1 AND conversation=?2 AND thread_key=?3 ORDER BY at,external_id")?;
-                let messages=query.query_map(params![signal.source,signal.conversation,signal.thread_key],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                let mut query=c.prepare("SELECT author,CASE WHEN ?4 THEN text ELSE '' END FROM inbox_messages WHERE source=?1 AND conversation=?2 AND thread_key=?3 ORDER BY at,external_id")?;
+                let messages=query.query_map(params![signal.source,signal.conversation,signal.thread_key,context],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
                 let display_name=|id:&str|profiles.get(id).map(|profile|profile.name.as_str()).filter(|name|!name.is_empty()).unwrap_or(if id==*owner {"You"}else{"Participant"}).to_string();
                 let source_text=|text:&str|display_mentions(text,|id|display_name(id));
                 let peers=messages.iter().map(|(author,_)|author.as_str()).filter(|author|!author.is_empty()&&*author!=*owner).fold(Vec::new(),|mut peers,author|{if !peers.contains(&author) {peers.push(author);}peers});
@@ -70,7 +70,7 @@ impl Store {
                         .or_else(||(peers.len()==1&&profiles.get(peers[0]).is_some_and(|profile|!profile.name.is_empty())).then(||display_name(peers[0])))
                         .unwrap_or_else(||"Direct message".into())
                 }else {metadata["name"].as_str().filter(|name|!name.is_empty()&&*name!=*channel).unwrap_or("Channel mention").into()};
-                let text=if messages.is_empty(){signal.text.clone()}else{messages.iter().map(|(author,text)|format!("{}: {}",display_name(author),source_text(text))).collect::<Vec<_>>().join("\n\n")};
+                let text=if !context{String::new()}else if messages.is_empty(){signal.text.clone()}else{messages.iter().map(|(author,text)|format!("{}: {}",display_name(author),source_text(text))).collect::<Vec<_>>().join("\n\n")};
                 item.display=Some(crate::model::InboxDisplay{preview:format!("{}: {}",display_name(&signal.author),source_text(&signal.text)),label,text});
             }
             Ok(())
