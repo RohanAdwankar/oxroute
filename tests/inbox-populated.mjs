@@ -54,12 +54,14 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
   if(screenshots)await mkdir(screenshots,{recursive:true});
   const session=await page.context().newCDPSession(page);
   for(const width of [1280,390])for(const zoom of [.8,1,1.25]){
+   await page.setViewportSize({width:Math.round(width/zoom),height:Math.round(900/zoom)});
    await session.send('Emulation.setDeviceMetricsOverride',{width:Math.round(width/zoom),height:Math.round(900/zoom),deviceScaleFactor:zoom,mobile:false});
    await choose(0);await content(0);await choose(1);await content(1);
    await page.keyboard.press('Escape');await choose(1);await content(1);
    if(items[1].sourceUrl)assert.equal(await page.getByRole('link',{name:'Open source message',exact:true}).getAttribute('href'),items[1].sourceUrl);
-   const box=await context.boundingBox();assert.ok(box&&box.width>0&&box.height>0);
-   if(screenshots)await page.screenshot({path:`${screenshots}/populated-${width}-${zoom}.png`});
+   const box=await context.boundingBox(),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
+   assert.ok(box&&box.width>0&&box.height>0&&box.x>=0&&box.x+box.width<=viewport.width+.1,'Opened context fits the actual viewport');
+   if(screenshots)await page.screenshot({path:`${screenshots}/populated-${width}-${zoom}.png`,clip:{x:0,y:0,...viewport},captureBeyondViewport:false});
   }
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({populatedInboxItems:snapshot.inbox.length,sourceContextLengths:details.map(item=>text(item).length),openSwitchReturnRetry:true,lateResponsesIsolated:true,browserWritesForwarded:0,desktopNarrowZoom:true}));
