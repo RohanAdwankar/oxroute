@@ -172,18 +172,18 @@ export function Fleet({
             onClick={onSend}
             aria-label={ticked.size === 0 ? "pick an agent" : `send to ${ticked.size} agent${ticked.size === 1 ? "" : "s"}`}
             title={ticked.size === 0 ? "Pick an agent" : `Send to ${ticked.size} agent${ticked.size === 1 ? "" : "s"}`}
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-[3px] bg-ink text-paper disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="send" />
           </button>
-          <span className="flex items-stretch">
+          <span className="flex min-w-0 items-stretch">
             <button
               type="button"
               disabled={busy || !chosen}
               onClick={() => onSpawn(chosen)}
               aria-label="start a new agent"
               title="Start a new agent"
-              className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
+              className="relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-l-[3px] border border-edge text-ink disabled:opacity-40"
             >
               <Icon name="plus" />
             </button>
@@ -192,7 +192,7 @@ export function Fleet({
               onChange={(event) => setModel(event.target.value)}
               disabled={busy}
               aria-label="model for the new agent"
-              className="tnum cursor-pointer rounded-r-[3px] border border-l-0 border-edge bg-wash px-3 text-[12.5px] text-ink outline-none disabled:opacity-40"
+              className="tnum min-w-0 cursor-pointer rounded-r-[3px] border border-l-0 border-edge bg-wash px-3 text-[12.5px] text-ink outline-none disabled:opacity-40"
             >
               {models.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -207,7 +207,7 @@ export function Fleet({
             onClick={onDiscard}
             aria-label="discard"
             title="Discard"
-            className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
+            className="relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-rule text-mid hover:text-ink disabled:opacity-40"
           >
             <Icon name="discard" />
           </button>

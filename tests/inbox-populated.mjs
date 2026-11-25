@@ -61,6 +61,9 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    if(items[1].sourceUrl)assert.equal(await page.getByRole('link',{name:'Open source message',exact:true}).getAttribute('href'),items[1].sourceUrl);
    const box=await context.boundingBox(),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
    assert.ok(box&&box.width>0&&box.height>0&&box.x>=0&&box.x+box.width<=viewport.width+.1,'Opened context fits the actual viewport');
+   for(const control of await context.locator('..').locator('footer button,footer select').all()){
+    const bounds=await control.boundingBox();assert.ok(bounds&&bounds.width>=16&&bounds.x>=0&&bounds.x+bounds.width<=viewport.width+.1,'Routing controls remain visible and usable in the actual viewport');
+   }
    if(screenshots)await page.screenshot({path:`${screenshots}/populated-${width}-${zoom}.png`,clip:{x:0,y:0,...viewport},captureBeyondViewport:false});
   }
   assert.deepEqual(errors,[]);
