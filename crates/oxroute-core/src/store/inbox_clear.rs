@@ -6,8 +6,8 @@ impl Store {
         let (mut items,through,waiting)=self.read(|c|{
             let tx=c.unchecked_transaction()?;
             let through=tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM inbox_arrivals",[],|r|r.get::<_,i64>(0))?;
-            let waiting=tx.query_row("SELECT count(*) FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id WHERE s.state='waiting' AND a.sequence<=?1",[through],|r|r.get::<_,usize>(0))?;
-            let mut query=tx.prepare("SELECT s.* FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id WHERE a.sequence<=?1 ORDER BY (s.state='waiting') DESC,s.at DESC,s.rowid DESC LIMIT ?2")?;
+            let waiting=tx.query_row("SELECT count(*) FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE v.state='response_needed' AND a.sequence<=?1",[through],|r|r.get::<_,usize>(0))?;
+            let mut query=tx.prepare("SELECT s.* FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE a.sequence<=?1 ORDER BY CASE v.state WHEN 'response_needed' THEN 3 WHEN 'unreviewed' THEN 2 ELSE 0 END DESC,s.at DESC,s.rowid DESC LIMIT ?2")?;
             let items=query.query_map(params![through,limit as i64],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;drop(query);
             tx.commit()?;Ok((items,through,waiting))
         })?;

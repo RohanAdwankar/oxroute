@@ -78,6 +78,9 @@ export interface TaskItem {
 }
 
 export interface InboxItem {
+  revision?: number;
+  contextRevision?: number;
+  review?: {revision:number;state:string;reason:string;draft:string|null;resolvedBy:number|null};
   display?: {label: string; text: string; preview?: string};
   sourceUrl?: string;
   signal: Signal;
@@ -86,7 +89,7 @@ export interface InboxItem {
   agentIds: string[];
   /** The agent this thread is already wired to. Pre-ticked when routing. */
   suggested: string | null;
-  recommendation?: {recommendationId: number; action: "existing" | "spawn" | "discard"; agentIds: string[]; reason: string};
+  recommendation?: {attention?:string;recommendationId: number; action: "existing" | "spawn" | "discard"; agentIds: string[]; reason: string};
 }
 
 export interface Entry {

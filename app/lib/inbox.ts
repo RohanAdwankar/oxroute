@@ -11,11 +11,14 @@ export type InboxRow =
   | { kind: "item"; item: InboxItem }
   | { kind: "band"; count: number };
 
+export const attention = (item:InboxItem) => item.state!=="waiting"?"routed":item.review?.state??(["slack-inbox","outlook-inbox"].includes(item.signal.source)?"unreviewed":"response_needed");
+export const needsAttention = (item:InboxItem) => ["response_needed","unreviewed"].includes(attention(item));
+
 export function inboxRows(items: InboxItem[], showDone: boolean): InboxRow[] {
-  const waiting = items.filter((item) => item.state === "waiting");
-  const done = items.filter((item) => item.state !== "waiting");
+  const waiting = items.filter(needsAttention);
+  const done = items.filter(item=>!needsAttention(item));
   return [
-    ...waiting.map((item): InboxRow => ({ kind: "item", item })),
+    ...waiting.sort((a,b)=>Number(attention(b)==="response_needed")-Number(attention(a)==="response_needed")).map((item): InboxRow => ({ kind: "item", item })),
     ...(done.length > 0 ? [{ kind: "band", count: done.length } as InboxRow] : []),
     ...(showDone ? done.map((item): InboxRow => ({ kind: "item", item })) : []),
   ];

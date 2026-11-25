@@ -44,6 +44,7 @@ impl Store {
             let mut names=HashMap::new();
             let mut channels=HashMap::new();
             for item in items {
+                Self::decorate_inbox_review(c,item)?;
                 let signal=&item.signal;
                 if signal.source!=crate::inbox::SLACK {continue;}
                 let parts=signal.conversation.split(':').collect::<Vec<_>>();

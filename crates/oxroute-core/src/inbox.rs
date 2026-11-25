@@ -33,6 +33,8 @@ pub struct Status {
     pub source: String,
     pub configured: bool,
     pub last_sync: Option<f64>,
+    #[serde(default)]
+    pub partial:bool,
     pub error: Option<String>,
 }
 
@@ -56,6 +58,13 @@ pub fn statuses(hub: &Hub) -> Vec<Status> {
             .unwrap_or_default();
         status.source = source.into();
         status.configured = path.is_some();
+        if source==SLACK {
+            if let Some(coverage)=hub.store.get("inbox-coverage:slack").ok().flatten().and_then(|s|serde_json::from_str::<Value>(&s).ok()) {
+                status.partial=coverage["historiesRead"].as_u64().is_some_and(|n|n>0)&&coverage["gaps"].as_array().is_some_and(|g|!g.is_empty());
+                if coverage["historiesRead"].as_u64().is_some_and(|n|n>0) {status.last_sync=coverage["checkedAt"].as_f64();}
+                if let Some(gaps)=coverage["gaps"].as_array().filter(|g|!g.is_empty()) {status.error=Some(gaps.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; "));}
+            }
+        }
         if source == SLACK && status.configured && status.error.is_none() && hub.config.inbox.slack_app_token_file.is_some() {
             status.error = hub.store
                     .get("inbox-events-error")

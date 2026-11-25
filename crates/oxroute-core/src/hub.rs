@@ -1095,7 +1095,7 @@ impl Hub {
         let lock = self.lock_for(&format!("routing-advice:{signal_id}")).await;
         let _held = lock.lock().await;
         let (item,revision) = self.store.inbox_version(signal_id)?.context("no such inbox item")?;
-        if item.state != InboxState::Waiting || self.store.bound_agent(&item.signal.source, &item.signal.conversation, &item.signal.thread_key)?.is_some() { return Ok(None); }
+        if item.state != InboxState::Waiting { return Ok(None); }
         let agents = self.store.unarchived_agents()?;
         let available: Vec<_> = agents.iter().map(|agent| agent.id.clone()).collect();
         if let Some(advice) = self.routing_advice(signal_id)? {
@@ -1104,7 +1104,7 @@ impl Hub {
         let tags = self.store.all_tags()?;
         let roster: Vec<_> = agents.iter().map(|agent| serde_json::json!({"id":agent.id,"name":agent.name,"status":agent.status,"tags":tags.get(&agent.id)})).collect();
         let text=if crate::inbox::imported(&item.signal.source) {self.store.routing_text(&item.signal,12000)?}else{recommendations::recent_text(&item.signal.text,12000)};
-        let context = serde_json::json!({"item":{"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":text},"agents":roster});
+        let context = serde_json::json!({"item":{"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"authenticatedUser":item.signal.conversation.split(':').nth(1),"sourceContext":text},"contextRevision":item.context_revision,"agents":roster});
         let guidance = self.store.recommendation_guidance(recommendations::ROUTING)?;
         let response = self.harness(Backend::Codex).metadata(&recommendations::apply(&recommendations::routing_prompt(&context), &guidance), recommendations::routing_schema(), &self.config.workspace).await?;
         let available: Vec<_> = self.store.unarchived_agents()?.into_iter().map(|agent| agent.id).collect();
@@ -3476,9 +3476,9 @@ impl Hub {
                 )
                 .ok()
                 .flatten();
-            if item.state == InboxState::Waiting && item.suggested.is_none() {
+            if item.state == InboxState::Waiting {
                 item.recommendation = self.routing_advice(&item.signal.id)?;
-                if let Some(advice) = &item.recommendation { item.suggested = advice.choice.agent_ids.first().cloned(); }
+                if item.suggested.is_none() {if let Some(advice) = &item.recommendation { item.suggested = advice.choice.agent_ids.first().cloned(); }}
             }
         }
         let quote_threads = self.store.quote_threads()?;

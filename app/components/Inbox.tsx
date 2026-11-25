@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef } from "react";
 
 import { clip, clock } from "../lib/format";
-import type { InboxRow } from "../lib/inbox";
+import {attention, type InboxRow} from "../lib/inbox";
 import type { Agent, InboxItem } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -30,7 +30,7 @@ export function Inbox({
   onCollapse,
 }: {
   items: InboxItem[];
-  connectors?: {source: string; configured: boolean; lastSync: number | null; error: string | null}[];
+  connectors?: {source: string; configured: boolean; lastSync: number | null; error: string | null;partial?:boolean}[];
   /// The column as it is drawn; the cursor counts these.
   rows: InboxRow[];
   onShowDone: () => void;
@@ -46,18 +46,19 @@ export function Inbox({
   active: boolean;
   onCollapse: () => void;
 }) {
-  const waiting = waitingCount ?? items.filter((item) => item.state === "waiting").length;
+  const waiting = waitingCount ?? items.filter(item=>attention(item)==="response_needed").length;
+  const unreviewed=items.filter(item=>attention(item)==="unreviewed").length;
   const name = (id: string) => agents.find((a) => a.id === id)?.name ?? "an agent";
 
   return (
     <aside className="flex h-full w-full flex-col bg-card">
-      <div className="flex h-[var(--bar)] shrink-0 items-center border-b border-rule px-[18px]">
+      <div className="flex min-w-0 h-[var(--bar)] shrink-0 items-center border-b border-rule px-[18px]">
         <span className="text-[14px] font-semibold">Inbox</span>
-        <span className="flex-1" />
+        <span className="min-w-1 flex-1" />
         <span className="text-[11.5px] text-faint">
-          {waiting === 0 ? "all clear" : `${waiting} waiting`}
+          {waiting ? `${waiting} waiting` : unreviewed ? `${unreviewed} to review` : "all clear"}
         </span>
-        <button type="button" onClick={onClear} disabled={busy || waiting === 0} aria-label="Clear all inbox arrivals" title="Clear all" className="ml-3 cursor-pointer text-faint hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="discard" size={14} /></button>
+        <button type="button" onClick={onClear} disabled={busy || !items.some(item=>item.state==="waiting")} aria-label="Clear all inbox arrivals" title="Clear all" className="ml-3 cursor-pointer text-faint hover:text-ink disabled:cursor-default disabled:opacity-30"><Icon name="discard" size={14} /></button>
         <button
           type="button"
           onClick={onCollapse}
@@ -69,7 +70,7 @@ export function Inbox({
         </button>
       </div>
 
-      <div className="quiet-scroll flex-1 overflow-y-auto">
+      <div className="quiet-scroll min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         {items.length === 0 && (
           <p className="px-[18px] py-6 text-[11.5px] text-faint">
             New incoming messages and direct mentions appear here.
@@ -80,13 +81,13 @@ export function Inbox({
           row.kind === "band" ? (
             <Band
               key="done"
-              label={`Done · ${row.count}`}
+              label={`Handled · ${row.count}`}
               focused={active && index === cursor}
               onClick={onShowDone}
             />
           ) : (
             <Fragment key={`${row.item.signal.id}-${index}`}>
-              {index === 0 && <Band label="Waiting on you" strong />}
+              {(index===0||rows[index-1].kind!=="item"||attention((rows[index-1] as {kind:"item";item:InboxItem}).item)!==attention(row.item))&&<Band label={attention(row.item)==="response_needed"?"Waiting on you":attention(row.item)==="unreviewed"?"To review":"Handled"} strong/>}
               <Row
                 item={row.item}
                 selected={selected === row.item.signal.id}
@@ -99,7 +100,7 @@ export function Inbox({
         )}
       </div>
       {connectors?.filter(source => source.configured).map(source => <div key={source.source} className="px-[18px] py-1 text-[11px] text-faint" title={source.error ?? "Read-only; waiting for your routing decision"}>
-        {source.source === "outlook-inbox" ? "Outlook" : "Slack"} · {source.error ? "sync interrupted" : source.lastSync ? "synced" : "loading"}
+        {source.source === "outlook-inbox" ? "Outlook" : "Slack"} · {source.error ? ((source as {partial?:boolean}).partial ? "partial sync" : "sync interrupted") : source.lastSync ? "synced" : "loading"}
       </div>)}
     </aside>
   );
@@ -164,7 +165,8 @@ function Row({
 
   // What happened to it, in the same slot whether it is a question or an
   // answer, so the eye lands in one place down the column.
-  const footer = waiting
+  const status=attention(item);
+  const footer = status==="resolved"?"Resolved":status==="answered"?"Answered in source":status==="no_response_needed"?"No response needed":waiting
     ? item.suggested
       ? `→ ${name(item.suggested)}`
       : item.recommendation?.action === "spawn" ? "→ New agent" : item.recommendation?.action === "discard" ? "→ Dismiss" : "not routed yet"
@@ -193,7 +195,7 @@ function Row({
             : "border-l-transparent hover:bg-paper",
       ].join(" ")}
     >
-      <span className="flex items-center gap-[7px]">
+      <span className="flex min-w-0 max-w-full items-center gap-[7px]">
         <time dateTime={new Date(signal.at * 1000).toISOString()} title={new Date(signal.at * 1000).toLocaleString()} className="shrink-0 tnum text-[9.5px] text-faint">{new Date(signal.at * 1000).toDateString() === new Date().toDateString() ? clock(signal.at) : new Date(signal.at * 1000).toLocaleDateString(undefined, {month:"short", day:"numeric"})}</time>
         <span className="shrink-0 tnum rounded-[2px] border border-rule px-[5px] text-[9.5px] text-mid">
           {signal.source === "outlook-inbox" ? "Outlook" : signal.source === "slack-inbox" ? "Slack" : signal.source}
@@ -203,11 +205,11 @@ function Row({
         )}
       </span>
 
-      <span className={`text-[11.5px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
+      <span className={`min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-[11.5px] leading-[1.4] ${waiting ? "text-ink" : "text-faint"}`}>
         {signal.text ? clip(item.display?.preview ?? signal.text, 130) : `${signal.attachments.length} attachment(s)`}
       </span>
 
-      <span title={waiting ? item.recommendation?.reason : undefined} className={`tnum text-[10px] ${footerTone}`}>{footer}</span>
+      <span title={waiting ? item.recommendation?.reason : undefined} className={`max-w-full break-words [overflow-wrap:anywhere] tnum text-[10px] ${footerTone}`}>{footer}</span>
     </button>
   );
 }

@@ -17,7 +17,9 @@ pub(super) fn continuation(page: &Value) -> Result<String> {
 }
 
 pub(super) async fn poll(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
-    hub.store.set("inbox-coverage:slack",&serde_json::json!({"checkedAt":now(),"inProgress":true,"gaps":["Collection has not finished; no new source watermark"]}).to_string())?;
+    let mut previous:Value=hub.store.get("inbox-coverage:slack")?.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_else(||serde_json::json!({}));
+    previous["inProgress"]=true.into();previous["startedAt"]=now().into();
+    hub.store.set("inbox-coverage:slack",&previous.to_string())?;
     let result = poll_at(hub, reader, now()).await;
     if let Err(error) = &result {
         let coverage: Value =
@@ -126,6 +128,7 @@ async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
         channels.entry(id.clone()).or_insert_with(|| serde_json::json!({"id":id,"name":id,"is_im":id.starts_with('D')}));
     }
     let mut collected = HashSet::new();
+    let mut histories_read=0;
     // Established sources collect before indexed discovery, which cannot certify coverage.
     for discover_new in [false, true] {
         if discover_new {
@@ -144,7 +147,7 @@ async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
             let label = channel["name"].as_str().unwrap_or("Direct message");
             if let Err(error) = collect(hub, reader, &conversation, label, id, at).await {
                 gaps.push(format!("History {id}: {error}"));
-            }
+            } else {histories_read+=1;}
         }
     }
     if let Err(error) = slack_mentions(hub, reader, team, user).await {
@@ -153,13 +156,13 @@ async fn poll_at(hub: &Arc<Hub>, reader: &Reader, at: f64) -> Result<()> {
     if let Err(error) = recover_slack_threads(hub, reader, &format!("{team}:{user}:")).await {
         gaps.push(format!("Thread reconciliation: {error}"));
     }
-    let coverage = serde_json::json!({"checkedAt":at,"teamId":team,"userId":user,"inProgress":false,"enumerated":enumerated,"knownConversations":channels.len(),"gaps":gaps,"overlapSeconds":OVERLAP,"historyReconciliation":"Rotating full history and full known-thread sweeps; older edits are eventually reconciled, not instant event coverage.","forwardHistoryThrough":if gaps.is_empty(){Some(at)}else{None},"checkpointScope":"Enumerated top-level history; edits and known-thread replies use independent reconciliation sweeps"});
+    let coverage = serde_json::json!({"checkedAt":at,"teamId":team,"userId":user,"inProgress":false,"enumerated":enumerated,"knownConversations":channels.len(),"historiesRead":histories_read,"gaps":gaps,"overlapSeconds":OVERLAP,"historyReconciliation":"Rotating full history and full known-thread sweeps; older edits are eventually reconciled, not instant event coverage.","forwardHistoryThrough":if gaps.is_empty(){Some(at)}else{None},"checkpointScope":"Enumerated top-level history; edits and known-thread replies use independent reconciliation sweeps"});
     hub.store
         .set("inbox-coverage:slack", &coverage.to_string())?;
     if !gaps.is_empty() {
         anyhow::bail!(
-            "Slack collection has {} coverage gap(s); see inbox coverage",
-            gaps.len()
+            "Known conversation reads: {histories_read}; collection coverage incomplete: {}",
+            gaps.join("; ")
         );
     }
     Ok(())

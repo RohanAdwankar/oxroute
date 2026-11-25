@@ -77,7 +77,7 @@ export function Fleet({
     let live=true;setContext(current=>current?.id===contextId?{id:contextId,text:current.text}:{id:contextId});
     api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextId,text:item.display?.text||item.signal.text});},()=>{if(live)setContext(current=>({id:contextId,text:current?.id===contextId?current.text:undefined,error:"Could not load conversation."}));});
     return()=>{live=false;};
-  },[routing,contextId,contextRetry]);
+  },[contextId,routing?.contextRevision,contextRetry]);
   const contextText=routing?.display?.text||(context?.id===contextId?context.text:undefined);
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
