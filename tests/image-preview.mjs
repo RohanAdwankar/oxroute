@@ -1,3 +1,4 @@
+import {fixtureState} from './fixture-state.mjs';
 import assert from 'node:assert/strict';
 import {createServer,request} from 'node:http';
 import {copyFile, readFile} from 'node:fs/promises';
@@ -37,7 +38,7 @@ try {
  const page=await browser.newPage({viewport:{width:1440,height:950}});
 
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
- await page.route('**/api/state',route=>route.fulfill({json:{...snapshot,agents:[agent],archived:[],tasks:[],taskNotes:[],messages:{},paneLinks:{},tags:{},boards:[]}}));
+ await page.route('**/api/state',route=>route.fulfill({json:fixtureState(snapshot,[agent])}));
  const entry={id:900,agentId:agent.id,kind:'said',text:`![Architecture](/api/artifacts?path=${encodeURIComponent(source)})`,detail:'',at:Date.now()/1000};
  await page.route(`**/api/agents/${agent.id}`,route=>route.fulfill({json:{agent,timeline:[entry,attached],delivery:'start'}}));
  await page.goto(`${ui}/?agent=${agent.id}`);

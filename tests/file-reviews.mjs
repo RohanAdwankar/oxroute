@@ -1,3 +1,4 @@
+import {fixtureState} from './fixture-state.mjs';
 import assert from 'node:assert/strict';
 import {copyFile, writeFile, readFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -24,7 +25,7 @@ try{
  await page.route('**/api/**',async route=>{const url=new URL(route.request().url());const result=await route.fetch({url:`${native}${url.pathname}${url.search}`});await route.fulfill({response:result});});
  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
  const textMessage=['pdf','pptx','txt'].map(ext=>`[Review ${ext}](/api/artifacts?path=${encodeURIComponent(paths[ext])})`).join('\n\n');
- await page.route('**/api/state',route=>route.fulfill({json:{...snapshot,agents:[agent],archived:[],tasks:[],taskNotes:[],messages:{},paneLinks:{},tags:{},boards:[]}}));
+ await page.route('**/api/state',route=>route.fulfill({json:fixtureState(snapshot,[agent])}));
  await page.route(`**/api/agents/${agent.id}`,route=>route.fulfill({json:{agent,timeline:[{id:1,agentId:agent.id,kind:'said',text:textMessage,detail:'',at:Date.now()/1000}],delivery:'start'}}));
  await page.goto(`${web}/?agent=${agent.id}`);
  await page.getByRole('button',{name:'Review',exact:true}).nth(1).click();

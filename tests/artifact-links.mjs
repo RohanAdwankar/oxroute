@@ -1,3 +1,4 @@
+import {fixtureState} from './fixture-state.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ const snapshot = await (await fetch(`${native}/api/state`)).json();
 assert.ok(snapshot.artifactRoot, 'The daemon provides the configured artifact root');
 const directory = await mkdtemp(join(snapshot.artifactRoot, 'artifact-links-'));
 const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch(process.env.BROWSER_EXECUTABLE ? {executablePath: process.env.BROWSER_EXECUTABLE} : {});
+let page;
 try {
   const path = join(directory, 'drawing # λ.svg');
   const notes = join(directory, 'notes.txt');
@@ -18,11 +20,12 @@ try {
   const agent = { id: 'artifact-links-fixture', name: 'Artifact links', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
   const malformed = ['https://[::1', '/api/attachments/%', '/api/attachments/%C3', '/api/attachments/%FE'];
   const text = malformed.map((href, i) => `[Invalid target ${i}](${href})`).join('\n\n') + '\n\n' + `![Generated drawing](${url(path)})\n\n[Download notes](${url(notes)})\n\n![Existing site image](/icon.png)\n\n[Malformed link](/invalid%ZZ)\n\n[Ordinary link](https://example.invalid/document)\n\n[Unreadable review](/api/agents/${agent.id}/file-reviews/%E2%82)`;
-  const page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
-  const errors = []; page.on('pageerror', error => errors.push(String(error)));
+  page = await browser.newPage({ viewport: { width: 1100, height: 850 } });
+  const errors = [], agentReads = []; page.on('pageerror', error => errors.push(String(error)));
+  page.on('request', request => {const path=new URL(request.url()).pathname;if(path.startsWith('/api/agents/'))agentReads.push(path);});
   if(native !== base) await page.route('**/api/**', async route => {const url = new URL(route.request().url()); await route.fulfill({response: await route.fetch({url: `${native}${url.pathname}${url.search}`})});});
   await page.addInitScript(() => { window.SharedWorker = undefined; window.EventSource = class extends EventTarget { close() {} }; });
-  await page.route('**/api/state', route => route.fulfill({ json: { ...snapshot, agents: [agent], archived: [], tasks: [], taskNotes: [], messages: {}, paneLinks: {}, tags: {}, boards: [] } }));
+  await page.route('**/api/state', route => route.fulfill({ json: fixtureState(snapshot,[agent]) }));
   await page.route('**/api/agents/*', route => route.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', text, detail: '', at: Date.now()/1000 }], delivery: 'start' } }));
   await page.goto(`${base}/?agent=${agent.id}`);
   const image = page.getByAltText('Generated drawing', {exact: true});
@@ -46,6 +49,7 @@ try {
   await dialog.getByText('Could not open that file URL.', {exact: true}).waitFor();
   await page.keyboard.press('Escape'); await dialog.waitFor({state: 'hidden'});
   assert.deepEqual(errors, [], 'Malformed external text does not escape rendering or preview boundaries');
+  assert.ok(agentReads.every(path=>path.split('/')[3]===agent.id),'The artifact fixture never loads unrelated live conversations or reviews');
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   console.log('Real artifact images load before and after reload; encoded filenames, downloads, site images, ordinary links and malformed links are preserved.');
-} finally { await browser.close(); await rm(directory, { recursive: true, force: true }); }
+} finally { if(page)await page.unrouteAll({behavior:'wait'});await browser.close(); await rm(directory, { recursive: true, force: true }); }
