@@ -14,6 +14,10 @@ pub struct InboxReview {
     pub draft_context_revision:Option<i64>,
     pub state:String,
     pub reason:String,
+    #[serde(default)]
+    pub evidence_message_ids:Vec<String>,
+    #[serde(default)]
+    pub resolution_entries:Vec<i64>,
     pub draft:Option<String>,
     pub resolved_by:Option<i64>,
 }
@@ -29,6 +33,10 @@ impl Store {
             review.state=if item.state==InboxState::Done {"routed".into()}else if let Some(advice)=&advice {advice.choice.attention.clone()}else if crate::inbox::imported(&item.signal.source) {"unreviewed".into()}else{"response_needed".into()};
             review.reason=advice.map(|a|a.choice.reason).unwrap_or_default();review.resolved_by=None;
         }
+        if review.resolved_by.is_none() {
+            let triage=c.query_row("SELECT state,reason,resolution_entries FROM inbox_focus_attention WHERE id=?1",[&item.signal.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?))).optional()?;
+            if let Some((state,reason,entries))=triage {review.state=state;review.reason=reason;review.resolution_entries=entries.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_default();}
+        }
         review.revision=item.revision;item.review=Some(review);Ok(())
     }
 }
@@ -40,11 +48,11 @@ mod tests {
     fn arrivals_and_stale_predictions_cannot_claim_an_unanswered_obligation()->Result<()> {
         for (owner,sender) in [("reader-a","source-a"),("reader-b","source-b")] {
             let store=Store::in_memory()?;store.set("inbox-dm:workspace:direct","true")?;
-            let incoming=Signal{id:"incoming".into(),source:crate::inbox::SLACK.into(),conversation:format!("workspace:{owner}:direct"),thread_key:"conversation".into(),external_id:"101".into(),author:sender.into(),text:"Source request with retained context".into(),at:101.0,label:"Source conversation".into(),attachments:vec![],root:true};
+            let incoming=Signal{id:"incoming".into(),source:crate::inbox::SLACK.into(),conversation:format!("workspace:{owner}:direct"),thread_key:"100".into(),external_id:"101".into(),author:sender.into(),text:"Source request with retained context".into(),at:101.0,label:"Source conversation".into(),attachments:vec![],root:true};
             store.import_inbox(&incoming,"")?;let (item,revision)=store.inbox_version(&incoming.id)?.unwrap();
             assert_eq!(item.review.unwrap().state,"unreviewed");assert_eq!(store.inbox_snapshot(100)?.2,0);
             let context=serde_json::json!({"contextRevision":item.context_revision});
-            let choice=|attention:&str|crate::recommendations::RoutePrediction{attention:attention.into(),action:"spawn".into(),agent_ids:vec![],reason:"Source-grounded assessment".into()};
+            let choice=|attention:&str|crate::recommendations::RoutePrediction{evidence_message_ids:if attention=="answered"{vec!["102".into()]}else{vec![]},attention:attention.into(),action:"spawn".into(),agent_ids:vec![],reason:"Source-grounded assessment".into()};
             store.save_routing_advice(&incoming.id,revision,&context,choice("response_needed"),0)?;
             assert_eq!(store.inbox_snapshot(100)?.2,1);
             let reply=Signal{id:"reply".into(),external_id:"102".into(),author:owner.into(),text:"Relevant later owner source reply".into(),at:102.0,..incoming.clone()};
@@ -198,6 +206,58 @@ mod action_tests {
             assert!(store.save_inbox_action(&signal.id,&action("resolve"),"",None,None).is_err(),"A stale click cannot resolve a revised message");
             store.read(|c|{assert_eq!(c.query_row("SELECT count(*) FROM agents",[],|r|r.get::<_,usize>(0))?,0,"Local actions never create a conversation");assert_eq!(c.query_row("SELECT status FROM tasks WHERE id='retained'",[],|r|r.get::<_,String>(0))?,"waiting_for_human");assert_eq!(c.query_row("SELECT count(*) FROM entries WHERE item_id=?1",[resolved.request_id],|r|r.get::<_,usize>(0))?,1,"A retried click has one human evidence record");Ok(())})?;
             drop(store);std::fs::remove_dir_all(root)?;
+        }Ok(())
+    }
+}
+
+impl Store {
+    pub fn inbox_authenticated_users(&self,signal:&Signal)->Result<Vec<String>> {self.read(|c|Self::inbox_users_from(c,signal))}
+    fn inbox_users_from(c:&Connection,signal:&Signal)->Result<Vec<String>> {
+        if signal.source==crate::inbox::SLACK {return Ok(signal.conversation.split(':').nth(1).map(|s|vec![s.to_owned()]).unwrap_or_default());}
+        let saved:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("source-account:outlook:{}",signal.conversation)],|r|r.get(0)).optional()?;
+        Ok(saved.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_default())
+    }
+    pub(super) fn validate_response_evidence(c:&Connection,signal:&Signal,state:&str,evidence:&[String])->Result<()> {
+        anyhow::ensure!(evidence.len()<=20,"Too many response evidence records");
+        if state=="response_needed" {return Ok(());}
+        anyhow::ensure!(!evidence.is_empty(),"A terminal response assessment requires retained source evidence");
+        anyhow::ensure!(state!="no_response_needed"||evidence.contains(&signal.external_id),"No-response assessment must cite the exact incoming source message");
+        let parts=signal.conversation.split(':').collect::<Vec<_>>();
+        let direct=if signal.source==crate::inbox::SLACK&&parts.len()==3 {c.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key=?1)",[format!("inbox-dm:{}:{}",parts[0],parts[2])],|r|r.get::<_,bool>(0))?}else{false};
+        let owners=Self::inbox_users_from(c,signal)?;let mut answered=false;
+        let activity=c.query_row("SELECT activity FROM slack_inbox_messages WHERE conversation=?1 AND ts=?2",params![signal.conversation,signal.external_id],|r|r.get::<_,f64>(0)).optional()?.unwrap_or(signal.at);
+        for id in evidence {
+            let record=c.query_row("SELECT author,at,thread_key FROM inbox_messages WHERE source=?1 AND conversation=?2 AND external_id=?3",params![signal.source,signal.conversation,id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,f64>(1)?,r.get::<_,String>(2)?))).optional()?.context("Response evidence is outside the retained source conversation")?;
+            anyhow::ensure!(record.2==signal.thread_key||direct,"Response evidence belongs to a different source thread");
+            answered|=record.1>activity&&owners.iter().any(|owner|owner.eq_ignore_ascii_case(&record.0));
+        }
+        anyhow::ensure!(state!="answered"||answered,"An answer requires a later authenticated-user source reply");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    #[test]
+    fn reviewed_source_evidence_projects_without_closing_work()->Result<()> {
+        for (owner,sender) in [("reader-a","source-a"),("reader-b","source-b")] {
+            let store=Store::in_memory()?;let conversation=format!("workspace:{owner}:direct");store.set("inbox-dm:workspace:direct","true")?;
+            let raw=serde_json::json!({"ts":"100","thread_ts":"100","user":sender,"text":"Source observation"});store.observe_slack_dm(&conversation,&raw,110.0)?;
+            let signal=Signal{id:"incoming".into(),source:crate::inbox::SLACK.into(),conversation:conversation.clone(),thread_key:"100".into(),external_id:"100".into(),author:sender.into(),text:"Source observation".into(),at:100.0,label:"Source conversation".into(),attachments:vec![],root:true};store.import_inbox(&signal,"")?;
+            let item=store.inbox_item(&signal.id)?.unwrap();
+            assert!(store.save_inbox_assessment(&signal.id,item.revision,item.context_revision,"answered","Reply is required",&["100".into()]).is_err(),"An incoming participant is not a later owner answer");
+            assert!(store.save_inbox_assessment(&signal.id,item.revision,item.context_revision,"no_response_needed","Context only",&["missing".into()]).is_err(),"Missing source evidence cannot suppress an obligation");
+            store.save_inbox_assessment(&signal.id,item.revision,item.context_revision,"no_response_needed","Source statement asks nothing further",&["100".into()])?;
+            assert_eq!(store.inbox_review(&signal.id)?.evidence_message_ids,vec!["100"]);
+            store.cache_inbox_context(&Signal{text:"Edited source observation".into(),..signal.clone()})?;assert_eq!(store.inbox_review(&signal.id)?.state,"unreviewed","Changed cited evidence requires fresh semantic inspection");store.cache_inbox_context(&signal)?;
+            let entry=store.add_entry("coordinator",111.0,EntryKind::Said,"Source context reviewed against the current request","","")?.id;
+            let mut triage=store.focus_inbox(Some("slack"),Some("direct:100"))?.items.remove(0);triage.state="resolved".into();triage.summary="Current source review establishes resolution".into();triage.resolution_entries=vec![entry];
+            store.update_focus_inbox(&super::super::FocusInboxUpdate{items:vec![triage],..Default::default()},112.0)?;
+            let projected=store.inbox_item(&signal.id)?.unwrap();assert_eq!(projected.review.unwrap().state,"resolved");assert_eq!(projected.state,InboxState::Waiting,"Source routing and tasks remain independent");assert_eq!(store.inbox_snapshot(100)?.2,0);
+            let mut edited=raw.clone();edited["text"]=serde_json::json!("Changed source request");edited["edited"]=serde_json::json!({"ts":"113"});store.observe_slack_dm(&conversation,&edited,114.0)?;
+            store.import_inbox(&Signal{text:"Changed source request".into(),..signal.clone()},"")?;
+            assert_eq!(store.inbox_review(&signal.id)?.state,"unreviewed","A stale disposition cannot suppress an edited request");
         }Ok(())
     }
 }

@@ -275,8 +275,16 @@ fn migrate(conn: &Connection) -> Result<()> {
     conn.execute("CREATE INDEX IF NOT EXISTS inbox_messages_thread ON inbox_messages(source,conversation,thread_key,at DESC)",[])?;
     conn.execute("CREATE INDEX IF NOT EXISTS signals_source_thread ON signals(source,conversation,thread_key,at DESC)",[])?;
     Store::reconcile_intake_exclusions(conn)?;
-    conn.execute_batch("CREATE VIEW IF NOT EXISTS inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state') IN ('answered','no_response_needed') THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state')='response_needed' AND json_extract(r.value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||s.source||':'||s.conversation),0) THEN 'response_needed' WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id")?;
-    conn.execute("DELETE FROM kv WHERE key LIKE 'routing-advice:%' AND json_type(value,'$.attention') IS NULL",[])?;
+    conn.execute_batch("DROP VIEW IF EXISTS inbox_attention; DROP VIEW IF EXISTS inbox_focus_attention;
+CREATE VIEW inbox_focus_attention AS
+SELECT s.id,json_extract(f.data,'$.state') AS state,json_extract(f.data,'$.summary') AS reason,json_extract(f.data,'$.resolutionEntries') AS resolution_entries
+FROM signals s JOIN slack_inbox_messages m ON s.source='slack-inbox' AND m.conversation=s.conversation AND m.ts=s.external_id AND m.text=s.text
+JOIN focus_inbox f ON f.source='slack' AND f.item_id=m.channel||':'||m.ts AND json_extract(f.data,'$.revision')=m.revision
+WHERE json_extract(f.data,'$.state') IN ('resolved','no_response_needed') AND
+((json_array_length(json_extract(f.data,'$.resolutionEntries'))>0 AND NOT EXISTS(SELECT 1 FROM json_each(f.data,'$.resolutionEntries') proof LEFT JOIN entries e ON e.id=proof.value WHERE e.id IS NULL OR e.kind NOT IN ('you','said') OR length(e.text)=0) AND EXISTS(SELECT 1 FROM json_each(f.data,'$.resolutionEntries') proof JOIN entries e ON e.id=proof.value WHERE e.at>=m.activity)) OR EXISTS(SELECT 1 FROM entries e WHERE e.id=json_extract(f.data,'$.dismissedBy') AND e.kind='you' AND e.at>=m.activity));")?;
+    conn.execute_batch("CREATE VIEW inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN json_extract(r.value,'$.state') WHEN f.state IS NOT NULL THEN f.state WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state') IN ('answered','no_response_needed') THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state')='response_needed' AND json_extract(r.value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||s.source||':'||s.conversation),0) THEN 'response_needed' WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id LEFT JOIN inbox_focus_attention f ON f.id=s.id")?;
+    conn.execute("DELETE FROM kv WHERE key LIKE 'routing-advice:%' AND (json_type(value,'$.attention') IS NULL OR (json_extract(value,'$.attention') IN ('answered','no_response_needed') AND COALESCE(json_array_length(json_extract(value,'$.evidenceMessageIds')),0)=0))",[])?;
+    conn.execute("UPDATE kv SET value=json_set(value,'$.state','unreviewed','$.reason','') WHERE key LIKE 'inbox-review:%' AND json_extract(value,'$.resolvedBy') IS NULL AND json_extract(value,'$.state') IN ('answered','no_response_needed') AND COALESCE(json_array_length(json_extract(value,'$.evidenceMessageIds')),0)=0",[])?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");
@@ -1272,6 +1280,7 @@ impl Store {
         if changed>0 {
             c.execute("INSERT INTO kv(key,value) VALUES(?1,1) ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",[format!("inbox-context-revision:{}:{}",signal.source,signal.conversation)])?;
             c.execute("DELETE FROM kv WHERE key IN (SELECT 'routing-advice:'||id FROM signals WHERE source=?1 AND conversation=?2)",params![signal.source,signal.conversation])?;
+            c.execute("UPDATE kv SET value=json_set(value,'$.state','unreviewed','$.reason','') WHERE key IN (SELECT 'inbox-review:'||id FROM signals WHERE source=?1 AND conversation=?2) AND json_extract(value,'$.resolvedBy') IS NULL AND EXISTS(SELECT 1 FROM json_each(kv.value,'$.evidenceMessageIds') WHERE json_each.value=?3)",params![signal.source,signal.conversation,signal.external_id])?;
         }
         Ok(changed)
     }
@@ -1307,7 +1316,7 @@ impl Store {
     }
 
     pub fn pending_imports(&self)->Result<Vec<String>> {
-        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='inbox-review:'||signals.id AND json_extract(value,'$.revision')=signals.revision AND (json_extract(value,'$.resolvedBy') IS NOT NULL OR json_extract(value,'$.state') IN ('answered','no_response_needed') OR (json_extract(value,'$.state')='response_needed' AND json_extract(value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||signals.source||':'||signals.conversation),0)))) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND EXISTS(SELECT 1 FROM inbox_attention v WHERE v.id=signals.id AND v.state IN ('unreviewed','response_needed')) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='inbox-review:'||signals.id AND json_extract(value,'$.revision')=signals.revision AND (json_extract(value,'$.resolvedBy') IS NOT NULL OR json_extract(value,'$.state') IN ('answered','no_response_needed') OR (json_extract(value,'$.state')='response_needed' AND json_extract(value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||signals.source||':'||signals.conversation),0)))) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
 
     pub fn save_routing_advice(&self,id:&str,expected:i64,context:&serde_json::Value,choice:crate::recommendations::RoutePrediction,revision:i64)->Result<Option<crate::recommendations::RoutingAdvice>> {
@@ -1317,13 +1326,15 @@ impl Store {
             if current!=Some((expected,"waiting".into())) {return Ok(None);}
             let source_revision:i64=tx.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||s.source||':'||s.conversation),0) FROM signals s WHERE id=?1",[id],|r|r.get(0))?;
             if source_revision!=context["contextRevision"].as_i64().unwrap_or(0) {return Ok(None);}
+            let signal=tx.query_row("SELECT * FROM signals WHERE id=?1",[id],read_item)?.signal;
+            Self::validate_response_evidence(&tx,&signal,&choice.attention,&choice.evidence_message_ids)?;
             tx.execute("INSERT INTO recommendations(domain,owner,context,offered,prompt_revision) VALUES (?1,?2,?3,?4,?5)",params![crate::recommendations::ROUTING,id,context.to_string(),serde_json::to_string(&choice)?,revision])?;
             let advice=crate::recommendations::RoutingAdvice {recommendation_id:tx.last_insert_rowid(),choice};
             tx.execute("INSERT INTO kv(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("routing-advice:{id}"),serde_json::to_string(&advice)?])?;
             let saved:Option<String>=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("inbox-review:{id}")],|r|r.get(0)).optional()?;
             let mut review=saved.map(|s|serde_json::from_str::<InboxReview>(&s)).transpose()?.unwrap_or_default();
             if review.revision!=expected||review.resolved_by.is_none() {
-                review.revision=expected;review.context_revision=source_revision;review.state=advice.choice.attention.clone();review.reason=advice.choice.reason.clone();review.resolved_by=None;
+                review.revision=expected;review.context_revision=source_revision;review.state=advice.choice.attention.clone();review.reason=advice.choice.reason.clone();review.evidence_message_ids=advice.choice.evidence_message_ids.clone();review.resolved_by=None;
                 tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-review:{id}"),serde_json::to_string(&review)?])?;
             }
             tx.commit()?;Ok(Some(advice))
@@ -2428,7 +2439,7 @@ mod tests {
             store.import_inbox(&signal,"").unwrap();let (item,revision)=store.inbox_version(&signal.id).unwrap().unwrap();
             signal.text="Updated context".into();store.import_inbox(&signal,"").unwrap();
             signal.text=if source==crate::inbox::SLACK {item.signal.text.clone()}else{item.signal.text.strip_prefix("sender: ").unwrap().into()};store.import_inbox(&signal,"").unwrap();
-            let choice=crate::recommendations::RoutePrediction {attention:"response_needed".into(),action:"spawn".into(),agent_ids:vec![],reason:"New work".into()};
+            let choice=crate::recommendations::RoutePrediction {evidence_message_ids:vec![],attention:"response_needed".into(),action:"spawn".into(),agent_ids:vec![],reason:"New work".into()};
             assert!(store.save_routing_advice(&signal.id,revision,&serde_json::json!({}),choice.clone(),0).unwrap().is_none());
             let (current_item,current)=store.inbox_version(&signal.id).unwrap().unwrap();assert!(current>revision);
             assert!(store.save_routing_advice(&signal.id,current,&serde_json::json!({"contextRevision":current_item.context_revision}),choice,0).unwrap().is_some());

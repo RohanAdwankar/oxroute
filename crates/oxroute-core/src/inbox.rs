@@ -254,6 +254,7 @@ async fn outlook(hub: &Arc<Hub>, reader: &Reader) -> Result<()> {
     // Profile discovery is optional metadata; its scopes do not gate existing mail reads.
     let identity=reader.get("v1.0/me",&[("$select","id,mail,userPrincipalName")]).await;
     let owner=identity.ok().map(|profile|["mail","userPrincipalName"].into_iter().filter_map(|key|profile[key].as_str().filter(|value|!value.is_empty()).map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
+    if !owner.is_empty() {hub.store.set(&format!("source-account:outlook:{account}"),&serde_json::to_string(&owner)?)?;}
     let key = format!("inbox-cursor:{OUTLOOK}:{account}");
     let since = time::OffsetDateTime::now_utc() - time::Duration::days(7);
     let initial=format!("v1.0/me/mailFolders/inbox/messages/delta?$select=id,conversationId,subject,from,body,receivedDateTime,lastModifiedDateTime,webLink,hasAttachments&$top=100&$filter=receivedDateTime ge {}",since.format(&time::format_description::well_known::Rfc3339)?);

@@ -60,14 +60,15 @@ impl Store {
         let [_,_,channel]=parts.as_slice() else{return Ok(false)};
         self.read(|c|Ok(!c.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key='source-account:slack')",[],|r|r.get::<_,bool>(0))?&&c.query_row("SELECT EXISTS(SELECT 1 FROM bindings WHERE source='slack' AND conversation=?1 AND thread_key=?2)",params![channel,signal.thread_key],|r|r.get::<_,bool>(0))?))
     }
-    pub fn save_inbox_assessment(&self,id:&str,revision:i64,context_revision:i64,state:&str,reason:&str)->Result<bool> {
+    pub fn save_inbox_assessment(&self,id:&str,revision:i64,context_revision:i64,state:&str,reason:&str,evidence:&[String])->Result<bool> {
         anyhow::ensure!(matches!(state,"response_needed"|"no_response_needed"|"answered")&&!reason.trim().is_empty()&&reason.len()<=1200,"Invalid source response assessment");
         self.with(|c|{
             let tx=c.unchecked_transaction()?;let mut item=tx.query_row("SELECT * FROM signals WHERE id=?1",[id],read_item)?;
             Self::decorate_inbox_review(&tx,&mut item)?;
             if item.revision!=revision||item.context_revision!=context_revision {return Ok(false);}
+            Self::validate_response_evidence(&tx,&item.signal,state,evidence)?;
             let mut review=item.review.unwrap_or_default();
-            if review.resolved_by.is_none() {review.state=state.into();review.reason=reason.into();review.context_revision=context_revision;
+            if review.resolved_by.is_none() {review.state=state.into();review.reason=reason.into();review.evidence_message_ids=evidence.to_vec();review.context_revision=context_revision;
                 tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-review:{id}"),serde_json::to_string(&review)?])?;
             }
             tx.commit()?;Ok(true)
@@ -142,7 +143,7 @@ mod tests {
         let mut other=first.clone();other.conversation="another:reader:direct".into();assert!(store.inbox_destination(&other)?.is_none(),"Workspace identity cannot be inferred from a channel/root collision");
         other.conversation="workspace:another-reader:direct".into();assert!(store.inbox_destination(&other)?.is_none(),"Account identity is preserved");
         let second=source("102.1","100.1",102.1);store.import_inbox(&second,"https://example.test/second")?;
-        let assessed=store.inbox_item(&first.id)?.unwrap();store.save_inbox_assessment(&first.id,assessed.revision,assessed.context_revision,"response_needed","Source request remains unanswered")?;assert_eq!(store.inbox_review(&first.id)?.state,"response_needed");assert_eq!(store.inbox_snapshot(100)?.2,1);
+        let assessed=store.inbox_item(&first.id)?.unwrap();store.save_inbox_assessment(&first.id,assessed.revision,assessed.context_revision,"response_needed","Source request remains unanswered",&[])?;assert_eq!(store.inbox_review(&first.id)?.state,"response_needed");assert_eq!(store.inbox_snapshot(100)?.2,1);
         let snapshot=store.inbox(100)?.remove(0);assert_eq!(snapshot.group.as_ref().unwrap().members.len(),2);
         let resolve=action(&snapshot,"resolve",None);let route=action(&snapshot,"route",Some("original"));
         let later=source("103.1","100.1",103.1);store.import_inbox(&later,"https://example.test/later")?;

@@ -32,7 +32,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
   const prediction=!!params.outputSchema?.properties?.actions;
   const learning=!!params.outputSchema?.properties?.guidance;
   const routing=!!params.outputSchema?.properties?.agentIds;
-  const text=learning?JSON.stringify({guidance:params.input[0].text.includes('input-routing')?learnedRouting:learned}):routing?JSON.stringify({attention:'response_needed',action:'existing',agentIds:[routeAgent],reason:'This agent owns the related ongoing work'}):params.outputSchema?.properties?.attention?JSON.stringify({attention:'response_needed',reason:'Current source request remains unanswered'}):prediction?JSON.stringify({actions,automatic:null}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
+  const text=learning?JSON.stringify({guidance:params.input[0].text.includes('input-routing')?learnedRouting:learned}):routing?JSON.stringify({attention:'response_needed',evidenceMessageIds:[],action:'existing',agentIds:[routeAgent],reason:'This agent owns the related ongoing work'}):params.outputSchema?.properties?.attention?JSON.stringify({attention:'response_needed',evidenceMessageIds:[],reason:'Current source request remains unanswered'}):prediction?JSON.stringify({actions,automatic:null}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
   if(routing)routingPrompts.push(params.input[0].text);
   if(learning)reflections.push(params.input[0].text);
   if(prediction)predictionPrompts.push(params.input[0].text);

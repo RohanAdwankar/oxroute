@@ -24,7 +24,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  if(method==='turn/interrupt'){const saved=sessions.get(params.threadId);saved.turn.status='interrupted';setTimeout(()=>send(socket,'turn/completed',{threadId:params.threadId,turn:saved.turn}),5);}
  if(method==='turn/start'){
   const schema=params.outputSchema?.properties,ordinary=!schema,turn={id:'turn-'+(++serial),status:'inProgress',items:[]};
-  const text=schema?.draft?JSON.stringify({draft:'A concise local response grounded in the source conversation.'}):schema?.agentIds?JSON.stringify({attention:'response_needed',action:'existing',agentIds:[target],reason:'Existing conversation owns the related work'}):schema?.attention?JSON.stringify({attention:'response_needed',reason:'Current source request remains unanswered'}):schema?JSON.stringify({title:'Source review'}):'Internal source handling completed.';
+  const text=schema?.draft?JSON.stringify({draft:'A concise local response grounded in the source conversation.'}):schema?.agentIds?JSON.stringify({attention:'response_needed',evidenceMessageIds:[],action:'existing',agentIds:[target],reason:'Existing conversation owns the related work'}):schema?.attention?JSON.stringify({attention:'response_needed',evidenceMessageIds:[],reason:'Current source request remains unanswered'}):schema?JSON.stringify({title:'Source review'}):'Internal source handling completed.';
   sessions.set(params.threadId,{turn,text,socket});turns.push(params);result={turn};
   if(schema?.draft&&failDraft){failDraft=false;turn.error={message:'Draft generation interrupted'};turn.status='failed';setTimeout(()=>send(socket,'turn/completed',{threadId:params.threadId,turn}),10);}
   else if(!ordinary||!holdOwner)setTimeout(()=>finish(params.threadId),10);

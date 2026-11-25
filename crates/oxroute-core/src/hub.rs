@@ -1099,12 +1099,12 @@ impl Hub {
         let destination=self.store.inbox_destination(&item.signal)?;
         if destination.is_none()&&self.store.inbox_destination_pending(&item.signal)? {return Ok(None);}
         let text=if crate::inbox::imported(&item.signal.source) {self.store.routing_text(&item.signal,12000)?}else{recommendations::recent_text(&item.signal.text,12000)};
-        let item_context=serde_json::json!({"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"authenticatedUser":item.signal.conversation.split(':').nth(1),"sourceContext":text});
+        let item_context=serde_json::json!({"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"messageId":item.signal.external_id,"authenticatedUser":self.store.inbox_authenticated_users(&item.signal)?,"sourceContext":text});
         if destination.is_some() {
             if item.review.as_ref().is_some_and(|r|r.resolved_by.is_some()||matches!(r.state.as_str(),"answered"|"no_response_needed")||(r.state=="response_needed"&&r.context_revision==item.context_revision)) {return Ok(None);}
             let raw=self.harness(Backend::Codex).metadata(&recommendations::response_prompt(&item_context),recommendations::response_schema(),&self.config.workspace).await?;
             let result:serde_json::Value=serde_json::from_str(&raw)?;
-            self.store.save_inbox_assessment(signal_id,revision,item.context_revision,result["attention"].as_str().context("Response assessment is missing")?,result["reason"].as_str().context("Response rationale is missing")?)?;
+            self.store.save_inbox_assessment(signal_id,revision,item.context_revision,result["attention"].as_str().context("Response assessment is missing")?,result["reason"].as_str().context("Response rationale is missing")?,&serde_json::from_value::<Vec<String>>(result["evidenceMessageIds"].clone())?)?;
             self.emit(Event::Sync);return Ok(None);
         }
         let agents = self.store.unarchived_agents()?;
