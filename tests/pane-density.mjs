@@ -5,6 +5,11 @@ const tasks = [{ id: 'density-task', text: 'A readable task', status: 'incomplet
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
+  await page.route('**/api/**',route=>route.fulfill({json:[]}));
+  await page.route('**/api/version',route=>route.continue());
+  await page.route('**/api/intake/policies',route=>route.fulfill({json:{policies:[],connectors:[],defaultMode:'standard',standardIntervalSeconds:1200}}));
+  const reload=async()=>{await page.waitForLoadState('networkidle');await page.reload();await page.waitForLoadState('networkidle');};
   const writes = [];
   page.on('request', request => { if (request.method() !== 'GET') writes.push(request.url()); });
   await page.route('**/api/state', route => route.fulfill({ json: { mode: 'ask', agents, archived: [], tasks, taskNotes: [], messages: {}, inbox: [], paneLinks: {}, tags: {}, boards: [], sources: [], models: [], backends: [] } }));
@@ -14,7 +19,7 @@ try {
     return route.fulfill({ json: { agent, timeline: [{ id: 1, agentId: agent.id, kind: 'said', text: 'Conversation stays available when the pane expands.', detail: '', at: 1 }], delivery: 'start' } });
   });
   const url = `${process.env.TEST_URL ?? 'http://127.0.0.1:3941'}/?agent=alpha`;
-  await page.goto(url);
+  await page.goto(url);await page.waitForLoadState('networkidle');
   const pane = id => page.locator(`[data-agent-pane="${id}"]`);
   await pane('alpha').locator('[data-composer]').fill('Preserve this draft.');
   await page.getByLabel('Choose visible agents').click();
@@ -40,7 +45,7 @@ try {
   assert.ok(await pane('alpha').locator('[data-pane-title]').isVisible());
   assert.equal(await pane('alpha').locator('[data-composer]').inputValue(), 'Preserve this draft.');
   await drag(1);
-  await page.reload(); await pane('bravo').waitFor();
+  await reload(); await pane('bravo').waitFor();
   assert.ok((await pane('alpha').boundingBox()).width < 48, 'Rail width survives reload');
   await drag(300);
   assert.ok(await pane('alpha').locator('[data-pane-title]').isVisible());
@@ -60,7 +65,7 @@ try {
   assert.equal(await zoom(sidebar), 0.85, 'Task sidebar uses the same chosen minimum');
   const scaledBox = await sidebar.boundingBox(), wrapperBox = await page.locator('[data-task-pane]').boundingBox();
   assert.ok(Math.abs(scaledBox.width - wrapperBox.width) < 0.5 && Math.abs(scaledBox.height - wrapperBox.height) < 0.5, 'Scaled tasks fill their sidebar');
-  await page.reload(); await pane('alpha').waitFor();
+  await reload(); await pane('alpha').waitFor();
   assert.equal(await zoom(pane('alpha').locator('[data-agent-panel]')), 0.85, 'Custom scale persists');
   const taskDivider = page.getByRole('separator', { name: 'resize tasks', exact: true });
   const taskEdge = await taskDivider.boundingBox();
@@ -70,7 +75,7 @@ try {
   await page.mouse.up();
   assert.equal((await page.locator('[data-task-pane]').boundingBox()).width, 180, 'Task sidebar can shrink below its old minimum');
   if (process.env.NARROW_SCREENSHOT) await page.screenshot({ path: process.env.NARROW_SCREENSHOT });
-  await page.reload(); await pane('alpha').waitFor();
+  await reload(); await pane('alpha').waitFor();
   assert.equal((await page.locator('[data-task-pane]').boundingBox()).width, 180, 'Narrow task width persists');
   await taskDivider.focus(); await taskDivider.press('ArrowRight');
   for (let i = 0; i < 10; i++) await taskDivider.press('ArrowRight');
@@ -78,7 +83,7 @@ try {
   assert.ok(await sidebar.locator('[data-task-rail]').isVisible());
   assert.equal(await sidebar.getByRole('searchbox', { name: 'Search tasks' }).isVisible(), false);
   if (process.env.RAIL_SCREENSHOT) await page.screenshot({ path: process.env.RAIL_SCREENSHOT });
-  await page.reload(); await pane('alpha').waitFor();
+  await reload(); await pane('alpha').waitFor();
   assert.equal((await page.locator('[data-task-pane]').boundingBox()).width, 34, 'Collapsed task width persists');
   const railEdge = await taskDivider.boundingBox();
   await page.mouse.move(railEdge.x, railEdge.y + railEdge.height / 2);
@@ -87,4 +92,4 @@ try {
   assert.ok(await sidebar.getByRole('combobox', { name: 'status for A readable task' }).isVisible());
   assert.deepEqual(writes, [], 'Layout and scale settings never mutate agent or task data');
   console.log('Dots-only rails, flush sidebar, draft restoration, custom scale and task scaling pass.');
-} finally { await browser.close(); }
+} finally { for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'wait'});await browser.close(); }
