@@ -45,6 +45,7 @@ impl Store {
             let mut channels=HashMap::new();
             for item in items {
                 Self::decorate_inbox_review(c,item)?;
+                item.destination=Self::inbox_destination_from(c,&item.signal)?;
                 let signal=&item.signal;
                 if signal.source!=crate::inbox::SLACK {continue;}
                 let parts=signal.conversation.split(':').collect::<Vec<_>>();
@@ -56,7 +57,7 @@ impl Store {
                     channels.insert(account.clone(),value.map(|value|serde_json::from_str::<serde_json::Value>(&value)).transpose()?.unwrap_or_default());
                 }
                 let profiles=&names[*team];let metadata=&channels[&account][*channel];
-                let mut query=c.prepare("SELECT author,CASE WHEN ?4 THEN text ELSE '' END FROM inbox_messages WHERE source=?1 AND conversation=?2 AND thread_key=?3 ORDER BY at,external_id")?;
+                let mut query=c.prepare("SELECT author,CASE WHEN ?4 THEN text ELSE '' END FROM inbox_messages WHERE source=?1 AND conversation=?2 AND (source='slack-inbox' OR thread_key=?3) ORDER BY at,external_id")?;
                 let messages=query.query_map(params![signal.source,signal.conversation,signal.thread_key,context],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
                 let display_name=|id:&str|profiles.get(id).map(|profile|profile.name.as_str()).filter(|name|!name.is_empty()).unwrap_or(if id==*owner {"You"}else{"Participant"}).to_string();
                 let source_text=|text:&str|display_mentions(text,|id|display_name(id));
@@ -79,14 +80,14 @@ impl Store {
     }
 }
 
-fn slack_names(c:&Connection,team:&str)->Result<HashMap<String,SlackName>> {
+pub(super) fn slack_names(c:&Connection,team:&str)->Result<HashMap<String,SlackName>> {
     let prefix=format!("inbox-slack-name:{team}:");let mut query=c.prepare("SELECT value FROM kv WHERE substr(key,1,length(?1))=?1")?;
     let values=query.query_map([prefix],|row|row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     values.into_iter().map(|value|{let profile:SlackName=serde_json::from_str(&value)?;Ok((profile.user.clone(),profile))}).collect()
 }
 
 // Slack's canonical wire token denotes a provider user reference, not a display name.
-fn display_mentions(text:&str,name:impl Fn(&str)->String)->String {
+pub(super) fn display_mentions(text:&str,name:impl Fn(&str)->String)->String {
     let mut parts=text.split("<@");let mut output=parts.next().unwrap_or_default().to_owned();
     for part in parts {if let Some((id,rest))=part.split_once('>') {output.push('@');output.push_str(&name(id));output.push_str(rest);}else{output.push_str("<@");output.push_str(part);}}output
 }

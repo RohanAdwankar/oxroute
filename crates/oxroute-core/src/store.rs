@@ -24,7 +24,9 @@ mod inbox_display;
 mod inbox_arrivals;
 mod inbox_clear;
 mod inbox_review;
-pub use inbox_review::{InboxReview,InboxAction,InboxRoute};
+mod inbox_threads;
+pub use inbox_threads::{InboxDestination,InboxGroup,InboxMember,InboxHistory,InboxHistoryMessage};
+pub use inbox_review::{InboxReview,InboxAction,InboxRoute,InboxScope};
 pub(crate) use inbox_display::SlackName;
 mod intake;
 pub use intake::{IntakePolicy,IntakeMode,IntakeArrival};
@@ -267,8 +269,13 @@ fn migrate(conn: &Connection) -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO inbox_arrivals(signal_id,message_id) SELECT id,external_id FROM signals WHERE source!='slack-inbox'",[])?;
     // Repair admitted legacy refresh times from the durable provider message, without a new arrival.
     conn.execute("UPDATE signals AS s SET at=m.at FROM inbox_messages m,inbox_arrivals a WHERE a.signal_id=s.id AND s.source='slack-inbox' AND m.source=s.source AND m.conversation=s.conversation AND m.external_id=s.external_id AND s.at!=m.at",[])?;
+    conn.execute("UPDATE signals SET thread_key=COALESCE((SELECT CASE WHEN m.thread='' THEN m.ts ELSE m.thread END FROM slack_inbox_messages m WHERE m.conversation=signals.conversation AND m.ts=signals.external_id),CASE WHEN thread_key='conversation' THEN external_id ELSE thread_key END) WHERE source='slack-inbox' AND external_id!='conversation' AND (thread_key='conversation' OR EXISTS(SELECT 1 FROM slack_inbox_messages m WHERE m.conversation=signals.conversation AND m.ts=signals.external_id AND signals.thread_key!=CASE WHEN m.thread='' THEN m.ts ELSE m.thread END))",[])?;
+    conn.execute("UPDATE inbox_messages SET thread_key=COALESCE((SELECT CASE WHEN m.thread='' THEN m.ts ELSE m.thread END FROM slack_inbox_messages m WHERE m.conversation=inbox_messages.conversation AND m.ts=inbox_messages.external_id),CASE WHEN thread_key='conversation' THEN external_id ELSE thread_key END) WHERE source='slack-inbox' AND thread_key='conversation'",[])?;
+    conn.execute("INSERT OR IGNORE INTO bindings(source,conversation,thread_key,agent_id) SELECT source,conversation,thread_key,MIN(json_extract(agent_ids,'$[0]')) FROM signals WHERE source='slack-inbox' AND state='done' AND external_id!='conversation' AND json_array_length(agent_ids)>0 GROUP BY source,conversation,thread_key HAVING COUNT(DISTINCT json_extract(agent_ids,'$[0]'))=1",[])?;
+    conn.execute("CREATE INDEX IF NOT EXISTS inbox_messages_thread ON inbox_messages(source,conversation,thread_key,at DESC)",[])?;
+    conn.execute("CREATE INDEX IF NOT EXISTS signals_source_thread ON signals(source,conversation,thread_key,at DESC)",[])?;
     Store::reconcile_intake_exclusions(conn)?;
-    conn.execute_batch("CREATE VIEW IF NOT EXISTS inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state') IN ('answered','no_response_needed') THEN json_extract(r.value,'$.state') WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id")?;
+    conn.execute_batch("CREATE VIEW IF NOT EXISTS inbox_attention AS SELECT s.id,CASE WHEN s.state!='waiting' THEN 'routed' WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.resolvedBy') IS NOT NULL THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state') IN ('answered','no_response_needed') THEN json_extract(r.value,'$.state') WHEN json_extract(r.value,'$.revision')=s.revision AND json_extract(r.value,'$.state')='response_needed' AND json_extract(r.value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||s.source||':'||s.conversation),0) THEN 'response_needed' WHEN json_extract(a.value,'$.attention') IN ('response_needed','no_response_needed','answered') THEN json_extract(a.value,'$.attention') WHEN s.source IN ('slack-inbox','outlook-inbox') THEN 'unreviewed' ELSE 'response_needed' END AS state FROM signals s LEFT JOIN kv r ON r.key='inbox-review:'||s.id LEFT JOIN kv a ON a.key='routing-advice:'||s.id")?;
     conn.execute("DELETE FROM kv WHERE key LIKE 'routing-advice:%' AND json_type(value,'$.attention') IS NULL",[])?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
@@ -1261,7 +1268,7 @@ impl Store {
     }
 
     fn put_inbox_context(c:&Connection,signal:&Signal)->Result<usize> {
-        let changed=c.execute("INSERT INTO inbox_messages VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source,conversation,external_id) DO UPDATE SET text=excluded.text,author=excluded.author WHERE text!=excluded.text OR author!=excluded.author",params![signal.source,signal.conversation,signal.external_id,signal.thread_key,signal.author,signal.text,signal.at])?;
+        let changed=c.execute("INSERT INTO inbox_messages VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source,conversation,external_id) DO UPDATE SET text=excluded.text,author=excluded.author,thread_key=excluded.thread_key WHERE text!=excluded.text OR author!=excluded.author OR thread_key!=excluded.thread_key",params![signal.source,signal.conversation,signal.external_id,signal.thread_key,signal.author,signal.text,signal.at])?;
         if changed>0 {
             c.execute("INSERT INTO kv(key,value) VALUES(?1,1) ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",[format!("inbox-context-revision:{}:{}",signal.source,signal.conversation)])?;
             c.execute("DELETE FROM kv WHERE key IN (SELECT 'routing-advice:'||id FROM signals WHERE source=?1 AND conversation=?2)",params![signal.source,signal.conversation])?;
@@ -1300,7 +1307,7 @@ impl Store {
     }
 
     pub fn pending_imports(&self)->Result<Vec<String>> {
-        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='inbox-review:'||signals.id AND json_extract(value,'$.revision')=signals.revision AND (json_extract(value,'$.resolvedBy') IS NOT NULL OR json_extract(value,'$.state') IN ('answered','no_response_needed'))) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='inbox-review:'||signals.id AND json_extract(value,'$.revision')=signals.revision AND (json_extract(value,'$.resolvedBy') IS NOT NULL OR json_extract(value,'$.state') IN ('answered','no_response_needed') OR (json_extract(value,'$.state')='response_needed' AND json_extract(value,'$.contextRevision')=COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key='inbox-context-revision:'||signals.source||':'||signals.conversation),0)))) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
 
     pub fn save_routing_advice(&self,id:&str,expected:i64,context:&serde_json::Value,choice:crate::recommendations::RoutePrediction,revision:i64)->Result<Option<crate::recommendations::RoutingAdvice>> {
@@ -1373,17 +1380,28 @@ impl Store {
     }
 
     pub fn routing_text(&self,signal:&Signal,budget:usize)->Result<String> {
-        self.with(|c| {
-            let mut query=c.prepare("SELECT author,substr(text,-?4) FROM inbox_messages WHERE source=?1 AND conversation=?2 AND thread_key=?3 ORDER BY at DESC,external_id DESC")?;
-            let mut rows=query.query(params![signal.source,signal.conversation,signal.thread_key,budget as i64])?;
-            let mut remaining=budget;let mut messages=Vec::new();
-            while remaining>0 {
-                let Some(row)=rows.next()? else {break};
-                let author:String=row.get(0)?;let text:String=row.get(1)?;
-                let text=crate::recommendations::recent_text(&format!("{author}: {text}"),remaining);
-                remaining=remaining.saturating_sub(text.chars().count()+2);messages.push(text);
+        self.read(|c|{
+            let mut seen=HashSet::new();let mut messages=Vec::new();
+            // Anchor reply evidence near the exact request, then retain thread endpoints and recent context.
+            for (condition,order,limit,share) in [
+                ("at>=?4","at,external_id",24,50usize),
+                ("thread_key=?3","at DESC,external_id DESC",12,25),
+                ("thread_key=?3","at,external_id",4,10),
+                ("at<?4","at DESC,external_id DESC",4,10),
+                ("1=1","at DESC,external_id DESC",4,5),
+            ] {
+                let sql=format!("SELECT external_id,author,text,at FROM inbox_messages WHERE source=?1 AND conversation=?2 AND (source='slack-inbox' OR thread_key=?3) AND (?4 IS NOT NULL) AND {condition} ORDER BY {order} LIMIT {limit}");
+                let mut query=c.prepare(&sql)?;let mut rows=query.query(params![signal.source,signal.conversation,signal.thread_key,signal.at])?;
+                let mut remaining=budget*share/100;
+                while remaining>0 {
+                    let Some(row)=rows.next()? else{break};let id:String=row.get(0)?;if !seen.insert(id.clone()){continue;}
+                    let author:String=row.get(1)?;let text:String=row.get(2)?;let at:f64=row.get(3)?;
+                    let text=crate::recommendations::recent_text(&text,remaining.saturating_sub(author.len()+id.len()+16));
+                    let line=format!("[{id}] {author}: {text}");remaining=remaining.saturating_sub(line.chars().count()+2);messages.push((at,id,line));
+                }
             }
-            messages.reverse();Ok(messages.join("\n\n"))
+            messages.sort_by(|a,b|a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            Ok(messages.into_iter().map(|(_,_,text)|text).collect::<Vec<_>>().join("\n\n"))
         })
     }
 
@@ -2216,7 +2234,7 @@ fn read_item(row: &Row<'_>) -> rusqlite::Result<InboxItem> {
     let agent_ids: Vec<String> =
         serde_json::from_str(&row.get::<_, String>("agent_ids")?).unwrap_or_default();
     Ok(InboxItem {
-        revision:row.get("revision")?,context_revision:0,review:None,
+        revision:row.get("revision")?,context_revision:0,review:None,destination:None,group:None,
         display: None,
         signal: Signal {
             id: row.get("id")?,

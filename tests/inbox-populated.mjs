@@ -41,7 +41,7 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    return route.fulfill({json:[]});
   });
   await page.goto(web);
-  const row=n=>page.locator('[data-inbox-item]').filter({has:page.locator(`time[datetime="${new Date(items[n].signal.at*1000).toISOString()}"]`)}).first();
+  const row=n=>page.locator('[data-inbox-item]').filter({has:page.locator(`time[datetime="${new Date((items[n].group?.latestAt??items[n].signal.at)*1000).toISOString()}"]`)}).first();
   const context=page.getByLabel('Conversation context',{exact:true});
   const content=async n=>{await context.waitFor();await page.waitForFunction(expected=>document.querySelector('[aria-label="Conversation context"]')?.textContent===expected,text(details[n]));};
   const choose=async n=>{

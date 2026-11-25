@@ -1040,7 +1040,7 @@ export default function Home() {
   const deleteTask = useCallback((id: string) => void run(() => api.deleteTask(id)), [run]);
   const approveFocusTask = useCallback((task: TaskItem) => void updateTask({...task, status:"complete", blockedByTaskId:""}, "approved", true), [updateTask]);
 
-  const selected = snapshot.inbox.find((item) => item.signal.id === routing) ?? null;
+  const selected = snapshot.inbox.find((item) => item.signal.id === routing||item.group?.members.some(member=>member.id===routing)) ?? null;
   useEffect(() => {
     if (!routing) return;
     let current = true;
@@ -1098,9 +1098,10 @@ export default function Home() {
   const sendTo = useCallback(
     (signalId: string, agentIds: string[]) => {
       if (agentIds.length === 0) return;
-      void run(() => api.routeExisting(signalId, agentIds), settled(signalId));
+      const item=snapshot.inbox.find(item=>item.signal.id===signalId||item.group?.members.some(member=>member.id===signalId));
+      void run(() => item?.group?api.inboxAction(item,"route_manual",undefined,crypto.randomUUID(),agentIds):api.routeExisting(signalId, agentIds), settled(signalId));
     },
-    [run, settled],
+    [run, settled, snapshot.inbox],
   );
 
   const toggle = (id: string) =>

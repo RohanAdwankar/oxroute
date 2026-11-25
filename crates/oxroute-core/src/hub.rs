@@ -1096,6 +1096,17 @@ impl Hub {
         let _held = lock.lock().await;
         let (item,revision) = self.store.inbox_version(signal_id)?.context("no such inbox item")?;
         if item.state != InboxState::Waiting { return Ok(None); }
+        let destination=self.store.inbox_destination(&item.signal)?;
+        if destination.is_none()&&self.store.inbox_destination_pending(&item.signal)? {return Ok(None);}
+        let text=if crate::inbox::imported(&item.signal.source) {self.store.routing_text(&item.signal,12000)?}else{recommendations::recent_text(&item.signal.text,12000)};
+        let item_context=serde_json::json!({"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"authenticatedUser":item.signal.conversation.split(':').nth(1),"sourceContext":text});
+        if destination.is_some() {
+            if item.review.as_ref().is_some_and(|r|r.resolved_by.is_some()||matches!(r.state.as_str(),"answered"|"no_response_needed")||(r.state=="response_needed"&&r.context_revision==item.context_revision)) {return Ok(None);}
+            let raw=self.harness(Backend::Codex).metadata(&recommendations::response_prompt(&item_context),recommendations::response_schema(),&self.config.workspace).await?;
+            let result:serde_json::Value=serde_json::from_str(&raw)?;
+            self.store.save_inbox_assessment(signal_id,revision,item.context_revision,result["attention"].as_str().context("Response assessment is missing")?,result["reason"].as_str().context("Response rationale is missing")?)?;
+            self.emit(Event::Sync);return Ok(None);
+        }
         let agents = self.store.unarchived_agents()?;
         let available: Vec<_> = agents.iter().map(|agent| agent.id.clone()).collect();
         if let Some(advice) = self.routing_advice(signal_id)? {
@@ -1103,8 +1114,7 @@ impl Hub {
         }
         let tags = self.store.all_tags()?;
         let roster: Vec<_> = agents.iter().map(|agent| serde_json::json!({"id":agent.id,"name":agent.name,"status":agent.status,"tags":tags.get(&agent.id)})).collect();
-        let text=if crate::inbox::imported(&item.signal.source) {self.store.routing_text(&item.signal,12000)?}else{recommendations::recent_text(&item.signal.text,12000)};
-        let context = serde_json::json!({"item":{"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"authenticatedUser":item.signal.conversation.split(':').nth(1),"sourceContext":text},"contextRevision":item.context_revision,"agents":roster});
+        let context = serde_json::json!({"item":item_context,"contextRevision":item.context_revision,"agents":roster});
         let guidance = self.store.recommendation_guidance(recommendations::ROUTING)?;
         let response = self.harness(Backend::Codex).metadata(&recommendations::apply(&recommendations::routing_prompt(&context), &guidance), recommendations::routing_schema(), &self.config.workspace).await?;
         let available: Vec<_> = self.store.unarchived_agents()?.into_iter().map(|agent| agent.id).collect();
@@ -3467,16 +3477,8 @@ impl Hub {
         let (mut inbox,inbox_clear_through,inbox_waiting) = self.store.inbox_snapshot(inbox_limit)?;
         for item in &mut inbox {
             item.source_url=self.store.get(&format!("inbox-url:{}",item.signal.id))?.filter(|url|reqwest::Url::parse(url).is_ok_and(|url|matches!(url.scheme(),"https"|"http")));
-            item.suggested = self
-                .store
-                .bound_agent(
-                    &item.signal.source,
-                    &item.signal.conversation,
-                    &item.signal.thread_key,
-                )
-                .ok()
-                .flatten();
-            if item.state == InboxState::Waiting {
+            item.suggested=item.destination.as_ref().map(|d|d.agent_id.clone());
+            if item.state == InboxState::Waiting && item.destination.is_none() {
                 item.recommendation = self.routing_advice(&item.signal.id)?;
                 if item.suggested.is_none() {if let Some(advice) = &item.recommendation { item.suggested = advice.choice.agent_ids.first().cloned(); }}
             }

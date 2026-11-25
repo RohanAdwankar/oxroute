@@ -36,6 +36,9 @@ impl Store {
 
     // A Slack row represents one admitted source message, never a refreshed history aggregate.
     pub(super) fn import_slack_arrival(tx:rusqlite::Transaction<'_>,signal:&Signal,url:&str)->Result<Option<String>> {
+        let mut normalized=signal.clone();
+        if normalized.thread_key=="conversation" {normalized.thread_key=tx.query_row("SELECT CASE WHEN thread='' THEN ts ELSE thread END FROM slack_inbox_messages WHERE conversation=?1 AND ts=?2",params![signal.conversation,signal.external_id],|r|r.get(0)).optional()?.unwrap_or_else(||signal.external_id.clone());}
+        let signal=&normalized;
         Self::put_inbox_context(&tx,signal)?;
         if Self::intake_excluded_from(&tx,signal)?{tx.commit()?;return Ok(None);}
         let cutoff:Option<String>=tx.query_row("SELECT value FROM kv WHERE key='inbox-slack-arrivals-since'",[],|r|r.get(0)).optional()?;
@@ -49,7 +52,7 @@ impl Store {
         let existing:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND external_id=?3",params![signal.source,signal.conversation,signal.external_id],|r|r.get(0)).optional()?;
         let id=existing.clone().unwrap_or_else(||signal.id.clone());
         let admitted=tx.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals WHERE signal_id=?1)",[&id],|r|r.get::<_,bool>(0))?;
-        let changed=tx.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(id) DO UPDATE SET text=excluded.text,label=excluded.label,at=excluded.at,revision=signals.revision+1 WHERE text!=excluded.text OR label!=excluded.label OR at!=excluded.at",params![id,signal.source,signal.conversation,signal.thread_key,signal.external_id,signal.author,signal.label,signal.text,signal.at,signal.root])?;
+        let changed=tx.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(id) DO UPDATE SET text=excluded.text,label=excluded.label,at=excluded.at,thread_key=excluded.thread_key,revision=signals.revision+1 WHERE text!=excluded.text OR label!=excluded.label OR at!=excluded.at OR thread_key!=excluded.thread_key",params![id,signal.source,signal.conversation,signal.thread_key,signal.external_id,signal.author,signal.label,signal.text,signal.at,signal.root])?;
         if !admitted {Self::advance_arrival(&tx,&id,&signal.external_id)?;}
         if changed>0 {tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;}
         tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-url:{id}"),url])?;

@@ -32,7 +32,7 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
   const prediction=!!params.outputSchema?.properties?.actions;
   const learning=!!params.outputSchema?.properties?.guidance;
   const routing=!!params.outputSchema?.properties?.agentIds;
-  const text=learning?JSON.stringify({guidance:'Prefer context relevant to ongoing work'}):routing?JSON.stringify({attention:'response_needed',action:'spawn',agentIds:[],reason:'A new agent can review this context'}):prediction?JSON.stringify({actions,automatic:null}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
+  const text=learning?JSON.stringify({guidance:'Prefer context relevant to ongoing work'}):routing?JSON.stringify({attention:'response_needed',action:'spawn',agentIds:[],reason:'A new agent can review this context'}):params.outputSchema?.properties?.attention?JSON.stringify({attention:'response_needed',reason:'Current source request remains unanswered'}):prediction?JSON.stringify({actions,automatic:null}):params.outputSchema?JSON.stringify({title:'Configuration review'}):'The configuration check is complete.';
   setTimeout(()=>{
    for(const [method,extra] of [['turn/started',{turn}],['item/completed',{item:{id:`item-${next}`,type:'agentMessage',text,phase:'final_answer'}}],['turn/completed',{turn}]])
     if(socket.readyState===1)socket.send(JSON.stringify({method,params:{threadId:params.threadId,...extra}}));

@@ -653,6 +653,10 @@ pub struct InboxItem {
     #[serde(default)]
     pub context_revision: i64,
     #[serde(default,skip_serializing_if="Option::is_none")]
+    pub destination:Option<crate::store::InboxDestination>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub group:Option<crate::store::InboxGroup>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
     pub review: Option<crate::store::InboxReview>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<InboxDisplay>,
@@ -841,7 +845,7 @@ mod tests {
         assert_eq!(encoded["agentId"], "a");
 
         let item = InboxItem {
-            revision:0,context_revision:0,review:None,
+            revision:0,context_revision:0,review:None,destination:None,group:None,
             display: None,
             signal,
             state: InboxState::Waiting,

@@ -72,13 +72,14 @@ export function Fleet({
   const [context,setContext]=useState<{id:string;text?:string;error?:string}|null>(null);
   const [contextRetry,setContextRetry]=useState(0);
   const contextId=routing&&["outlook-inbox","slack-inbox"].includes(routing.signal.source)?routing.signal.id:null;
+  const contextKey=routing?.group?.key??contextId;
   useEffect(()=>{
     if(!contextId||routing?.display?.text)return;
-    let live=true;setContext(current=>current?.id===contextId?{id:contextId,text:current.text}:{id:contextId});
-    api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextId,text:item.display?.text||item.signal.text});},()=>{if(live)setContext(current=>({id:contextId,text:current?.id===contextId?current.text:undefined,error:"Could not load conversation."}));});
+    let live=true;setContext(current=>current?.id===contextKey?{id:contextKey!,text:current.text}:{id:contextKey!});
+    api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextKey!,text:item.display?.text||item.signal.text});},()=>{if(live)setContext(current=>({id:contextKey!,text:current?.id===contextKey?current.text:undefined,error:"Could not load conversation."}));});
     return()=>{live=false;};
-  },[contextId,routing?.contextRevision,contextRetry]);
-  const contextText=routing?.display?.text||(context?.id===contextId?context.text:undefined);
+  },[contextKey,routing?.contextRevision,contextRetry]);
+  const contextText=routing?.display?.text||(context?.id===contextKey?context.text:undefined);
   const [model, setModel] = useState("");
   const chosen = model || defaultModel || models[0]?.id || "";
   const [order,setOrder]=useState<string[]|null>(null);
@@ -128,7 +129,7 @@ export function Fleet({
         )}
       </div>
 
-      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextId&&context.error?"":"Loading conversation…")}{context?.id===contextId&&context.error&&<span role="alert"> {context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>}</div>}
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextKey&&context.error?"":"Loading conversation…")}{context?.id===contextKey&&context.error&&<span role="alert"> {context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

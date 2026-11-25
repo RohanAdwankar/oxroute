@@ -80,6 +80,8 @@ export interface TaskItem {
 export interface InboxItem {
   revision?: number;
   contextRevision?: number;
+  destination?:{agentId:string;blocked:boolean};
+  group?:{key:string;latestAt:number;historyCount:number;draft:string|null;members:{id:string;revision:number;at:number;preview:string;state:string;attention:string;sourceUrl?:string}[]};
   review?: {revision:number;contextRevision?:number;draftRevision?:number|null;draftContextRevision?:number|null;state:string;reason:string;draft:string|null;resolvedBy:number|null};
   display?: {label: string; text: string; preview?: string};
   sourceUrl?: string;

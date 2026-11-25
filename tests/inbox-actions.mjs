@@ -21,9 +21,10 @@ rpc.on('connection',socket=>socket.on('message',raw=>{
  const{id,method,params={}}=JSON.parse(raw);if(id===undefined)return;let result={};
  if(method==='thread/start')result={thread:{id:'session-'+(++serial)}};
  if(method==='thread/resume'){const saved=sessions.get(params.threadId);if(saved)saved.socket=socket;result={thread:{id:params.threadId,turns:saved?[saved.turn]:[]}};}
+ if(method==='turn/interrupt'){const saved=sessions.get(params.threadId);saved.turn.status='interrupted';setTimeout(()=>send(socket,'turn/completed',{threadId:params.threadId,turn:saved.turn}),5);}
  if(method==='turn/start'){
   const schema=params.outputSchema?.properties,ordinary=!schema,turn={id:'turn-'+(++serial),status:'inProgress',items:[]};
-  const text=schema?.draft?JSON.stringify({draft:'A concise local response grounded in the source conversation.'}):schema?.agentIds?JSON.stringify({attention:'response_needed',action:'existing',agentIds:[target],reason:'Existing conversation owns the related work'}):schema?JSON.stringify({title:'Source review'}):'Internal source handling completed.';
+  const text=schema?.draft?JSON.stringify({draft:'A concise local response grounded in the source conversation.'}):schema?.agentIds?JSON.stringify({attention:'response_needed',action:'existing',agentIds:[target],reason:'Existing conversation owns the related work'}):schema?.attention?JSON.stringify({attention:'response_needed',reason:'Current source request remains unanswered'}):schema?JSON.stringify({title:'Source review'}):'Internal source handling completed.';
   sessions.set(params.threadId,{turn,text,socket});turns.push(params);result={turn};
   if(schema?.draft&&failDraft){failDraft=false;turn.error={message:'Draft generation interrupted'};turn.status='failed';setTimeout(()=>send(socket,'turn/completed',{threadId:params.threadId,turn}),10);}
   else if(!ordinary||!holdOwner)setTimeout(()=>finish(params.threadId),10);
@@ -95,9 +96,62 @@ try{
  finish(ownerThread,false);await stop();daemon=start();await healthy();holdOwner=false;
  await until(()=>turns.filter(t=>!t.outputSchema).length===2,'Queued internal route did not recover after restart');
  const routed=turns.filter(t=>!t.outputSchema).at(-1),savedTarget=JSON.parse(db.prepare('SELECT target FROM active_turns WHERE agent_id=?').get(owner.id).target);
- assert.equal(savedTarget.source,'you','Internal routing never falls back to destination external home');assert.ok(JSON.stringify(routed.input).includes('Exact incoming message'));
+ assert.equal(savedTarget.source,'you','Internal routing never falls back to destination external home');assert.ok(JSON.stringify(routed.input).includes('Review observations and retain'));
  await post('/api/intake/'+incoming.signal+'/action',accepted);assert.equal(turns.filter(t=>!t.outputSchema).length,2,'Accepted route retry cannot deliver twice');
  finish(routed.threadId);assert.equal((await read('/api/intake/'+unrelated.signal)).state,'waiting');
  assert.deepEqual(db.prepare('SELECT * FROM inbox_messages ORDER BY external_id').all(),originalMessages);assert.deepEqual(await read('/api/tasks'),originalTasks);assert.deepEqual(errors,[]);
+ // Confirmed thread destinations are looked up without invoking the model router.
+ await until(async()=>(await read('/api/agents/'+owner.id)).agent.status==='complete','Owner did not settle');
+ db.prepare("INSERT INTO kv(key,value) VALUES('source-account:slack',?)").run(JSON.stringify({account:'workspace',owner:'reader',actor:'source-bot'}));
+ db.prepare("INSERT INTO kv(key,value) VALUES('inbox-dm:workspace:direct','true')").run();
+ db.prepare("INSERT INTO bindings(source,conversation,thread_key,agent_id) VALUES('slack','direct','100.1',?)").run(owner.id);
+ const routerCount=()=>turns.filter(t=>t.outputSchema?.properties?.agentIds).length;
+ const routedBefore=routerCount(),incomingThread=text=>post('/api/signal',{source:'slack-inbox',conversation:'workspace:reader:direct',threadKey:'100.1',label:'Thread source',text});
+ const first=await incomingThread('First source reply'),second=await incomingThread('Later source reply');
+ for(const message of [first,second]){assert.equal(await post('/api/routing-recommendations/'+message.signal,{}),null);assert.equal((await read('/api/intake/'+message.signal)).destination.agentId,owner.id);}
+ assert.equal(routerCount(),routedBefore,'Original binding resolves the first and subsequent replies without a router invocation');
+ let grouped=(await read('/api/state')).inbox.find(i=>i.group?.members.some(m=>m.id===second.signal));
+ assert.equal(grouped.group.members.length,2);const groupKey=grouped.group.key;
+ const threadRow=page.locator('[data-inbox-thread='+JSON.stringify(groupKey)+']');await threadRow.waitFor();
+ await threadRow.getByRole('button',{name:'Show thread history',exact:true}).click();await threadRow.getByLabel('Thread history',{exact:true}).getByText('First source reply',{exact:true}).waitFor();
+ await threadRow.getByRole('button',{name:'Open Inbox item',exact:true}).click();
+ const context=page.getByLabel('Conversation context',{exact:true});await until(async()=>(await context.textContent()).includes('Later source reply'),'Thread context did not load');
+ await context.evaluate(node=>{window.threadFlashes=0;window.threadObserver=new MutationObserver(()=>{if(node.textContent.includes('Loading conversation'))window.threadFlashes++;});window.threadObserver.observe(node,{subtree:true,childList:true,characterData:true});});
+ for(const width of [1280,390])for(const zoom of [.8,1,1.25]){
+  const viewport={width:Math.round(width/zoom),height:Math.round(900/zoom)};await page.setViewportSize(viewport);await cdp.send('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:zoom,mobile:false});
+  if(!await threadRow.isVisible())await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click();
+  await threadRow.scrollIntoViewIfNeeded();assert.ok(await threadRow.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'Expanded thread stays within the viewport');
+  if(process.env.INBOX_SCREENSHOTS)await page.screenshot({path:join(process.env.INBOX_SCREENSHOTS,'thread-'+width+'-'+zoom+'.png'),clip:{x:0,y:0,...viewport},captureBeyondViewport:false});
+ }
+ await page.setViewportSize({width:1280,height:900});await cdp.send('Emulation.clearDeviceMetricsOverride');
+ const oldResolve=body(grouped,'resolve',{members:grouped.group.members.map(({id,revision})=>({id,revision}))});
+ const third=await incomingThread('New arrival after the member snapshot');await post('/api/routing-recommendations/'+third.signal,{});
+ await post('/api/intake/'+grouped.signal.id+'/action',oldResolve);
+ assert.equal((await read('/api/intake/'+first.signal)).review.state,'resolved');assert.equal((await read('/api/intake/'+third.signal)).review.state,'response_needed','Later arrival survives group resolve');
+ await until(async()=>(await context.textContent()).includes('New arrival after the member snapshot'),'Selected context did not refresh after its anchor changed');
+ assert.equal(await page.evaluate(()=>window.threadFlashes),0,'New same-thread arrivals keep the loaded pane visible');
+ assert.equal(await threadRow.getByRole('button',{name:'Show thread history'}).getAttribute('aria-expanded'),'true','Expandable history retains its place');
+ assert.equal(routerCount(),routedBefore);
+ const alternate=await post('/api/agents',{});await post('/api/rename',{agent:alternate.id,name:'Alternate owner'});holdOwner=true;
+ grouped=(await read('/api/state')).inbox.find(i=>i.group?.key===groupKey);
+ await post('/api/intake/'+grouped.signal.id+'/action',body(grouped,'route_manual',{target:alternate.id,targets:[alternate.id,owner.id],members:grouped.group.members.map(({id,revision})=>({id,revision}))}));
+ await until(async()=>(await read('/api/agents/'+alternate.id)).agent.status==='working','Manual reroute did not reach the selected owner');
+ await until(async()=>turns.filter(t=>!t.outputSchema&&t.threadId===ownerThread).length===3,'Manual fanout did not preserve the original owner');
+ const fourth=await incomingThread('Same root after manual reroute');await post('/api/routing-recommendations/'+fourth.signal,{});
+ assert.equal((await read('/api/intake/'+fourth.signal)).destination.agentId,alternate.id,'Accepted manual reroute overrides original ownership');
+ await post('/api/interrupt',{agent:alternate.id});
+ await until(async()=>(await read('/api/intake/'+fourth.signal)).destination.blocked,'Stopped destination boundary not retained');
+ const ordinaryBefore=turns.filter(t=>!t.outputSchema).length;const fifth=await incomingThread('Arrival while its owner is stopped');await post('/api/routing-recommendations/'+fifth.signal,{});
+ assert.equal((await read('/api/intake/'+fifth.signal)).destination.agentId,alternate.id);assert.equal(turns.filter(t=>!t.outputSchema).length,ordinaryBefore,'Inheritance never resumes a stopped owner');
+ await stop();daemon=start();await healthy();
+ assert.equal((await read('/api/intake/'+fifth.signal)).destination.agentId,alternate.id);assert.equal(routerCount(),routedBefore,'Restart retains destinations with no model router calls');
+ const beforeRoot=await read('/api/intake/'+fifth.signal);
+ db.prepare("INSERT INTO inbox_messages VALUES('slack-inbox','workspace:reader:direct','100.1','100.1','reader','Original root collected later',100.1)").run();
+ const historyResult=await read('/api/intake/'+fifth.signal+'/thread');assert.equal(historyResult.messages[0].id,'100.1');assert.equal((await read('/api/intake/'+fifth.signal)).destination.agentId,beforeRoot.destination.agentId);
+ const isolated=await post('/api/signal',{source:'slack-inbox',conversation:'workspace:reader:direct',threadKey:'200.1',text:'Independent provider root'});
+ assert.equal((await read('/api/intake/'+isolated.signal)).destination,undefined,'Unrelated roots cannot inherit a channel destination');
+ assert.equal((await read('/api/state')).inbox.filter(i=>i.signal.source==='slack-inbox').length,2,'One row per provider root');
+ assert.deepEqual(await read('/api/tasks'),originalTasks);assert.equal(db.prepare("SELECT value FROM kv WHERE key='review:independent'").get().value,'{"status":"pending"}');
+ console.log('Original/accepted provider-root destination inheritance, zero model router calls, grouped history, anchor/scroll retention, later-arrival resolve boundary, manual reroute, stopped-owner and restart isolation pass.');
  console.log('Real daemon inline local generation/edit/error retention, no conversation creation, resolve/recovery, stale prediction rejection, durable deduped internal route/restart, task/review/history preservation and desktop/narrow80/100/125% controls pass.');
 }finally{db?.close();await browser?.close();await stop();for(const client of rpc.clients)client.terminate();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));await new Promise(done=>rpc.close(done));await new Promise(done=>transport.close(done));await rm(root,{recursive:true,force:true});}

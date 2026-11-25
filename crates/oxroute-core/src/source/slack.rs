@@ -55,6 +55,15 @@ impl SlackSource {
         }
     }
 
+    /// Read the configured source namespace without changing transport or permissions.
+    pub async fn account_metadata(&self)->Result<Value> {
+        let value:Value=self.http.get(format!("{}/auth.test",self.api)).bearer_auth(&self.bot_token).send().await?.json().await?;
+        anyhow::ensure!(value["ok"]==true,"Slack source identity could not be verified");
+        let team=value["team_id"].as_str().context("Slack source has no workspace")?;
+        let actor=value["user_id"].as_str().context("Slack source has no actor")?;
+        Ok(json!({"account":team,"owner":self.allowed_user,"actor":actor}))
+    }
+
     pub fn allowed_user(&self) -> &str {
         &self.allowed_user
     }

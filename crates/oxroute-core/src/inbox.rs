@@ -439,11 +439,7 @@ async fn slack_message(
     let activity=message["edited"]["ts"].as_str().unwrap_or(ts).parse::<f64>().context("invalid Slack message timestamp")?;
     ensure!(at.is_finite()&&activity.is_finite(),"invalid Slack source time");
     if text.is_empty() {return Ok(());}
-    let thread = if dm {
-        "conversation"
-    } else {
-        message["thread_ts"].as_str().unwrap_or(ts)
-    };
+    let thread=message["thread_ts"].as_str().unwrap_or(ts);
     let signal = Signal {
         id: new_id("sig"),
         source: SLACK.into(),
@@ -584,7 +580,8 @@ mod tests {
         hub.store.set("inbox-events-error","Previous push transport disconnected")?;
         let status=statuses(&hub).into_iter().find(|status|status.source==SLACK).unwrap();assert!(status.configured);assert!(status.error.is_none(),"Optional push transport cannot turn configured polling into missing read access");
         assert!(slack(&hub,&Reader::new(&base,token)?).await.is_err(),"The discovery coverage gap remains visible");
-        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,"conversation");assert!(!items[0].signal.text.contains("Context from the owner"));assert!(hub.store.inbox_item(&items[0].signal.id)?.unwrap().display.unwrap().text.contains("Context from the owner"));
+        let partial=statuses(&hub).into_iter().find(|s|s.source==SLACK).unwrap();assert!(partial.partial&&partial.last_sync.is_some(),"Successful known history reads remain visible alongside the discovery gap");
+        let items=hub.store.inbox(10)?;assert_eq!(items.len(),1);assert_eq!(items[0].signal.thread_key,items[0].signal.external_id,"Top-level source identity is the provider root, never a channel aggregate");assert!(!items[0].signal.text.contains("Context from the owner"));assert!(hub.store.inbox_item(&items[0].signal.id)?.unwrap().display.unwrap().text.contains("Context from the owner"));
         assert!(hub.store.get("inbox-cursor:slack-inbox:team:owner:D-fixture-source")?.is_some(),"Known history checkpoints advance independently of missing listing access");
         let coverage:Value=serde_json::from_str(&hub.store.get("inbox-coverage:slack")?.unwrap())?;assert_eq!(coverage["enumerated"],false);assert_eq!(coverage["knownConversations"],1);assert!(coverage["forwardHistoryThrough"].is_null());assert!(!coverage["gaps"].as_array().unwrap().is_empty());
         assert_eq!(hub.store.focus_inbox(Some("slack"),None)?.items.len(),1,"Configured DM history retains response reconciliation");
@@ -931,22 +928,20 @@ mod tests {
                 }
             }
             let items = hub.store.inbox(10000)?;
-            assert!(original.iter().all(|id|items.iter().any(|item|&item.signal.id==id)),"Recovered arrivals retain their stable identities");
-            assert_eq!(items.len(),original.len()+roots*6,"New direct/group replies arrive individually; unmentioned channel replies stay context only");
+            let members=items.iter().flat_map(|item|item.group.as_ref().unwrap().members.iter()).collect::<Vec<_>>();
+            assert!(original.iter().all(|id|members.iter().any(|item|&item.id==id)),"Grouping retains every recovered source identity");
+            assert_eq!(members.len(),original.len()+roots*6,"New direct/group replies remain individual source records; unmentioned channel replies stay context only");
             for channel in ["direct","group","work","mentioned"] {
                 let conversation=format!("workspace:owner:{channel}");
                 let imported=hub.store.imported_conversations(SLACK,"workspace:owner:")?;assert!(imported.contains(&conversation));
                 let roots=remote.lock().unwrap().roots.clone();
                 for root in &roots {
-                    let mut context=Signal{id:String::new(),source:SLACK.into(),conversation:conversation.clone(),thread_key:if matches!(channel,"direct"|"group") {"conversation".into()}else{root.clone()},external_id:String::new(),author:String::new(),label:String::new(),text:String::new(),attachments:vec![],at:0.0,root:false};
+                    let mut context=Signal{id:String::new(),source:SLACK.into(),conversation:conversation.clone(),thread_key:root.clone(),external_id:String::new(),author:String::new(),label:String::new(),text:String::new(),attachments:vec![],at:0.0,root:false};
                     context.text=hub.store.routing_text(&context,100000)?;
                     if channel!="mentioned"||root==&roots[0] {assert!(context.text.contains("Delta "),"Recovered source context is durable even when it is not an arrival");}
                 }
             }
-            for item in &items {
-                hub.store
-                    .resolve_signal(&item.signal.id, "discarded", &[])?;
-            }
+            for member in members {hub.store.resolve_signal(&member.id,"discarded",&[])?;}
             slack(&hub, &reader).await?;
             assert!(hub
                 .store

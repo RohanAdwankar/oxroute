@@ -6,12 +6,12 @@ impl Store {
         let (mut items,through,waiting)=self.read(|c|{
             let tx=c.unchecked_transaction()?;
             let through=tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM inbox_arrivals",[],|r|r.get::<_,i64>(0))?;
-            let waiting=tx.query_row("SELECT count(*) FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE v.state='response_needed' AND a.sequence<=?1",[through],|r|r.get::<_,usize>(0))?;
-            let mut query=tx.prepare("SELECT s.* FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE a.sequence<=?1 ORDER BY CASE v.state WHEN 'response_needed' THEN 3 WHEN 'unreviewed' THEN 2 ELSE 0 END DESC,s.at DESC,s.rowid DESC LIMIT ?2")?;
+            let waiting=tx.query_row("SELECT count(DISTINCT json_array(s.source,s.conversation,CASE WHEN s.source IN ('slack-inbox','outlook-inbox') THEN s.thread_key ELSE s.id END)) FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE v.state='response_needed' AND a.sequence<=?1",[through],|r|r.get::<_,usize>(0))?;
+            let mut query=tx.prepare("WITH ranked AS (SELECT s.id,MAX(CASE v.state WHEN 'response_needed' THEN 3 WHEN 'unreviewed' THEN 2 ELSE 0 END) OVER (PARTITION BY s.source,s.conversation,CASE WHEN s.source IN ('slack-inbox','outlook-inbox') THEN s.thread_key ELSE s.id END) AS priority,MAX(s.at) OVER (PARTITION BY s.source,s.conversation,CASE WHEN s.source IN ('slack-inbox','outlook-inbox') THEN s.thread_key ELSE s.id END) AS latest,ROW_NUMBER() OVER (PARTITION BY s.source,s.conversation,CASE WHEN s.source IN ('slack-inbox','outlook-inbox') THEN s.thread_key ELSE s.id END ORDER BY (s.state='waiting') DESC,s.at DESC,s.rowid DESC) AS ordinal FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id JOIN inbox_attention v ON v.id=s.id WHERE a.sequence<=?1) SELECT s.* FROM ranked r JOIN signals s ON s.id=r.id WHERE r.ordinal=1 ORDER BY r.priority DESC,r.latest DESC,s.rowid DESC LIMIT ?2")?;
             let items=query.query_map(params![through,limit as i64],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;drop(query);
             tx.commit()?;Ok((items,through,waiting))
         })?;
-        self.decorate_inbox(&mut items,false)?;Ok((items,through,waiting))
+        self.decorate_inbox(&mut items,false)?;self.decorate_inbox_groups(&mut items,through)?;Ok((items,through,waiting))
     }
 
     pub fn clear_inbox(&self,request:&str,through:i64,focus:&str)->Result<usize> {

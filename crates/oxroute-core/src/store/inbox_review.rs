@@ -23,7 +23,7 @@ impl Store {
         item.context_revision=c.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM kv WHERE key=?1),0)",[format!("inbox-context-revision:{}:{}",item.signal.source,item.signal.conversation)],|r|r.get(0))?;
         let saved:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("inbox-review:{}",item.signal.id)],|r|r.get(0)).optional()?;
         let mut review=saved.map(|s|serde_json::from_str::<InboxReview>(&s)).transpose()?.unwrap_or_default();
-        if review.revision!=item.revision||!(review.resolved_by.is_some()||matches!(review.state.as_str(),"answered"|"no_response_needed")) {
+        if review.revision!=item.revision||!(review.resolved_by.is_some()||matches!(review.state.as_str(),"answered"|"no_response_needed")||(review.state=="response_needed"&&review.context_revision==item.context_revision)) {
             let advice:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("routing-advice:{}",item.signal.id)],|r|r.get(0)).optional()?;
             let advice=advice.map(|s|serde_json::from_str::<crate::recommendations::RoutingAdvice>(&s)).transpose()?;
             review.state=if item.state==InboxState::Done {"routed".into()}else if let Some(advice)=&advice {advice.choice.attention.clone()}else if crate::inbox::imported(&item.signal.source) {"unreviewed".into()}else{"response_needed".into()};
@@ -62,12 +62,19 @@ mod tests {
 
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct InboxScope {pub id:String,pub revision:i64}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct InboxAction {
+    #[serde(default)]
+    pub members:Vec<InboxScope>,
     pub request_id:String,
     pub revision:i64,
     pub context_revision:i64,
     pub action:String,
     pub target:Option<String>,
+    #[serde(default)]
+    pub targets:Vec<String>,
     pub recommendation_id:Option<i64>,
     pub draft:Option<String>,
 }
@@ -77,6 +84,8 @@ pub struct InboxRoute {
     pub request_id:String,
     pub target:String,
     pub text:String,
+    #[serde(default)]
+    pub quiet_epoch:Option<String>,
 }
 impl Store {
     pub fn inbox_action_receipt(&self,id:&str,action:&InboxAction)->Result<bool> {
@@ -95,32 +104,58 @@ impl Store {
             let mut item=tx.query_row("SELECT * FROM signals WHERE id=?1",[id],read_item)?;
             Self::decorate_inbox_review(&tx,&mut item)?;
             anyhow::ensure!(item.revision==action.revision,"Source message changed; inspect its current revision");
-            if matches!(action.action.as_str(),"route"|"draft") {anyhow::ensure!(item.context_revision==action.context_revision,"Source conversation changed; refresh before acting");}
-            let mut review=item.review.unwrap_or_default();
-            if action.action=="route" {
+            if action.action=="draft" {anyhow::ensure!(item.context_revision==action.context_revision,"Source conversation changed; refresh before acting");}
+            let scope=if action.members.is_empty() {vec![InboxScope{id:id.into(),revision:action.revision}]}else{action.members.clone()};
+            anyhow::ensure!(scope.len()<=5000&&scope.iter().any(|m|m.id==id),"Invalid group snapshot");
+            let mut seen=HashSet::new();let mut members=Vec::new();
+            for scope in scope {
+                anyhow::ensure!(seen.insert(scope.id.clone()),"Duplicate group member");
+                let mut member=tx.query_row("SELECT * FROM signals WHERE id=?1",[&scope.id],read_item)?;
+                anyhow::ensure!(member.revision==scope.revision,"A source message changed; inspect the current group");
+                anyhow::ensure!(member.signal.source==item.signal.source&&member.signal.conversation==item.signal.conversation&&member.signal.thread_key==item.signal.thread_key,"Group members must belong to one verified source thread");
+                Self::decorate_inbox_review(&tx,&mut member)?;members.push(member);
+            }
+            let mut review=item.review.clone().unwrap_or_default();
+            if matches!(action.action.as_str(),"route"|"route_manual") {
                 anyhow::ensure!(item.state==InboxState::Waiting&&!Self::intake_excluded_from(&tx,&item.signal)?,"Source is no longer available for routing");
                 let target=action.target.as_deref().context("Choose an existing suggested conversation")?;
                 anyhow::ensure!(tx.query_row("SELECT EXISTS(SELECT 1 FROM agents WHERE id=?1 AND archived=0)",[target],|r|r.get::<_,bool>(0))?,"Suggested conversation is unavailable");
-                let bound:Option<String>=tx.query_row("SELECT agent_id FROM bindings WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![item.signal.source,item.signal.conversation,item.signal.thread_key],|r|r.get(0)).optional()?;
-                if let Some(bound)=bound {anyhow::ensure!(bound==target,"Conversation ownership changed; inspect the current target");}
-                else {
+                if action.action!="route_manual" {if let Some(bound)=Self::inbox_destination_from(&tx,&item.signal)? {
+                    anyhow::ensure!(!bound.blocked&&bound.agent_id==target,"Confirmed destination changed or is unavailable");
+                } else {
                     let raw:String=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("routing-advice:{id}")],|r|r.get(0)).context("Prediction changed; refresh before routing")?;
                     let advice:crate::recommendations::RoutingAdvice=serde_json::from_str(&raw)?;
-                    anyhow::ensure!(Some(advice.recommendation_id)==action.recommendation_id&&advice.choice.action=="existing"&&advice.choice.agent_ids.first().is_some_and(|a|a==target),"Prediction changed; inspect the current target");
-                    tx.execute("INSERT INTO bindings(source,conversation,thread_key,agent_id) VALUES(?1,?2,?3,?4)",params![item.signal.source,item.signal.conversation,item.signal.thread_key,target])?;
+                    anyhow::ensure!(item.context_revision==action.context_revision&&Some(advice.recommendation_id)==action.recommendation_id&&advice.choice.action=="existing"&&advice.choice.agent_ids.first().is_some_and(|a|a==target),"Prediction changed; inspect the current target");
+                }}
+                tx.execute("INSERT INTO bindings(source,conversation,thread_key,agent_id) VALUES(?1,?2,?3,?4) ON CONFLICT(source,conversation,thread_key) DO UPDATE SET agent_id=excluded.agent_id",params![item.signal.source,item.signal.conversation,item.signal.thread_key,target])?;
+                let fresh=members.iter().filter(|m|m.state==InboxState::Waiting).collect::<Vec<_>>();
+                let targets=if action.targets.is_empty() {vec![target.to_owned()]}else{action.targets.clone()};
+                anyhow::ensure!(targets.first().is_some_and(|t|t==target)&&targets.iter().collect::<HashSet<_>>().len()==targets.len(),"Invalid target selection");
+                if action.action=="route" {anyhow::ensure!(targets.len()==1,"A prediction selects one exact destination");}
+                for target in &targets {
+                    anyhow::ensure!(tx.query_row("SELECT EXISTS(SELECT 1 FROM agents WHERE id=?1 AND archived=0)",[target],|r|r.get::<_,bool>(0))?,"Selected conversation is unavailable");
+                    let quiet_epoch=tx.query_row("SELECT value FROM kv WHERE key=?1",[format!("quiet-stop:{target}")],|r|r.get::<_,String>(0)).optional()?;
+                    let queued=InboxRoute{request_id:format!("{}:{target}",action.request_id),target:target.into(),quiet_epoch,text:format!("{}\n\nAccepted incoming messages:\n{}",route_text.context("Internal source context is required")?,fresh.iter().map(|m|format!("[{}] {}: {}",m.review.as_ref().map(|r|r.state.as_str()).unwrap_or("unreviewed"),m.signal.id,m.signal.text)).collect::<Vec<_>>().join("\n\n"))};
+                    tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2)",params![format!("inbox-route:{}",queued.request_id),serde_json::to_string(&queued)?])?;
                 }
-                let queued=InboxRoute{request_id:action.request_id.clone(),target:target.into(),text:route_text.context("Internal source context is required")?.into()};
-                tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2)",params![format!("inbox-route:{}",action.request_id),serde_json::to_string(&queued)?])?;
-                tx.execute("UPDATE signals SET state='done',outcome='routed internally',agent_ids=?2 WHERE id=?1",params![id,serde_json::to_string(&vec![target])?])?;
+                for member in fresh {tx.execute("UPDATE signals SET state='done',outcome='routed internally',agent_ids=?2 WHERE id=?1",params![member.signal.id,serde_json::to_string(&targets)?])?;}
             }
             let detail=serde_json::json!({"signal":id,"action":action});
             tx.execute("INSERT INTO entries(agent_id,at,kind,text,detail,item_id) VALUES(?1,?2,'you',?3,?4,?5)",params![actor,crate::model::now(),match action.action.as_str(){"resolve"=>"Mark Inbox item resolved","reopen"=>"Review Inbox item again","draft"=>"Generate local Inbox draft","save_draft"=>"Edit local Inbox draft",_=>"Route Inbox item internally"},detail.to_string(),action.request_id])?;
             let entry=tx.last_insert_rowid();
             match action.action.as_str() {
-                "resolve"=>{review.state="resolved".into();review.reason="Marked resolved by you".into();review.resolved_by=Some(entry);},
-                "reopen"=>{review.resolved_by=None;tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;},
+                "resolve"|"reopen"=>{
+                    for mut member in members {
+                        Self::decorate_inbox_review(&tx,&mut member)?;
+                        let mut changed=member.review.unwrap_or_default();changed.state=if action.action=="resolve" {"resolved"}else{"unreviewed"}.into();
+                        changed.reason=if action.action=="resolve" {"Marked resolved by you"}else{""}.into();changed.resolved_by=(action.action=="resolve").then_some(entry);
+                        tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-review:{}",member.signal.id),serde_json::to_string(&changed)?])?;
+                        if action.action=="reopen" {tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{}",member.signal.id)])?;}
+                        if member.signal.id==id {review=changed;}
+                    }
+                },
                 "draft"|"save_draft"=>{let text=draft.context("Local draft is required")?;anyhow::ensure!(text.len()<=16000,"Draft is too long");review.draft=Some(text.into());review.draft_revision=Some(action.revision);review.draft_context_revision=Some(action.context_revision);},
-                "route"=>{},_=>anyhow::bail!("Invalid Inbox action")
+                "route"|"route_manual"=>{},_=>anyhow::bail!("Invalid Inbox action")
             }
             tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-review:{id}"),serde_json::to_string(&review)?])?;
             tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2)",params![key,payload])?;
@@ -145,7 +180,7 @@ mod action_tests {
             store.import_inbox(&signal,"https://example.test/source")?;
             store.with(|c|{c.execute("INSERT INTO tasks(id,text,status,created_at,updated_at) VALUES('retained','Retained work','waiting_for_human',1,1)",[])?;Ok(())})?;
             let item=store.inbox_item(&signal.id)?.unwrap();
-            let action=|kind:&str|InboxAction{request_id:uuid::Uuid::new_v4().to_string(),revision:item.revision,context_revision:item.context_revision,action:kind.into(),target:None,recommendation_id:None,draft:None};
+            let action=|kind:&str|InboxAction{targets:vec![],members:vec![],request_id:uuid::Uuid::new_v4().to_string(),revision:item.revision,context_revision:item.context_revision,action:kind.into(),target:None,recommendation_id:None,draft:None};
             let saved=action("save_draft");store.save_inbox_action(&signal.id,&saved,"",Some("Retained local draft"),None)?;
             let resolved=action("resolve");store.save_inbox_action(&signal.id,&resolved,"",None,None)?;store.save_inbox_action(&signal.id,&resolved,"",None,None)?;
             assert_eq!(store.inbox_review(&signal.id)?.state,"resolved");assert_eq!(store.inbox_review(&signal.id)?.draft.as_deref(),Some("Retained local draft"));

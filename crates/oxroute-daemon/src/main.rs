@@ -209,10 +209,16 @@ async fn serve() -> Result<()> {
     };
 
     let mut hub = Hub::new(config, store);
-    if let Some(slack) = slack {
-        hub.with_source(slack);
-    }
+    if let Some(slack) = &slack {hub.with_source(slack.clone());}
     hub.start().await?;
+    if let Some(slack)=slack {
+        let source_hub=hub.clone();tokio::spawn(async move {
+            match slack.account_metadata().await {
+                Ok(account)=>{if let Err(error)=source_hub.store.set("source-account:slack",&account.to_string()) {tracing::warn!(%error,"Source namespace was not saved");}source_hub.emit(oxroute_core::model::Event::Sync);},
+                Err(error)=>tracing::warn!(%error,"Source namespace verification deferred; existing source transport is unchanged")
+            }
+        });
+    }
     merge_watch::start(hub.clone());
 
     let (agent_routes, _) = agent_api();
@@ -251,6 +257,7 @@ async fn serve() -> Result<()> {
         .route("/api/intake/policies",get(intake_policies).put(set_intake_policy))
         .route("/api/intake/{id}",get(intake_item))
         .route("/api/intake/{id}/action",post(inbox_action))
+        .route("/api/intake/{id}/thread",get(inbox_thread_history))
         .route("/api/say", post(say))
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
@@ -623,6 +630,13 @@ struct RouteBody {
     signal: String,
     #[serde(flatten)]
     routing: Routing,
+}
+
+#[derive(Default,Deserialize)]
+#[serde(rename_all="camelCase")]
+struct InboxHistoryQuery {before:Option<String>}
+async fn inbox_thread_history(State(hub):Hubs,Path(id):Path<String>,Query(query):Query<InboxHistoryQuery>)->Result<Json<oxroute_core::store::InboxHistory>,Failed> {
+    Ok(Json(hub.store.inbox_thread_history(&id,query.before.as_deref())?))
 }
 
 async fn inbox_action(State(hub):Hubs,Path(id):Path<String>,Json(body):Json<oxroute_core::store::InboxAction>)->Result<Json<oxroute_core::store::InboxReview>,Failed> {
