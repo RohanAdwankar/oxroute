@@ -50,7 +50,8 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    assert.equal(await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled(),snapshot.inbox.some(item=>item.state==='waiting'),'Presentation clearing reflects pending scope without being invoked');
    if(await page.evaluate(()=>innerWidth<640))await page.getByRole('button',{name:'collapse inbox',exact:true}).click();
   };
-  if(!await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isVisible())await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click();
+  const inboxToggle=page.getByRole('button',{name:'Show or hide the inbox',exact:true});await inboxToggle.waitFor();
+  if(await inboxToggle.getAttribute('aria-pressed')!=='true')await inboxToggle.click();
   if(items.some(item=>item.state!=='waiting'||['resolved','answered','no_response_needed'].includes(item.review?.state))){const handled=page.getByRole('button',{name:/^Handled ·/});await handled.waitFor();await handled.click();}
   await row(0).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Conversation context"]')?.textContent.includes('Loading conversation'));
   await row(1).click();await page.getByRole('button',{name:'Retry conversation context',exact:true}).click();await content(1);
