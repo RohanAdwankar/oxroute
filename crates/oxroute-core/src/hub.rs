@@ -1125,8 +1125,8 @@ impl Hub {
         if item.state != InboxState::Waiting { return Ok(None); }
         let destination=self.store.inbox_destination(&item.signal)?;
         if destination.is_none()&&self.store.inbox_destination_pending(&item.signal)? {return Ok(None);}
-        let text=if crate::inbox::imported(&item.signal.source) {self.store.routing_text(&item.signal,12000)?}else{recommendations::recent_text(&item.signal.text,12000)};
-        let item_context=serde_json::json!({"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"messageId":item.signal.external_id,"authenticatedUser":self.store.inbox_authenticated_users(&item.signal)?,"sourceContext":text});
+        let context=if crate::inbox::imported(&item.signal.source) {self.store.routing_context(&item.signal,12000)?}else{serde_json::Value::String(recommendations::recent_text(&item.signal.text,12000))};
+        let item_context=serde_json::json!({"source":item.signal.source,"author":item.signal.author,"label":item.signal.label,"text":item.signal.text,"at":item.signal.at,"messageId":item.signal.external_id,"threadKey":item.signal.thread_key,"authenticatedUser":self.store.inbox_authenticated_users(&item.signal)?,"sourceContext":context});
         if destination.is_some() {
             if item.review.as_ref().is_some_and(|r|r.resolved_by.is_some()||matches!(r.state.as_str(),"answered"|"no_response_needed")||(r.state=="response_needed"&&r.context_revision==item.context_revision)) {return Ok(None);}
             let raw=self.harness(Backend::Codex).metadata(&recommendations::response_prompt(&item_context),recommendations::response_schema(),&self.config.workspace).await?;

@@ -212,7 +212,7 @@ mod action_tests {
 
 impl Store {
     pub fn inbox_authenticated_users(&self,signal:&Signal)->Result<Vec<String>> {self.read(|c|Self::inbox_users_from(c,signal))}
-    fn inbox_users_from(c:&Connection,signal:&Signal)->Result<Vec<String>> {
+    pub(super) fn inbox_users_from(c:&Connection,signal:&Signal)->Result<Vec<String>> {
         if signal.source==crate::inbox::SLACK {return Ok(signal.conversation.split(':').nth(1).map(|s|vec![s.to_owned()]).unwrap_or_default());}
         let saved:Option<String>=c.query_row("SELECT value FROM kv WHERE key=?1",[format!("source-account:outlook:{}",signal.conversation)],|r|r.get(0)).optional()?;
         Ok(saved.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_default())
@@ -259,5 +259,65 @@ mod evidence_tests {
             store.import_inbox(&Signal{text:"Changed source request".into(),..signal.clone()},"")?;
             assert_eq!(store.inbox_review(&signal.id)?.state,"unreviewed","A stale disposition cannot suppress an edited request");
         }Ok(())
+    }
+}
+
+impl Store {
+    pub(super) fn refresh_response_context(c:&Connection)->Result<()> {
+        let tx=c.unchecked_transaction()?;
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key='structured-response-context')",[],|r|r.get::<_,bool>(0))? {return Ok(());}
+        // Reassess incomplete automatic conclusions made without source reply relationships.
+        let ids=tx.prepare("SELECT s.id FROM signals s JOIN inbox_attention a ON a.id=s.id LEFT JOIN kv r ON r.key='inbox-review:'||s.id WHERE s.source='slack-inbox' AND s.state='waiting' AND a.state IN ('unreviewed','response_needed') AND json_extract(r.value,'$.resolvedBy') IS NULL")?.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;
+            tx.execute("UPDATE kv SET value=json_set(value,'$.state','unreviewed','$.contextRevision',-1,'$.reason','','$.evidenceMessageIds',json('[]')) WHERE key=?1",[format!("inbox-review:{id}")])?;
+        }
+        tx.execute("INSERT INTO kv(key,value) VALUES('structured-response-context','1')",[])?;
+        tx.commit()?;Ok(())
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    #[test]
+    fn reply_context_retains_source_relationships_and_budget()->Result<()> {
+        for root in ["request-a","request-b"] {
+            let store=Store::in_memory()?;
+            let signal=Signal{id:root.into(),source:crate::inbox::SLACK.into(),conversation:"workspace:owner:direct".into(),thread_key:root.into(),external_id:root.into(),author:"source".into(),text:"Requested information".into(),at:100.0,label:"Source conversation".into(),attachments:vec![],root:true};
+            store.import_inbox(&signal,"")?;
+            for (id,thread,author,text,at) in [("neighbor","other-root","source","Separate question",101.0),("reply",root,"owner","Requested details",103.0),("other-reply","other-root","owner","Unrelated answer",104.0)] {
+                let mut message=signal.clone();message.external_id=id.into();message.thread_key=thread.into();message.author=author.into();message.text=text.into();message.at=at;store.import_inbox(&message,"")?;
+            }
+            let context=store.routing_context(&signal,12000)?;
+            assert_eq!(context["threadMessages"].as_array().unwrap().iter().find(|m|m["messageId"]=="reply").unwrap()["threadKey"],root);
+            assert_eq!(context["conversationMessages"].as_array().unwrap().iter().find(|m|m["messageId"]=="other-reply").unwrap()["threadKey"],"other-root");
+            for key in ["threadMessages","conversationMessages"] {assert!(context[key].as_array().unwrap().windows(2).all(|p|p[0]["at"].as_f64()<p[1]["at"].as_f64()));}
+            assert_eq!(context["threadMessages"].as_array().unwrap().iter().find(|m|m["messageId"]=="reply").unwrap()["isAuthenticatedUser"],true);
+            for budget in [256,1000,12000] {assert!(store.routing_text(&signal,budget)?.chars().count()<=budget);}
+        }Ok(())
+    }
+    #[test]
+    fn representation_refresh_preserves_drafts_terminal_and_manual_dispositions()->Result<()> {
+        let store=Store::in_memory()?;store.slack_arrival_cutoff(Some(1.0))?;store.set("inbox-dm:workspace:direct","1")?;
+        let cases=[("pending","response_needed",false),("answered","answered",false),("context","no_response_needed",false),("manual","resolved",true)];
+        for (id,_,_) in cases {
+            let signal=Signal{id:id.into(),source:crate::inbox::SLACK.into(),conversation:"workspace:owner:direct".into(),thread_key:id.into(),external_id:id.into(),author:"source".into(),text:"Retained source".into(),at:100.0,label:"Source conversation".into(),attachments:vec![],root:true};store.import_inbox(&signal,"")?;
+        }
+        for (id,state,manual) in cases {
+            let stored=store.inbox_item(id)?.unwrap();
+            store.set(&format!("inbox-review:{id}"),&serde_json::json!({"revision":stored.revision,"contextRevision":stored.context_revision,"state":state,"reason":"Retained assessment","evidenceMessageIds":[id],"draft":"Retained draft","resolvedBy":manual.then_some(1)}).to_string())?;
+            store.set(&format!("routing-advice:{id}"),&serde_json::json!({"recommendationId":1,"attention":state,"action":"spawn","agentIds":[],"reason":"Retained advice","evidenceMessageIds":[id]}).to_string())?;
+        }
+        store.with(|c|{c.execute("DELETE FROM kv WHERE key='structured-response-context'",[])?;Store::refresh_response_context(c)})?;
+        for item in store.inbox(100)? {
+            let review=store.inbox_review(&item.signal.id)?;
+            assert_eq!(review.draft.as_deref(),Some("Retained draft"));assert_eq!(item.state,InboxState::Waiting);
+            if item.signal.thread_key=="pending" {assert_eq!(review.state,"unreviewed");assert!(store.get(&format!("routing-advice:{}",item.signal.id))?.is_none());}
+            else {assert_ne!(review.state,"unreviewed");assert!(store.get(&format!("routing-advice:{}",item.signal.id))?.is_some());}
+        }
+        assert_eq!(store.inbox(100)?.len(),4);
+        store.with(|c|{c.execute("UPDATE kv SET value=json_set(value,'$.state','response_needed') WHERE key='inbox-review:pending'",[])?;Store::refresh_response_context(c)})?;
+        assert!(store.get("inbox-review:pending")?.unwrap().contains("response_needed"),"The representation upgrade runs once, never resetting fresh assessments");Ok(())
     }
 }

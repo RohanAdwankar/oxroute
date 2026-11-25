@@ -290,6 +290,7 @@ WHERE json_extract(f.data,'$.state') IN ('resolved','no_response_needed') AND
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");
     if !has_revision {conn.execute("ALTER TABLE signals ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",[])?;}
+    Store::refresh_response_context(conn)?;
     if !conn.query_row("SELECT EXISTS(SELECT 1 FROM kv WHERE key='slack-thread-recovery')",[],|row|row.get::<_,bool>(0))? {
         // Older DM rows lost provider root IDs when grouped; probe those candidates once.
         conn.execute("INSERT OR IGNORE INTO slack_threads(conversation,thread,checkpoint) SELECT conversation,CASE WHEN thread_key='conversation' THEN external_id ELSE thread_key END,COALESCE((SELECT value FROM kv WHERE key='inbox-thread-cursor:'||m.conversation||':'||CASE WHEN m.thread_key='conversation' THEN m.external_id ELSE m.thread_key END),?1) FROM inbox_messages m WHERE source='slack-inbox'",[format!("{:.6}",crate::model::now()-7.0*86400.0)])?;
@@ -1392,28 +1393,43 @@ impl Store {
     }
 
     pub fn routing_text(&self,signal:&Signal,budget:usize)->Result<String> {
+        Ok(serde_json::to_string(&self.routing_context(signal,budget)?)?)
+    }
+
+    pub fn routing_context(&self,signal:&Signal,budget:usize)->Result<serde_json::Value> {
         self.read(|c|{
             let mut seen=HashSet::new();let mut messages=Vec::new();
-            // Anchor reply evidence near the exact request, then retain thread endpoints and recent context.
+            let owners=Self::inbox_users_from(c,signal)?;
+            let mut context=serde_json::json!({"threadKey":(signal.thread_key!="conversation").then_some(&signal.thread_key),"threadMessages":[],"conversationMessages":[]});
+            let header=serde_json::to_string(&context)?.chars().count();
+            // Retain exact-thread replies and endpoints alongside neighboring conversation context.
             for (condition,order,limit,share) in [
-                ("at>=?4","at,external_id",24,50usize),
-                ("thread_key=?3","at DESC,external_id DESC",12,25),
-                ("thread_key=?3","at,external_id",4,10),
+                ("thread_key=?3","at DESC,external_id DESC",12,40usize),
+                ("thread_key=?3","at,external_id",4,15),
+                ("at>=?4","at,external_id",24,30),
                 ("at<?4","at DESC,external_id DESC",4,10),
                 ("1=1","at DESC,external_id DESC",4,5),
             ] {
-                let sql=format!("SELECT external_id,author,text,at FROM inbox_messages WHERE source=?1 AND conversation=?2 AND (source='slack-inbox' OR thread_key=?3) AND (?4 IS NOT NULL) AND {condition} ORDER BY {order} LIMIT {limit}");
+                let sql=format!("SELECT external_id,author,text,at,thread_key FROM inbox_messages WHERE source=?1 AND conversation=?2 AND (source='slack-inbox' OR thread_key=?3) AND (?4 IS NOT NULL) AND {condition} ORDER BY {order} LIMIT {limit}");
                 let mut query=c.prepare(&sql)?;let mut rows=query.query(params![signal.source,signal.conversation,signal.thread_key,signal.at])?;
-                let mut remaining=budget*share/100;
+                let mut remaining=budget.saturating_sub(header)*share/100;
                 while remaining>0 {
-                    let Some(row)=rows.next()? else{break};let id:String=row.get(0)?;if !seen.insert(id.clone()){continue;}
-                    let author:String=row.get(1)?;let text:String=row.get(2)?;let at:f64=row.get(3)?;
-                    let text=crate::recommendations::recent_text(&text,remaining.saturating_sub(author.len()+id.len()+16));
-                    let line=format!("[{id}] {author}: {text}");remaining=remaining.saturating_sub(line.chars().count()+2);messages.push((at,id,line));
+                    let Some(row)=rows.next()? else{break};let id:String=row.get(0)?;if seen.contains(&id){continue;}
+                    let author:String=row.get(1)?;let text:String=row.get(2)?;let at:f64=row.get(3)?;let thread:String=row.get(4)?;
+                    let mut record=serde_json::json!({"messageId":id,"author":author,"at":at,"isAuthenticatedUser":owners.iter().any(|owner|owner.eq_ignore_ascii_case(&author)),"threadKey":(thread!="conversation").then_some(thread),"text":""});
+                    let mut length=text.chars().count().min(remaining);
+                    loop {
+                        record["text"]=crate::recommendations::recent_text(&text,length).into();
+                        let used=serde_json::to_string(&record)?.chars().count()+1;
+                        if used<=remaining {remaining-=used;seen.insert(id.clone());messages.push((at,id,record));break;}
+                        if length==0 {break;}
+                        length=length.saturating_sub(used-remaining);
+                    }
                 }
             }
             messages.sort_by(|a,b|a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            Ok(messages.into_iter().map(|(_,_,text)|text).collect::<Vec<_>>().join("\n\n"))
+            let (thread,conversation):(Vec<_>,Vec<_>)=messages.into_iter().map(|(_,_,record)|record).partition(|record|record["threadKey"].as_str()==Some(signal.thread_key.as_str()));
+            context["threadMessages"]=thread.into();context["conversationMessages"]=conversation.into();Ok(context)
         })
     }
 

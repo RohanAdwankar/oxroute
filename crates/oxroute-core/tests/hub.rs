@@ -3908,6 +3908,9 @@ async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conv
         let calls=w.calls.lock().unwrap().predictions.clone();
         assert!(calls.iter().skip(1).any(|prompt|prompt.contains(subject)&&prompt.contains(recent)));
         assert!(calls.last().unwrap().contains(recent),"Retained source evidence must not displace the latest request");
+        let context:serde_json::Value=serde_json::from_str(calls.last().unwrap().split("Context (JSON):\n").nth(1).unwrap().split("\n\nLearned recommendation").next().unwrap()).unwrap();
+        assert!(context["item"]["sourceContext"]["threadMessages"].is_array(),"Source relationships reach metadata as native structured records");
+        assert!(context["item"]["sourceContext"]["threadMessages"].as_array().unwrap().iter().all(|message|message["threadKey"].is_string()&&message["messageId"].is_string()));
         let stored=w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().signal;
         assert!(w.hub.store.routing_text(&stored,12000).unwrap().chars().count()<=12000);
         let full=stored.text;
