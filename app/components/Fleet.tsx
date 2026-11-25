@@ -74,8 +74,8 @@ export function Fleet({
   const contextId=routing&&["outlook-inbox","slack-inbox"].includes(routing.signal.source)?routing.signal.id:null;
   useEffect(()=>{
     if(!contextId||routing?.display?.text)return;
-    let live=true;setContext({id:contextId});
-    api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextId,text:item.display?.text||item.signal.text});},()=>{if(live)setContext({id:contextId,error:"Could not load conversation."});});
+    let live=true;setContext(current=>current?.id===contextId?{id:contextId,text:current.text}:{id:contextId});
+    api.inboxItem(contextId).then(item=>{if(live)setContext({id:contextId,text:item.display?.text||item.signal.text});},()=>{if(live)setContext(current=>({id:contextId,text:current?.id===contextId?current.text:undefined,error:"Could not load conversation."}));});
     return()=>{live=false;};
   },[routing,contextId,contextRetry]);
   const contextText=routing?.display?.text||(context?.id===contextId?context.text:undefined);
@@ -128,7 +128,7 @@ export function Fleet({
         )}
       </div>
 
-      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextId&&context.error?<span>{context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>:"Loading conversation…")}</div>}
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextId&&context.error?"":"Loading conversation…")}{context?.id===contextId&&context.error&&<span role="alert"> {context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

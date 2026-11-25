@@ -20,10 +20,10 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
  }
  const text=item=>item.display?.text||item.signal.text;
  assert.ok(details.every(item=>text(item).length>0),'Full source context stays accessible');
- const browser=await chromium.launch();let release,held=false,failed=false;
+ const browser=await chromium.launch();let release,held=false,failed=false,contextReads=0,backgroundFailure=false;
  try{
   const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(String(error)));
-  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{close(){}};});
+  await page.addInitScript(()=>{window.SharedWorker=undefined;window.EventSource=class extends EventTarget{constructor(){super();window.fixtureEvents=this;}close(){}};});
   const gate=new Promise(done=>release=done);
   await page.route('**/api/**',async route=>{
    const url=new URL(route.request().url()),path=url.pathname;
@@ -31,6 +31,8 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    if(path==='/api/state')return route.fulfill({json:{...fixtureState(snapshot,[]),inbox:snapshot.inbox,inboxWaiting:snapshot.inboxWaiting,inboxClearThrough:snapshot.inboxClearThrough}});
    const n=items.findIndex(item=>path===`/api/intake/${encodeURIComponent(item.signal.id)}`);
    if(n>=0){
+    contextReads++;
+    if(backgroundFailure){backgroundFailure=false;return route.fulfill({status:503,json:{error:"Context refresh interrupted"}});}
     if(n===0&&!held){held=true;await gate;}
     if(n===1&&!failed){failed=true;return route.fulfill({status:503,json:{error:'Source context temporarily unavailable'}});}
     return route.fulfill({json:details[n]});
@@ -58,6 +60,13 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    await session.send('Emulation.setDeviceMetricsOverride',{width:Math.round(width/zoom),height:Math.round(900/zoom),deviceScaleFactor:zoom,mobile:false});
    await choose(0);await content(0);await choose(1);await content(1);
    await page.keyboard.press('Escape');await choose(1);await content(1);
+   await context.evaluate(node=>{node.scrollTop=Math.min(120,node.scrollHeight-node.clientHeight);window.contextScroll=node.scrollTop;window.loadingFlashes=0;window.contextObserver?.disconnect();window.contextObserver=new MutationObserver(()=>{if(node.textContent.includes('Loading conversation'))window.loadingFlashes++;});window.contextObserver.observe(node,{subtree:true,childList:true,characterData:true});});
+   const readsBefore=contextReads;
+   for(let cycle=0;cycle<3;cycle++){await page.evaluate(()=>window.fixtureEvents.onmessage({data:JSON.stringify({type:'sync'})}));await page.waitForTimeout(200);await content(1);}
+   assert.ok(contextReads>readsBefore,'Source refreshes continue while loaded context remains visible');
+   assert.equal(await page.evaluate(()=>window.loadingFlashes),0,'Background snapshots retain loaded context without a loading flash');
+   assert.ok(await context.evaluate(node=>Math.abs(node.scrollTop-window.contextScroll)<1),'Background refresh retains the reading position');
+   backgroundFailure=true;await page.evaluate(()=>window.fixtureEvents.onmessage({data:JSON.stringify({type:'sync'})}));await page.getByRole('button',{name:'Retry conversation context',exact:true}).waitFor();assert.ok((await context.textContent()).startsWith(text(details[1])),'A background failure retains loaded source content');await page.getByRole('button',{name:'Retry conversation context',exact:true}).click();await content(1);
    if(items[1].sourceUrl)assert.equal(await page.getByRole('link',{name:'Open source message',exact:true}).getAttribute('href'),items[1].sourceUrl);
    const box=await context.boundingBox(),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
    assert.ok(box&&box.width>0&&box.height>0&&box.x>=0&&box.x+box.width<=viewport.width+.1,'Opened context fits the actual viewport');
