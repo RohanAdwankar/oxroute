@@ -263,6 +263,8 @@ pub struct Store {
 
 fn migrate(conn: &Connection) -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO inbox_arrivals(signal_id,message_id) SELECT id,external_id FROM signals WHERE source!='slack-inbox'",[])?;
+    // Repair admitted legacy refresh times from the durable provider message, without a new arrival.
+    conn.execute("UPDATE signals AS s SET at=m.at FROM inbox_messages m,inbox_arrivals a WHERE a.signal_id=s.id AND s.source='slack-inbox' AND m.source=s.source AND m.conversation=s.conversation AND m.external_id=s.external_id AND s.at!=m.at",[])?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");

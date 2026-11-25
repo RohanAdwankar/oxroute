@@ -48,7 +48,7 @@ impl Store {
         let existing:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND external_id=?3",params![signal.source,signal.conversation,signal.external_id],|r|r.get(0)).optional()?;
         let id=existing.clone().unwrap_or_else(||signal.id.clone());
         let admitted=tx.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals WHERE signal_id=?1)",[&id],|r|r.get::<_,bool>(0))?;
-        let changed=tx.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(id) DO UPDATE SET text=excluded.text,label=excluded.label,at=excluded.at,revision=signals.revision+1 WHERE text!=excluded.text OR label!=excluded.label",params![id,signal.source,signal.conversation,signal.thread_key,signal.external_id,signal.author,signal.label,signal.text,signal.at,signal.root])?;
+        let changed=tx.execute("INSERT INTO signals(id,source,conversation,thread_key,external_id,author,label,text,at,root) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(id) DO UPDATE SET text=excluded.text,label=excluded.label,at=excluded.at,revision=signals.revision+1 WHERE text!=excluded.text OR label!=excluded.label OR at!=excluded.at",params![id,signal.source,signal.conversation,signal.thread_key,signal.external_id,signal.author,signal.label,signal.text,signal.at,signal.root])?;
         if !admitted {Self::advance_arrival(&tx,&id,&signal.external_id)?;}
         if changed>0 {tx.execute("DELETE FROM kv WHERE key=?1",[format!("routing-advice:{id}")])?;}
         tx.execute("INSERT INTO kv(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("inbox-url:{id}"),url])?;
@@ -111,4 +111,19 @@ mod tests {
             drop(store);std::fs::remove_dir_all(root)?;
         }Ok(())
     }
+    #[test]
+    fn legacy_refresh_times_reconcile_without_new_arrivals()->Result<()> {
+        for (account,owner,peer) in [("workspace-a","reader-a","sender-a"),("workspace-b","reader-b","sender-b")] {
+            let root=std::env::temp_dir().join(crate::model::new_id("source-time"));std::fs::create_dir_all(&root)?;let path=root.join("state.sqlite3");
+            let store=Store::open(&path)?;store.slack_arrival_cutoff(Some(100.0))?;store.set(&format!("inbox-dm:{account}:direct"),"1")?;
+            let source=Signal{id:"incoming".into(),source:crate::inbox::SLACK.into(),conversation:format!("{account}:{owner}:direct"),thread_key:"conversation".into(),external_id:"125.5".into(),author:peer.into(),label:"Source message".into(),text:"Retained request".into(),attachments:vec![],at:125.5,root:true};
+            let mut refreshed=source.clone();refreshed.at=500.0;
+            store.cache_inbox_context(&source)?;store.put_signal(&refreshed)?;let boundary=store.inbox_snapshot(100)?.1;
+            store.import_inbox(&source,"")?;assert_eq!(store.inbox_item(&source.id)?.unwrap().signal.at,source.at,"Same-content reconciliation restores provider time");assert_eq!(store.inbox_snapshot(100)?.1,boundary,"Repair never bumps the arrival");
+            store.with(|c|{c.execute("UPDATE signals SET at=?1 WHERE id=?2",params![refreshed.at,source.id])?;Ok(())})?;
+            drop(store);let store=Store::open(&path)?;let repaired=store.inbox_item(&source.id)?.unwrap();assert_eq!(repaired.signal.at,source.at,"Restart repairs legacy refresh times without needing another source delivery");assert_eq!(repaired.state,InboxState::Waiting);assert_eq!(store.inbox_snapshot(100)?.1,boundary);assert!(store.routing_text(&source,10000)?.contains(&source.text));
+            drop(store);std::fs::remove_dir_all(root)?;
+        }Ok(())
+    }
+
 }
