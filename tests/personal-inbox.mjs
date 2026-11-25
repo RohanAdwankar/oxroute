@@ -8,6 +8,7 @@ import {resolve,join} from 'node:path';
 import {createRequire} from 'node:module';
 import {chromium,webkit} from 'playwright';
 import {baseEnv} from './daemon-env.mjs';
+import {verifyPopulatedInbox} from './inbox-populated.mjs';
 const {WebSocketServer}=createRequire(import.meta.url)('next/dist/compiled/ws');
 assert.ok(process.env.TEST_DAEMON,'TEST_DAEMON must name the reviewed daemon');
 await mkdir(resolve('.tmp'),{recursive:true});
@@ -66,6 +67,7 @@ try{
  }
  await until(async()=>(await api('/api/state')).inbox.every(item=>item.recommendation));
  let state=await api('/api/state');assert.equal(state.inbox.length,2);assert.equal(state.agents.length,0);assert.ok(state.inbox.every(item=>item.state==='waiting'));
+ await verifyPopulatedInbox(native,frontend);
  browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];page.on('pageerror',error=>errors.push(String(error)));
  // Source HTTP and Socket Mode transports are exercised by the Rust runtime test.
@@ -106,6 +108,7 @@ try{
  await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).click();await until(async()=>await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isDisabled());
  await page.reload();await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click().catch(()=>{});
  assert.equal((await api('/api/state')).inboxWaiting,0);
+ if(process.env.TEST_INBOX_URL)await verifyPopulatedInbox(process.env.TEST_INBOX_URL,frontend,{allowEmpty:true,screenshots:process.env.INBOX_SCREENSHOTS});
  console.log('Incoming messages retain explicit routing; advice waits even in auto mode; source links, explicit new-agent routing and local dismissal and snapshot-bounded Clear all preserve concurrent arrivals, source context and tasks.');
 }finally{
  for(const context of browser?.contexts()??[])for(const page of context.pages())await page.unrouteAll({behavior:"wait"});
