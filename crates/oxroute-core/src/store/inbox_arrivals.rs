@@ -37,6 +37,7 @@ impl Store {
     // A Slack row represents one admitted source message, never a refreshed history aggregate.
     pub(super) fn import_slack_arrival(tx:rusqlite::Transaction<'_>,signal:&Signal,url:&str)->Result<Option<String>> {
         Self::put_inbox_context(&tx,signal)?;
+        if Self::intake_excluded_from(&tx,signal)?{tx.commit()?;return Ok(None);}
         let cutoff:Option<String>=tx.query_row("SELECT value FROM kv WHERE key='inbox-slack-arrivals-since'",[],|r|r.get(0)).optional()?;
         let cutoff=cutoff.map(|cutoff|cutoff.parse::<f64>()).transpose()?;
         let parts=signal.conversation.split(':').collect::<Vec<_>>();

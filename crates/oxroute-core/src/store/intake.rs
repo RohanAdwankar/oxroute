@@ -3,7 +3,7 @@ use serde::{Deserialize,Serialize};
 
 #[derive(Clone,Debug,Default,PartialEq,Serialize,Deserialize)]
 #[serde(rename_all="snake_case")]
-pub enum IntakeMode {Immediate,#[default] Standard}
+pub enum IntakeMode {Immediate,#[default] Standard,Excluded}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct IntakePolicy {
@@ -28,6 +28,18 @@ pub struct IntakeArrival {
     pub revision:String,
     pub delegation_entry_id:i64,
 }
+fn read_policies(c:&Connection)->Result<Vec<IntakePolicy>> {
+    let value:Option<String>=c.query_row("SELECT value FROM kv WHERE key='intake.policies'",[],|r|r.get(0)).optional()?;
+    Ok(value.map(|value|serde_json::from_str(&value)).transpose()?.unwrap_or_default())
+}
+fn policy_for<'a>(policies:&'a[IntakePolicy],source:&str,account:&str,sender:&str)->Option<&'a IntakePolicy> {
+    policies.iter().find(|p|p.source==source&&p.account==account&&p.sender==sender).or_else(||policies.iter().find(|p|p.source==source&&p.account==account&&p.sender.is_empty()))
+}
+fn excluded(policies:&[IntakePolicy],source:&str,conversation:&str,sender:&str)->bool {
+    let account=if source==crate::inbox::SLACK{conversation.split(':').next().unwrap_or_default()}else{conversation};
+    policy_for(policies,source,account,sender).is_some_and(|p|p.mode==IntakeMode::Excluded)
+}
+
 impl Store {
     pub fn intake_delegation_at(&self,entry:i64)->Result<f64> {
         self.read(|c|c.query_row("SELECT at FROM entries WHERE id=?1 AND kind='you'",[entry],|r|r.get(0)).context("policy delegation must cite an actual human entry"))
@@ -36,7 +48,7 @@ impl Store {
         self.read(|c|Ok(c.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND ((source='slack-inbox' AND external_id=?3) OR (source!='slack-inbox' AND thread_key=?4))",params![signal.source,signal.conversation,signal.external_id,signal.thread_key],|r|r.get(0)).optional()?))
     }
     pub fn intake_policies(&self)->Result<Vec<IntakePolicy>> {
-        Ok(self.get("intake.policies")?.map(|value|serde_json::from_str(&value)).transpose()?.unwrap_or_default())
+        self.read(read_policies)
     }
     pub fn save_intake_policy(&self,policy:&IntakePolicy)->Result<()> {
         anyhow::ensure!(crate::inbox::imported(&policy.source)&&!policy.account.trim().is_empty(),"a supported source and provider account are required");
@@ -49,17 +61,33 @@ impl Store {
             policies.retain(|item|(&item.source,&item.account,&item.sender)!=(&policy.source,&policy.account,&policy.sender));
             anyhow::ensure!(policies.len()<100,"too many intake policies");policies.push(policy.clone());
             tx.execute("INSERT INTO kv(key,value) VALUES('intake.policies',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[serde_json::to_string(&policies)?])?;
+            Self::reconcile_intake_exclusions(&tx)?;
             tx.commit()?;Ok(())
         })
     }
     pub fn intake_policy(&self,source:&str,account:&str,sender:&str)->Result<Option<IntakePolicy>> {
-        let policies=self.intake_policies()?;
-        Ok(policies.iter().find(|item|item.source==source&&item.account==account&&item.sender==sender).or_else(||policies.iter().find(|item|item.source==source&&item.account==account&&item.sender.is_empty())).cloned())
+        self.read(|c|{let policies=read_policies(c)?;Ok(policy_for(&policies,source,account,sender).cloned())})
+    }
+    pub fn intake_signal_excluded(&self,signal:&Signal)->Result<bool> {
+        self.read(|c|Self::intake_excluded_from(c,signal))
+    }
+    pub(super) fn intake_excluded_from(c:&Connection,signal:&Signal)->Result<bool> {
+        Ok(excluded(&read_policies(c)?,&signal.source,&signal.conversation,&signal.author))
+    }
+    pub(super) fn reconcile_intake_exclusions(c:&Connection)->Result<()> {
+        let policies=read_policies(c)?;
+        if !policies.iter().any(|policy|policy.mode==IntakeMode::Excluded){return Ok(());}
+        let mut query=c.prepare("SELECT id,source,conversation,author FROM signals")?;
+        let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;drop(query);
+        for (id,source,conversation,sender) in rows {
+            if excluded(&policies,&source,&conversation,&sender){c.execute("DELETE FROM inbox_arrivals WHERE signal_id=?1",[id])?;}
+        }
+        Ok(())
     }
     pub fn intake_context(&self)->Result<serde_json::Value> {
         let (pending,total)=self.read(|c|{
-            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id))",[],|r|r.get(0))?;
-            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)) ORDER BY at DESC,rowid DESC LIMIT 50")?;
+            let total:usize=c.query_row("SELECT count(*) FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)",[],|r|r.get(0))?;
+            let mut query=c.prepare("SELECT * FROM signals WHERE source IN ('slack-inbox','outlook-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) ORDER BY at DESC,rowid DESC LIMIT 50")?;
             let items=query.query_map([],read_item)?.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok((items,total))
         })?;
@@ -68,7 +96,7 @@ impl Store {
     }
     pub(crate) fn queue_intake_arrival(&self,signal_id:&str,signal:&Signal,sender:&str,revision:&str,activity:f64)->Result<bool> {
         if sender.is_empty(){return Ok(false)}
-        if signal.source==crate::inbox::SLACK && !self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=?1 AND s.state='waiting' AND a.dismissed_by IS NULL)",[signal_id],|r|r.get::<_,bool>(0))?))? {return Ok(false)}
+        if !self.read(|c|Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM inbox_arrivals a JOIN signals s ON s.id=a.signal_id WHERE s.id=?1 AND s.state='waiting' AND a.dismissed_by IS NULL)",[signal_id],|r|r.get::<_,bool>(0))?))? {return Ok(false)}
         let account=if signal.source==crate::inbox::SLACK {signal.conversation.split(':').next().unwrap_or_default()}else{&signal.conversation};
         let Some(policy)=self.intake_policy(&signal.source,account,sender)? else{return Ok(false)};
         if policy.mode!=IntakeMode::Immediate||activity<policy.effective_at{return Ok(false)}
@@ -113,4 +141,39 @@ mod tests {
         let receipt=store.add_entry("coordinator",31.0,EntryKind::Coordination,"A delegated report","","source")?;policy.delegation_entry_id=receipt.id;assert!(store.save_intake_policy(&policy).is_err(),"Agent context cannot mint a human delegation");
         drop(store);std::fs::remove_dir_all(root)?;Ok(())
     }
+    #[test]
+    fn exclusions_preserve_context_and_unrelated_work_across_restart()->Result<()> {
+        for (account,sender,peer) in [("workspace-a","service-a","human-a"),("workspace-b","service-b","human-b")] {
+            let root=std::env::temp_dir().join(crate::model::new_id("exclusion"));std::fs::create_dir_all(&root)?;let path=root.join("state.sqlite3");let store=Store::open(&path)?;
+            store.slack_arrival_cutoff(Some(1.0))?;store.set("focus.agent","coordinator")?;
+            let consent=store.add_entry("coordinator",2.0,EntryKind::You,"Exclude the selected source sender","","")?;
+            store.set(&format!("inbox-dm:{account}:shared"),"1")?;store.set("inbox-dm:other-account:shared","1")?;
+            let message=|id:&str,source:&str,conversation:String,author:&str|Signal{id:id.into(),source:source.into(),conversation,thread_key:"conversation".into(),external_id:id.into(),author:author.into(),label:"Source context".into(),text:format!("Retained source context {id}"),attachments:vec![],at:20.0,root:true};
+            let selected=message("selected",crate::inbox::SLACK,format!("{account}:reader:shared"),sender);
+            let human=message("human",crate::inbox::SLACK,selected.conversation.clone(),peer);
+            let other=message("other",crate::inbox::SLACK,"other-account:reader:shared".into(),sender);
+            let mail=message("mail",crate::inbox::OUTLOOK,"mailbox-account".into(),sender);
+            for signal in [&selected,&human,&other,&mail]{store.import_inbox(signal,"https://example.invalid/source")?;}
+            store.with(|c|{c.execute("INSERT INTO tasks(id,text,status,created_at,updated_at) VALUES('retained-task','Retained work','waiting_for_human',1,1)",[])?;Ok(())})?;
+            store.set("review:retained-review",r#"{"status":"pending"}"#)?;
+            let mut policy=IntakePolicy{source:crate::inbox::SLACK.into(),account:account.into(),sender:sender.into(),label:"Selected sender".into(),mode:IntakeMode::Immediate,delegation_entry_id:consent.id,effective_at:2.0};
+            store.save_intake_policy(&policy)?;assert!(store.queue_intake_arrival(&selected.id,&selected,sender,"first",20.0)?);
+            policy.mode=IntakeMode::Excluded;store.save_intake_policy(&policy)?;
+            assert!(!store.pending_focus_events("coordinator")?,"Queued intake cannot route an excluded source");
+            assert!(!store.queue_intake_arrival(&selected.id,&selected,sender,"next",21.0)?);
+            assert_eq!(store.inbox(100)?.len(),3);assert_eq!(store.inbox_item(&selected.id)?.unwrap().state,InboxState::Waiting,"Exclusion is not resolution");
+            assert!(store.intake_signal_excluded(&selected)?);assert!(!store.intake_signal_excluded(&human)?);assert!(!store.intake_signal_excluded(&other)?);assert!(!store.intake_signal_excluded(&mail)?);
+            let mut newer=selected.clone();newer.id="later-context".into();newer.external_id="later-context".into();newer.at=30.0;newer.text="Retained later source context".into();
+            assert!(store.import_inbox(&newer,"https://example.invalid/source")?.is_none());
+            drop(store);let store=Store::open(&path)?;
+            store.import_inbox(&selected,"https://example.invalid/source")?;store.import_inbox(&newer,"https://example.invalid/source")?;
+            assert_eq!(store.inbox(100)?.len(),3,"Replay and restart cannot re-admit the excluded identity");
+            assert!(store.inbox_item(&selected.id)?.unwrap().display.unwrap().text.contains(&newer.text),"Excluded messages remain readable source context");
+            assert_eq!(store.read(|c|Ok(c.query_row("SELECT status FROM tasks WHERE id='retained-task'",[],|r|r.get::<_,String>(0))?))?,"waiting_for_human");
+            assert_eq!(store.get("review:retained-review")?.unwrap(),r#"{"status":"pending"}"#);
+            assert_eq!(store.intake_context()?["pendingCount"],3);
+            drop(store);std::fs::remove_dir_all(root)?;
+        }Ok(())
+    }
+
 }

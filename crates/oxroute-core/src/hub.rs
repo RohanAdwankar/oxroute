@@ -1134,6 +1134,7 @@ impl Hub {
         if item.state == InboxState::Done {
             anyhow::bail!("that signal has already been routed");
         }
+        anyhow::ensure!(!self.store.intake_signal_excluded(&item.signal)?,"Source is excluded from the Inbox");
         let signal = item.signal;
 
         let actual = routing.clone();

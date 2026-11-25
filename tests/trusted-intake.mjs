@@ -71,7 +71,18 @@ try{
  const owner=await api('/api/agents',{}),handoff={agentId:focus.id,targetId:owner.id,requestId:payload.requestId,text:'Reconcile the corrected source revision within the retained scope; original human delegation is retained in intake provenance.',urgent:false};
  const receipt=await api('/api/focus/messages',handoff);await api('/api/focus/messages',handoff);assert.ok(receipt.delivery);assert.equal((await api(`/api/agents/${owner.id}`)).timeline.filter(entry=>entry.kind==='coordination').length,1,'Existing owner handoff is durable and idempotent');
  await stop();finish(focusThread,'completed',false);daemon=start();await healthy();await pause(800);assert.equal(focusTurns().filter(turn=>turn.input.some(input=>input.text?.startsWith('Conversation or intake events arrived.')&&input.text.includes('revision-b'))).length,1,'Accepted intake is not replayed after restart');assert.equal((await api('/api/intake/policies')).policies.length,2);
- console.log('Real daemon policy persistence, explicit scope, provenance, typed intake wake/restart, current source context, idempotent owner handoff, and desktop/mobile settings/error retry pass. Collectors remain explicitly unconfigured.');
+ const unrelatedPolicy=(await api('/api/intake/policies')).policies.find(item=>item.source==='outlook-inbox');
+ await page.goto(`${web}/?agent=${focus.id}`);await page.getByRole('button',{name:'Settings',exact:true}).click();
+ await page.getByRole('combobox',{name:'Routing for Selected source',exact:true}).selectOption('excluded');
+ await until(async()=>(await api('/api/intake/policies')).policies.some(item=>item.source===policy.source&&item.sender===policy.sender&&item.mode==='excluded'),'Exclusion was not saved');
+ assert.ok(!(await api('/api/state')).inbox.some(item=>item.signal.id==='source-signal'),'Exclusion removes presentation without clearing unrelated arrivals');
+ assert.equal((await api('/api/intake/source-signal')).state,'waiting','Excluded source history remains manually readable and unresolved');
+ assert.deepEqual((await api('/api/intake/policies')).policies.find(item=>item.source==='outlook-inbox'),unrelatedPolicy,'Other routing policies remain unchanged');
+ const rejected=await fetch(base+'/api/route',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({signal:'source-signal',action:'existing',agentIds:[owner.id]})});assert.equal(rejected.ok,false,'A stale selection cannot route an excluded source');
+ await stop();finish(focusThread,'completed',false);daemon=start();await healthy();
+ assert.ok(!(await api('/api/state')).inbox.some(item=>item.signal.id==='source-signal'));assert.equal((await api('/api/intake/source-signal')).state,'waiting');
+ assert.ok((await api('/api/intake/policies')).policies.some(item=>item.mode==='excluded'));
+ console.log('Real daemon policy persistence, explicit scope, provenance, typed intake wake/restart, current source context, idempotent owner handoff, sender exclusion with retained history/rejected stale routing, and desktop/mobile settings/error retry pass. Collectors remain explicitly unconfigured.');
 }finally{
  db?.close();await browser?.close();await stop();for(const client of rpc.clients)client.terminate();proxy.closeAllConnections();await new Promise(done=>proxy.close(done));await new Promise(done=>rpc.close(done));await new Promise(done=>transport.close(done));await rm(root,{recursive:true,force:true});
 }

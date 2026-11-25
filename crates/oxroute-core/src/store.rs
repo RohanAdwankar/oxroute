@@ -265,6 +265,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO inbox_arrivals(signal_id,message_id) SELECT id,external_id FROM signals WHERE source!='slack-inbox'",[])?;
     // Repair admitted legacy refresh times from the durable provider message, without a new arrival.
     conn.execute("UPDATE signals AS s SET at=m.at FROM inbox_messages m,inbox_arrivals a WHERE a.signal_id=s.id AND s.source='slack-inbox' AND m.source=s.source AND m.conversation=s.conversation AND m.external_id=s.external_id AND s.at!=m.at",[])?;
+    Store::reconcile_intake_exclusions(conn)?;
     let event_columns=conn.prepare("PRAGMA table_info(focus_turn_events)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !event_columns.iter().any(|column|column=="payload") {conn.execute("ALTER TABLE focus_turn_events ADD COLUMN payload TEXT",[])?;}
     let has_revision=conn.prepare("PRAGMA table_info(signals)")?.query_map([],|row|row.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?.iter().any(|column|column=="revision");
@@ -1270,6 +1271,7 @@ impl Store {
             if signal.source==crate::inbox::SLACK {return Self::import_slack_arrival(tx,signal,url);}
             let fresh=!tx.query_row("SELECT EXISTS(SELECT 1 FROM inbox_messages WHERE source=?1 AND conversation=?2 AND external_id=?3)",params![signal.source,signal.conversation,signal.external_id],|r|r.get::<_,bool>(0))?;
             let changed=Self::put_inbox_context(&tx,signal)?;
+            if Self::intake_excluded_from(&tx,signal)?{tx.commit()?;return Ok(None);}
             if !fresh && tx.query_row("SELECT EXISTS(SELECT 1 FROM signals s JOIN inbox_arrivals a ON a.signal_id=s.id WHERE s.source=?1 AND s.conversation=?2 AND s.thread_key=?3 AND a.dismissed_by IS NOT NULL)",params![signal.source,signal.conversation,signal.thread_key],|r|r.get::<_,bool>(0))? {tx.commit()?;return Ok(None);}
             if changed==0 {return Ok(None);}
             let id:Option<String>=tx.query_row("SELECT id FROM signals WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![signal.source,signal.conversation,signal.thread_key],|r|r.get(0)).optional()?;
@@ -1289,7 +1291,7 @@ impl Store {
     }
 
     pub fn pending_imports(&self)->Result<Vec<String>> {
-        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND (source!='slack-inbox' OR EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id)) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM bindings WHERE source=signals.source AND conversation=signals.conversation AND thread_key=signals.thread_key) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
+        self.with(|c| {let mut query=c.prepare("SELECT id FROM signals WHERE source IN ('outlook-inbox','slack-inbox') AND state='waiting' AND EXISTS(SELECT 1 FROM inbox_arrivals a WHERE a.signal_id=signals.id) AND NOT EXISTS(SELECT 1 FROM kv WHERE key='routing-advice:'||signals.id) AND NOT EXISTS(SELECT 1 FROM bindings WHERE source=signals.source AND conversation=signals.conversation AND thread_key=signals.thread_key) ORDER BY at DESC")?;let rows=query.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;Ok(rows)})
     }
 
     pub fn save_routing_advice(&self,id:&str,expected:i64,context:&serde_json::Value,choice:crate::recommendations::RoutePrediction,revision:i64)->Result<Option<crate::recommendations::RoutingAdvice>> {
