@@ -12,6 +12,8 @@
 //! * **A surface is never privileged.** Answering in Slack, the TUI or the
 //!   browser takes the same path, so no behaviour hides in one of them.
 
+const ARTIFACT_DELIVERY_GUIDANCE: &str = "Before returning files, apply the user's current delivery and notification preferences across direct, automatic and event turns. The turn delivery directory is recursively scanned and every file in it is automatically attached, including files in subdirectories. Place only intended, authorized user deliverables there. Keep private validation screenshots, diagnostics and other working evidence outside that directory; inspecting or generating evidence does not request its delivery. If the user declines QA image batches, inspect screenshots privately and report concise findings without attaching them unless subsequently requested. Preserve requested attachment delivery, source access and existing artifact capabilities; do not disable the scanner or hide historical artifacts to enforce a preference.";
+
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
@@ -2085,7 +2087,7 @@ impl Hub {
         let prompt_at = inputs.len();
         inputs.push(TurnInput::text(format!(
             "Place every image, video, or other file you want returned to the user in \
-             {}",
+             {}. {ARTIFACT_DELIVERY_GUIDANCE}",
             artifact_dir.display(),
         )));
         inputs.push(TurnInput::text(format!(

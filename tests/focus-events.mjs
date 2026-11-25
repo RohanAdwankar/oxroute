@@ -155,6 +155,10 @@ try{
  const linkLine=source.split('\n').find(line=>line.startsWith('const SOURCE_LINK_GUIDANCE:'));
  const linkPolicy=JSON.parse(linkLine.slice(linkLine.indexOf('=')+1).trim().slice(0,-1));
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(linkPolicy)),`${scope} turns receive the maintained source-link grounding policy unchanged`);
+ const hubSource=await readFile(new URL('../crates/oxroute-core/src/hub.rs',import.meta.url),'utf8');
+ const deliveryLine=hubSource.split('\n').find(line=>line.startsWith('const ARTIFACT_DELIVERY_GUIDANCE:'));
+ const deliveryPolicy=JSON.parse(deliveryLine.slice(deliveryLine.indexOf('=')+1).trim().slice(0,-1));
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(deliveryPolicy)),`${scope} turns receive canonical delivery preferences and private evidence guidance`);
  const intakeSource=await readFile(new URL('../crates/oxroute-core/src/hub/intake.rs',import.meta.url),'utf8');
  const intakeLine=intakeSource.split('\n').find(line=>line.startsWith('pub const INTAKE_GUIDANCE:'));
  const intakePolicy=JSON.parse(intakeLine.slice(intakeLine.indexOf('=')+1).trim().slice(0,-1));
