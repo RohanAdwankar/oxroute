@@ -150,13 +150,7 @@ impl SlackSource {
             })
             .unwrap_or_default();
 
-        let text=event.get("text").and_then(Value::as_str).unwrap_or_default().trim_start();
-        let first=event.pointer("/blocks/0/elements/0");
-        let leading_list=event.pointer("/blocks/0/type").and_then(Value::as_str)==Some("rich_text")
-            && first.is_some_and(|element|element["type"]=="rich_text_list"&&element["style"]=="bullet");
-        // Slack turns a leading dash into a rich-text list. Preserve its routing
-        // intent using the existing marker; the complete list body stays intact.
-        let text=if thread_ts.is_none()&&leading_list&&!text.starts_with("- ") {format!("- {text}")}else{text.to_owned()};
+        let text=event.get("text").and_then(Value::as_str).unwrap_or_default().to_owned();
 
         Some(Signal {
             id: new_id("sig"),
@@ -230,7 +224,7 @@ impl SlackSource {
                         continue;
                     }
                     if let Some(signal) = self.to_signal(event) {
-                        let _ = inbox.send(SourceEvent::Arrived(Box::new(signal)));
+                        let _ = inbox.send(SourceEvent::Arrived{signal:Box::new(signal),metadata:Some(event.clone())});
                     }
                 }
                 Some("slash_commands") => {
@@ -271,6 +265,60 @@ impl SlackSource {
         }
         Ok(())
     }
+}
+
+impl SlackSource {
+    async fn read_history(&self, target: &Target, limit: usize, requests:bool) -> Result<Vec<(String, String)>> {
+        let mut cursor: Option<String> = None;
+        let mut out: Vec<(String, String)> = Vec::new();
+        loop {
+            let mut body = json!({
+                "channel": target.conversation,
+                "ts": target.thread_key,
+                "limit": 100,
+            });
+            if let Some(next) = &cursor {
+                body["cursor"] = json!(next);
+            }
+            let response = self.call("conversations.replies", body).await?;
+            for message in response
+                .get("messages")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let text = message.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let role = if message.get("bot_id").is_some() {
+                    "assistant"
+                } else if message.get("user").and_then(Value::as_str)
+                    == Some(self.allowed_user.as_str())
+                {
+                    "user"
+                } else {
+                    continue;
+                };
+                let raw=message.get("text").and_then(Value::as_str).unwrap_or_default();
+                let text=if requests&&role=="user"&&message["ts"]==target.thread_key {invocation_prefix(message,true).and_then(|prefix|raw.get(prefix..)).unwrap_or(raw).trim()}else{text};
+                out.push((role.into(), text.to_string()));
+            }
+            cursor = response
+                .pointer("/response_metadata/next_cursor")
+                .and_then(Value::as_str)
+                .filter(|c| !c.is_empty())
+                .map(str::to_string);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        if out.len() > limit {
+            out.drain(..out.len() - limit);
+        }
+        Ok(out)
+    }
+
 }
 
 #[async_trait]
@@ -527,54 +575,8 @@ impl Source for SlackSource {
         Ok(())
     }
 
-    async fn history(&self, target: &Target, limit: usize) -> Result<Vec<(String, String)>> {
-        let mut cursor: Option<String> = None;
-        let mut out: Vec<(String, String)> = Vec::new();
-        loop {
-            let mut body = json!({
-                "channel": target.conversation,
-                "ts": target.thread_key,
-                "limit": 100,
-            });
-            if let Some(next) = &cursor {
-                body["cursor"] = json!(next);
-            }
-            let response = self.call("conversations.replies", body).await?;
-            for message in response
-                .get("messages")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let text = message.get("text").and_then(Value::as_str).unwrap_or("").trim();
-                if text.is_empty() {
-                    continue;
-                }
-                let role = if message.get("bot_id").is_some() {
-                    "assistant"
-                } else if message.get("user").and_then(Value::as_str)
-                    == Some(self.allowed_user.as_str())
-                {
-                    "user"
-                } else {
-                    continue;
-                };
-                out.push((role.into(), text.to_string()));
-            }
-            cursor = response
-                .pointer("/response_metadata/next_cursor")
-                .and_then(Value::as_str)
-                .filter(|c| !c.is_empty())
-                .map(str::to_string);
-            if cursor.is_none() {
-                break;
-            }
-        }
-        if out.len() > limit {
-            out.drain(..out.len() - limit);
-        }
-        Ok(out)
-    }
+    async fn history(&self,target:&Target,limit:usize)->Result<Vec<(String,String)>> {self.read_history(target,limit,false).await}
+    async fn request_history(&self,target:&Target,limit:usize)->Result<Vec<(String,String)>> {self.read_history(target,limit,true).await}
 
     async fn permalink(&self, conversation: &str, external_id: &str) -> Result<String> {
         let response = permalink_request(&self.http, &self.api, &self.bot_token, conversation, external_id)
@@ -593,6 +595,18 @@ impl Source for SlackSource {
             .map(str::to_string)
             .context("Slack returned no message permalink")
     }
+}
+
+pub(crate) fn invocation_key(conversation:&str,message:&str)->String {format!("source-invocation:{}",json!([SOURCE,conversation,message]))}
+
+/// Consume only the existing root invocation, using Slack's list metadata when rendered.
+pub(crate) fn invocation_prefix(event:&Value,root:bool)->Option<usize> {
+    if !root {return None;}
+    let raw=event["text"].as_str().unwrap_or_default();let text=raw.trim_start();let leading=raw.len()-text.len();
+    if text.starts_with("- ") {return Some(leading+2);}
+    let first=event.pointer("/blocks/0/elements/0");
+    let list=event.pointer("/blocks/0/type").and_then(Value::as_str)==Some("rich_text")&&first.is_some_and(|element|element["type"]=="rich_text_list"&&element["style"]=="bullet");
+    list.then(||leading+if text.starts_with("• "){"• ".len()}else{0})
 }
 
 fn permalink_request(http: &reqwest::Client, api: &str, token: &str, channel: &str, ts: &str) -> reqwest::RequestBuilder {
@@ -774,12 +788,28 @@ mod tests {
                 "blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","indent":0,"elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Interchangeable list content"}]}]}]}]});
             assert!(slack.accepted(&event));
             let signal=slack.to_signal(&event).unwrap();
-            assert_eq!(signal.text.strip_prefix("- "),Some(text),"Normalization preserves the complete source body for routing");
+            assert_eq!(signal.text,text,"Raw provider text is retained independently of invocation projection");
+            let prefix=invocation_prefix(&event,true).unwrap();assert_eq!(&signal.text[prefix..],text.strip_prefix("• ").unwrap_or(text));
             for altered in [json!({"thread_ts":"0.9"}),json!({"blocks":[]}),json!({"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"ordered"}]}]}),json!({"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Introduction"}]},{"type":"rich_text_list","style":"bullet"}]}]})] {
                 let mut other=event.clone();for (key,value) in altered.as_object().unwrap(){other[key]=value.clone();}
                 assert_eq!(slack.to_signal(&other).unwrap().text,text,"Replies and nonleading or unstructured lists keep their source text");
             }
         }
+    }
+
+    struct CaptureHarness {events:tokio::sync::broadcast::Sender<crate::agent::HarnessEvent>,inputs:std::sync::Arc<std::sync::Mutex<Vec<Vec<TurnInput>>>>}
+    #[async_trait]
+    impl crate::agent::Harness for CaptureHarness {
+        fn backend(&self)->crate::model::Backend {crate::model::Backend::Codex}
+        fn capabilities(&self)->crate::agent::Capabilities {crate::agent::Capabilities{fork:false,inject:false,resume:false,steer:false}}
+        fn events(&self)->tokio::sync::broadcast::Receiver<crate::agent::HarnessEvent> {self.events.subscribe()}
+        async fn open(&self,_:&crate::agent::SessionSpec)->Result<String> {Ok(new_id("captured-session"))}
+        async fn start(&self,session:&str,inputs:Vec<TurnInput>)->Result<String> {
+            self.inputs.lock().unwrap().push(inputs);let id=new_id("captured-turn");let events=self.events.clone();let session=session.to_owned();
+            let _=events.send(crate::agent::HarnessEvent::TurnStarted{session:session.clone(),turn_id:id.clone()});
+            tokio::spawn(async move{tokio::time::sleep(Duration::from_millis(10)).await;let _=events.send(crate::agent::HarnessEvent::Message{session:session.clone(),text:"Source processing completed.".into(),final_answer:true});let _=events.send(crate::agent::HarnessEvent::TurnFinished{session,status:"completed".into()});});Ok(id)
+        }
+        async fn interrupt(&self,_:&str,_:&str)->Result<()> {Ok(())}
     }
 
     #[tokio::test]
@@ -800,10 +830,63 @@ mod tests {
         let (stream,_)=socket_listener.accept().await.unwrap();let mut socket=tokio_tungstenite::accept_async(stream).await.unwrap();
         socket.send(Message::Text(json!({"type":"events_api","envelope_id":"local-delivery","payload":{"event":event}}).to_string())).await.unwrap();
         let ack=socket.next().await.unwrap().unwrap();let ack:Value=serde_json::from_str(ack.to_text().unwrap()).unwrap();assert_eq!(ack["envelope_id"],"local-delivery");
-        let SourceEvent::Arrived(signal)=tokio::time::timeout(Duration::from_secs(2),received.recv()).await.unwrap().unwrap() else{panic!("expected a message")};
-        assert_eq!(signal.text.strip_prefix("- "),event["text"].as_str());assert!(signal.root);
+        let SourceEvent::Arrived{signal,metadata}=tokio::time::timeout(Duration::from_secs(2),received.recv()).await.unwrap().unwrap() else{panic!("expected a message")};
+        assert_eq!(signal.text,event["text"].as_str().unwrap());assert_eq!(metadata.as_ref(),Some(&event));assert!(signal.root);
         assert_eq!(signal.external_id,event["ts"].as_str().unwrap());assert_eq!(signal.conversation,event["channel"].as_str().unwrap());
+        let capture=std::env::var_os("OXROUTE_SLACK_CAPTURE_DIR").map(std::path::PathBuf::from);
+        let scratch=capture.clone().unwrap_or_else(||std::env::temp_dir().join(new_id("slack-invocation")));std::fs::create_dir_all(&scratch).unwrap();
+        let mut config=crate::config::Config::load().unwrap();config.database=scratch.join("state.sqlite3");config.workspace=scratch.to_string_lossy().into();config.attachments=scratch.join("attachments");config.artifacts=scratch.join("artifacts");config.owner=signal.author.clone();config.inbox=Default::default();config.min_free_bytes=0;config.slack_app_token=None;config.slack_bot_token=None;config.default_backend=crate::model::Backend::Codex;config.default_model="fixture".into();config.models.clear();config.models.insert("fixture".into(),crate::config::Choice{id:"fixture".into(),label:"Fixture".into(),backend:crate::model::Backend::Codex});
+        let store=crate::Store::open(&config.database).unwrap();store.set("mode","auto").unwrap();for key in ["automatic-titles","automatic-tags","recommendation-learning","next-action-suggestions"] {store.set(key,"false").unwrap();}
+        let inputs=std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));let harness=std::sync::Arc::new(CaptureHarness{events:tokio::sync::broadcast::channel(64).0,inputs:inputs.clone()});
+        let mut hub=crate::Hub::new(config,store);hub.with_harness(harness);hub.start().await.unwrap();
+        let expected=event["text"].as_str().unwrap().strip_prefix("• ").unwrap_or(event["text"].as_str().unwrap()).to_owned();
+        hub.accept_source((*signal).clone(),metadata.clone()).await.unwrap();
+        for _ in 0..200 {if !inputs.lock().unwrap().is_empty(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert!(inputs.lock().unwrap().iter().flatten().any(|input|input.as_text()==Some(expected.as_str())),"Actual socket ingestion supplies a clean derived request to the harness");
+        let agent=hub.store.bound_agent(SOURCE,&signal.conversation,&signal.thread_key).unwrap().unwrap();
+        assert_eq!(hub.store.agent(&agent).unwrap().unwrap().name,crate::naming::provisional(&expected));
+        assert!(hub.store.timeline(&agent,100).unwrap().iter().any(|entry|entry.kind==crate::model::EntryKind::Received&&entry.text==expected));
+        assert_eq!(hub.store.inbox_item(&signal.id).unwrap().unwrap().signal.text,signal.text,"The provider source record remains byte-exact");
+        let original=inputs.lock().unwrap().len();hub.accept_source((*signal).clone(),metadata).await.unwrap();assert_eq!(inputs.lock().unwrap().len(),original,"Provider redelivery cannot invoke work twice");
+        for _ in 0..200 {if hub.store.agent(&agent).unwrap().unwrap().status==crate::model::AgentStatus::Complete {break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        let mut reply=event.clone();reply["ts"]=json!("2.0");reply["thread_ts"]=event["ts"].clone();reply["text"]=json!("• Preserve literal reply .config");
+        socket.send(Message::Text(json!({"type":"events_api","envelope_id":"local-reply","payload":{"event":reply}}).to_string())).await.unwrap();socket.next().await.unwrap().unwrap();
+        let SourceEvent::Arrived{signal:reply_signal,metadata}=tokio::time::timeout(Duration::from_secs(2),received.recv()).await.unwrap().unwrap() else{panic!("expected a reply")};
+        hub.accept_source((*reply_signal).clone(),metadata).await.unwrap();
+        for _ in 0..200 {if inputs.lock().unwrap().len()>=2 {break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert!(inputs.lock().unwrap()[1].iter().any(|input|input.as_text()==reply["text"].as_str()),"Existing-thread punctuation is not a consumed invocation");
+        assert_eq!(hub.store.bound_agent(SOURCE,&reply_signal.conversation,&reply_signal.thread_key).unwrap().as_deref(),Some(agent.as_str()));
+        assert_eq!(hub.store.agent(&agent).unwrap().unwrap().name,crate::naming::provisional(&expected));
+        let mut literal=(*signal).clone();literal.id=new_id("literal-source");literal.source="fixture-mail".into();hub.accept_source(literal,Some(event.clone())).await.unwrap();
+        for _ in 0..200 {if inputs.lock().unwrap().len()>=3 {break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert!(inputs.lock().unwrap()[2].iter().any(|input|input.as_text()==event["text"].as_str()),"Non-Slack input is unchanged even when its content resembles an invocation");
+        for _ in 0..200 {if hub.store.unarchived_agents().unwrap().iter().all(|agent|agent.status==crate::model::AgentStatus::Complete) {break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert!(hub.store.unarchived_agents().unwrap().iter().all(|agent|agent.status==crate::model::AgentStatus::Complete),"Captured conversations must be settled before runtime reuse");
         intake.abort();server.abort();
+        if let Some(directory)=capture {std::fs::write(directory.join("capture.json"),serde_json::to_vec_pretty(&json!({"agentId":agent,"rawSignal":signal,"request":expected,"inputs":inputs.lock().unwrap().clone()})).unwrap()).unwrap();}
+    }
+
+    #[tokio::test]
+    async fn request_history_keeps_raw_history_and_reply_punctuation() {
+        let raw="• Inspect .config evidence\n• Keep the later item";
+        let messages=json!({"ok":true,"messages":[{"ts":"1.0","user":"U_ME","thread_ts":"1.0","text":raw,"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet"}]}]},{"ts":"1.1","user":"U_ME","thread_ts":"1.0","text":"• Preserve reply content"}]});
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let mut source=source();source.api=format!("http://{}",listener.local_addr().unwrap());
+        let app=axum::Router::new().route("/conversations.replies",axum::routing::post(move||{let body=messages.clone();async{axum::Json(body)}}));let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let target=Target::new(SOURCE,"D1","1.0");let original=source.history(&target,8).await.unwrap();assert_eq!(original[0].1,raw);
+        let requests=source.request_history(&target,8).await.unwrap();assert_eq!(requests[0].1,"Inspect .config evidence\n• Keep the later item");assert_eq!(requests[1].1,"• Preserve reply content");assert_eq!(source.history(&target,8).await.unwrap(),original);server.abort();
+    }
+
+    #[test]
+    fn invocation_projection_preserves_literal_content_and_reply_scope() {
+        let source=source();
+        for body in ["Inspect .config evidence","Compare 0.8 capacity","• Preserve a literal bullet","Review storage. Keep details."] {
+            let event=json!({"user":"U_ME","channel_type":"im","channel":"D1","ts":"1.0","text":format!("• {body}\n• Keep the later list item"),"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet"}]}]});
+            let raw=source.to_signal(&event).unwrap();let prefix=invocation_prefix(&event,true).unwrap();assert_eq!(&raw.text[prefix..],format!("{body}\n• Keep the later list item"));
+            assert_eq!(invocation_prefix(&event,false),None,"A reply's ordinary list is not a consumed root invocation");
+            let mut plain=event.clone();plain["blocks"]=json!([]);assert_eq!(invocation_prefix(&plain,true),None,"Literal punctuation alone never establishes the rich-list trigger");
+            for kind in ["mpim","channel"] {let mut other=event.clone();other["channel_type"]=json!(kind);assert!(!source.accepted(&other),"Do not broaden existing primary-adapter admission");}
+            let mut explicit=event.clone();explicit["text"]=json!(format!("- {body}"));let raw=explicit["text"].as_str().unwrap();assert_eq!(&raw[invocation_prefix(&explicit,true).unwrap()..],body,"Consume exactly the explicit marker, including when content begins with a literal bullet");
+        }
     }
 
     #[test]

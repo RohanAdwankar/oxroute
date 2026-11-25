@@ -214,7 +214,7 @@ async fn serve() -> Result<()> {
     if let Some(slack)=slack {
         let source_hub=hub.clone();tokio::spawn(async move {
             match slack.account_metadata().await {
-                Ok(account)=>{if let Err(error)=source_hub.store.set("source-account:slack",&account.to_string()) {tracing::warn!(%error,"Source namespace was not saved");}source_hub.emit(oxroute_core::model::Event::Sync);},
+                Ok(account)=>{if let Err(error)=source_hub.store.set("source-account:slack",&account.to_string()) {tracing::warn!(%error,"Source namespace was not saved");}if let Err(error)=source_hub.store.repair_slack_invocation_titles(&account) {tracing::warn!(%error,"Source-proven title repair deferred");}source_hub.emit(oxroute_core::model::Event::Sync);},
                 Err(error)=>tracing::warn!(%error,"Source namespace verification deferred; existing source transport is unchanged")
             }
         });

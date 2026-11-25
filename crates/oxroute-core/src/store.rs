@@ -25,6 +25,7 @@ mod inbox_arrivals;
 mod inbox_clear;
 mod inbox_review;
 mod inbox_threads;
+mod slack_invocations;
 pub use inbox_threads::{InboxDestination,InboxGroup,InboxMember,InboxHistory,InboxHistoryMessage};
 pub use inbox_review::{InboxReview,InboxAction,InboxRoute,InboxScope};
 pub(crate) use inbox_display::SlackName;

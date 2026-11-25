@@ -681,12 +681,12 @@ impl Hub {
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
-                    SourceEvent::Arrived(signal) => {
+                    SourceEvent::Arrived{signal,metadata} => {
                         let hub = self.clone();
                         // Each signal gets its own task; a slow turn in one
                         // thread must not hold up another thread's message.
                         tokio::spawn(async move {
-                            if let Err(error) = hub.accept(*signal).await {
+                            if let Err(error) = hub.accept_source(*signal,metadata).await {
                                 tracing::error!(%error, "handling a signal failed");
                             }
                         });
@@ -940,7 +940,13 @@ impl Hub {
     // -- signals ---------------------------------------------------------
 
     /// A signal arrived. Decide where it goes and get it there.
-    pub async fn accept(self: &Arc<Self>, mut signal: Signal) -> Result<()> {
+    pub async fn accept(self:&Arc<Self>,signal:Signal)->Result<()> {self.accept_source(signal,None).await}
+
+    pub(crate) async fn accept_source(self:&Arc<Self>,mut signal:Signal,metadata:Option<serde_json::Value>)->Result<()> {
+        let observed=metadata.as_ref().filter(|event|signal.source==crate::source::slack::SOURCE&&signal.root&&signal.thread_key==signal.external_id&&signal.author==self.config.owner&&signal.label=="dm"&&event["user"]==signal.author&&event["channel"]==signal.conversation&&event["ts"]==signal.external_id&&event["text"].as_str().unwrap_or_default()==signal.text&&event["channel_type"]=="im"&&event.get("bot_id").is_none()&&event["thread_ts"].is_null());
+        let invocation=observed.and_then(|event|crate::source::slack::invocation_prefix(event,true));
+        if let (Some(event),Some(prefix))=(observed,invocation) {self.store.set(&crate::source::slack::invocation_key(&signal.conversation,&signal.external_id),&serde_json::json!({"event":event,"prefixBytes":prefix}).to_string())?;}
+
         if crate::inbox::imported(&signal.source) {self.import_inbox(signal, "").await?;self.emit(Event::Sync);return Ok(());}
         if !self.store.put_signal(&signal)? {
             // Sources redeliver. That is normal, not an error.
@@ -961,7 +967,7 @@ impl Hub {
         if signal.source == crate::source::slack::SOURCE && signal.root
             && signal.author == self.config.owner && signal.label == "dm"
         {
-            if let Some(prompt) = signal.text.strip_prefix("- ") {
+            if let Some(prompt) = invocation.and_then(|prefix|signal.text.get(prefix..)).or_else(||signal.text.strip_prefix("- ")) {
                 signal.text = prompt.to_owned();
             } else {
                 let focus = self.ensure_focus_agent().await?;
@@ -3137,7 +3143,9 @@ impl Hub {
         let body = match (&target, recent) {
             (Some(target), true) => {
                 let source = self.source(&target.source).context("no such source")?;
-                naming::conversation(&source.history(target, 8).await.unwrap_or_default())
+                let known=target.source==crate::source::slack::SOURCE&&self.store.get(&crate::source::slack::invocation_key(&target.conversation,&target.thread_key))?.is_some();
+                let history=if known {source.request_history(target,8).await}else{source.history(target,8).await};
+                naming::conversation(&history.unwrap_or_default())
             }
             _ => {
                 let entries = self.store.timeline(agent_id, 8)?;

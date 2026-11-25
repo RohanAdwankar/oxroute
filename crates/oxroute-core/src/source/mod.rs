@@ -34,7 +34,11 @@ pub struct Reply {
 
 /// What a source hands to the hub.
 pub enum SourceEvent {
-    Arrived(Box<Signal>),
+    Arrived {
+        signal:Box<Signal>,
+        /// Original provider metadata, distinct from any derived invocation.
+        metadata:Option<serde_json::Value>,
+    },
     /// An out-of-band control word, like a slash command. The hub answers on
     /// the channel and the source decides how to show it.
     Command {
@@ -101,12 +105,14 @@ pub trait Source: Send + Sync {
         Ok(())
     }
 
-    /// The conversation so far, as `(role, text)`, oldest first. The namer
-    /// reads this to keep a title honest as the task drifts.
+    /// Provider conversation text as `(role, text)`, oldest first.
     async fn history(&self, target: &Target, limit: usize) -> Result<Vec<(String, String)>> {
         let _ = (target, limit);
         Ok(Vec::new())
     }
+
+    /// Naming history for provenance-confirmed invocations; ordinary history stays unchanged.
+    async fn request_history(&self,target:&Target,limit:usize)->Result<Vec<(String,String)>> {self.history(target,limit).await}
 
     /// A link a person can click to get back to a specific message.
     async fn permalink(&self, conversation: &str, external_id: &str) -> Result<String> {
