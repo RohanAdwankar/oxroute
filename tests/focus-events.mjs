@@ -156,6 +156,9 @@ try{
  const linkPolicy=JSON.parse(linkLine.slice(linkLine.indexOf('=')+1).trim().slice(0,-1));
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(linkPolicy)),`${scope} turns receive the maintained source-link grounding policy unchanged`);
  const hubSource=await readFile(new URL('../crates/oxroute-core/src/hub.rs',import.meta.url),'utf8');
+ const authorizationLine=hubSource.split('\n').find(line=>line.startsWith('const SCOPED_AUTHORIZATION_GUIDANCE:'));
+ const authorizationPolicy=JSON.parse(authorizationLine.slice(authorizationLine.indexOf('=')+1).trim().slice(0,-1));
+ assert.ok(turns.every(turn=>turn.input.some(input=>input.text?.includes(authorizationPolicy))),'Focus and owner turns retain canonical scoped authorization and durable source reconciliation guidance');
  const deliveryLine=hubSource.split('\n').find(line=>line.startsWith('const ARTIFACT_DELIVERY_GUIDANCE:'));
  const deliveryPolicy=JSON.parse(deliveryLine.slice(deliveryLine.indexOf('=')+1).trim().slice(0,-1));
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(deliveryPolicy)),`${scope} turns receive canonical delivery preferences and private evidence guidance`);
