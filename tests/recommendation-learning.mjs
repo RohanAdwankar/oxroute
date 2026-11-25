@@ -114,7 +114,8 @@ try{
  await page.getByLabel('Suggested route',{exact:true}).waitFor();
  if(process.env.ROUTING_SCREENSHOT)await page.screenshot({path:process.env.ROUTING_SCREENSHOT});
  const previousNext=(await api('/api/recommendation-learning')).nextActions.revision;
- await api('/api/route',{signal:incoming.signal,action:'existing',agentIds:[routeChosen.id]});
+ const currentSource=await api('/api/intake/'+incoming.signal);
+ await api('/api/intake/'+incoming.signal+'/action',{requestId:crypto.randomUUID(),revision:currentSource.revision,contextRevision:currentSource.contextRevision,action:'route_manual',target:routeChosen.id,targets:[routeChosen.id],recommendationId:advice.recommendationId});
  await until(async()=>(await api('/api/recommendation-learning')).inputRouting.revision===1);
  const guidance=await api('/api/recommendation-learning');assert.equal(guidance.nextActions.revision,previousNext);assert.equal(guidance.inputRouting.guidance,learnedRouting);
  const another=await api('/api/signal',{source:'fixture-email',conversation:'another-mailbox',text:'Inspect another storage capacity report'});

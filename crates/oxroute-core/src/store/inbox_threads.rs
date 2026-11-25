@@ -43,8 +43,8 @@ impl Store {
                     if let Some(raw)=row.get::<_,Option<String>>("review_json")? {if let Some(text)=serde_json::from_str::<super::InboxReview>(&raw)?.draft {draft=Some(text);}}
                     members.push(InboxMember{id:row.get("id")?,revision:row.get("revision")?,at:row.get("at")?,preview:row.get::<_,String>("text")?.chars().take(200).collect(),state:row.get("state")?,attention:row.get("attention")?,source_url:row.get::<_,Option<String>>("source_url")?.filter(|url|reqwest::Url::parse(url).is_ok_and(|u|matches!(u.scheme(),"http"|"https")))});
                 }
-                let state=if members.iter().any(|m|m.attention=="response_needed") {"response_needed"}else if members.iter().any(|m|m.attention=="unreviewed") {"unreviewed"}else if members.iter().any(|m|m.attention=="answered") {"answered"}else if members.iter().any(|m|m.attention=="resolved") {"resolved"}else{"no_response_needed"};
-                if let Some(review)=&mut item.review {review.state=state.into();}
+                let state=if members.iter().any(|m|m.attention=="response_needed") {"response_needed"}else if members.iter().any(|m|m.attention=="unreviewed") {"unreviewed"}else if members.iter().any(|m|m.attention=="answered") {"answered"}else if members.iter().any(|m|m.attention=="resolved") {"resolved"}else if members.iter().any(|m|m.attention=="no_response_needed") {"no_response_needed"}else{"routed"};
+                if state!="routed" {if let Some(review)=&mut item.review {review.state=state.into();}}
                 let latest_at=members.last().map(|m|m.at).unwrap_or(item.signal.at);
                 let history_count=c.query_row("SELECT count(*) FROM inbox_messages WHERE source=?1 AND conversation=?2 AND thread_key=?3",params![item.signal.source,item.signal.conversation,item.signal.thread_key],|r|r.get(0))?;
                 item.group=Some(InboxGroup{history_count,key:serde_json::to_string(&(&item.signal.source,&item.signal.conversation,&item.signal.thread_key))?,latest_at,members,draft});
@@ -155,6 +155,7 @@ mod tests {
         let original_root=Signal{author:"reader".into(),..source("100.1","100.1",100.1)};store.import_inbox(&original_root,"")?;
         let history=store.inbox_thread_history(&later.id,None)?;assert_eq!(history.messages.len(),4);assert_eq!(history.messages[0].id,"100.1","A root collected later stays first in source chronology");
         let item=store.inbox(100)?.remove(0);let manual=action(&item,"route_manual",Some("alternate"));store.save_inbox_action(&item.signal.id,&manual,"",None,Some("Explicit manual reroute"))?;
+        let routed=store.inbox_item(&later.id)?.unwrap();store.save_inbox_assessment(&later.id,routed.revision,routed.context_revision,"response_needed","Routing alone does not answer a source request",&[])?;assert_eq!(store.inbox(100)?[0].review.as_ref().unwrap().state,"response_needed","Grouping routed members must preserve independent source response state");
         let fourth=source("104.1","100.1",104.1);store.import_inbox(&fourth,"")?;assert_eq!(store.inbox_destination(&fourth)?.unwrap().agent_id,"alternate","Accepted manual rerouting takes precedence over the original binding");
         drop(store);let store=Store::open(&path)?;assert_eq!(store.inbox_destination(&fourth)?.unwrap().agent_id,"alternate");
         assert_eq!(store.inbox(100)?.len(),1);assert_eq!(store.inbox(100)?[0].group.as_ref().unwrap().members.len(),4);
