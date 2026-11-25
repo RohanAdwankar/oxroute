@@ -12,6 +12,8 @@ Whenever you make a mistake, investigate its cause and prevent recurrence by upd
 
 Before reusing an agent or presenting a conversation, task or review link, inspect its current purpose, outstanding work and saved reviews. Match the destination and exact artifact to the requested outcome; shared repository context alone does not establish relevance. Keep independent outcomes and approval scopes distinct, explain retained unrelated work when reuse is appropriate, and never present an old review as a dependency or result of new work. Link the exact relevant artifact when available and clearly distinguish informational navigation from a request for approval.
 
+Before evaluating a copied runtime, preserve the provenance and migration metadata needed to interpret the copied records, verify required configuration and generated assets, and require captured turns to reach their expected terminal state. Bind preparation commands to explicit source and runtime roots. Fail preparation separately from application assertions; missing fixture prerequisites are not product regressions. Run tests that mutate process-wide environment serially with configuration readers, or isolate them in separate processes.
+
 ## Interface rules
 
 - Show verified display names and descriptive labels in user-facing interfaces. Keep opaque provider, account, conversation, task and record IDs in routing, storage and optional technical details; do not use them as primary labels. Resolve identity through existing authorized metadata, and use an honest role or source description when a name is unavailable. Never invent an identity or obtain new permissions just to label it.
