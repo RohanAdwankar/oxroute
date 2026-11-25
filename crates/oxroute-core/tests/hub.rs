@@ -40,6 +40,7 @@ struct Calls {
 }
 
 struct FakeHarness {
+    hub: Mutex<std::sync::Weak<Hub>>,
     events: broadcast::Sender<HarnessEvent>,
     calls: Arc<Mutex<Calls>>,
     sessions: Mutex<usize>,
@@ -70,6 +71,7 @@ struct FakeHarness {
 impl FakeHarness {
     fn new(calls: Arc<Mutex<Calls>>, hang: bool) -> Self {
         FakeHarness {
+            hub: Mutex::new(std::sync::Weak::new()),
             events: broadcast::channel(256).0,
             calls,
             sessions: Mutex::new(0),
@@ -132,7 +134,7 @@ impl Harness for FakeHarness {
             turn_id: turn.clone(),
         });
         if self.leave_artifacts {
-            if let Some(directory) = artifact_directory(&self.calls.lock().unwrap().started) {
+            if let Some(directory) = self.hub.lock().unwrap().upgrade().and_then(|hub|artifact_directory(&hub,session)) {
                 std::fs::create_dir_all(&directory).unwrap();
                 std::fs::write(format!("{directory}/chart.png"), b"not really a png").unwrap();
                 for name in ["report.xlsx", "slides.pptx", "notes.txt", "payload.dat"] {
@@ -267,16 +269,9 @@ impl Harness for FakeHarness {
     }
 }
 
-/// The hub tells an agent where to leave files it wants handed back. Read
-/// that instruction out of the last turn's inputs.
-fn artifact_directory(started: &[(String, Vec<TurnInput>)]) -> Option<String> {
-    let instruction = started
-        .last()?
-        .1
-        .iter()
-        .filter_map(TurnInput::as_text)
-        .find(|text| text.contains("returned to the user in "))?;
-    instruction.rsplit(' ').next().map(str::to_string)
+/// Fixtures use persisted turn metadata rather than parsing user instructions.
+fn artifact_directory(hub:&Hub,session:&str) -> Option<String> {
+    hub.store.active_turns().ok()?.into_iter().find(|turn|turn.session_id==session).map(|turn|turn.artifact_dir.to_string_lossy().into_owned())
 }
 
 // -- a source that records instead of posting ----------------------------
@@ -544,7 +539,8 @@ async fn build(mode: Mode, options: Harnessed) -> World {
     let fail_open = Arc::new(AtomicBool::new(false));
 
     let mut hub = Hub::new(config, Store::in_memory().unwrap());
-    hub.with_harness(Arc::new(harness));
+    let harness=Arc::new(harness);
+    hub.with_harness(harness.clone());
     if options.source {
         hub.with_source(Arc::new(FakeSource {
             posts: posts.clone(),
@@ -554,6 +550,7 @@ async fn build(mode: Mode, options: Harnessed) -> World {
         }));
     }
     hub.start().await.unwrap();
+    *harness.hub.lock().unwrap()=Arc::downgrade(&hub);
     hub.set_mode(mode).unwrap();
 
     World {
@@ -2192,7 +2189,8 @@ async fn an_interrupted_turn_hands_nothing_back() {
     w.hub.accept(signal("100.0", "100.0", "make me a chart")).await.unwrap();
     assert!(settle(|| !w.calls.lock().unwrap().started.is_empty()).await);
 
-    let directory = artifact_directory(&w.calls.lock().unwrap().started).unwrap();
+    let session=w.calls.lock().unwrap().started[0].0.clone();
+    let directory = artifact_directory(&w.hub,&session).unwrap();
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(format!("{directory}/chart.png"), b"not really a png").unwrap();
 
@@ -3121,7 +3119,7 @@ async fn a_board_is_its_settings_and_moving_a_card_is_setting_one_tag() {
     rearranged.rows = String::new();
     rearranged.selected = words(&["stage:building"]);
     let saved = w.hub.update_board(&board.id, rearranged).unwrap();
-    assert_eq!(saved.created_at, board.created_at);
+    assert!((saved.created_at-board.created_at).abs()<1e-6,"Creation time survives the persisted wire representation");
     let laid = w.hub.arrange(&board.id).unwrap();
     assert_eq!((laid.shown, laid.total), (1, 2));
     assert_eq!(column(&laid, "p1"), vec![second.clone()]);
@@ -3895,7 +3893,7 @@ async fn personal_inbox_context_waits_in_both_modes_despite_bindings_and_directi
 #[tokio::test]
 async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conversation() {
     for (subject,early,recent) in [("Storage capacity","Prior storage layout","Inspect the new capacity observations"),("Service reliability","Prior service topology","Review the latest failure measurements")] {
-        let reply=serde_json::json!({"action":"spawn","agentIds":[],"reason":"Separate review"}).to_string();
+        let reply=serde_json::json!({"attention":"response_needed","evidenceMessageIds":[],"action":"spawn","agentIds":[],"reason":"Separate review"}).to_string();
         let w=build(Mode::Ask,Harnessed {predictions:vec![reply.clone();4],prediction_delay:Duration::from_millis(100),..Default::default()}).await;
         let mut first=signal_from("outlook-inbox","context-thread","older",&format!("{early} {}","historical material ".repeat(1500)));first.label=subject.into();
         w.hub.import_inbox(first,"").await.unwrap();
@@ -3909,7 +3907,7 @@ async fn routing_long_threads_uses_recent_context_and_delivers_the_complete_conv
         assert!(w.hub.recommend_routing(&item.signal.id).await.unwrap().is_some());
         let calls=w.calls.lock().unwrap().predictions.clone();
         assert!(calls.iter().skip(1).any(|prompt|prompt.contains(subject)&&prompt.contains(recent)));
-        assert!(!calls.last().unwrap().contains(early),"Old text must not displace recent messages");
+        assert!(calls.last().unwrap().contains(recent),"Retained source evidence must not displace the latest request");
         let stored=w.hub.store.inbox_item(&item.signal.id).unwrap().unwrap().signal;
         assert!(w.hub.store.routing_text(&stored,12000).unwrap().chars().count()<=12000);
         let full=stored.text;
