@@ -13,6 +13,7 @@
 //!   browser takes the same path, so no behaviour hides in one of them.
 
 const SCOPED_AUTHORIZATION_GUIDANCE: &str = "Before asking for consent or waiting on a review, reconcile the exact product, outcome, actions and constraints against current explicit human authorization. Current scoped authorization overrides generic review defaults only within its stated scope; an older pending card or waiting note cannot revoke it. Persist the originating human entry references, authorized actions and boundaries in the existing owning task notes or maintained plan, and make that same durable context available to Focus and the outcome owner. Inspect those saved records on relevant direct, automatic and event turns instead of relying on transient handoffs or repeating a satisfied consent gate. Reconcile related pending recommendations against the same authorization while preserving unrelated decisions, task states and independent approval boundaries. Do not approve cards, close tasks, broaden conversation-wide publication policy or infer additional merge, deployment, access or external-communication permission from authorization for another action. When authorization is explicitly bound to a reviewed snapshot, retain that exact boundary; when the user explicitly authorizes an outcome without another review, continue the covered implementation and validation rather than requiring a new card.";
+const TASK_NOTE_GUIDANCE: &str = "For progress notes, use the dedicated note-write operation and read back the resulting note record, checking its identity, owning task, author and exact text before claiming persistence. Task metadata, an unchanged status or an updated timestamp alone do not prove a note was saved. Preserve task ownership and status unless a separate authorized action changes them.";
 const ARTIFACT_DELIVERY_GUIDANCE: &str = "Before returning files, apply the user's current delivery and notification preferences across direct, automatic and event turns. The turn delivery directory is recursively scanned and every file in it is automatically attached, including files in subdirectories. Place only intended, authorized user deliverables there. Keep private validation screenshots, diagnostics and other working evidence outside that directory; inspecting or generating evidence does not request its delivery. If the user declines QA image batches, inspect screenshots privately and report concise findings without attaching them unless subsequently requested. Preserve requested attachment delivery, source access and existing artifact capabilities; do not disable the scanner or hide historical artifacts to enforce a preference.";
 
 use std::collections::{HashMap, HashSet};
@@ -2153,7 +2154,8 @@ impl Hub {
              --agent {id} for task work. Commands: tasks list --filter status=incomplete \
              --fields id,text,status,parentTaskId; tasks create --text TEXT \
              --parent-task-id PARENT; tasks update --id TASK --status STATUS --note REASON; \
-             notes list --filter taskId=TASK. CLI help and flags are generated from the API. \
+             notes add --id TASK --text TEXT; notes list --filter taskId=TASK. \
+             {TASK_NOTE_GUIDANCE} CLI help and flags are generated from the API. \
              Omitted update fields are preserved. Group contributing work under an existing \
              task using parentTaskId; create subtasks only for independently managed outcomes. \
              Reference tasks in replies using exact IDs for live cards and approval controls. \

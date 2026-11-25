@@ -159,6 +159,10 @@ try{
  const authorizationLine=hubSource.split('\n').find(line=>line.startsWith('const SCOPED_AUTHORIZATION_GUIDANCE:'));
  const authorizationPolicy=JSON.parse(authorizationLine.slice(authorizationLine.indexOf('=')+1).trim().slice(0,-1));
  assert.ok(turns.every(turn=>turn.input.some(input=>input.text?.includes(authorizationPolicy))),'Focus and owner turns retain canonical scoped authorization and durable source reconciliation guidance');
+ const noteLine=hubSource.split('\n').find(line=>line.startsWith('const TASK_NOTE_GUIDANCE:'));
+ const notePolicy=JSON.parse(noteLine.slice(noteLine.indexOf('=')+1).trim().slice(0,-1));
+ assert.ok(turns.every(turn=>turn.input.some(input=>input.text?.includes(notePolicy))),'Focus and owner turns receive the same dedicated note write/readback contract');
+ for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(notePolicy)),`${scope} turns retain canonical note persistence guidance`);
  const deliveryLine=hubSource.split('\n').find(line=>line.startsWith('const ARTIFACT_DELIVERY_GUIDANCE:'));
  const deliveryPolicy=JSON.parse(deliveryLine.slice(deliveryLine.indexOf('=')+1).trim().slice(0,-1));
  for(const [scope,turn] of [['automatic',focusTurns()[0]],['event',focusTurns()[1]],['direct',directTurn]])assert.ok(turn.input.some(input=>input.text?.includes(deliveryPolicy)),`${scope} turns receive canonical delivery preferences and private evidence guidance`);
