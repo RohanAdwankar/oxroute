@@ -65,7 +65,11 @@ try {
   assert.ok(response.ok);return (await response.json()).result;
  };
  assert.equal((await mcp('initialize',{protocolVersion:'2025-03-26'})).serverInfo.name,'oxroute');
- assert.ok((await mcp('tools/list')).tools.some(tool=>tool.name==='read_conversation'));
+ const advertised=(await mcp('tools/list')).tools;assert.ok(advertised.some(tool=>tool.name==='read_conversation'));
+ const publicationFields=advertised.find(tool=>tool.name==='publish_focus_update').inputSchema.properties;
+ const provenanceFields=['sourceAgentId','sourceRequestEntryId','sourceContextEntryId','revisionEntryId','evidenceEntryIds','taskId'];
+ for(const field of provenanceFields)assert.ok(publicationFields[field].description?.trim(),field+' exposes its publication provenance contract');
+ console.log(JSON.stringify({publicationFieldGuidance:Object.fromEntries(provenanceFields.map(field=>[field,publicationFields[field].description]))}));
  assert.equal((await mcp('tools/list',{},'Bearer invalid')).unauthorized,true);
  const call=async(name,args)=>(await mcp('tools/call',{name,arguments:args}));
  const requestId=crypto.randomUUID(),message={targetId:focus.id,text:'Inspect the current local validation evidence.',requestId};

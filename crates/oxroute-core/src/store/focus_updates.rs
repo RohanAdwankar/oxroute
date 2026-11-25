@@ -318,10 +318,20 @@ mod tests {
     }
     #[test]
     fn focus_originated_requests_can_cite_recorded_tool_results() {
-        let (store,path)=fixture();let request=add(&store,"focus",EntryKind::You);
+        let (store,path)=fixture();let prior=add(&store,"source",EntryKind::Said);let request=add(&store,"focus",EntryKind::You);
         let output=store.add_work_entry("source",now(),"Inspection","Read artifact metadata","records=2","").unwrap().id;
         let mut u=update("completion","source",0);u.focus_cycle=request;u.revision_entry_id=request;u.evidence_entry_ids=vec![output];
         store.publish_focus_update("focus",&u,now()).unwrap();
+        let mut foreign_request=u.clone();foreign_request.request_id=uuid::Uuid::new_v4().to_string();foreign_request.source_request_entry_id=request;
+        assert!(store.publish_focus_update("focus",&foreign_request,now()).is_err(),"A coordinator request is not a worker-owned human request");
+        let mut stale=u.clone();stale.request_id=uuid::Uuid::new_v4().to_string();stale.evidence_entry_ids=vec![prior];
+        assert!(store.publish_focus_update("focus",&stale,now()).is_err(),"Delegated work still requires results after its actual human revision");
+        for owner in ["focus","source"] {
+            let task=TaskItem{id:format!("task-{owner}"),text:"Tracked outcome".into(),status:crate::model::TaskStatus::Incomplete,parent_task_id:String::new(),blocked_by_task_id:String::new(),agent_id:owner.into(),position:0.0,images:vec![],created_at:now(),updated_at:now()};store.save_task(&task).unwrap();
+            let mut bound=u.clone();bound.request_id=uuid::Uuid::new_v4().to_string();bound.task_id=Some(task.id.clone());
+            assert_eq!(store.publish_focus_update("focus",&bound,now()).is_ok(),owner=="source","Optional task ownership follows the cited worker, independently of delegation origin");
+            assert_eq!(store.tasks().unwrap().into_iter().find(|t|t.id==task.id).unwrap().status,crate::model::TaskStatus::Incomplete,"Publication never closes or approves tracking work");
+        }
         let empty=store.add_work_entry("source",now(),"Inspection","Read artifact metadata","","").unwrap().id;
         let foreign=store.add_work_entry("other",now(),"Inspection","Read artifact metadata","records=2","").unwrap().id;
         let coordination=add(&store,"source",EntryKind::Coordination);
