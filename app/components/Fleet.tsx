@@ -129,7 +129,7 @@ export function Fleet({
         )}
       </div>
 
-      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextKey&&context.error?"":"Loading conversation…")}{context?.id===contextKey&&context.error&&<span role="alert"> {context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>}</div>}
+      {routing && ["outlook-inbox", "slack-inbox"].includes(routing.signal.source) && <div aria-label="Conversation context" className="quiet-scroll min-w-0 max-h-[35vh] shrink-0 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] border-b border-rule px-7 py-3 text-[13px] leading-relaxed">{contextText??(context?.id===contextKey&&context.error?"":"Loading conversation…")}{context?.id===contextKey&&context.error&&<span role="alert"> {context.error} <button type="button" aria-label="Retry conversation context" title="Retry" onClick={()=>setContextRetry(value=>value+1)}><Icon name="refresh" size={14}/></button></span>}</div>}
       <div className="quiet-scroll min-h-0 flex-1 overflow-y-auto px-7 py-[26px]">
         {shown.length === 0 ? (
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-faint">

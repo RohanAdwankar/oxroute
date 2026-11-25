@@ -7,12 +7,12 @@ import {fixtureState} from './fixture-state.mjs';
 export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screenshots}={}) {
  const read=async path=>{const r=await fetch(native+path);assert.ok(r.ok,`${path}: ${r.status}`);return r.json();};
  const snapshot=await read('/api/state'),seen=new Set();
- const items=snapshot.inbox.filter(item=>{
-  const key=JSON.stringify([item.signal.source,item.signal.conversation,item.signal.threadKey]);
-  if(item.state!=='waiting'||!['slack-inbox','outlook-inbox'].includes(item.signal.source)||seen.has(key))return false;
+ const items=[...snapshot.inbox].sort((a,b)=>Number(b.state==='waiting')-Number(a.state==='waiting')).filter(item=>{
+  const key=JSON.stringify([item.signal.source,item.signal.conversation,item.signal.source==='slack-inbox'?null:item.signal.threadKey]);
+  if(!['slack-inbox','outlook-inbox'].includes(item.signal.source)||seen.has(key))return false;
   seen.add(key);return true;
  }).slice(0,2);
- if(items.length<2){assert.ok(allowEmpty,'Two populated source conversations are required');console.log('Live source sample has fewer than two distinct pending conversations; populated source coverage is unavailable, separate real-daemon fixture checks remain required.');return;}
+ if(items.length<2){assert.ok(allowEmpty,'Two populated source histories are required');console.log('Live source sample has fewer than two distinct retained source histories; populated source coverage is unavailable, separate real-daemon fixture checks remain required.');return;}
  const details=await Promise.all(items.map(item=>read(`/api/intake/${encodeURIComponent(item.signal.id)}`)));
  for(let n=0;n<items.length;n++){
   assert.equal(details[n].signal.id,items[n].signal.id);assert.equal(details[n].signal.at,items[n].signal.at);
@@ -47,9 +47,11 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
   const choose=async n=>{
    if(!await row(n).isVisible())await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click();
    await row(n).click();
-   assert.ok(await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled(),'Presentation clearing remains available without being invoked');
+   assert.equal(await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isEnabled(),snapshot.inbox.some(item=>item.state==='waiting'),'Presentation clearing reflects pending scope without being invoked');
    if(await page.evaluate(()=>innerWidth<640))await page.getByRole('button',{name:'collapse inbox',exact:true}).click();
   };
+  if(!await page.getByRole('button',{name:'Clear all inbox arrivals',exact:true}).isVisible())await page.getByRole('button',{name:'Show or hide the inbox',exact:true}).click();
+  if(items.some(item=>item.state!=='waiting'||['resolved','answered','no_response_needed'].includes(item.review?.state))){const handled=page.getByRole('button',{name:/^Handled ·/});await handled.waitFor();await handled.click();}
   await row(0).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Conversation context"]')?.textContent.includes('Loading conversation'));
   await row(1).click();await page.getByRole('button',{name:'Retry conversation context',exact:true}).click();await content(1);
   release();await page.waitForTimeout(100);await content(1);
@@ -72,12 +74,13 @@ export async function verifyPopulatedInbox(native,web,{allowEmpty=false,screensh
    if(items[1].sourceUrl)assert.equal(await page.getByRole('link',{name:'Open source message',exact:true}).getAttribute('href'),items[1].sourceUrl);
    const box=await context.boundingBox(),viewport=await page.evaluate(()=>({width:innerWidth,height:innerHeight}));
    assert.ok(box&&box.width>0&&box.height>0&&box.x>=0&&box.x+box.width<=viewport.width+.1,'Opened context fits the actual viewport');
+   assert.ok(await context.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'Source links and text wrap within the visible context pane');
    for(const control of await context.locator('..').locator('footer button,footer select').all()){
     const bounds=await control.boundingBox();assert.ok(bounds&&bounds.width>=16&&bounds.x>=0&&bounds.x+bounds.width<=viewport.width+.1,'Routing controls remain visible and usable in the actual viewport');
    }
    if(screenshots)await page.screenshot({path:`${screenshots}/populated-${width}-${zoom}.png`,clip:{x:0,y:0,...viewport},captureBeyondViewport:false});
   }
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({populatedInboxItems:snapshot.inbox.length,sourceContextLengths:details.map(item=>text(item).length),openSwitchReturnRetry:true,lateResponsesIsolated:true,browserWritesForwarded:0,desktopNarrowZoom:true}));
+  console.log(JSON.stringify({populatedInboxItems:snapshot.inbox.length,sampledPendingItems:items.filter(item=>item.state==='waiting').length,sourceContextLengths:details.map(item=>text(item).length),openSwitchReturnRetry:true,lateResponsesIsolated:true,browserWritesForwarded:0,desktopNarrowZoom:true}));
  }finally{release?.();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'wait'});await browser.close();}
 }
