@@ -17,6 +17,7 @@ import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { DRAFT_CHANGED, draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
+import { useDictation } from "../lib/dictation";
 import { usePinnedMessages } from "../lib/pinned-messages";
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
@@ -247,6 +248,7 @@ export function AgentPanel({
     finally { setChangingAutorun(false); }
   };
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
+  const voice = useDictation(text => setDraft(current => [current, text].filter(Boolean).join(" ")));
   const [diffs, setDiffs] = useState(() => diffsFor(view.agent.id));
   const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
   const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
@@ -1117,6 +1119,7 @@ export function AgentPanel({
             }))}
             up
           />
+          {voice.supported && <SplitAction label={voice.listening ? "Stop dictating" : "Dictate"} icon="mic" onClick={voice.toggle} pressed={voice.listening} menu={[]} />}
           <textarea
             ref={composer}
             value={draft}
