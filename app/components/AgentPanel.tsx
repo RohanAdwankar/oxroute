@@ -17,7 +17,7 @@ import { Copyable } from "./Copyable";
 import { Sketch, type SketchHandle } from "./composer/Sketch";
 import { acceptsFileDrop, useUploads } from "../lib/uploads";
 import { DRAFT_CHANGED, draftFor, keepDraft, diffsFor, keepDiffs, type DiffQuote } from "../lib/drafts";
-import { useDictation } from "../lib/dictation";
+import { speak, useDictation } from "../lib/dictation";
 import { usePinnedMessages } from "../lib/pinned-messages";
 import DiffAttachment from "./DiffAttachment";
 import { TagEditor, tagChange } from "./Tags";
@@ -248,7 +248,24 @@ export function AgentPanel({
     finally { setChangingAutorun(false); }
   };
   const [draft, setDraft] = useState(() => draftFor(view.agent.id));
-  const voice = useDictation(text => setDraft(current => [current, text].filter(Boolean).join(" ")));
+  const [talking, setTalking] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const spoken = useRef(0);
+  const voice = useDictation(text => talking ? sayImmediately(text, [], working) : setDraft(current => [current, text].filter(Boolean).join(" ")), speaking);
+  const talk = (on: boolean) => {
+    spoken.current = view.timeline.findLast(entry => entry.kind === "said")?.id ?? 0;
+    if (!on) { speechSynthesis.cancel(); setSpeaking(false); }
+    setTalking(on);
+    voice.setListening(on);
+  };
+  // In voice mode each new reply is read aloud, and the microphone waits until it is done.
+  useEffect(() => {
+    const reply = talking ? view.timeline.findLast(entry => entry.kind === "said") : undefined;
+    if (!reply || reply.id <= spoken.current) return;
+    spoken.current = reply.id;
+    setSpeaking(true);
+    speak(reply.text, () => setSpeaking(false));
+  }, [talking, view.timeline]);
   const [diffs, setDiffs] = useState(() => diffsFor(view.agent.id));
   const composed = [...diffs.map(quote => quote.text.trim()), draft.trim()].filter(Boolean).join("\n\n");
   const [reviewingGit, setReviewingGit] = useState<boolean | null>(null);
@@ -1119,7 +1136,7 @@ export function AgentPanel({
             }))}
             up
           />
-          {voice.supported && <SplitAction label={voice.listening ? "Stop dictating" : "Dictate"} icon="mic" onClick={voice.toggle} pressed={voice.listening} menu={[]} />}
+          {voice.supported && <SplitAction label={voice.listening ? "Stop listening" : "Dictate"} icon="mic" onClick={() => { if (talking) talk(false); else voice.setListening(!voice.listening); }} pressed={voice.listening} menu={[{ label: talking ? "End voice mode" : "Voice mode: talk and hear replies", icon: "mic", onClick: () => talk(!talking) }]} up from="left" />}
           <textarea
             ref={composer}
             value={draft}
