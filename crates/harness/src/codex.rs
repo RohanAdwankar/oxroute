@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
 
 use super::{Capabilities, Harness, HarnessEvent, RecoveredTurn, SessionSpec};
-use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
+use crate::{Backend, ConversationLine, NativeSession, TurnInput};
 use crate::rpc::JsonSocket;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -114,18 +114,26 @@ impl Connection {
     }
 }
 
+pub struct CodexConfig {
+    pub binary: String,
+    pub url: String,
+    pub default_cwd: String,
+    pub effort: String,
+    pub title_model: Option<String>,
+}
+
 impl CodexHarness {
-    pub fn new(config: &crate::config::Config) -> Self {
-        let search_binary = std::fs::canonicalize(&config.codex_binary)
+    pub fn new(config: CodexConfig) -> Self {
+        let search_binary = std::fs::canonicalize(&config.binary)
             .ok()
             .and_then(|binary| binary.parent()?.parent().map(|root| root.join("codex-path/rg")))
             .filter(|binary| binary.is_file())
             .unwrap_or_else(|| PathBuf::from("rg"));
         CodexHarness {
-            url: config.codex_url.clone(),
-            default_cwd: config.workspace_path().to_string_lossy().to_string(),
-            reasoning_effort: config.codex_effort.clone(),
-            title_model: config.title_model.clone(),
+            url: config.url,
+            default_cwd: config.default_cwd,
+            reasoning_effort: config.effort,
+            title_model: config.title_model,
             search_binary,
             session_index: std::env::var_os("HOME")
                 .map(PathBuf::from)
@@ -987,9 +995,8 @@ fn content_text(content: &Value) -> String {
 mod tests {
     #[test]
     fn native_tools_extend_runtime_configuration() {
-        let config=crate::config::Config::load_from(std::path::Path::new("/nonexistent-fixture-config")).unwrap();
-        let harness=super::CodexHarness::new(&config);
-        let spec=super::SessionSpec {model:"fixture".into(),cwd:"/work".into(),resume:None,ephemeral:false,native_tools:Some(crate::agent::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()})};
+        let harness=super::CodexHarness::new(super::CodexConfig {binary:"codex".into(),url:"ws://127.0.0.1:1".into(),default_cwd:"/work".into(),effort:"medium".into(),title_model:Some("fixture".into())});
+        let spec=super::SessionSpec {model:"fixture".into(),cwd:"/work".into(),resume:None,ephemeral:false,native_tools:Some(crate::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()})};
         let options=harness.thread_options(&spec);
         assert_eq!(options["config"]["mcp_servers.oxroute_internal"]["http_headers"]["Authorization"],"Bearer fixture-token");
         assert_eq!(options["sandbox"],super::SANDBOX);

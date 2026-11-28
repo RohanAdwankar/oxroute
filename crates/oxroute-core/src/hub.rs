@@ -323,8 +323,8 @@ fn carry_on(tasks: &[TaskItem], agent_id: &str, chain: &Chain) -> Option<Vec<Tas
 
 impl Hub {
     pub fn new(config: Config, store: Store) -> Arc<Self> {
-        let codex = Arc::new(CodexHarness::new(&config));
-        let claude = Arc::new(ClaudeHarness::new(&config));
+        let codex = Arc::new(CodexHarness::new(config.codex()));
+        let claude = Arc::new(ClaudeHarness::new(config.claude()));
         let harnesses: HashMap<Backend, Arc<dyn Harness>> = HashMap::from([
             (Backend::Codex, codex as Arc<dyn Harness>),
             (Backend::ClaudeCode, claude as Arc<dyn Harness>),

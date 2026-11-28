@@ -7,6 +7,7 @@ license.workspace = true
 description = "Signals in, agents out. The shared core behind the oxroute daemon, TUI and web UI."
 
 [dependencies]
+agent-harness = { path = "../harness" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

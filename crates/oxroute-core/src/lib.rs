@@ -13,7 +13,7 @@
 //! | [`model`]   | the nouns, and the control words a person can type   |
 //! | [`store`]   | durable state, in SQLite                             |
 //! | [`source`]  | where signals come from; Slack is the one wired up   |
-//! | [`agent`]   | the harnesses: Codex and Claude Code                 |
+//! | [`agent`]   | the harnesses: the `agent-harness` crate             |
 //! | [`hub`]     | the only thing that knows about both sides           |
 //! | [`tags`]    | tags on sessions, and boards arranged by them         |
 //! | [`progress`]| what a running turn looks like to a person watching  |
@@ -23,7 +23,6 @@
 //! [`hub::Hub`] and are deliberately thin. Anything a surface can do, all of
 //! them can do, because none of them has behaviour of its own.
 
-pub mod agent;
 pub mod config;
 pub mod dashboard;
 pub mod hub;
@@ -34,11 +33,11 @@ pub mod naming;
 pub mod next_actions;
 pub mod recommendations;
 pub mod progress;
-pub mod rpc;
 pub mod source;
 pub mod store;
 pub mod tags;
 
+pub use agent_harness as agent;
 pub use config::{Config, Mode};
 pub use hub::{Hub, Routing, Snapshot};
 pub use model::{

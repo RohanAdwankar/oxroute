@@ -1,6 +1,6 @@
-//! The seam between oxroute and whatever is actually running the agents.
+//! One interface over the coding agents (Claude Code, Codex) that run your work.
 //!
-//! oxroute uses a small lifecycle, with optional active-turn steering:
+//! The lifecycle is a small lifecycle, with optional active-turn steering:
 //!
 //! ```text
 //! open        attach to a session, or make one
@@ -16,12 +16,15 @@
 
 pub mod claude;
 pub mod codex;
+pub mod rpc;
+mod types;
+
+pub use types::{new_id, Backend, ConversationLine, NativeSession, TurnInput};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
 
 /// What a harness can actually do, declared rather than discovered.
 #[derive(Debug, Clone, Copy)]

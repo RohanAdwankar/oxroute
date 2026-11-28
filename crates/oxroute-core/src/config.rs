@@ -11,6 +11,7 @@
 //! Every variable the Codex Slack bot used is still read, so an existing
 //! `~/.config/codex-slack/env` keeps working without a config file at all.
 
+use agent_harness::{claude::ClaudeConfig, codex::CodexConfig};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -234,6 +235,24 @@ fn pick(names: &[&str], file: Option<String>, fallback: impl FnOnce() -> String)
 }
 
 impl Config {
+    pub fn codex(&self) -> CodexConfig {
+        CodexConfig {
+            binary: self.codex_binary.clone(),
+            url: self.codex_url.clone(),
+            default_cwd: self.workspace_path().to_string_lossy().to_string(),
+            effort: self.codex_effort.clone(),
+            title_model: self.title_model.clone(),
+        }
+    }
+
+    pub fn claude(&self) -> ClaudeConfig {
+        ClaudeConfig {
+            binary: self.claude_binary.clone(),
+            default_cwd: self.workspace_path().to_string_lossy().to_string(),
+            permission_mode: self.claude_permission_mode.clone(),
+        }
+    }
+
     /// Where the config file lives, honouring `$OXROUTE_CONFIG`.
     pub fn default_path() -> PathBuf {
         std::env::var("OXROUTE_CONFIG")

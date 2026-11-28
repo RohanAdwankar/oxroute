@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use agent_harness::{new_id, Backend, ConversationLine, NativeSession, TurnInput};
+
 /// Character offsets use UTF-16, matching the browser's rendered text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,46 +35,6 @@ pub fn now() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
-}
-
-pub fn new_id(prefix: &str) -> String {
-    format!("{prefix}_{}", uuid::Uuid::new_v4().simple())
-}
-
-/// Which harness runs an agent.
-///
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Backend {
-    Codex,
-    ClaudeCode,
-}
-
-impl Backend {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Backend::Codex => "codex",
-            Backend::ClaudeCode => "claude-code",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "codex" => Some(Backend::Codex),
-            "claude-code" | "claude" => Some(Backend::ClaudeCode),
-            _ => None,
-        }
-    }
-
-    pub fn can_fork(self) -> bool {
-        matches!(self, Backend::Codex)
-    }
-}
-
-impl std::fmt::Display for Backend {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
 }
 
 /// How the next ordinary message reaches an agent.
@@ -139,27 +101,6 @@ pub struct Attachment {
     /// Source-specific handle. For Slack this is the private download URL,
     /// which only the source that produced it knows how to authenticate.
     pub url: String,
-}
-
-/// One piece of input for a turn, in the harness's vocabulary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum TurnInput {
-    Text { text: String },
-    LocalImage { path: String },
-}
-
-impl TurnInput {
-    pub fn text(value: impl Into<String>) -> Self {
-        TurnInput::Text { text: value.into() }
-    }
-
-    pub fn as_text(&self) -> Option<&str> {
-        match self {
-            TurnInput::Text { text } => Some(text),
-            TurnInput::LocalImage { .. } => None,
-        }
-    }
 }
 
 /// Where a reply goes. A surface hands one of these back to itself; the hub
@@ -586,27 +527,6 @@ pub struct SearchGroup {
     pub detail: String,
     pub origin: String,
     pub destinations: Vec<SearchDestination>,
-}
-
-/// A conversation owned by a native harness but not yet managed by oxroute.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeSession {
-    pub backend: Backend,
-    pub session_id: String,
-    pub name: String,
-    pub preview: String,
-    pub cwd: String,
-    pub model: String,
-    pub updated_at: f64,
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationLine {
-    pub role: String,
-    pub text: String,
 }
 
 /// What state a signal is in once it has reached the inbox.

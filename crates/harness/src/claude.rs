@@ -33,7 +33,7 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
 
 use super::{Capabilities, Harness, HarnessEvent, SessionSpec};
-use crate::model::{Backend, ConversationLine, NativeSession, TurnInput};
+use crate::{Backend, ConversationLine, NativeSession, TurnInput};
 use crate::rpc::JsonChild;
 
 pub struct ClaudeHarness {
@@ -45,12 +45,18 @@ pub struct ClaudeHarness {
     events: broadcast::Sender<HarnessEvent>,
 }
 
+pub struct ClaudeConfig {
+    pub binary: String,
+    pub default_cwd: String,
+    pub permission_mode: String,
+}
+
 impl ClaudeHarness {
-    pub fn new(config: &crate::config::Config) -> Self {
+    pub fn new(config: ClaudeConfig) -> Self {
         ClaudeHarness {
-            binary: config.claude_binary.clone(),
-            default_cwd: config.workspace_path().to_string_lossy().to_string(),
-            permission_mode: config.claude_permission_mode.clone(),
+            binary: config.binary,
+            default_cwd: config.default_cwd,
+            permission_mode: config.permission_mode,
             history_root: std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_default()
@@ -276,7 +282,7 @@ impl Harness for ClaudeHarness {
         // There is no turn id on the wire. One is minted so the hub has
         // something to hold, and `interrupt` ends the process rather than
         // naming a turn.
-        let turn = crate::model::new_id("turn");
+        let turn = crate::new_id("turn");
         let _ = self.events.send(HarnessEvent::TurnStarted {
             session: session.to_string(),
             turn_id: turn.clone(),
@@ -596,7 +602,7 @@ printf '%s' '{"structured_output":{"decision":"finished"}}'
     fn native_tools_preserve_existing_runtime_permissions() {
         let harness=ClaudeHarness::bare("claude","/work","bypassPermissions");
         let mut spec=spec("fixture",None);
-        spec.native_tools=Some(crate::agent::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()});
+        spec.native_tools=Some(crate::NativeTools{url:"http://127.0.0.1:1/api/agent-tools/source".into(),token:"fixture-token".into()});
         let args=harness.argv("fixture-session",&spec,Opening::Fresh);
         let config:serde_json::Value=serde_json::from_str(&args[args.iter().position(|a|a=="--mcp-config").unwrap()+1]).unwrap();
         assert_eq!(config["mcpServers"]["oxroute_internal"]["headers"]["Authorization"],"Bearer fixture-token");
