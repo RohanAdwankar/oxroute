@@ -2765,7 +2765,10 @@ impl Hub {
             "Your task list still has open work:\n{list}\n\nCarry on with it. Mark each \
              one complete as you finish it. If something stops you, set that task to \
              blocked -- naming the task it waits on -- or to waiting_for_human, and say \
-             what you need.",
+             what you need. If the work is already delegated and still running, or nothing \
+             is blocked and no human decision is needed, end the turn without a user-facing \
+             message; speak only for a finished result with evidence, a real blocker, or a \
+             genuine decision.",
         ))];
         if let Ok(forks) = self.store.task_forks() {
             if let Some((task, parent, _)) = forks.iter().find(|(_, _, child)| child == &agent.id) {
