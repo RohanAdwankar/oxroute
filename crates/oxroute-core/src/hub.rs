@@ -3641,8 +3641,9 @@ impl Hub {
             self.ask_quietly(
                 agent_id,
                 &format!(
-                    "A task was added to your list: {}\n\nStart on it. Mark it complete when \
-                     it is done, or blocked or waiting_for_human if you cannot go further.",
+                    "A task was added to your list: {}\n\nStart on it. Mark it done when \
+                     it is finished, which means awaiting human approval, or blocked or \
+                     waiting_for_human if you cannot go further.",
                     task.text,
                 ),
                 &format!("Given the task: {}", task.text),
