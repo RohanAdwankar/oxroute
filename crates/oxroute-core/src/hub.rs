@@ -2763,7 +2763,8 @@ impl Hub {
             .join("\n");
         let mut inputs = vec![TurnInput::text(format!(
             "Your task list still has open work:\n{list}\n\nCarry on with it. Mark each \
-             one complete as you finish it. If something stops you, set that task to \
+             one done as you finish it; done means awaiting human approval, and only a \
+             person marks a task complete. If something stops you, set that task to \
              blocked -- naming the task it waits on -- or to waiting_for_human, and say \
              what you need. If the work is already delegated and still running, or nothing \
              is blocked and no human decision is needed, end the turn without a user-facing \
