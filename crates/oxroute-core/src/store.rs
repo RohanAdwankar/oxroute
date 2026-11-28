@@ -2504,6 +2504,26 @@ mod tests {
     }
 
     #[test]
+    fn the_focus_queue_treats_every_review_kind_alike() {
+        let store = Store::in_memory().unwrap();
+        for (kind, subject) in [("git", serde_json::json!({ "headCommit": "h" })), ("file", serde_json::json!({ "sha256": "s" }))] {
+            let review = |id: &str, decision: serde_json::Value| serde_json::json!({ "id": id, "agentId": "a", "title": id, "kind": kind, "subject": subject, "decision": decision, "feedback": [] });
+            let observe = |id: &str, status: &str| store.set(&format!("review-status:{id}"), &serde_json::json!({ "subject": subject, "status": status }).to_string()).unwrap();
+            for (id, decision, status) in [("pending", serde_json::Value::Null, "pending"), ("approved", serde_json::json!({ "status": "approved", "at": 1.0, "requestId": "r" }), "approved"), ("stale", serde_json::Value::Null, "stale")] {
+                let id = format!("{kind}-{id}");
+                store.set(&format!("review:{id}"), &review(&id, decision).to_string()).unwrap();
+                observe(&id, status);
+            }
+            store.set(&format!("review:{kind}-unobserved"), &review(&format!("{kind}-unobserved"), serde_json::Value::Null).to_string()).unwrap();
+            let states = store.review_priority_states(true).unwrap();
+            assert_eq!(states[&format!("{kind}-pending")].status, "pending");
+            assert_eq!(states[&format!("{kind}-stale")].status, "stale");
+            assert_eq!(states[&format!("{kind}-unobserved")].status, "unverified");
+            assert!(!states.contains_key(&format!("{kind}-approved")), "A decided review is not a pending decision");
+        }
+    }
+
+    #[test]
     fn slack_recovery_migrates_existing_roots_and_checkpoints_once() {
         for grouping in ["conversation","123.000001"] {
             let conn=Connection::open_in_memory().unwrap();conn.execute_batch(SCHEMA).unwrap();

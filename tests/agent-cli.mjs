@@ -20,7 +20,7 @@ const server = createServer(async (request, response) => {
   requests.push({ method: request.method, url, body });
   const result = url.pathname === '/api/tasks' && request.method === 'GET' ? [task, { ...task, id: 'foreign', agentId: 'another-agent' }]
     : url.pathname === '/api/task-notes' ? [{ taskId: id, text: 'Human feedback', agentId: '' }, { taskId: 'another-task', text: 'Other feedback' }]
-    : { ...body, path: url.pathname, full: url.searchParams.get('full'), snapshot: { headCommit: 'fixture-head', files: ['Large content is omitted by projection'] } };
+    : { ...body, path: url.pathname, full: url.searchParams.get('full'), subject: { headCommit: 'fixture-head', files: ['Large content is omitted by projection'] } };
   if (url.pathname.includes('rejected')) { response.statusCode = 400; response.end(JSON.stringify({ error: 'Fixture request rejected' })); return; }
   response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(result));
 });
@@ -53,8 +53,8 @@ try {
   assert.equal(result.status, 0, result.error);
   assert.equal(requests.at(-1).url.pathname, `/api/agents/${actor}/reviews/review-fixture`);
   assert.equal(requests.at(-1).url.searchParams.get('full'), 'true');
-  result = await run(['reviews', 'show', '--review', 'review-fixture', '--fields', 'snapshot.headCommit']);
-  assert.deepEqual(JSON.parse(result.out), { 'snapshot.headCommit': 'fixture-head' }, 'Review metadata can be read without returning patch content to the agent');
+  result = await run(['reviews', 'show', '--review', 'review-fixture', '--fields', 'subject.headCommit']);
+  assert.deepEqual(JSON.parse(result.out), { 'subject.headCommit': 'fixture-head' }, 'Review metadata can be read without returning patch content to the agent');
   result = await run(['widgets', 'inspect', '--key', 'example', '--enabled', 'true', '--optional-text', 'A nullable string', '--labels', '["one","two"]']);
   assert.equal(result.status, 0, result.error);
   assert.deepEqual(requests.at(-1).body, { enabled: true, optionalText: 'A nullable string', labels: ['one', 'two'] }, 'New schema routes and typed fields work without changing the CLI');

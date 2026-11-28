@@ -2254,10 +2254,10 @@ impl Hub {
             "Unless current explicit human authorization covers this exact publication without \
              another review, before pushing a branch or creating a PR, present the committed local change \
              for human review using oxroute-agent --server http://{listen} --agent {id} \
-             reviews create --repository ROOT --base BASE --remote REMOTE --title TITLE \
+             reviews create --kind git --repository ROOT --base BASE --remote REMOTE --title TITLE \
              --description DESCRIPTION. It returns a review ID and \
              captures the exact diff in this conversation. Linked Slack threads receive a \
-             Review changes button; direct the user there instead of asking them to find a raw review ID. \
+             Review button; direct the user there instead of asking them to find a raw review ID. \
              Do not push to make it reviewable. \
              Wait for the user's approval of that exact committed change. Explicit approval \
              from the user in Slack or chat is equivalent to approval on the review card: \
@@ -2265,10 +2265,10 @@ impl Hub {
              Record the user's approval in a task note; do not ask for another approval or \
              require a card click. Immediately before publication, use the same CLI binding \
              with reviews show --review REVIEW --fields \
-             status,snapshot.headCommit,snapshot.remote,snapshot.branch,title,description. \
+             status,subject.headCommit,subject.remote,subject.branch,title,description. \
              A stale review requires presenting the changed work for new approval; \
              a pending review with explicit chat approval is ready to publish. \
-             Push only its snapshot.headCommit to snapshot.remote and snapshot.branch, \
+             Push only its subject.headCommit to subject.remote and subject.branch, \
              and use its stored title and description for the PR; \
              approval does not authorize merging or deploying. Changes to the reviewed head, merge base, \
              branch, remote or tracked edits require a new review. Unrelated target-branch updates \
