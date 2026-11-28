@@ -2252,7 +2252,9 @@ impl Hub {
         } else {
             inputs.push(TurnInput::text(format!(
             "Unless current explicit human authorization covers this exact publication without \
-             another review, before pushing a branch or creating a PR, present the committed local change \
+             another review, including a review waiver in the repository's or the user's AGENTS.md \
+             instructions that covers this repository and this kind of push (in which case push as \
+             the waiver allows and request no review card), before pushing a branch or creating a PR, present the committed local change \
              for human review using oxroute-agent --server http://{listen} --agent {id} \
              reviews create --repository ROOT --base BASE --remote REMOTE --title TITLE \
              --description DESCRIPTION. It returns a review ID and \
