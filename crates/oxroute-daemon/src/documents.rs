@@ -29,10 +29,20 @@ async fn run(mut command: Command) -> Result<String> {
 
 /// Capture a submitted file as a review; returns whether this call created it.
 pub async fn create(hub: &Arc<Hub>, agent: &str, title: String, path: &str, attachment: bool) -> Result<(Review, bool)> {
-    let root = if attachment { &hub.config.attachments } else { &hub.config.artifacts };
-    let root = tokio::fs::canonicalize(root).await?;
-    let source = tokio::fs::canonicalize(if attachment { root.join(path) } else { PathBuf::from(path) }).await?;
-    ensure!(source.starts_with(&root) && source.is_file(), "File is outside submitted artifacts");
+    let expanded = match path.strip_prefix("~/") {
+        Some(rest) if !attachment => PathBuf::from(std::env::var_os("HOME").context("No home directory")?).join(rest),
+        _ => PathBuf::from(path),
+    };
+    let source = if attachment {
+        let root = tokio::fs::canonicalize(&hub.config.attachments).await?;
+        let source = tokio::fs::canonicalize(root.join(&expanded)).await.context("No such attachment")?;
+        ensure!(source.starts_with(&root), "File is outside attachments");
+        source
+    } else {
+        ensure!(expanded.is_absolute(), "Use an absolute path");
+        tokio::fs::canonicalize(&expanded).await.with_context(|| format!("Cannot read {path}"))?
+    };
+    ensure!(source.is_file(), "{path} is not a file");
     let name = source.file_name().context("Missing filename")?.to_string_lossy().into_owned();
     let extension = source.extension().unwrap_or_default().to_string_lossy().to_lowercase();
     ensure!(IMAGE_EXTENSIONS.contains(&extension.as_str()) || ["pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"].contains(&extension.as_str()), "This file format cannot be reviewed");

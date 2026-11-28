@@ -2164,7 +2164,20 @@ mod tests {
         let again: serde_json::Value = client.post(&url).json(&submission).send().await.unwrap().json().await.unwrap();
         assert_eq!(again["id"], review["id"], "Submitting the same bytes returns the same review");
         assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::Review).count(), 1);
-        assert!(!client.post(&url).json(&json!({ "kind": "file", "title": "x", "path": "/etc/hostname" })).send().await.unwrap().status().is_success());
+        // Any readable file on disk can be reviewed, as a snapshot of its contents at that moment.
+        tokio::fs::create_dir_all(root.join("elsewhere")).await.unwrap();
+        let outside = root.join("elsewhere/notes.md");
+        tokio::fs::write(&outside, "first\n").await.unwrap();
+        let snapshot: serde_json::Value = client.post(&url).json(&json!({ "kind": "file", "title": "notes.md", "path": outside })).send().await.unwrap().json().await.unwrap();
+        tokio::fs::write(&outside, "second\n").await.unwrap();
+        let reread: serde_json::Value = client.get(format!("{url}/{}", snapshot["id"].as_str().unwrap())).send().await.unwrap().json().await.unwrap();
+        assert_eq!(reread["subject"]["text"], "first\n", "Later edits to the file never change the review");
+        tokio::fs::write(root.join("elsewhere/binary.bin"), [0u8, 1]).await.unwrap();
+        for path in [root.join("elsewhere"), root.join("elsewhere/missing.md"), "notes.md".into(), root.join("elsewhere/binary.bin")] {
+            let refused = client.post(&url).json(&json!({ "kind": "file", "title": "x", "path": path })).send().await.unwrap();
+            assert!(!refused.status().is_success(), "{path:?}");
+            assert!(refused.text().await.unwrap().len() < 200, "Errors stay short");
+        }
         assert!(!client.post(&url).json(&json!({ "kind": "git", "title": "x", "description": "" })).send().await.unwrap().status().is_success(), "A Git review needs its repository");
         let endpoint = format!("{url}/{}", review["id"].as_str().unwrap());
         assert_eq!(client.get(format!("{endpoint}/original")).send().await.unwrap().text().await.unwrap(), "# Plan\n");
