@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use agent_harness::{new_id, Backend, ConversationLine, NativeSession, TurnInput};
+pub use coding_agent_harness::{new_id, Backend, ConversationLine, NativeSession, TurnInput};
 
 /// Character offsets use UTF-16, matching the browser's rendered text.
 #[derive(Debug, Clone, Serialize, Deserialize)]

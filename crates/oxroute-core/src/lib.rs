@@ -13,7 +13,7 @@
 //! | [`model`]   | the nouns, and the control words a person can type   |
 //! | [`store`]   | durable state, in SQLite                             |
 //! | [`source`]  | where signals come from; Slack is the one wired up   |
-//! | [`agent`]   | the harnesses: the `agent-harness` crate             |
+//! | [`agent`]   | the harnesses: the `coding-agent-harness` crate      |
 //! | [`hub`]     | the only thing that knows about both sides           |
 //! | [`tags`]    | tags on sessions, and boards arranged by them         |
 //! | [`progress`]| what a running turn looks like to a person watching  |
@@ -37,7 +37,7 @@ pub mod source;
 pub mod store;
 pub mod tags;
 
-pub use agent_harness as agent;
+pub use coding_agent_harness as agent;
 pub use config::{Config, Mode};
 pub use hub::{Hub, Routing, Snapshot};
 pub use model::{

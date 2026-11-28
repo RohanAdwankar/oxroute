@@ -9,22 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-harness"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -373,6 +357,22 @@ name = "clap_lex"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
+
+[[package]]
+name = "coding-agent-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "color_quant"
@@ -1710,10 +1710,10 @@ dependencies = [
 name = "oxroute-core"
 version = "0.1.0"
 dependencies = [
- "agent-harness",
  "anyhow",
  "async-trait",
  "axum",
+ "coding-agent-harness",
  "futures-util",
  "libc",
  "reqwest 0.12.28",

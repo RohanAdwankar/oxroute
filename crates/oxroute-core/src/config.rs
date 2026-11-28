@@ -11,7 +11,7 @@
 //! Every variable the Codex Slack bot used is still read, so an existing
 //! `~/.config/codex-slack/env` keeps working without a config file at all.
 
-use agent_harness::{claude::ClaudeConfig, codex::CodexConfig};
+use coding_agent_harness::{claude::ClaudeConfig, codex::CodexConfig};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

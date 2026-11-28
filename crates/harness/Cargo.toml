@@ -1,5 +1,5 @@
 [package]
-name = "agent-harness"
+name = "coding-agent-harness"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
