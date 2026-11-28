@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
 const agent={id:'zoom-source',name:'Source inspection',backend:'codex',model:'fixture',status:'complete',updatedAt:1};
 const files=['source.rs','settings.toml'].map(path=>({path,patch:`diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,2 @@\n-previous source value\n+current source value\n preserved source context`}));
-const review={id:'proportions',agentId:agent.id,title:'Review control proportions',description:'Inspect the exact local source change.',status:'pending',snapshot:{repository:'/workspace',branch:'change',baseRef:'main',remote:'origin',remoteUrl:'https://example.invalid/source',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files}};
+const review={id:'proportions',agentId:agent.id,title:'Review control proportions',description:'Inspect the exact local source change.',status:'pending',kind:'git',subject:{repository:'/workspace',branch:'change',baseRef:'main',remote:'origin',remoteUrl:'https://example.invalid/source',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files}};
 const browser=await chromium.launch();
 try{
  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[],writes=[];page.on('pageerror',error=>errors.push(String(error)));

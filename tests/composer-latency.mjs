@@ -9,7 +9,7 @@ const tasks=Array.from({length:1500},(_,n)=>({id:`task_${n.toString(16).padStart
 const text='A completed investigation with **evidence**, [source](https://example.com/) and a proposed next step.\n\n```rust\nfn inspect(value: usize) -> usize {\n    (0..value).map(|n| n * 2).sum()\n}\n```\n';
 const timeline=Array.from({length:180},(_,n)=>({id:n+1,agentId:focus.id,kind:'said',text:`Result ${n}\n\n${text}`,at:1,detail:'',output:'',origin:''}));
 const patch='@@ -1,120 +1,120 @@\n'+Array.from({length:120},(_,n)=>`-const option${n} = "previous setting ${n}";`).join('\n')+'\n'+Array.from({length:120},(_,n)=>`+const option${n} = "revised setting ${n}";`).join('\n');
-const review={agentId:archived[0].id,id:'review-0',title:'Prepared code review',description:'',snapshot:{repository:'/workspace',branch:'proposal',baseRef:'main',remote:'origin',remoteUrl:'',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files:Array.from({length:3},(_,n)=>({path:`settings-${n}.ts`,patch}))}};
+const review={agentId:archived[0].id,id:'review-0',title:'Prepared code review',description:'',kind:'git',subject:{repository:'/workspace',branch:'proposal',baseRef:'main',remote:'origin',remoteUrl:'',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files:Array.from({length:3},(_,n)=>({path:`settings-${n}.ts`,patch}))}};
 for(let n=0;n<20;n++)timeline[160+n].text+=`\n\n[Prepared code review](#review/review-${n})`;
 const browser=await chromium.launch();
 try{

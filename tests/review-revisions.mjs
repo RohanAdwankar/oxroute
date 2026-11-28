@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 
 const agent = { id: 'revision-session', name: 'Revision review', cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 };
 const review = { id: 'revision-review', agentId: agent.id, title: 'Refine request handling', description: '', status: 'pending', full: false,
-  snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), reviewBaseCommit: 'b'.repeat(40), headCommit: 'c'.repeat(40), files: [] } };
+  kind:'git',subject: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), reviewBaseCommit: 'b'.repeat(40), headCommit: 'c'.repeat(40), files: [] } };
 const patch = (before, after) => `@@ -1 +1 @@\n-${before}\n+${after}`;
 const browser = await chromium.launch();
 try {
@@ -20,9 +20,9 @@ try {
       images.push(url.searchParams.get('full'));
       return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><path fill="gray" d="M0 0h80v40H0z"/></svg>' });
     }
-    if (url.pathname.endsWith('/approve')) { writes.push(url.pathname); return route.fulfill({ json: { ...review, status: 'approved' } }); }
+    if (url.pathname.endsWith('/decision')) { writes.push(url.pathname); return route.fulfill({ json: { ...review, status: 'approved' } }); }
     const full = url.searchParams.get('full') === 'true';
-    return route.fulfill({ json: { ...review, full, snapshot: { ...review.snapshot, files: [
+    return route.fulfill({ json: { ...review, full, kind:'git',subject: { ...review.subject, files: [
       { path: 'settings.yaml', patch: patch(full ? 'original' : 'accepted', 'refined') },
       ...(full ? [{ path: 'earlier.txt', patch: patch('old', 'accepted') }, { path: 'diagram.svg', patch: '', image: { before: true, after: true } }] : []),
     ] } } });
@@ -43,10 +43,10 @@ try {
     const sent = page.waitForResponse(response => response.url().endsWith('/api/say'));
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await sent;
-    assert.ok(quotes.at(-1).text.includes(`${expected}...${review.snapshot.headCommit}`), 'Quotes name the actual comparison revisions');
+    assert.ok(quotes.at(-1).text.includes(`${expected}...${review.subject.headCommit}`), 'Quotes name the actual comparison revisions');
     await page.getByRole('button', { name: 'Open change review', exact: true }).click();
   };
-  await quote(review.snapshot.reviewBaseCommit);
+  await quote(review.subject.reviewBaseCommit);
   await scope.click();
   await page.getByRole('button', { name: 'Full PR', exact: true }).waitFor();
   await page.getByRole('heading', { name: 'earlier.txt', exact: true }).waitFor();
@@ -54,7 +54,7 @@ try {
   await page.getByAltText('Before diagram.svg', { exact: true }).waitFor();
   await page.waitForFunction(() => [...document.images].filter(image => image.alt.includes('diagram.svg')).every(image => image.complete && image.naturalWidth));
   assert.deepEqual(images, ['true', 'true'], 'Full-PR image previews use the same scope as the text diff');
-  await quote(review.snapshot.baseCommit);
+  await quote(review.subject.baseCommit);
   await page.getByRole('button', { name: 'Full PR', exact: true }).click();
   await scope.waitFor();
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });

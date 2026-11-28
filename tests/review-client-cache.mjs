@@ -20,7 +20,7 @@ try {
     if (offline) return r.abort();
     const full = url.searchParams.has('full');
     return r.fulfill({ json: { id, agentId: id === liveId ? hidden.id : agent.id, title: `Prepared ${ids.indexOf(id)}`, description: '', status: 'pending', full,
-      snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: '', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), ...(id === ids[0] ? { reviewBaseCommit: 'c'.repeat(40) } : {}),
+      kind:'git',subject: { repository: '/workspace', remote: 'origin', remoteUrl: '', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), ...(id === ids[0] ? { reviewBaseCommit: 'c'.repeat(40) } : {}),
         files: [{ path: 'change.ts', patch: '@@ -1 +1 @@\n-old value\n+cached value\n' }, ...(id === ids[0] ? [{ path: 'picture.svg', patch: 'Binary files differ', image: { before: false, after: true } }] : [])] } } });
   });
   await page.route('**/reviews/*/image?*', r => offline ? r.abort() : r.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><rect width="12" height="12" fill="#888"/></svg>' }));

@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 
 const agent = { id: 'inline-review-test', name: 'Inline reviews', cwd: '/workspace', backend: 'codex', model: 'test', status: 'complete', updatedAt: Date.now()/1000 };
 const reviews = ['a', 'b'].map((letter, index) => ({ agentId: agent.id, id: `review_${letter.repeat(32)}`, title: ['Adjust cache settings', 'Update installation guide'][index], status: 'pending', description: '',
-  snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo', branch: 'proposal', baseRef: 'main', baseCommit: 'c'.repeat(40), headCommit: 'd'.repeat(40), files: [] } }));
+  kind:'git',subject: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo', branch: 'proposal', baseRef: 'main', baseCommit: 'c'.repeat(40), headCommit: 'd'.repeat(40), files: [] } }));
 const unknown = `review_${'e'.repeat(32)}`;
 const text = `Please review ${reviews[0].id}, or compare \`${reviews[1].id}\`.\n\nUnknown: ${unknown}. Lookalike: ${reviews[0].id}extra.\n\n\`\`\`text\n${reviews[0].id}\n\`\`\`\n\n[Existing link](https://example.invalid/${reviews[0].id})`;
 const timeline = [...reviews.map((review, index) => ({ id: index + 1, agentId: agent.id, at: Date.now()/1000, kind: 'review', text: review.title, detail: review.id })),

@@ -10,7 +10,7 @@ const files = [
   { path: 'vector.svg', patch: '@@ -1 +1 @@\n-<svg width="10"/>\n+<svg width="20"/>', image: { before: true, after: true } },
   { path: 'broken.png', patch: binary, image: { before: false, after: true } },
 ];
-const review = { id: 'image-review', agentId: agent.id, title: 'Update visual assets', description: 'Review image revisions alongside their source changes.', status: 'pending', snapshot: { repository: agent.cwd, branch: 'images', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/images.git', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
+const review = { id: 'image-review', agentId: agent.id, title: 'Update visual assets', description: 'Review image revisions alongside their source changes.', status: 'pending', kind:'git',subject: { repository: agent.cwd, branch: 'images', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/images.git', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });

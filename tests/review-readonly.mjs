@@ -27,7 +27,7 @@ try {
  for(let n=0;n<100;n++){try{if((await fetch(api+'/api/health')).ok)break;}catch{}await pause(100);}
  for(const feature of ['automatic-titles','automatic-tags','recommendation-learning','next-action-suggestions'])await post(`/api/${feature}`,{enabled:false});
  const agent=await post('/api/agents',{}),path=`/api/agents/${agent.id}`;
- const review=await post(path+'/reviews',{repository:repo,base:'main',remote:'origin',title:'Prepared settings',description:'Inspect this saved change.'}),endpoint=path+'/reviews/'+review.id;
+ const review=await post(path+'/reviews',{kind:'git',repository:repo,base:'main',remote:'origin',title:'Prepared settings',description:'Inspect this saved change.'}),endpoint=path+'/reviews/'+review.id;
  await writeFile(join(repo,'settings.txt'),'uncommitted change\n');
  const before=await get(path);
  for(const response of await Promise.all([get(endpoint),get(endpoint+'?full=true'),get(endpoint)]))assert.equal(response.status,'stale');

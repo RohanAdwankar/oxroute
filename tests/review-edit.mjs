@@ -22,7 +22,7 @@ try {
  const proposed='  proposal λ  \r\nsecond line\r\n';await writeFile(join(repo,path),proposed);await writeFile(join(repo,'binary.bin'),Buffer.from([0,1,2]));await symlink('untouched.txt',join(repo,'link.txt'));git('add','.');git('commit','-m','Proposal');const originalHead=git('rev-parse','HEAD');
  const request=async(path,body)=>fetch(api+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
  const post=async(path,body)=>{const r=await request(path,body);assert.ok(r.ok,await r.clone().text());return r.json();};
- const agent=await post('/api/agents',{}),review=await post(`/api/agents/${agent.id}/reviews`,{repository:repo,base:'main',remote:'origin',title:'Adjust service settings',description:'Review the proposed service configuration.'});
+ const agent=await post('/api/agents',{}),review=await post(`/api/agents/${agent.id}/reviews`,{kind:'git',repository:repo,base:'main',remote:'origin',title:'Adjust service settings',description:'Review the proposed service configuration.'});
  const endpoint=`/api/agents/${agent.id}/reviews/${review.id}`;
  const read=path=>fetch(api+endpoint+'/edit?'+new URLSearchParams({path}));
  assert.equal((await (await read(path)).json()).text,proposed,'Editor preserves exact bytes and newlines');
@@ -52,9 +52,9 @@ try {
  const saved=page.waitForResponse(r=>r.url().endsWith(endpoint+'/edit')&&r.request().method()==='POST'&&r.ok());await page.getByRole('button',{name:'Save revision',exact:true}).click();const next=await (await saved).json();
  await page.getByRole('dialog',{name:`Edit ${path}`,exact:true}).waitFor({state:'detached'});
  await page.locator('[data-diff-line]').filter({hasText:'+reviewer revision λ'}).waitFor();
- assert.notEqual(next.id,review.id);assert.equal(next.status,'pending');assert.equal(next.approvedAt,null);assert.equal(next.snapshot.baseCommit,review.snapshot.baseCommit);assert.equal(next.snapshot.remoteUrl,review.snapshot.remoteUrl);
- assert.equal(await readFile(join(next.snapshot.repository,path),'utf8'),revised);
- assert.equal(execFileSync('git',['-C',next.snapshot.repository,'show','HEAD:untouched.txt'],{encoding:'utf8'}),'keep\n');
+ assert.notEqual(next.id,review.id);assert.equal(next.status,'pending');assert.notEqual(next.decision?.status,'approved');assert.equal(next.subject.baseCommit,review.subject.baseCommit);assert.equal(next.subject.remoteUrl,review.subject.remoteUrl);
+ assert.equal(await readFile(join(next.subject.repository,path),'utf8'),revised);
+ assert.equal(execFileSync('git',['-C',next.subject.repository,'show','HEAD:untouched.txt'],{encoding:'utf8'}),'keep\n');
  assert.equal(git('rev-parse','HEAD'),originalHead);assert.equal(git('status','--porcelain'),before);assert.equal(await readFile(join(repo,path),'utf8'),'Concurrent agent draft\n');
  assert.equal((await (await read(path)).json()).text,proposed,'Original review stays pinned');
  if(process.env.RESULT_SCREENSHOT)await page.screenshot({path:process.env.RESULT_SCREENSHOT});

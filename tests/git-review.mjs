@@ -6,10 +6,10 @@ const agent = { id: 'review-test', name: 'Review test', cwd: '/workspace/review'
 const patch = 'diff --git a/config.yaml b/config.yaml\nindex 1234567..abcdef0 100644\n--- a/config.yaml\n+++ b/config.yaml\n@@ -2,2 +2,2 @@\n setting: true\n-value: before\n+value: after\n@@ -20 +30 @@\n-later: before\n+later: after\n';
 const otherPatch = 'diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -7,51 +7,51 @@\n-old note\n+new note\n' + Array.from({ length: 50 }, (_, index) => ` context ${index}`).join('\n');
 const review = { agentId: agent.id, id: 'review-local', title: 'Adjust request settings', description: 'Proposed PR description', status: 'pending',
-  snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
+  kind:'git',subject: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
     baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'config.yaml', patch }, { path: 'notes.txt', patch: otherPatch }] } };
-const authorization = `Authorize publishing revision ${review.snapshot.headCommit} from ${agent.cwd}; merge and deployment require separate approval.`;
-const approvalDetail = 'review-approval:' + JSON.stringify({ id: review.id, title: review.title, commit: review.snapshot.headCommit, branch: review.snapshot.branch, base: review.snapshot.baseRef });
+const authorization = `Authorize publishing revision ${review.subject.headCommit} from ${agent.cwd}; merge and deployment require separate approval.`;
+const approvalDetail = 'review-approval:' + JSON.stringify({ id: review.id, title: review.title, commit: review.subject.headCommit, branch: review.subject.branch, base: review.subject.baseRef });
 const timeline = [{ id: 1, agentId: agent.id, at: Date.now()/1000, kind: 'review', text: review.title, detail: review.id },
   { id: 2, agentId: agent.id, at: Date.now()/1000, kind: 'you', text: authorization, detail: approvalDetail }];
 const demo = process.env.DEMO_DIR;
@@ -34,7 +34,7 @@ try {
   await page.route('**/api/events', r => r.fulfill({ contentType: 'text/event-stream', body: ': test\n\n' }));
   await page.route('**/api/agents/*', r => r.fulfill({ json: { agent, timeline, delivery: 'start' } }));
   await page.route('**/reviews/review-local', r => r.fulfill({ json: review }));
-  await page.route('**/reviews/review-local/approve', r => r.fulfill({ json: { ...review, status: 'approved' } }));
+  await page.route('**/reviews/review-local/decision', r => r.fulfill({ json: { ...review, status: 'approved' } }));
   const writes = [];
   page.on('request', r => { if (r.method() !== 'GET') writes.push(r.url()); });
   await page.goto(`${process.env.TEST_URL ?? 'http://localhost:3941'}/?agent=${agent.id}`);
@@ -66,7 +66,7 @@ try {
   await summary.click();
   const details = await page.locator('section[aria-label="Change review"] details').innerText();
   assert.ok(details.includes('Base aaaaaaaa · Head bbbbbbbb'));
-  assert.ok(!details.includes(review.snapshot.headCommit) && !details.includes(review.snapshot.baseCommit), 'Displayed commits are abbreviated');
+  assert.ok(!details.includes(review.subject.headCommit) && !details.includes(review.subject.baseCommit), 'Displayed commits are abbreviated');
   assert.ok(!details.includes('branch proposal'), 'Branch is not repeated');
   await summary.click();
   const removed = page.locator('[data-diff-line]').filter({ hasText: '-value: before' });
@@ -204,17 +204,17 @@ try {
   assert.deepEqual(writes, [], 'Review and quote never send a message or change Git');
   await page.getByRole('button', { name: `Review ${review.title}`, exact: true }).click();
   await stage('When satisfied, approve this revision for publication.');
-  await page.route('**/reviews/review-local/approve', r => r.fulfill({ status: 409, json: { error: 'Revision changed before approval' } }));
+  await page.route('**/reviews/review-local/decision', r => r.fulfill({ status: 409, json: { error: 'Revision changed before approval' } }));
   await page.getByRole('button', { name: 'Approve publication' }).click();
   await page.getByRole('alert').filter({ hasText: 'Revision changed before approval' }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Change review' }).isVisible(), true, 'Failed approval keeps the review open');
-  await page.route('**/reviews/review-local/approve', r => r.fulfill({ json: { ...review, status: 'approved' } }));
+  await page.route('**/reviews/review-local/decision', r => r.fulfill({ json: { ...review, status: 'approved' } }));
   await page.getByRole('button', { name: 'Approve publication' }).click();
   await page.getByRole('region', { name: 'Change review' }).waitFor({ state: 'hidden' });
   assert.equal(await page.locator('[data-composer]').inputValue(), 'Explain this change.', 'Approval returns to chat without losing the draft');
   if (process.env.APPROVED_SCREENSHOT) await page.screenshot({ path: process.env.APPROVED_SCREENSHOT });
   assert.equal(writes.length, 2, 'Only explicit approval attempts mutate review state');
-  assert.ok(writes[0].endsWith('/reviews/review-local/approve'));
+  assert.ok(writes[0].endsWith('/reviews/review-local/decision'));
   await stage('Approval authorizes this revision only. Merge and deployment remain separate.');
   // A stale snapshot stays inspectable but cannot authorize publication.
   await page.route('**/reviews/review-local', r => r.fulfill({ json: { ...review, status: 'stale' } }));
@@ -235,7 +235,7 @@ try {
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await attachment.waitFor();
     assert.equal(await page.locator('[data-composer]').inputValue(), 'Explain this change.', 'Rejected sends restore question and attachment');
-    assert.ok(sent.text.includes(review.id) && sent.text.includes(`${review.snapshot.baseCommit}...${review.snapshot.headCommit}`));
+    assert.ok(sent.text.includes(review.id) && sent.text.includes(`${review.subject.baseCommit}...${review.subject.headCommit}`));
     assert.ok(sent.text.includes('File: config.yaml (old 3–3, new 3–3)'));
     assert.ok(sent.text.includes('> -value: before\n> +value: after'));
     assert.ok(sent.text.endsWith('Explain this change.'));

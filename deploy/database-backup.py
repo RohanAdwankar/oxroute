@@ -64,7 +64,7 @@ def restore_reviews(database, archive):
             if row:
                 saved, live = json.loads(value), json.loads(row[0])
                 if isinstance(saved, dict) and isinstance(live, dict):
-                    saved.update({field: live[field] for field in ('approvedAt', 'feedback') if field in live})
+                    saved.update({field: live[field] for field in ('decision', 'feedback') if field in live})
                     value = json.dumps(saved)
             current.execute('INSERT OR REPLACE INTO kv (key,value) VALUES (?,?)', (key, value))
 

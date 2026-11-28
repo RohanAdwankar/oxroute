@@ -16,7 +16,7 @@ const cases = [
   { path: 'block.js', before: '/* opening\nold comment\n*/\nconst count = 20;', after: '/* opening\nnew comment\n*/\nconst extra = true;\nconst count = 40;', changes: ['new', '40'], segments: ['new', '40'], removedSegments: ['old', '20'] },
 ];
 const files = cases.map(item => ({ path: item.path, patch: '@@ -1 +1 @@\n' + item.before.split('\n').map(line => '-' + line).join('\n') + '\n' + item.after.split('\n').map(line => '+' + line).join('\n') }));
-const review = { agentId: agent.id, id: 'syntax-review', title: 'Syntax and changed words', description: '', status: 'pending', snapshot: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: '', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
+const review = { agentId: agent.id, id: 'syntax-review', title: 'Syntax and changed words', description: '', status: 'pending', kind:'git',subject: { repository: '/workspace', branch: 'change', baseRef: 'main', remote: 'origin', remoteUrl: '', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files } };
 const browser = await (process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 960 } });

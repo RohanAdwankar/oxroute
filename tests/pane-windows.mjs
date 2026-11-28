@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 
 const base = process.env.TEST_URL ?? 'http://127.0.0.1:3942';
 const agents = ['alpha', 'bravo', 'charlie'].map(id => ({ id, name: `${id} session`, cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now()/1000 }));
-const review = { id: 'transfer-review', agentId: 'alpha', title: 'A quoted change', status: 'pending', description: '', snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'example.txt', patch: '@@ -1 +1 @@\n-before\n+after' }] } };
+const review = { id: 'transfer-review', agentId: 'alpha', title: 'A quoted change', status: 'pending', description: '', kind:'git',subject: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'example.txt', patch: '@@ -1 +1 @@\n-before\n+after' }] } };
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });

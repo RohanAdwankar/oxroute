@@ -184,7 +184,7 @@ try {
   const git=(...args)=>execFileSync('git',['-C',repo,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   git('init','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('remote','add','origin','https://example.invalid/proposal.git');
   await writeFile(join(repo,'setting.txt'),'alpha\n');git('add','.');git('commit','-m','Initial settings');git('checkout','-b','proposal');await writeFile(join(repo,'setting.txt'),'beta\n');git('commit','-am','Proposed settings');
-  return api(`/api/agents/${agent.id}/reviews`,{repository:repo,remote:'origin',base:'main',title:label,description:'Choose whether to publish the committed configuration.'});};
+  return api(`/api/agents/${agent.id}/reviews`,{kind:'git',repository:repo,remote:'origin',base:'main',title:label,description:'Choose whether to publish the committed configuration.'});};
  const firstReview=await makeReview(owner,'Network Change Review'),secondReview=await makeReview(second,'Storage Change Review');
  const firstEvidence=entry('said','A committed proposal is ready for a publication decision.'),secondEvidence=entry('said','A separate committed proposal is ready for a publication decision.',second.id);
  const reviewState=await api('/api/focus/task-priorities');
@@ -216,7 +216,7 @@ try {
   await page.setViewportSize({width,height:850});
   await panel.locator(`[data-decision="${secondReview.id}"]`).getByRole('button',{name:'Open decision source',exact:true}).click();
   await page.waitForURL(url=>url.searchParams.get('agent')===second.id&&url.searchParams.get('entry')===String(secondEvidence));
-  assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Source navigation never approves a review');
+  assert.notEqual(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).decision?.status,'approved','Source navigation never approves a review');
   await page.goto(`${base}/?view=focus`);await panel.getByText(firstReview.title,{exact:true}).waitFor();
  }
  await page.setViewportSize({width:1280,height:850});
@@ -238,7 +238,7 @@ try {
   await page.getByRole('button',{name:'Remove diff Review title',exact:true}).click();
   if(width===390)await page.getByRole('button',{name:'Show or hide tasks',exact:true}).click();
   if(process.env.SELECTION_SCREENSHOT)await page.screenshot({path:process.env.SELECTION_SCREENSHOT.replace('.png',`-review-${width}.png`)});
-  assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Selection and contextual replies never approve reviews');
+  assert.notEqual(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).decision?.status,'approved','Selection and contextual replies never approve reviews');
  }
  assert.deepEqual(await api('/api/tasks'),navigationTasks,'Selection does not change task state or ownership');
  await page.setViewportSize({width:1280,height:850});
@@ -283,17 +283,17 @@ try {
  entry('you','Inspect an independent status update.',focus.id);await page.reload();await panel.getByText('Choose the execution plan',{exact:true}).waitFor();
  for(const review of[firstReview,secondReview])assert.equal(await panel.getByText(review.title,{exact:true}).count(),0,'Submitted decision quotes remain consumed across refresh and unrelated context');
  assert.equal(await panel.getByText('No verified decision queued. Agents continue their work.',{exact:true}).count(),0,'Context changes retain taskless and multi-owner reviews');
- for(const review of[firstReview,secondReview])assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${review.id}`).value).approvedAt,null,'Selecting, quoting and editing do not approve reviews');
+ for(const review of[firstReview,secondReview])assert.notEqual(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${review.id}`).value).decision?.status,'approved','Selecting, quoting and editing do not approve reviews');
  await page.goto(`${base}/?agent=${owner.id}&review=${firstReview.id}`);await page.getByRole('button',{name:'Approve publication',exact:true}).click();
- for(let i=0;i<60&&!JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).approvedAt;i++)await new Promise(done=>setTimeout(done,100));
- assert.ok(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).approvedAt);assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).approvedAt,null,'Human approval applies only to the selected owner and artifact');
+ for(let i=0;i<60&&JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).decision?.status!=='approved';i++)await new Promise(done=>setTimeout(done,100));
+ assert.equal(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${firstReview.id}`).value).decision?.status,'approved');assert.notEqual(JSON.parse(db.prepare('SELECT value FROM kv WHERE key=?').get(`review:${secondReview.id}`).value).decision?.status,'approved','Human approval applies only to the selected owner and artifact');
  assert.equal((await api('/api/tasks')).find(t=>t.id===urgent.id).status,beforeTasks.find(t=>t.id===urgent.id).status,'Review approval never closes its broader tracking task');
  await page.close();
  db.prepare('DELETE FROM kv WHERE key=?').run(`review-status:${secondReview.id}`);
  let grounding=await api('/api/focus/task-priorities');assert.equal(grounding.reviews[secondReview.id].status,'unverified');
  const unverified=await mcp('prioritize_tasks',{requestId:crypto.randomUUID(),focusContextEntryId:grounding.review.focusContextEntryId,items:[{...reviewItem(secondReview,secondEvidence),basis:grounding.reviews[secondReview.id].basis}]});assert.equal(unverified.isError,true,'Stored pending metadata cannot substitute for an observed artifact status');
  assert.equal((await api(`/api/agents/${second.id}/reviews/${secondReview.id}`)).status,'pending');
- await writeFile(join(secondReview.snapshot.repository,'setting.txt'),'gamma\n');execFileSync('git',['-C',secondReview.snapshot.repository,'commit','-am','Advance proposal'],{stdio:'ignore'});
+ await writeFile(join(secondReview.subject.repository,'setting.txt'),'gamma\n');execFileSync('git',['-C',secondReview.subject.repository,'commit','-am','Advance proposal'],{stdio:'ignore'});
  assert.equal((await api(`/api/agents/${second.id}/reviews/${secondReview.id}`)).status,'stale');
  grounding=await api('/api/focus/task-priorities');assert.equal(grounding.reviews[secondReview.id].status,'stale');assert.equal(grounding.reviews[secondReview.id].recommendation,null);
  const obsolete=await mcp('prioritize_tasks',{requestId:crypto.randomUUID(),focusContextEntryId:grounding.review.focusContextEntryId,items:[{...reviewItem(secondReview,secondEvidence),basis:grounding.reviews[secondReview.id].basis}]});assert.equal(obsolete.isError,true,'A stale saved snapshot remains readable without becoming a ready publication decision');

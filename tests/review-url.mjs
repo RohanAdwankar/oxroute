@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium, webkit } from 'playwright';
 
 const agents = ['alpha', 'bravo'].map(id => ({ id, name: `${id} session`, cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: Date.now() / 1000 }));
-const review = { id: 'proposed-change', agentId: 'alpha', title: 'Prepared change', description: '', status: 'pending', snapshot: { repository: '/workspace', remote: 'origin', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'value.ts', patch: '@@ -1 +1 @@\n-const value = 10;\n+const value = 20;\n' }] } };
+const review = { id: 'proposed-change', agentId: 'alpha', title: 'Prepared change', description: '', status: 'pending', kind:'git',subject: { repository: '/workspace', remote: 'origin', branch: 'proposal', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'value.ts', patch: '@@ -1 +1 @@\n-const value = 10;\n+const value = 20;\n' }] } };
 const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch({ ...(process.env.BROWSER_EXECUTABLE ? { executablePath: process.env.BROWSER_EXECUTABLE } : {}) });
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 750 } });

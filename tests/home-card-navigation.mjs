@@ -7,7 +7,7 @@ const agents = ['Map work', 'Plan work'].map((name, index) => ({
 }));
 const reviews = agents.map((agent, index) => ({
   id: `proposal-${index}`, agentId: agent.id, title: `Change ${index}`, status: 'pending', description: 'Review this change', full: true,
-  snapshot: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
+  kind:'git',subject: { repository: agent.cwd, branch: 'proposal', baseRef: 'main', remote: 'origin', remoteUrl: 'https://example.invalid/repo.git',
     baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'settings.txt',
       patch: 'diff --git a/settings.txt b/settings.txt\n--- a/settings.txt\n+++ b/settings.txt\n@@ -1 +1 @@\n-before\n+after\n' }] },
 }));

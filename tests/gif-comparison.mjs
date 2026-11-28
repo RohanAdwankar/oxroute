@@ -6,9 +6,9 @@ import {chromium} from 'playwright';
 const source=process.env.TEST_REVIEW_URL;
 const readSource=async()=>{const response=await fetch(source);assert.ok(response.ok);return response.json();};
 const reviewed=source?await readSource():null;
-const file=reviewed?.snapshot.files.find(file=>file.path.endsWith('.gif')&&file.image?.before&&file.image?.after);
+const file=reviewed?.subject.files.find(file=>file.path.endsWith('.gif')&&file.image?.before&&file.image?.after);
 if(source)assert.ok(file,'The source review contains both GIF revisions');
-const fixtures=source?await Promise.all(['before','after'].map(async side=>{const url=new URL(source);url.pathname+='/image';url.search=new URLSearchParams({path:file.path,side}).toString();const response=await fetch(url);assert.ok(response.ok);const bytes=Buffer.from(await response.arrayBuffer());console.log(JSON.stringify({side,bytes:bytes.length,snapshot:reviewed.snapshot.headCommit}));return bytes.toString('base64');})):JSON.parse(execFileSync('uv',['run','--no-project','--with','pillow','python','-c',`
+const fixtures=source?await Promise.all(['before','after'].map(async side=>{const url=new URL(source);url.pathname+='/image';url.search=new URLSearchParams({path:file.path,side}).toString();const response=await fetch(url);assert.ok(response.ok);const bytes=Buffer.from(await response.arrayBuffer());console.log(JSON.stringify({side,bytes:bytes.length,snapshot:reviewed.subject.headCommit}));return bytes.toString('base64');})):JSON.parse(execFileSync('uv',['run','--no-project','--with','pillow','python','-c',`
 from PIL import Image
 import io,json,base64
 result=[]
@@ -20,7 +20,7 @@ print(json.dumps(result))
 `],{encoding:'utf8'}));
 const agent={id:'animation-source',name:'Animation source',backend:'codex',model:'fixture',status:'complete',updatedAt:Date.now()/1000};
 const path='comparison.gif',id='animation-review';
-const review={id,agentId:agent.id,title:'Compare animation timing',description:'',status:'pending',full:false,snapshot:{repository:'/workspace/proposal',remote:'origin',remoteUrl:'https://example.invalid/proposal.git',branch:'proposal',baseRef:'main',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files:[{path,patch:'Binary files differ',image:{before:true,after:true}}]}};
+const review={id,agentId:agent.id,title:'Compare animation timing',description:'',status:'pending',full:false,kind:'git',subject:{repository:'/workspace/proposal',remote:'origin',remoteUrl:'https://example.invalid/proposal.git',branch:'proposal',baseRef:'main',baseCommit:'a'.repeat(40),headCommit:'b'.repeat(40),files:[{path,patch:'Binary files differ',image:{before:true,after:true}}]}};
 const browser=await chromium.launch();
 try{
  const page=await browser.newPage({viewport:{width:1280,height:900}});
@@ -58,6 +58,6 @@ try{
  }
  for(const width of[1280,390]){await page.setViewportSize({width,height:900});if(process.env.SCREENSHOT)await page.screenshot({path:`${process.env.SCREENSHOT}-${width}.png`});}
  await page.reload();await container.getByRole('img').first().waitFor();await container.getByRole('img').last().waitFor();
- if(source)assert.deepEqual((await readSource()).snapshot,reviewed.snapshot,'Source snapshot remains exact through playback');
+ if(source)assert.deepEqual((await readSource()).subject,reviewed.subject,'Source snapshot remains exact through playback');
  console.log('Both GIFs wait for readiness, retain individual frame timing, hold the shorter final frame and replay jointly; shared replay and desktop/mobile rendering pass.');
 }finally{await browser.close();}

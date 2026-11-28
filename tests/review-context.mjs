@@ -23,7 +23,7 @@ await writeFile(join(repo,path),source.join('\n')+'\n');git('add','.');git('comm
 const changed=[...source];changed[34]='const setting35 = 3500;';changed.splice(35,0,'const extra = true;');changed[85]='const setting85 = 8500;';
 await writeFile(join(repo,path),changed.join('\n')+'\n');git('commit','-am','Change');
 const post=async(path,body)=>{const r=await fetch(api+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
-const agent=await post('/api/agents',{}),review=await post(`/api/agents/${agent.id}/reviews`,{repository:repo,base:'main',remote:'origin',title:'Review with surrounding context',description:''});
+const agent=await post('/api/agents',{}),review=await post(`/api/agents/${agent.id}/reviews`,{kind:'git',repository:repo,base:'main',remote:'origin',title:'Review with surrounding context',description:''});
 await writeFile(join(repo,path),'Uncommitted replacement, never show this as review context.\n');
 const endpoint=`/api/agents/${agent.id}/reviews/${review.id}`;
 assert.equal((await fetch(api+endpoint.replace(agent.id,'unrelated-agent')+'/context?'+new URLSearchParams({path,side:'after',start:'1',count:'20'}))).ok,false);

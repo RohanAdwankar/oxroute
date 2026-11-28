@@ -12,7 +12,7 @@ const server = http.createServer((req, res) => {
   if (req.url === '/reviews.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(module); return; }
   res.setHeader('Content-Type', 'application/json');
   order.push(req.url);
-  const send = () => res.end(JSON.stringify({ id: req.url, status: 'pending', snapshot: { files: [] } }));
+  const send = () => res.end(JSON.stringify({ id: req.url, status: 'pending', kind:'git',subject: { files: [] } }));
   if (req.url.startsWith('/background/')) { requested++; held.push(send); } else send();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

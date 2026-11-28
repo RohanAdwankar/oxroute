@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const source = { id: 'source-review-thread', name: 'Original discussion', cwd: '/workspace', backend: 'codex', model: 'fixture', status: 'complete', updatedAt: 1 };
 const fork = { ...source, id: 'fork-review-thread', name: 'Continued discussion' };
-const review = { id: 'inherited-review', agentId: source.id, title: 'Adjust cache duration', description: '', status: 'pending', snapshot: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/project', branch: 'change', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'settings.ts', patch: '@@ -1 +1 @@\n-const ttl = 20;\n+const ttl = 30;' }] } };
+const review = { id: 'inherited-review', agentId: source.id, title: 'Adjust cache duration', description: '', status: 'pending', kind:'git',subject: { repository: '/workspace', remote: 'origin', remoteUrl: 'https://example.invalid/project', branch: 'change', baseRef: 'main', baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), files: [{ path: 'settings.ts', patch: '@@ -1 +1 @@\n-const ttl = 20;\n+const ttl = 30;' }] } };
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 850 } });
@@ -15,7 +15,7 @@ try {
   });
   await page.route('**/reviews/inherited-review', r => r.fulfill({ json: review }));
   const approvals = [];
-  await page.route('**/reviews/inherited-review/approve', r => {
+  await page.route('**/reviews/inherited-review/decision', r => {
     approvals.push(new URL(r.request().url()).pathname);
     return r.fulfill({ json: { ...review, status: 'approved' } });
   });
@@ -25,6 +25,6 @@ try {
   if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
   await page.getByRole('button', { name: 'Approve publication', exact: true }).click();
   await page.getByRole('button', { name: 'Review ' + review.title, exact: true }).waitFor();
-  assert.deepEqual(approvals, [`/api/agents/${source.id}/reviews/${review.id}/approve`]);
+  assert.deepEqual(approvals, [`/api/agents/${source.id}/reviews/${review.id}/decision`]);
   console.log('Inherited reviews render in forks; explicit approval targets the original review and publishing conversation.');
 } finally { await browser.close(); }

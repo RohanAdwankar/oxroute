@@ -66,7 +66,7 @@ try{
  git('init','-b','main');git('config','user.name','Reviewer');git('config','user.email','review@example.invalid');git('remote','add','origin','https://example.invalid/repo.git');
  await writeFile(join(repo,'service.conf'),'workers=2\nmode=steady\nregion=west\n');git('add','.');git('commit','-m','Base');git('checkout','-b','proposal');
  await writeFile(join(repo,'service.conf'),'workers=4\nmode=steady\nregion=east\n');git('add','.');git('commit','-m','Proposal');
- const review=await api(`/api/agents/${workerIds[1]}/reviews`,{repository:repo,base:'main',remote:'origin',title:'Review worker count',description:'Adjust concurrency for the service.'});reviewId=review.id;
+ const review=await api(`/api/agents/${workerIds[1]}/reviews`,{kind:'git',repository:repo,base:'main',remote:'origin',title:'Review worker count',description:'Adjust concurrency for the service.'});reviewId=review.id;
  turns.length=0;focusMode=true;
  browser=await(process.env.BROWSER==='webkit'?webkit:chromium).launch(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{});
  const page=await browser.newPage({viewport:{width:1280,height:1000}}),errors=[];page.on('pageerror',error=>{errors.push(String(error));console.error(String(error));});
@@ -106,7 +106,7 @@ try{
   if(process.env.NAVIGATION_SCREENSHOT)await page.screenshot({path:`${process.env.NAVIGATION_SCREENSHOT}-${width}.png`});
   await page.getByRole('tab',{name:'Focus',exact:true}).click();await deck.waitFor();await card(workerIds[0]).getByText('Validation is ready.',{exact:true}).waitFor();assert.equal(await inline().inputValue(),'Keep the inline source question.');assert.equal(await page.locator('[data-composer]').inputValue(),'Keep the coordinator navigation draft.');
  }
- assert.deepEqual(await api('/api/tasks'),navigationTasks,'Conversation title navigation preserves task state and ownership');assert.equal((await api(`/api/agents/${workerIds[1]}/reviews/${reviewId}`)).approvedAt,null,'Navigation never grants review consent');
+ assert.deepEqual(await api('/api/tasks'),navigationTasks,'Conversation title navigation preserves task state and ownership');assert.notEqual((await api(`/api/agents/${workerIds[1]}/reviews/${reviewId}`)).decision?.status,'approved','Navigation never grants review consent');
  await inline().fill('');await page.setViewportSize({width:1280,height:1000});
 
  if(process.env.HISTORY_SCREENSHOT){for(const width of[1280,390]){await page.setViewportSize({width,height:850});await card(workerIds[0]).screenshot({path:`${process.env.HISTORY_SCREENSHOT}-${width}.png`});}await page.setViewportSize({width:1280,height:1000});}
@@ -199,7 +199,7 @@ try{
  const sent=(await api(`/api/agents/${focusId}`)).timeline.findLast(entry=>entry.kind==='you'&&entry.detail.startsWith('diff-attachments:'));
  const quote=JSON.parse(sent.detail.slice('diff-attachments:'.length))[0];
  assert.deepEqual(quote.rows.map(row=>row.text),expected);assert.deepEqual(quote.rows.map(({old,next})=>[old,next]),[[1,null],[null,1],[2,2],[3,null],[null,3]]);
- for(const source of[workerIds[1],reviewId,review.snapshot.headCommit,'service.conf'])assert.ok(quote.text.includes(source),'Sent quotes retain review, source conversation, revision and file identity');
+ for(const source of[workerIds[1],reviewId,review.subject.headCommit,'service.conf'])assert.ok(quote.text.includes(source),'Sent quotes retain review, source conversation, revision and file identity');
  const sentAttachment=page.locator(`[data-entry="${sent.id}"]`).getByRole('region',{name:'Attached diff service.conf',exact:true});await sentAttachment.waitFor();
  assert.deepEqual(await sentAttachment.locator('[data-quoted-diff-line]').evaluateAll(rows=>rows.map(row=>row.lastElementChild.textContent)),expected);
  for(const width of[1280,390]){await page.setViewportSize({width,height:1000});await sentAttachment.scrollIntoViewIfNeeded();if(process.env.DIFF_SCREENSHOT)await page.screenshot({path:`${process.env.DIFF_SCREENSHOT}-sent-${width}.png`});}
