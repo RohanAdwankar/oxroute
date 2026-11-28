@@ -1,5 +1,6 @@
 //! Immutable submitted-file reviews. Human decisions never authorize Git publication.
 use super::*;
+use crate::review::{File, Subject};
 use oxroute_core::model::{now, EntryKind, Event};
 use std::{collections::HashMap, path::PathBuf, sync::{Arc, LazyLock, Weak}};
 use tokio::{process::Command, sync::Mutex};
@@ -11,33 +12,13 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 static RENDER: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 static CAPTURES: LazyLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Clone, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Review {
-    id: String,
-    agent_id: String,
-    name: String,
-    sha256: String,
-    extension: String,
-    pages: usize,
-    text: Option<String>,
-    status: String,
-    feedback: String,
-    annotations: serde_json::Value,
-    decided_at: Option<f64>,
-    #[serde(default)]
-    request_id: String,
+fn directory(hub: &Hub, id: &str) -> PathBuf {
+    hub.config.database.parent().expect("database directory").join("document-reviews").join(id)
 }
-#[derive(Deserialize)]
-pub struct Submission { path: String, #[serde(default)] attachment: bool }
-
-fn directory(hub: &Hub, review: &Review) -> PathBuf {
-    hub.config.database.parent().expect("database directory").join("document-reviews").join(&review.id)
-}
-fn record(hub: &Hub, agent: &str, id: &str) -> Result<Review> {
-    let review: Review = serde_json::from_str(&hub.store.get(&format!("document:{id}"))?.context("No such file review")?)?;
-    ensure!(review.agent_id == agent, "File review belongs to another conversation");
-    Ok(review)
+fn file_review(hub: &Hub, agent: &str, id: &str, inherited: bool) -> Result<(Review, File)> {
+    let review = review_record(hub, agent, id, inherited)?.0;
+    let file = review.file()?.clone();
+    Ok((review, file))
 }
 async fn run(mut command: Command) -> Result<String> {
     command.kill_on_drop(true).env("LC_ALL", "C");
@@ -46,11 +27,11 @@ async fn run(mut command: Command) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Json<Submission>) -> Result<Json<Review>, Failed> {
-    hub.store.agent(&agent)?.context("No such agent")?;
-    let root = if body.attachment { &hub.config.attachments } else { &hub.config.artifacts };
+/// Capture a submitted file as a review; returns whether this call created it.
+pub async fn create(hub: &Arc<Hub>, agent: &str, title: String, path: &str, attachment: bool) -> Result<(Review, bool)> {
+    let root = if attachment { &hub.config.attachments } else { &hub.config.artifacts };
     let root = tokio::fs::canonicalize(root).await?;
-    let source = tokio::fs::canonicalize(if body.attachment { root.join(&body.path) } else { PathBuf::from(&body.path) }).await?;
+    let source = tokio::fs::canonicalize(if attachment { root.join(path) } else { PathBuf::from(path) }).await?;
     ensure!(source.starts_with(&root) && source.is_file(), "File is outside submitted artifacts");
     let name = source.file_name().context("Missing filename")?.to_string_lossy().into_owned();
     let extension = source.extension().unwrap_or_default().to_string_lossy().to_lowercase();
@@ -82,18 +63,18 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
         lock
     };
     let _capture = capture.lock().await;
-    if let Ok(review) = record(&hub, &agent, &id) {
+    if let Ok((review, _)) = review_record(hub, agent, &id, false) {
         tokio::fs::remove_file(temporary).await?;
-        return Ok(Json(review));
+        return Ok((review, false));
     }
-    let mut review = Review { id, agent_id: agent, name, sha256, extension, pages: 0, text: None, status: "pending".into(), feedback: String::new(), annotations: json!([]), decided_at: None, request_id: String::new() };
-    let folder = directory(&hub, &review);
+    let mut file = File { name, sha256, extension, pages: 0, text: None };
+    let folder = directory(hub, &id);
     tokio::fs::create_dir_all(&folder).await?;
-    let saved = folder.join(format!("source.{}", review.extension));
+    let saved = folder.join(format!("source.{}", file.extension));
     tokio::fs::rename(temporary, &saved).await?;
-    if ["pdf", "pptx"].contains(&review.extension.as_str()) {
+    if ["pdf", "pptx"].contains(&file.extension.as_str()) {
         let _render = RENDER.lock().await;
-        if review.extension == "pptx" {
+        if file.extension == "pptx" {
             let profile = folder.join("profile");
             let mut command = Command::new("libreoffice");
             command.arg(format!("-env:UserInstallation=file://{}", profile.display())).args(["--headless", "--convert-to", "pdf", "--outdir"]).arg(&folder).arg(&saved);
@@ -102,27 +83,23 @@ pub async fn create(State(hub): Hubs, Path(agent): Path<String>, Json(body): Jso
         let mut command = Command::new("pdfinfo");
         command.arg(folder.join("source.pdf"));
         let info = run(command).await?;
-        review.pages = info.lines().find_map(|line| line.strip_prefix("Pages:").and_then(|value| value.trim().parse().ok())).context("No pages in document")?;
-    } else if IMAGE_EXTENSIONS.contains(&review.extension.as_str()) {
-        review.pages = 1;
+        file.pages = info.lines().find_map(|line| line.strip_prefix("Pages:").and_then(|value| value.trim().parse().ok())).context("No pages in document")?;
+    } else if IMAGE_EXTENSIONS.contains(&file.extension.as_str()) {
+        file.pages = 1;
     } else {
-        review.text = Some(tokio::fs::read_to_string(saved).await.context("Text review requires UTF-8")?);
+        file.text = Some(tokio::fs::read_to_string(saved).await.context("Text review requires UTF-8")?);
     }
-    hub.store.set(&format!("document:{}", review.id), &serde_json::to_string(&review)?)?;
-
-    Ok(Json(review))
-}
-
-pub async fn show(State(hub): Hubs, Path((agent, id)): Path<(String, String)>) -> Result<Json<Review>, Failed> {
-    Ok(Json(record(&hub, &agent, &id)?))
+    let review = Review::new(id, agent.into(), title, String::new(), Subject::File(file));
+    crate::announce(hub, &review)?;
+    Ok((review, true))
 }
 
 pub async fn page(State(hub): Hubs, Path((agent, id, page)): Path<(String, String, usize)>, headers: HeaderMap) -> Result<Response, Failed> {
-    let review = record(&hub, &agent, &id)?;
-    ensure!(page > 0 && page <= review.pages, "No such page");
-    let folder = directory(&hub, &review);
-    if IMAGE_EXTENSIONS.contains(&review.extension.as_str()) {
-        return attachment_response(&folder.join(format!("source.{}", review.extension)), oxroute_core::model::attachment_mime(&review.name), &headers).await;
+    let (_, file) = file_review(&hub, &agent, &id, true)?;
+    ensure!(page > 0 && page <= file.pages, "No such page");
+    let folder = directory(&hub, &id);
+    if IMAGE_EXTENSIONS.contains(&file.extension.as_str()) {
+        return attachment_response(&folder.join(format!("source.{}", file.extension)), oxroute_core::model::attachment_mime(&file.name), &headers).await;
     }
     let target = folder.join(format!("page-{page}.png"));
     {
@@ -137,13 +114,10 @@ pub async fn page(State(hub): Hubs, Path((agent, id, page)): Path<(String, Strin
 }
 
 pub async fn original(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, headers: HeaderMap) -> Result<Response, Failed> {
-    let review = record(&hub, &agent, &id)?;
-    attachment_response(&directory(&hub, &review).join(format!("source.{}", review.extension)), oxroute_core::model::attachment_mime(&review.name), &headers).await
+    let (_, file) = file_review(&hub, &agent, &id, true)?;
+    attachment_response(&directory(&hub, &id).join(format!("source.{}", file.extension)), oxroute_core::model::attachment_mime(&file.name), &headers).await
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Decision { status: String, #[serde(default)] text: String, #[serde(default)] annotations: Vec<Annotation>, request_id: String }
 #[derive(serde::Serialize, Deserialize)]
 struct Annotation {
     #[serde(default)] style: MarkerStyle,
@@ -159,48 +133,47 @@ impl Default for MarkerStyle {
 #[derive(serde::Serialize, Deserialize)]
 struct TextMark { at: [f64; 2], text: String }
 
-pub async fn decide(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, mut multipart: Multipart) -> Result<Json<Review>, Failed> {
-    let mut review = record(&hub, &agent, &id)?;
-    let mut decision = None;
-    let mut images = vec![];
-    while let Some(field) = multipart.next_field().await? {
-        if field.name() == Some("decision") { decision = Some(serde_json::from_str::<Decision>(&field.text().await?)?); }
-        else if field.name() == Some("files") { images.push(keep_file(&hub.config.attachments, field).await?); }
-    }
-    let body = decision.context("Missing decision")?;
-    ensure!(["approved", "changes_requested"].contains(&body.status.as_str()) || (body.status == "replied" && IMAGE_EXTENSIONS.contains(&review.extension.as_str())), "Unknown decision");
-    ensure!(!body.request_id.is_empty() && body.request_id.len() <= 100 && body.text.len() <= 32000 && body.annotations.len() <= 100, "Invalid review feedback");
-    ensure!(body.status != "changes_requested" || !body.text.trim().is_empty() || body.annotations.iter().any(|note| !note.comment.trim().is_empty()), "Describe the requested revision");
-    for note in &body.annotations {
+/// Decide a file review; an approval authorizes nothing beyond the submitted bytes.
+pub async fn decide(hub: &Arc<Hub>, mut review: Review, body: DecisionBody, images: Vec<String>) -> anyhow::Result<serde_json::Value> {
+    let file = review.file()?.clone();
+    let is_image = IMAGE_EXTENSIONS.contains(&file.extension.as_str());
+    ensure!(["approved", "changes_requested"].contains(&body.status.as_str()) || (body.status == "replied" && is_image), "Unknown decision");
+    ensure!(body.revision == file.sha256, "Decision must match this submitted file revision");
+    ensure!(body.annotations.len() <= 100, "Invalid review feedback");
+    let notes = body.annotations.iter().cloned().map(serde_json::from_value::<Annotation>).collect::<Result<Vec<_>, _>>()?;
+    ensure!(body.status != "changes_requested" || !body.text.trim().is_empty() || notes.iter().any(|note| !note.comment.trim().is_empty()), "Describe the requested revision");
+    for note in &notes {
         ensure!(note.style.color.strip_prefix('#').is_some_and(|color| color.len() == 6 && color.bytes().all(|ch| ch.is_ascii_hexdigit())) && note.style.width.is_finite() && (0.1..=10.0).contains(&note.style.width), "Invalid marker style");
-        ensure!(note.page <= review.pages && (review.pages == 0 || note.page > 0) && note.quote.len() <= 32000 && note.strokes.len() <= 100 && note.comment.len() <= 32000 && note.labels.len() <= 100 && note.labels.iter().all(|label| label.text.len() <= 2000), "Invalid annotation");
+        ensure!(note.page <= file.pages && (file.pages == 0 || note.page > 0) && note.quote.len() <= 32000 && note.strokes.len() <= 100 && note.comment.len() <= 32000 && note.labels.len() <= 100 && note.labels.iter().all(|label| label.text.len() <= 2000), "Invalid annotation");
         let coordinates = note.strokes.iter().flatten().flatten().copied().chain(note.region.iter().flatten().copied()).chain(note.labels.iter().flat_map(|label| label.at));
         ensure!(coordinates.into_iter().all(|p| p.is_finite() && (0.0..=1.0).contains(&p)) && note.strokes.iter().map(Vec::len).sum::<usize>() <= 20000, "Invalid annotation coordinates");
     }
-    if review.request_id == body.request_id { return Ok(Json(review)); }
-    let comments = body.annotations.iter().enumerate().filter(|(_, note)| note.quote != "Drawing" || (note.region.is_none() && note.strokes.is_empty() && note.labels.is_empty())).map(|(index, note)| {
+    let annotations = notes.iter().map(serde_json::to_value).collect::<Result<Vec<_>, _>>()?;
+    if let Some(saved) = review.feedback.iter().find(|saved| saved.request_id == body.request_id) {
+        ensure!(saved.text == body.text && saved.annotations == annotations, "requestId already belongs to different feedback");
+        return crate::observed_review(hub, review, false).await;
+    }
+    let comments = notes.iter().enumerate().filter(|(_, note)| note.quote != "Drawing" || (note.region.is_none() && note.strokes.is_empty() && note.labels.is_empty())).map(|(index, note)| {
         let context = if note.region.is_some() { format!("Selection {}", index+1) } else { note.quote.clone() };
         format!("{}{}{}", if note.page > 0 { format!("Page {}: ", note.page) } else { String::new() }, context, if note.comment.is_empty() { String::new() } else { format!("\n{}", note.comment) })
     }).collect::<Vec<_>>().join("\n\n");
     let status = match body.status.as_str() { "approved" => "Approved", "changes_requested" => "Revision requested", _ => "Image reply" };
-    let mut message = if body.status == "replied" { format!("{status}: {}", review.name) }
-        else { format!("[{status}: {}](/api/agents/{}/file-reviews/{})", review.name.replace('[', "").replace(']', ""), review.agent_id, review.id) };
+    let mut message = if body.status == "replied" { format!("{status}: {}", file.name) }
+        else { format!("[{status}: {}](/api/agents/{}/reviews/{})", file.name.replace('[', "").replace(']', ""), review.agent_id, review.id) };
     for text in [&body.text, &comments] { if !text.trim().is_empty() { message.push_str("\n\n"); message.push_str(text); } }
     if body.status != "replied" { message.push_str("\n\nThis decision applies only to this submitted file revision and grants no Git publication permission."); }
 
     // Existing request IDs give feedback the same durable, retry-safe delivery as a chat message.
-    hub.say_to_annotated(&agent, &message, images, true, "", &format!("document:{}:{}", review.id, body.request_id)).await?;
-    review.request_id = body.request_id;
-    review.status = body.status;
-    review.feedback = body.text;
-    review.annotations = serde_json::to_value(body.annotations)?;
-    review.decided_at = Some(now());
-    hub.store.set(&format!("document:{}", review.id), &serde_json::to_string(&review)?)?;
-    if review.status == "replied" {
+    hub.say_to_annotated(&review.agent_id, &message, images, true, "", &format!("review-decision:{}:{}", review.id, body.request_id)).await?;
+    let at = now();
+    review.decision = Some(Decision { status: body.status.clone(), at, request_id: body.request_id.clone() });
+    review.feedback.push(Feedback { request_id: body.request_id, at, revision: file.sha256, text: body.text, annotations });
+    hub.store.set(&format!("review:{}", review.id), &serde_json::to_string(&review)?)?;
+    if body.status == "replied" {
         hub.emit(Event::Sync);
     } else {
-        let entry = hub.store.add_entry(&agent, now(), EntryKind::Notice, &format!("File review {}: {}", review.name, review.status), "", "")?;
+        let entry = hub.store.add_entry(&review.agent_id, at, EntryKind::Notice, &format!("File review {}: {}", file.name, body.status), "", "")?;
         hub.emit(Event::Timeline { entry: Box::new(entry) });
     }
-    Ok(Json(review))
+    crate::observed_review(hub, review, false).await
 }

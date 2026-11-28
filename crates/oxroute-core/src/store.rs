@@ -323,6 +323,19 @@ WHERE json_extract(f.data,'$.state') IN ('resolved','no_response_needed') AND
         WHERE key GLOB 'review:*' AND json_valid(value) AND json_type(value, '$.snapshot') IS NOT NULL", [])?;
     conn.execute("UPDATE kv SET value = json_object('subject', json(json_extract(value, '$.snapshot')), 'status', json_extract(value, '$.status'))
         WHERE key GLOB 'review-status:*' AND json_valid(value) AND json_type(value, '$.snapshot') IS NOT NULL", [])?;
+    // File reviews become file-kind reviews with a timeline entry; stored message links follow them.
+    conn.execute("INSERT INTO entries (agent_id, at, kind, text, detail) SELECT json_extract(value, '$.agentId'), CAST(strftime('%s', 'now') AS REAL), 'review', json_extract(value, '$.name'), json_extract(value, '$.id')
+        FROM kv WHERE key GLOB 'document:*' AND json_valid(value)", [])?;
+    conn.execute("INSERT OR IGNORE INTO kv SELECT 'review:' || json_extract(value, '$.id'), json_object(
+            'id', json_extract(value, '$.id'), 'agentId', json_extract(value, '$.agentId'),
+            'title', json_extract(value, '$.name'), 'description', '', 'kind', 'file',
+            'subject', json_object('name', json_extract(value, '$.name'), 'sha256', json_extract(value, '$.sha256'), 'extension', json_extract(value, '$.extension'), 'pages', json_extract(value, '$.pages'), 'text', json_extract(value, '$.text')),
+            'decision', json(CASE WHEN json_extract(value, '$.status') != 'pending' THEN json_object('status', json_extract(value, '$.status'), 'at', json_extract(value, '$.decidedAt'), 'requestId', json_extract(value, '$.requestId')) END),
+            'staleNotified', json('false'),
+            'feedback', json(CASE WHEN json_extract(value, '$.status') != 'pending' THEN json_array(json_object('requestId', json_extract(value, '$.requestId'), 'at', json_extract(value, '$.decidedAt'), 'revision', json_extract(value, '$.sha256'), 'text', json_extract(value, '$.feedback'), 'annotations', json(json_extract(value, '$.annotations')))) ELSE '[]' END))
+        FROM kv WHERE key GLOB 'document:*' AND json_valid(value)", [])?;
+    conn.execute("DELETE FROM kv WHERE key GLOB 'document:*'", [])?;
+    conn.execute("UPDATE entries SET text = replace(text, '/file-reviews/', '/reviews/') WHERE text LIKE '%/api/agents/%/file-reviews/%'", [])?;
     let focus_columns=conn.prepare("PRAGMA table_info(focus_messages)")?.query_map([],|r|r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !focus_columns.iter().any(|column|column=="urgent") {conn.execute("ALTER TABLE focus_messages ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0",[])?;}
     if !focus_columns.iter().any(|column|column=="title") {conn.execute("ALTER TABLE focus_messages ADD COLUMN title TEXT",[])?;}
@@ -2467,6 +2480,27 @@ mod tests {
         assert_eq!(read("review-status:r"), serde_json::json!({ "subject": { "headCommit": "h" }, "status": "pending" }));
         migrate(&conn).unwrap();
         assert_eq!(read("review:r"), review, "A second migration changes nothing");
+    }
+
+    #[test]
+    fn file_review_migration_converts_documents_once_and_keeps_links_working() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let legacy = serde_json::json!({ "id": "d", "agentId": "a", "name": "plan.pdf", "sha256": "abc", "extension": "pdf", "pages": 2, "text": null,
+            "status": "changes_requested", "feedback": "fix", "annotations": [{ "page": 1 }], "decidedAt": 5.0, "requestId": "req" });
+        conn.execute("INSERT INTO kv VALUES ('document:d', ?1)", [legacy.to_string()]).unwrap();
+        conn.execute("INSERT INTO entries (agent_id, at, kind, text) VALUES ('a', 1, 'you', '[Revision requested: plan.pdf](/api/agents/a/file-reviews/d)')", []).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let review: serde_json::Value = serde_json::from_str(&conn.query_row("SELECT value FROM kv WHERE key = 'review:d'", [], |r| r.get::<_, String>(0)).unwrap()).unwrap();
+        assert_eq!(review["kind"], "file");
+        assert_eq!(review["subject"]["sha256"], "abc");
+        assert_eq!(review["decision"], serde_json::json!({ "status": "changes_requested", "at": 5.0, "requestId": "req" }));
+        assert_eq!(review["feedback"][0]["text"], "fix");
+        assert_eq!(review["feedback"][0]["annotations"], serde_json::json!([{ "page": 1 }]));
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM kv WHERE key GLOB 'document:*'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM entries WHERE kind = 'review' AND detail = 'd'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(conn.query_row("SELECT text FROM entries WHERE kind = 'you'", [], |r| r.get::<_, String>(0)).unwrap(), "[Revision requested: plan.pdf](/api/agents/a/reviews/d)");
     }
 
     #[test]

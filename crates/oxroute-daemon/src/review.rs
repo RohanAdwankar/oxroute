@@ -4,7 +4,7 @@
 //! approval authorizes. Everything else (decision, feedback, status, storage)
 //! is shared.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::git;
@@ -13,6 +13,16 @@ use crate::git;
 #[serde(tag = "kind", content = "subject", rename_all = "lowercase")]
 pub enum Subject {
     Git(git::Snapshot),
+    File(File),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct File {
+    pub name: String,
+    pub sha256: String,
+    pub extension: String,
+    pub pages: usize,
+    pub text: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,20 +66,24 @@ impl Review {
     }
 
     pub fn git(&self) -> Result<&git::Snapshot> {
-        match &self.subject { Subject::Git(snapshot) => Ok(snapshot) }
+        match &self.subject { Subject::Git(snapshot) => Ok(snapshot), _ => bail!("Not a Git review") }
     }
 
     pub fn git_mut(&mut self) -> Result<&mut git::Snapshot> {
-        match &mut self.subject { Subject::Git(snapshot) => Ok(snapshot) }
+        match &mut self.subject { Subject::Git(snapshot) => Ok(snapshot), _ => bail!("Not a Git review") }
+    }
+
+    pub fn file(&self) -> Result<&File> {
+        match &self.subject { Subject::File(file) => Ok(file), _ => bail!("Not a file review") }
     }
 
     /// The exact subject revision a decision applies to.
     pub fn revision(&self) -> &str {
-        match &self.subject { Subject::Git(snapshot) => &snapshot.head_commit }
+        match &self.subject { Subject::Git(snapshot) => &snapshot.head_commit, Subject::File(file) => &file.sha256 }
     }
 
     pub async fn is_current(&self) -> Result<bool> {
-        match &self.subject { Subject::Git(snapshot) => git::current(snapshot).await }
+        match &self.subject { Subject::Git(snapshot) => git::current(snapshot).await, Subject::File(_) => Ok(true) }
     }
 
     /// Stale outranks any decision; otherwise the latest decision wins.

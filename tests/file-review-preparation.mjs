@@ -18,7 +18,7 @@ const base=`http://127.0.0.1:${port}`,pause=ms=>new Promise(r=>setTimeout(r,ms))
 async function api(path,body){const r=await fetch(base+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();}
 try{
 for(let i=0;i<100;i++){try{await api('/api/health');break;}catch{await pause(100);}}
-const agent=await api('/api/agents',{}),create=name=>api(`/api/agents/${agent.id}/file-reviews`,{path:join(root,'artifacts',name)});
+const agent=await api('/api/agents',{}),create=name=>api(`/api/agents/${agent.id}/reviews`,{kind:'file',title:name,path:join(root,'artifacts',name)});
 const doc=create('held.pdf');for(let i=0;i<100;i++){try{await access(entered);break;}catch{await pause(50);}}
 let ready=false,imageMs;const start=performance.now();const image=create('image.png').then(r=>{ready=true;imageMs=Math.round(performance.now()-start);return r;});await pause(1000);const waiting=!ready;await rm(gate);await Promise.all([doc,image]);
 const timeline=(await api(`/api/agents/${agent.id}`)).timeline;

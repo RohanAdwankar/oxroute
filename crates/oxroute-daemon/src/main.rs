@@ -228,11 +228,8 @@ async fn serve() -> Result<()> {
     let app = Router::new()
         .merge(agent_routes)
         .route("/api/health", get(health))
-        .route("/api/agents/{id}/file-reviews", post(documents::create))
-        .route("/api/agents/{id}/file-reviews/{review}", get(documents::show))
-        .route("/api/agents/{id}/file-reviews/{review}/pages/{page}", get(documents::page))
-        .route("/api/agents/{id}/file-reviews/{review}/original", get(documents::original))
-        .route("/api/agents/{id}/file-reviews/{review}/decision", post(documents::decide))
+        .route("/api/agents/{id}/reviews/{review}/pages/{page}", get(documents::page))
+        .route("/api/agents/{id}/reviews/{review}/original", get(documents::original))
         .route("/api/agents", post(create_agent))
         .route("/api/agents/{id}/merge-watches", get(merge_watch::list).post(merge_watch::register))
         .route("/api/client-failures", get(client_failures).post(client_failure))
@@ -769,7 +766,12 @@ fn diff_detail(text: &str, diffs: &[DiffQuote]) -> anyhow::Result<String> {
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
-struct ReviewBody { repository: String, base: String, remote: String, title: String, description: String }
+#[serde(rename_all = "lowercase")]
+enum ReviewKind { Git, File }
+
+/// Git reviews use repository, base and remote; file reviews use path and attachment.
+#[derive(Deserialize, utoipa::ToSchema)]
+struct ReviewBody { kind: ReviewKind, title: String, #[serde(default)] description: String, repository: Option<String>, base: Option<String>, remote: Option<String>, path: Option<String>, attachment: Option<bool> }
 
 fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(Review, String)> {
     let data = hub.store.get(&format!("review:{id}"))?.context("no such review")?;
@@ -780,7 +782,13 @@ fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow
 
 async fn review_response(review: Review, full: bool) -> anyhow::Result<serde_json::Value> {
     let started = std::time::Instant::now();
-    let mut comparison = review.git()?.clone();
+    let Subject::Git(snapshot) = &review.subject else {
+        let status = review.status(true).to_owned();
+        let mut response = serde_json::to_value(&review)?;
+        response["status"] = json!(status);
+        return Ok(response);
+    };
+    let mut comparison = snapshot.clone();
     if full { comparison.review_base_commit = None; }
     let ((files, diff_ms), (current, check_ms)) = tokio::join!(
         async { let start = std::time::Instant::now(); (git::files(&comparison).await, start.elapsed().as_secs_f64() * 1000.0) },
@@ -799,12 +807,19 @@ async fn review_response(review: Review, full: bool) -> anyhow::Result<serde_jso
 // Observations ground queue eligibility; they never approve or replace a review.
 async fn observed_review(hub:&Hub,review:Review,full:bool)->anyhow::Result<serde_json::Value> {
     let key=format!("review-status:{}",review.id);
-    let subject=serde_json::to_value(review.git()?)?;
+    let subject=serde_json::to_value(&review)?["subject"].clone();
     let result=review_response(review,full).await;
     let status=result.as_ref().ok().and_then(|body|body["status"].as_str()).unwrap_or("unavailable");
     let observation=json!({"subject":subject,"status":status}).to_string();
     if hub.store.get(&key)?.as_deref()!=Some(observation.as_str()) {hub.store.set(&key,&observation)?;hub.emit(oxroute_core::model::Event::Sync);}
     result
+}
+
+/// Store a new review and put it on its conversation's timeline.
+fn announce(hub: &Hub, review: &Review) -> anyhow::Result<()> {
+    let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(review)?)?;
+    hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
+    Ok(())
 }
 
 #[utoipa::path(post, path = "/api/agents/{id}/reviews", operation_id = "reviews.create", params(("id" = String, Path)), request_body = ReviewBody, responses((status = 200, body = serde_json::Value)))]
@@ -813,21 +828,29 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     if body.title.trim().is_empty() || body.title.len() > 300 || body.description.len() > 32_000 {
         return Err(anyhow::anyhow!("Provide a concise PR title and description").into());
     }
-    let mut snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &body.repository, &body.base, &body.remote).await?;
-    if let Some(previous) = hub.store.last_approved_review(&snapshot.repository, &snapshot.remote_url, &snapshot.branch, &snapshot.base_ref)? {
-        let previous: Review = serde_json::from_str(&previous)?;
-        git::since_approval(&mut snapshot, &previous.git()?.head_commit).await;
-    }
-    let review = Review::new(oxroute_core::model::new_id("review"), agent_id, body.title, body.description, Subject::Git(snapshot));
-    let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
-    hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
+    let (review, created) = match body.kind {
+        ReviewKind::Git => {
+            let field = |value: Option<String>, name: &str| value.with_context(|| format!("A Git review requires {name}"));
+            let mut snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &field(body.repository, "repository")?, &field(body.base, "base")?, &field(body.remote, "remote")?).await?;
+            if let Some(previous) = hub.store.last_approved_review(&snapshot.repository, &snapshot.remote_url, &snapshot.branch, &snapshot.base_ref)? {
+                let previous: Review = serde_json::from_str(&previous)?;
+                git::since_approval(&mut snapshot, &previous.git()?.head_commit).await;
+            }
+            let review = Review::new(oxroute_core::model::new_id("review"), agent_id, body.title, body.description, Subject::Git(snapshot));
+            announce(&hub, &review)?;
+            (review, true)
+        }
+        ReviewKind::File => documents::create(&hub, &agent_id, body.title, &body.path.context("A file review requires path")?, body.attachment.unwrap_or(false)).await?,
+    };
     let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
     let response = observed_review(&hub,review, false).await?;
-    tokio::spawn(async move {
-        if let Err(error) = hub.share_review(&agent, &id, &title).await {
-            tracing::warn!(review = id, %error, "could not share review link");
-        }
-    });
+    if created {
+        tokio::spawn(async move {
+            if let Err(error) = hub.share_review(&agent, &id, &title).await {
+                tracing::warn!(review = id, %error, "could not share review link");
+            }
+        });
+    }
     Ok(Json(response))
 }
 
@@ -895,8 +918,7 @@ async fn edit_review(State(hub): Hubs, Path((agent, id)): Path<(String, String)>
     review.id = oxroute_core::model::new_id("review");
     review.decision = None;
     review.stale_notified = false;
-    let entry = hub.store.add_review(&agent, &review.id, &review.title, &serde_json::to_string(&review)?)?;
-    hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
+    announce(&hub, &review)?;
     Ok(Json(observed_review(&hub,review, false).await?))
 }
 
@@ -925,16 +947,21 @@ async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, Stri
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-struct DecisionBody { status:String, request_id:String, revision:String, #[serde(default)] text:String }
+struct DecisionBody { status:String, request_id:String, revision:String, #[serde(default)] text:String, #[serde(default)] annotations:Vec<serde_json::Value> }
 
 /// The one place a person decides any review; the kind only supplies its subject and its scope.
 async fn decide_review(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,mut multipart:Multipart)->Result<Json<serde_json::Value>,Failed> {
     let mut decision=None;
+    let mut images=vec![];
     while let Some(field)=multipart.next_field().await? {
         if field.name()==Some("decision") {decision=Some(serde_json::from_str::<DecisionBody>(&field.text().await?)?);}
+        else if field.name()==Some("files") {images.push(keep_file(&hub.config.attachments,field).await?);}
     }
     let body=decision.context("Missing decision")?;
     if body.request_id.is_empty()||body.request_id.len()>100||body.text.len()>32000 {return Err(anyhow::anyhow!("Invalid review decision").into());}
+    let review=review_record(&hub,&agent,&id,false)?.0;
+    if let Subject::File(_)=review.subject {return Ok(Json(documents::decide(&hub,review,body,images).await?));}
+    if !body.annotations.is_empty()||!images.is_empty() {return Err(anyhow::anyhow!("Annotations and images apply only to file reviews").into());}
     Ok(Json(match body.status.as_str() {
         "approved"=>approve_review(&hub,&agent,&id,&body).await?,
         "changes_requested"=>request_changes(&hub,&agent,&id,&body).await?,
@@ -2102,6 +2129,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_reviews_share_the_review_lifecycle_and_never_grant_publication() {
+        let root = std::env::temp_dir().join(oxroute_core::model::new_id("file-review-api"));
+        tokio::fs::create_dir_all(root.join("artifacts")).await.unwrap();
+        tokio::fs::write(root.join("artifacts/plan.md"), "# Plan\n").await.unwrap();
+        let config_path = root.join("config.toml");
+        tokio::fs::write(&config_path, "owner = 'fixture'\n").await.unwrap();
+        let mut config = Config::load_from(&config_path).unwrap();
+        config.artifacts = root.join("artifacts");
+        config.attachments = root.join("attachments");
+        config.min_free_bytes = 0;
+        config.database = root.join("state.sqlite");
+        let store = Store::open(&config.database).unwrap();
+        let agent_id = "file-fixture";
+        store.save_agent(&oxroute_core::Agent {
+            id: agent_id.into(), name: "File fixture".into(), backend: Backend::Codex, model: config.default_model.clone(),
+            session_id: String::new(), cwd: config.workspace.clone(), status: oxroute_core::model::AgentStatus::Complete,
+            activity: String::new(), permalink: String::new(), last_activity: 0.0, updated_at: 0.0,
+            stall_reason: None, stall_alerted: false, pinned: false,
+        }).unwrap();
+        let mut hub = Hub::new(config, store);
+        hub.with_harness(Arc::new(ReviewHarness::default()));
+        let router = Router::new().merge(agent_api().0)
+            .route("/api/agents/{id}/reviews/{review}/original", get(documents::original))
+            .route("/api/agents/{id}/reviews/{review}/decision", post(decide_review)).with_state(hub.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/api/agents/{agent_id}/reviews");
+        let submission = json!({ "kind": "file", "title": "plan.md", "path": root.join("artifacts/plan.md") });
+        let review: serde_json::Value = client.post(&url).json(&submission).send().await.unwrap().json().await.unwrap();
+        assert_eq!((review["kind"].as_str(), review["status"].as_str(), review["subject"]["text"].as_str()), (Some("file"), Some("pending"), Some("# Plan\n")));
+        let again: serde_json::Value = client.post(&url).json(&submission).send().await.unwrap().json().await.unwrap();
+        assert_eq!(again["id"], review["id"], "Submitting the same bytes returns the same review");
+        assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::Review).count(), 1);
+        assert!(!client.post(&url).json(&json!({ "kind": "file", "title": "x", "path": "/etc/hostname" })).send().await.unwrap().status().is_success());
+        assert!(!client.post(&url).json(&json!({ "kind": "git", "title": "x", "description": "" })).send().await.unwrap().status().is_success(), "A Git review needs its repository");
+        let endpoint = format!("{url}/{}", review["id"].as_str().unwrap());
+        assert_eq!(client.get(format!("{endpoint}/original")).send().await.unwrap().text().await.unwrap(), "# Plan\n");
+        let sha = review["subject"]["sha256"].as_str().unwrap();
+        let change = |request: &str, text: &str| json!({ "status": "changes_requested", "requestId": request, "revision": sha, "text": text, "annotations": [{ "page": 0, "quote": "Plan", "region": null, "strokes": [], "comment": "Rename" }] });
+        assert!(!post_decision(&client, &endpoint, json!({ "status": "approved", "requestId": "r0", "revision": "other" })).await.status().is_success());
+        assert!(!post_decision(&client, &endpoint, json!({ "status": "replied", "requestId": "r0", "revision": sha })).await.status().is_success(), "Only images accept replies");
+        for _ in 0..2 {
+            let saved: serde_json::Value = post_decision(&client, &endpoint, change("r1", "Fix")).await.json().await.unwrap();
+            assert_eq!((saved["status"].as_str(), saved["feedback"].as_array().unwrap().len()), (Some("changes_requested"), 1));
+        }
+        assert!(!post_decision(&client, &endpoint, change("r1", "Other")).await.status().is_success());
+        let approved: serde_json::Value = decide(&client, &endpoint, "approved", sha).await.json().await.unwrap();
+        assert_eq!(approved["status"], "approved");
+        let messages = hub.store.timeline(agent_id, 20).unwrap();
+        let sent = messages.iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::You).map(|entry| entry.text.as_str()).collect::<Vec<_>>();
+        assert_eq!(sent.len(), 2);
+        assert!(sent.iter().all(|text| text.contains("grants no Git publication permission") && text.contains(&format!("/reviews/{}", review["id"].as_str().unwrap()))));
+        server.abort();
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn local_review_http_lifecycle_never_publishes_and_persists_approval() {
         let root = std::env::temp_dir().join(oxroute_core::model::new_id("review-api"));
         tokio::fs::create_dir_all(&root).await.unwrap();
@@ -2165,7 +2251,7 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let client = reqwest::Client::new();
         let url = format!("http://{address}/api/agents/{agent_id}/reviews");
-        let created = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Proposed change", "description": "Review before publication" }))
+        let created = client.post(&url).json(&json!({ "kind": "git", "repository": root, "base": "main", "remote": "origin", "title": "Proposed change", "description": "Review before publication" }))
             .send().await.unwrap();
         assert!(created.status().is_success(), "{}", created.text().await.unwrap());
         let review: serde_json::Value = created.json().await.unwrap();
@@ -2288,7 +2374,7 @@ mod tests {
         assert!(!decide(&client, &endpoint, "approved", review["subject"]["headCommit"].as_str().unwrap()).await.status().is_success());
         let requested: serde_json::Value = client.get(&endpoint).send().await.unwrap().json().await.unwrap();
         assert_eq!(requested["staleNotified"], true, "Explicit stale approval still requests an updated review");
-        let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
+        let revision: serde_json::Value = client.post(&url).json(&json!({ "kind": "git", "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(revision["subject"]["reviewBaseCommit"], review["subject"]["headCommit"]);
         assert_eq!(revision["subject"]["baseCommit"], advanced_base, "A new snapshot captures the current target without rewriting its predecessor");

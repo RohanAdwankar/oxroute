@@ -13,12 +13,12 @@ async function api(path,body){const r=await fetch(native+path,body===undefined?{
 const agent=await api('/api/agents',{id:`agent_${crypto.randomUUID().replaceAll("-", "")}`});
 const paths={};
 for(const ext of ['pdf','pptx','txt']){paths[ext]=join(snapshot.artifactRoot,`proposal.${ext}`);await copyFile(join(fixtures,`proposal.${ext}`),paths[ext]);}
-const create=path=>api(`/api/agents/${agent.id}/file-reviews`,{path});
+const create=path=>api(`/api/agents/${agent.id}/reviews`,{kind:'file',title:path.split('/').at(-1),path});
 const pdf=await create(paths.pdf), slides=await create(paths.pptx), text=await create(paths.txt);
-assert.equal(pdf.pages,2);assert.equal(slides.pages,2);assert.match(text.text,/Release plan/);
-for(const review of [pdf,slides]){const result=await fetch(`${native}/api/agents/${agent.id}/file-reviews/${review.id}/pages/2`);assert.ok(result.ok,await result.clone().text());assert.equal(result.headers.get('content-type'),'image/png');assert.ok((await result.arrayBuffer()).byteLength>1000);}
-const escaped=await fetch(`${native}/api/agents/${agent.id}/file-reviews`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:'/etc/passwd'})});assert.ok(!escaped.ok);
-assert.ok(!(await fetch(`${native}/api/agents/other/file-reviews/${pdf.id}`)).ok);
+assert.equal(pdf.subject.pages,2);assert.equal(slides.subject.pages,2);assert.match(text.subject.text,/Release plan/);
+for(const review of [pdf,slides]){const result=await fetch(`${native}/api/agents/${agent.id}/reviews/${review.id}/pages/2`);assert.ok(result.ok,await result.clone().text());assert.equal(result.headers.get('content-type'),'image/png');assert.ok((await result.arrayBuffer()).byteLength>1000);}
+const escaped=await fetch(`${native}/api/agents/${agent.id}/reviews`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({kind:'file',title:'passwd',path:'/etc/passwd'})});assert.ok(!escaped.ok);
+assert.ok(!(await fetch(`${native}/api/agents/other/reviews/${pdf.id}`)).ok);
 const browser=await chromium.launch();
 try{
  const page=await browser.newPage({viewport:{width:1440,height:950}});
@@ -36,7 +36,7 @@ try{
  assert.ok(await revision.isDisabled(),'Revision requires feedback');assert.ok(await approve.isEnabled());
  async function decide(button,status){
   let release, requested;const waiting=new Promise(done=>{release=done;}), arrival=new Promise(done=>{requested=done;});
-  const pattern='**/file-reviews/*/decision', hold=async route=>{requested();await waiting;await route.fallback();};
+  const pattern='**/reviews/*/decision', hold=async route=>{requested();await waiting;await route.fallback();};
   await page.route(pattern,hold);await button.click();await arrival;
   try{assert.ok(await revision.isDisabled());assert.ok(await approve.isDisabled());assert.equal(await revision.getAttribute('aria-busy'),'true');assert.equal(await approve.getAttribute('aria-busy'),'true');}finally{release();}
   await dialog.getByText(status,{exact:true}).waitFor();await page.unroute(pattern,hold);
@@ -52,8 +52,8 @@ try{
  await dialog.getByRole('textbox',{name:'File review feedback'}).fill('Move the decision above the rollout details.');
  if(process.env.SCREENSHOT)await page.screenshot({path:process.env.SCREENSHOT});
  await decide(revision,'changes requested');
- const revised=await api(`/api/agents/${agent.id}/file-reviews/${slides.id}`);
- assert.equal(revised.annotations.length,2);assert.equal(revised.annotations[0].page,1);assert.ok(revised.annotations[0].region[2]>.5);assert.ok(revised.annotations[1].strokes[0].length>3);
+ const revised=await api(`/api/agents/${agent.id}/reviews/${slides.id}`);
+ assert.equal(revised.feedback.at(-1).annotations.length,2);assert.equal(revised.feedback.at(-1).annotations[0].page,1);assert.ok(revised.feedback.at(-1).annotations[0].region[2]>.5);assert.ok(revised.feedback.at(-1).annotations[1].strokes[0].length>3);
  let view=await api(`/api/agents/${agent.id}`);const sent=view.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Move the decision'));
  const recent=await api(`/api/agents/${agent.id}/messages`);
  assert.deepEqual(recent.map(entry=>entry.id),view.timeline.filter(entry=>['said','you','received'].includes(entry.kind)).slice(-4).map(entry=>entry.id),'Inline context returns recent messages without tool history');
@@ -62,15 +62,15 @@ try{
  await dialog.getByRole('button',{name:'Close file review'}).click();
  await page.getByRole('button',{name:'Review',exact:true}).first().click();await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
  await decide(approve,'approved');
- assert.equal((await api(`/api/agents/${agent.id}/file-reviews/${pdf.id}`)).status,'approved');
+ assert.equal((await api(`/api/agents/${agent.id}/reviews/${pdf.id}`)).status,'approved');
  assert.equal((await create(paths.pdf)).id,pdf.id);
  await writeFile(paths.pdf, await readFile(join(fixtures,'proposal.pdf')).then(bytes=>Buffer.concat([bytes,Buffer.from('\n% revised source\n')])));
  const replacement=await create(paths.pdf);assert.notEqual(replacement.id,pdf.id);assert.equal(replacement.status,'pending');
- const original=await (await fetch(`${native}/api/agents/${agent.id}/file-reviews/${pdf.id}/original`)).arrayBuffer();assert.deepEqual(Buffer.from(original),await readFile(join(fixtures,'proposal.pdf')),'Approved original survives source edits');
+ const original=await (await fetch(`${native}/api/agents/${agent.id}/reviews/${pdf.id}/original`)).arrayBuffer();assert.deepEqual(Buffer.from(original),await readFile(join(fixtures,'proposal.pdf')),'Approved original survives source edits');
  await dialog.getByRole('button',{name:'Close file review'}).click();await page.getByRole('button',{name:'Review',exact:true}).nth(2).click();
  const pre=dialog.locator('pre');await pre.waitFor();await pre.evaluate(element=>{const range=document.createRange();range.selectNodeContents(element);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);});await pre.click({button:'right'});
  await page.getByRole('menuitem',{name:'Quote selected text'}).click();await dialog.getByRole('textbox',{name:'Selection comment'}).fill('Clarify the two remaining checks.');
  await decide(revision,'changes requested');
- assert.match((await api(`/api/agents/${agent.id}/file-reviews/${text.id}`)).annotations[0].quote,/Release plan/);
+ assert.match((await api(`/api/agents/${agent.id}/reviews/${text.id}`)).feedback.at(-1).annotations[0].quote,/Release plan/);
  console.log('Real PDF/PPTX/text reviews: rendering, area quotes, drawing feedback with image delivery, text quotes, approval isolation, immutable originals and path/owner confinement passed.');
 }finally{await browser.close();}

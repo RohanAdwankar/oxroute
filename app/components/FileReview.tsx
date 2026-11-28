@@ -8,7 +8,7 @@ import {MarkupTools, MarkupInput, MARKUP_INK, MARKUP_DEFAULT, type MarkupStyle, 
 export const FileReviews = createContext<((url: string) => void) | null>(null);
 const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 const extensions = new Set([...imageExtensions, "pdf", "pptx", "txt", "md", "csv", "tsv", "json", "yaml", "yml", "log", "rs", "py", "js", "ts", "tsx", "html", "css", "sh", "toml", "xml"]);
-export function savedReview(url: string) {return url.startsWith("/api/agents/") && url.split("/").length === 6 && url.split("/")[4] === "file-reviews";}
+export function savedReview(url: string) {return url.startsWith("/api/agents/") && url.split("/").length === 6 && url.split("/")[4] === "reviews";}
 function fileLocation(url: string, base = "http://localhost") {
   try {
     const parsed = new URL(url, base);
@@ -40,7 +40,7 @@ export function ReviewImage({src, alt, ...props}: ImgHTMLAttributes<HTMLImageEle
 type Point = [number, number];
 type Annotation = {style?: MarkupStyle; page: number; quote: string; region: [number, number, number, number] | null; strokes: Point[][]; comment?: string; labels?: {at: Point; text: string}[]};
 const isMark = (note: Annotation) => note.quote === "Drawing" && (note.region !== null || note.strokes.length > 0 || !!note.labels?.length);
-type Review = {agentId: string; id: string; name: string; extension: string; sha256: string; pages: number; text: string | null; status: string; feedback: string; annotations: Annotation[]};
+type Review = {agentId: string; id: string; status: string; subject: {name: string; extension: string; sha256: string; pages: number; text: string | null}; feedback: {text: string; annotations: Annotation[]}[]};
 async function response<T>(request: Promise<Response>): Promise<T> {
   const result = await request;
   if (!result.ok) throw new Error(await result.text());
@@ -57,7 +57,7 @@ export function DraftImageReview({file, url, close, apply}: LocalImage & {url: s
 }
 
 function FileReview({agent, url, close, local}: {agent: string; url: string; close: () => void; local?: LocalImage}) {
-  const [review, setReview] = useState<Review | null>(() => local ? {agentId:"",id:crypto.randomUUID(),name:local.file.name,extension:"png",sha256:"",pages:1,text:null,status:"pending",feedback:"",annotations:[]} : null), [error, setError] = useState("");
+  const [review, setReview] = useState<Review | null>(() => local ? {agentId:"",id:crypto.randomUUID(),status:"pending",subject:{name:local.file.name,extension:"png",sha256:"",pages:1,text:null},feedback:[]} : null), [error, setError] = useState("");
   const [page, setPage] = useState(1), [tool, setTool] = useState<MarkupTool | "select">("select"), [busy, setBusy] = useState(false);
   const [size, setSize] = useState({width: 1100, height: 700});
   const [typing, setTyping] = useState<{at: Point; value: string; style: MarkupStyle} | null>(null);
@@ -81,7 +81,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     dialog.current?.focus();
     return () => previous?.focus();
   }, []);
-  const base = review ? `/api/agents/${encodeURIComponent(review.agentId)}/file-reviews/${review.id}` : "";
+  const base = review ? `/api/agents/${encodeURIComponent(review.agentId)}/reviews/${review.id}` : "";
   useEffect(() => {
     if (local) return;
     const controller = new AbortController();
@@ -89,10 +89,10 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     if (!locationInfo) { setError("Could not open that file URL."); return; }
     const {parsed, file} = locationInfo, attachment = parsed.pathname.startsWith("/api/attachments/");
     const path = attachment ? file.slice("/api/attachments/".length) : parsed.searchParams.get("path");
-    response<Review>(savedReview(url) ? fetch(url, {signal: controller.signal}) : fetch(`/api/agents/${encodeURIComponent(agent)}/file-reviews`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({path, attachment}), signal: controller.signal})).then(value => {
+    response<Review>(savedReview(url) ? fetch(url, {signal: controller.signal}) : fetch(`/api/agents/${encodeURIComponent(agent)}/reviews`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({kind: "file", title: file.split("/").at(-1), path, attachment}), signal: controller.signal})).then(value => {
       let draft: {notes: Annotation[]; text: string} | null = null;
       try {draft = JSON.parse(sessionStorage.getItem(`oxroute.fileReview.${value.id}`) ?? "null");} catch {}
-      setReview(value); setNotes(draft?.notes ?? value.annotations); setText(draft?.text ?? value.feedback);
+      setReview(value); const latest = value.feedback.at(-1); setNotes(draft?.notes ?? latest?.annotations ?? []); setText(draft?.text ?? latest?.text ?? "");
     }).catch(reason => {if (!controller.signal.aborted) setError(String(reason));});
     return () => controller.abort();
   }, [agent, url, setNotes, local]);
@@ -108,7 +108,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
   }, [menu, typing, close]);
   const originalName = fileLocation(url)?.file.split("/").at(-1) ?? "";
   const previewImage = reviewable(url) && imageExtensions.includes(originalName.split(".").at(-1)?.toLowerCase() ?? "");
-  const isImage = review ? imageExtensions.includes(review.extension) : previewImage;
+  const isImage = review ? imageExtensions.includes(review.subject.extension) : previewImage;
   const pageNotes = notes.filter(note => note.page === page);
   const point = useCallback((event: {clientX: number; clientY: number}): Point => {
     const bounds = surface.current!.getBoundingClientRect();
@@ -128,7 +128,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
   }, [page, changeNotes]);
   function commitText() {if (typing?.value.trim()) mark([], [{at: typing.at, text: typing.value.trim()}], typing.style); setTyping(null);}
   function quote() {
-    if (menu) addComment({page: review?.pages ? page : 0, quote: menu.quote, region: null, strokes: []});
+    if (menu) addComment({page: review?.subject.pages ? page : 0, quote: menu.quote, region: null, strokes: []});
   }
   const finish = useCallback((event: PointerEvent) => {
     if (drawingPointer.current !== event.pointerId) return;
@@ -164,7 +164,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     setBusy(true); setError("");
     try {
       const form = new FormData();
-      form.append("decision", JSON.stringify({status, text, annotations: notes, requestId: requestId.current}));
+      form.append("decision", JSON.stringify({status, text, annotations: notes, requestId: requestId.current, revision: review.subject.sha256}));
       for (const number of new Set(isImage ? [1] : notes.map(note => note.page).filter(Boolean))) {
         const picture = new Image(); picture.src = local ? url : `${base}/pages/${number}`; await picture.decode();
         const canvas = document.createElement("canvas"); canvas.width = picture.naturalWidth; canvas.height = picture.naturalHeight;
@@ -191,14 +191,14 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
     } catch (reason) {setError(String(reason));} finally {setBusy(false);}
   }
   return <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={isImage ? "Image preview" : "File review"} className="fixed inset-0 z-[100] flex flex-col bg-paper text-ink" onKeyDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
-    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.name ?? (previewImage ? originalName : "Preparing file review…")}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={local ? url : `${base}/original`} download={review.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
+    <header className="flex shrink-0 items-center gap-4 bg-band px-5 py-3 text-sm"><strong className="min-w-0 flex-1 truncate">{review?.subject.name ?? (previewImage ? originalName : "Preparing file review…")}</strong>{review && <><span aria-live="polite">{review.status === "replied" ? "Reply sent" : isImage && review.status === "pending" ? "" : review.status.replaceAll("_", " ")}</span><a href={local ? url : `${base}/original`} download={review.subject.name} aria-label="Download original" title="Download original"><Icon name="attach" /></a></>}<button type="button" aria-label="Close file review" onClick={close} className="cursor-pointer px-2">×</button></header>
     {error && <p role="alert" className="px-5 py-2 text-hold">{error}</p>}
     {!review && previewImage && <div className="min-h-0 flex-1 overflow-auto p-5">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={url} alt="Image preview" className="mx-auto block h-auto w-full max-w-[1100px]" />
     </div>}
     {review && <><div className="flex min-h-0 flex-1 flex-col md:flex-row"><main className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {review.pages > 0 && <div className="flex shrink-0 flex-wrap items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.pages}</span><button disabled={page === review.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools marker={marker} onMarker={setMarker} select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
+      {review.subject.pages > 0 && <div className="flex shrink-0 flex-wrap items-center gap-4 px-5 py-2 text-xs">{!isImage && <><button disabled={page === 1} onClick={() => {setPage(page - 1);}}>Previous</button><span>Page {page} of {review.subject.pages}</span><button disabled={page === review.subject.pages} onClick={() => {setPage(page + 1);}}>Next</button></>}<MarkupTools marker={marker} onMarker={setMarker} select tool={tool} onTool={setTool} empty={!notes.some(note => note.page === page)}
         onUndo={() => setAnnotationState(current => {
           const previous = current.history.at(-1), index = current.notes.findLastIndex(note => note.page === page);
           return {active: null, history: current.history.slice(0,-1), notes: previous ?? current.notes.flatMap((note,i) => i !== index ? [note] : note.labels?.length ? [{...note,labels:note.labels.slice(0,-1)}] : note.strokes.length ? [{...note,strokes:note.strokes.slice(0,-1)}] : [])};
@@ -206,7 +206,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
         onClear={() => {changeNotes(current => current.filter(note => note.page !== page)); setActive(null);}} />
         <span className="text-faint">{tool === "select" ? "Select an area to comment" : tool === "text" ? "Click to add text" : "Draw directly on the page"}</span></div>}
       <div className="min-h-0 flex-1 overflow-auto p-5" onClick={() => setMenu(null)}>
-        {review.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
+        {review.subject.text !== null ? <pre className="whitespace-pre-wrap break-words font-mono text-sm" onContextMenu={event => {const selected = window.getSelection()?.toString(); if (selected) {event.preventDefault(); setMenu({x: event.clientX, y: event.clientY, quote: selected});}}}>{review.subject.text}</pre> : <div className="relative mx-auto w-full max-w-[1100px] bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img key={page} src={local ? url : `${base}/pages/${page}`} alt={`Document page ${page}`} onLoad={event => setSize({width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight})} className="block h-auto w-full" onError={() => setError("Could not render this page. Reopen the review to retry.")} />
           <svg ref={surface} aria-label="Document annotations" className="absolute inset-0 h-full w-full touch-none" viewBox="0 0 1 1" preserveAspectRatio="none" style={{cursor: tool === "text" ? "text" : draw ? "crosshair" : "default"}}
@@ -225,7 +225,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
       <textarea ref={field} aria-label={active === null ? "File review feedback" : "Selection comment"} placeholder={active !== null ? "Comment on this selection…" : isImage ? "Add a reply…" : "What should change?"} value={active === null ? text : notes[active]?.comment ?? ""} onChange={event => {const value=event.target.value; if (active === null) setText(value); else setNotes(current => current.map((note,i) => i === active ? {...note,comment:value} : note));}} className="min-h-36 w-full resize-y bg-paper p-3 text-sm outline-none" /><div className="flex justify-end gap-2">
       <button type="button" aria-label={local ? "Apply image annotations" : isImage ? "Send image reply" : "Request revision"} title={busy ? "Saving" : local ? "Apply annotations" : isImage ? "Send reply" : "Request revision"} aria-busy={busy} disabled={busy || (!isImage && !text.trim() && !notes.some(note => note.comment?.trim()))} onClick={() => void decide(isImage ? "replied" : "changes_requested")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-paper disabled:opacity-40"><span className={busy ? "animate-spin" : ""}><Icon name={busy ? "refresh" : local ? "tick" : isImage ? "send" : "pen"} /></span></button>
       {!isImage && <button type="button" aria-label="Approve this version" title="Approve" aria-busy={busy} disabled={busy} onClick={() => void decide("approved")} className="flex h-9 w-9 cursor-pointer items-center justify-center bg-ink text-paper disabled:opacity-40"><Icon name="tick" /></button>}
-    </div>{!local && <p className="break-all text-[10px] text-faint" title={review.sha256}>Revision {review.sha256.slice(0, 12)}</p>}</aside></div></>}
+    </div>{!local && <p className="break-all text-[10px] text-faint" title={review.subject.sha256}>Revision {review.subject.sha256.slice(0, 12)}</p>}</aside></div></>}
     {menu && <button type="button" role="menuitem" className="fixed z-[110] cursor-pointer bg-ink px-4 py-2 text-sm text-paper" style={{left: Math.min(menu.x, window.innerWidth-210), top: Math.min(menu.y, window.innerHeight-50)}} onClick={quote}>Quote selected text</button>}
   </div>;
 }

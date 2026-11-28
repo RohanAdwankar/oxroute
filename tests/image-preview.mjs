@@ -15,8 +15,8 @@ const source=join(snapshot.artifactRoot,'diagram.png');
 await copyFile(join(fixtures,'diagram.png'),source);
 for(const ext of ['png','jpg','webp','gif','svg']) {
  const path=join(snapshot.artifactRoot,`diagram.${ext}`);await copyFile(join(fixtures,`diagram.${ext}`),path);
- const review=await api(`/api/agents/${agent.id}/file-reviews`,{path});assert.equal(review.pages,1);assert.equal(review.text,null);
- const rendered=await fetch(`${native}/api/agents/${agent.id}/file-reviews/${review.id}/pages/1`);assert.ok(rendered.ok);
+ const review=await api(`/api/agents/${agent.id}/reviews`,{kind:'file',title:path.split('/').at(-1),path});assert.equal(review.subject.pages,1);assert.equal(review.subject.text,null);
+ const rendered=await fetch(`${native}/api/agents/${agent.id}/reviews/${review.id}/pages/1`);assert.ok(rendered.ok);
  assert.deepEqual(Buffer.from(await rendered.arrayBuffer()),await readFile(path),'Image rendering retains source bytes and format');
 }
 
@@ -46,7 +46,7 @@ try {
  let releasePreparation;
  const preparation=new Promise(done=>{releasePreparation=done;});
  const holdPreparation=async route=>{await preparation;await route.continue();};
- await page.route(`**/api/agents/${agent.id}/file-reviews`,holdPreparation);
+ await page.route(`**/api/agents/${agent.id}/reviews`,holdPreparation);
  await thumbnail.click();
  const pendingDialog=page.getByRole('dialog');await pendingDialog.waitFor();
  try {
@@ -54,7 +54,7 @@ try {
   await preview.waitFor({timeout:1500});await preview.evaluate(image=>image.decode());
   assert.ok((await preview.boundingBox()).width>600,'Image enlarges before review preparation returns');
   if(process.env.PREPARING_SCREENSHOT)await page.screenshot({path:process.env.PREPARING_SCREENSHOT});
- } finally {releasePreparation();await page.unroute(`**/api/agents/${agent.id}/file-reviews`,holdPreparation);}
+ } finally {releasePreparation();await page.unroute(`**/api/agents/${agent.id}/reviews`,holdPreparation);}
  const dialog=page.getByRole('dialog',{name:'Image preview'});await dialog.waitFor();
  await dialog.getByRole('img',{name:'Document page 1',exact:true}).evaluate(image=>image.decode());
  assert.equal(page.context().pages().length,1,'Click enlarges inside the existing window');
@@ -83,9 +83,9 @@ try {
  const decisionResponse=page.waitForResponse(response=>response.url().endsWith('/decision')&&response.request().method()==='POST');
  await dialog.getByRole('button',{name:'Send image reply'}).click();await dialog.waitFor({state:'hidden'});
  const saved=await (await decisionResponse).json();
- const styles=saved.annotations.filter(note=>note.quote==='Drawing').flatMap(note=>note.strokes.map(()=>note.style));
+ const styles=saved.feedback.at(-1).annotations.filter(note=>note.quote==='Drawing').flatMap(note=>note.strokes.map(()=>note.style));
  assert.deepEqual(styles,[{color:'#d23c2e',width:1},{color:'#2468c7',width:4},{color:'#d23c2e',width:1}]);
- assert.deepEqual((await api(`/api/agents/${agent.id}/file-reviews/${saved.id}`)).annotations,saved.annotations,'Saved review retains chosen marker styles');
+ assert.deepEqual((await api(`/api/agents/${agent.id}/reviews/${saved.id}`)).feedback.at(-1).annotations,saved.feedback.at(-1).annotations,'Saved review retains chosen marker styles');
  const result=await api(`/api/agents/${agent.id}`), reply=result.timeline.find(entry=>entry.kind==='you'&&entry.text.includes('Please align'));
  const delivered=result.timeline.filter(entry=>!beforeReply.includes(entry.id));
  assert.equal(delivered.filter(entry=>entry.kind==='you').length,1,'One submission creates one user reply');
