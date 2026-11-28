@@ -2,7 +2,7 @@
 
 import { ReviewEditor } from "./ReviewEditor";
 import { DiffCode } from "./DiffCode";
-import { cachedReview, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
+import { cachedReview, decisionForm, loadReview, loadReviewImage, reviewEndpoint, type Review } from "../lib/reviews";
 
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {createPortal} from "react-dom";
@@ -194,7 +194,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
     cancelLoad.current?.();
     setApproving(true);
     try {
-      setReview(await response<Review>(fetch(`${reviewEndpoint(review.agentId, review.id)}/approve`, { method: "POST" })));
+      setReview(await response<Review>(fetch(`${reviewEndpoint(review.agentId, review.id)}/decision`, { method: "POST", body: decisionForm("approved", review.subject.headCommit) })));
       setError("");
       onClose();
     } catch (error) { setError(String(error)); }

@@ -1,6 +1,6 @@
 "use client";
 import {useRef,useState} from "react";
-import type {Review} from "../lib/reviews";
+import {decisionForm,type Review} from "../lib/reviews";
 import {Icon} from "./Icon";
 
 export function ReviewFeedback({review,endpoint,open,onClose,onSaved}:{review:Review;endpoint:string;open:boolean;onClose:()=>void;onSaved:(review:Review)=>void}) {
@@ -16,7 +16,7 @@ export function ReviewFeedback({review,endpoint,open,onClose,onSaved}:{review:Re
     try{localStorage.setItem(key+'.request',JSON.stringify(request.current));}catch{/* Retain the retry identity in memory. */}
     setBusy(true);setError('');
     try{
-      const response=await fetch(endpoint+'/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:request.current.id,headCommit:review.subject.headCommit,reason})});
+      const response=await fetch(endpoint+'/decision',{method:'POST',body:decisionForm('changes_requested',review.subject.headCommit,reason,request.current.id)});
       const body=await response.json();if(!response.ok)throw new Error(body.error??'Could not save feedback');
       onSaved(body);change('');request.current=null;try{localStorage.removeItem(key+'.request');}catch{/* The saved feedback remains authoritative. */}onClose();
     }catch(error){setError(error instanceof Error?error.message:String(error));}finally{setBusy(false);}

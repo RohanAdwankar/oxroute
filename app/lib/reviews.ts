@@ -10,6 +10,12 @@ export type Review = {
 const ready = new Map<string, Review>();
 const pending = new Map<string, Promise<Review>>();
 const images = new Map<string, Promise<Blob>>();
+/** The one body for any review decision; `requestId` makes a retry safe. */
+export function decisionForm(status: "approved" | "changes_requested", revision: string, text = "", requestId: string = crypto.randomUUID()) {
+  const form = new FormData();
+  form.set("decision", JSON.stringify({ status, requestId, revision, text }));
+  return form;
+}
 export const reviewEndpoint = (agent: string, review: string) =>
   `/api/agents/${encodeURIComponent(agent)}/reviews/${encodeURIComponent(review)}`;
 export const cachedReview = (endpoint: string) => ready.get(endpoint);

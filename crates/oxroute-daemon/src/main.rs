@@ -264,8 +264,7 @@ async fn serve() -> Result<()> {
         .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
         .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
         .route("/api/agents/{id}/reviews/{review}/edit", get(review_edit_text).post(edit_review))
-        .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review))
-        .route("/api/agents/{id}/reviews/{review}/feedback", post(review_feedback))
+        .route("/api/agents/{id}/reviews/{review}/decision", post(decide_review))
         .route("/api/say-attachments", post(say_attachments))
         .route("/api/interrupt", post(interrupt))
         .route("/api/fork", post(fork))
@@ -926,38 +925,54 @@ async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, Stri
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-struct ReviewFeedbackBody { request_id:String, head_commit:String, reason:String }
+struct DecisionBody { status:String, request_id:String, revision:String, #[serde(default)] text:String }
 
-async fn review_feedback(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,Json(body):Json<ReviewFeedbackBody>)->Result<Json<serde_json::Value>,Failed> {
-    if body.request_id.is_empty()||body.request_id.len()>100||body.reason.trim().is_empty()||body.reason.len()>32000 {return Err(anyhow::anyhow!("Describe the requested changes").into());}
-    let (mut review,before)=review_record(&hub,&agent,&id,false)?;
-    if body.head_commit!=review.revision() {return Err(anyhow::anyhow!("Feedback must match this saved review snapshot").into());}
+/// The one place a person decides any review; the kind only supplies its subject and its scope.
+async fn decide_review(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,mut multipart:Multipart)->Result<Json<serde_json::Value>,Failed> {
+    let mut decision=None;
+    while let Some(field)=multipart.next_field().await? {
+        if field.name()==Some("decision") {decision=Some(serde_json::from_str::<DecisionBody>(&field.text().await?)?);}
+    }
+    let body=decision.context("Missing decision")?;
+    if body.request_id.is_empty()||body.request_id.len()>100||body.text.len()>32000 {return Err(anyhow::anyhow!("Invalid review decision").into());}
+    Ok(Json(match body.status.as_str() {
+        "approved"=>approve_review(&hub,&agent,&id,&body).await?,
+        "changes_requested"=>request_changes(&hub,&agent,&id,&body).await?,
+        _=>return Err(anyhow::anyhow!("Unknown decision").into()),
+    }))
+}
+
+async fn request_changes(hub:&Arc<Hub>,agent:&str,id:&str,body:&DecisionBody)->anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(!body.text.trim().is_empty(),"Describe the requested changes");
+    let (mut review,before)=review_record(hub,agent,id,false)?;
+    anyhow::ensure!(body.revision==review.revision(),"Feedback must match this saved review snapshot");
     if let Some(saved)=review.feedback.iter().find(|saved|saved.request_id==body.request_id) {
-        if saved.text!=body.reason||saved.revision!=body.head_commit {return Err(anyhow::anyhow!("requestId already belongs to different feedback").into());}
+        anyhow::ensure!(saved.text==body.text&&saved.revision==body.revision,"requestId already belongs to different feedback");
     } else {
-        let text=format!("Changes requested for review {id}: {}\nSnapshot: {} (base {})\n\n{}\n\nThis feedback applies to this saved review snapshot. Publication is not approved; revise the change and present its updated review. No merge, deployment or external communication is authorized.",review.title,review.revision(),review.git()?.base_commit,body.reason);
-        let detail=format!("review-feedback:{}",json!({"id":id,"title":review.title,"headCommit":body.head_commit,"baseCommit":review.git()?.base_commit,"requestId":body.request_id}));
+        let text=format!("Changes requested for review {id}: {}\nSnapshot: {} (base {})\n\n{}\n\nThis feedback applies to this saved review snapshot. Publication is not approved; revise the change and present its updated review. No merge, deployment or external communication is authorized.",review.title,review.revision(),review.git()?.base_commit,body.text);
+        let detail=format!("review-feedback:{}",json!({"id":id,"title":review.title,"headCommit":body.revision,"baseCommit":review.git()?.base_commit,"requestId":body.request_id}));
         let at=oxroute_core::model::now();
         review.decision=Some(Decision{status:"changes_requested".into(),at,request_id:body.request_id.clone()});
-        review.feedback.push(Feedback{request_id:body.request_id.clone(),at,revision:body.head_commit,text:body.reason,annotations:vec![]});
+        review.feedback.push(Feedback{request_id:body.request_id.clone(),at,revision:body.revision.clone(),text:body.text.clone(),annotations:vec![]});
         let request=format!("review-feedback:{id}:{}",body.request_id);
-        if let Some(entry)=hub.store.record_review_feedback(&id,&before,&serde_json::to_string(&review)?,&agent,&request,(&text,&detail))? {
+        if let Some(entry)=hub.store.record_review_feedback(id,&before,&serde_json::to_string(&review)?,agent,&request,(&text,&detail))? {
             hub.emit(oxroute_core::model::Event::Timeline{entry:Box::new(entry)});
             hub.emit(oxroute_core::model::Event::Sync);
         }
     }
     hub.dispatch_review_feedback().await?;
-    Ok(Json(observed_review(&hub,review_record(&hub,&agent,&id,false)?.0,false).await?))
+    observed_review(hub,review_record(hub,agent,id,false)?.0,false).await
 }
 
-async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
-    let (mut review, before) = review_record(&hub, &agent_id, &id, false)?;
+async fn approve_review(hub:&Arc<Hub>,agent_id:&str,id:&str,body:&DecisionBody)->anyhow::Result<serde_json::Value> {
+    let (mut review, before) = review_record(hub, agent_id, id, false)?;
+    anyhow::ensure!(body.revision == review.revision(), "Approval must match this saved review revision");
     if !review.is_current().await? {
-        notify_stale_review(&hub, &agent_id, &id).await?;
-        return Err(anyhow::anyhow!("This revision changed. The agent has been asked to prepare an updated review before publishing.").into());
+        notify_stale_review(hub, agent_id, id).await?;
+        return Err(anyhow::anyhow!("This revision changed. The agent has been asked to prepare an updated review before publishing."));
     }
     if review.decision.as_ref().map(|decision| decision.status.as_str()) != Some("approved") {
-        review.decision = Some(Decision { status: "approved".into(), at: oxroute_core::model::now(), request_id: String::new() });
+        review.decision = Some(Decision { status: "approved".into(), at: oxroute_core::model::now(), request_id: body.request_id.clone() });
         let after = serde_json::to_string(&review)?;
         let key = format!("review:{id}");
         if hub.store.replace_value(&key, &before, &after)? {
@@ -968,13 +983,13 @@ async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, St
                 "id": id, "title": review.title, "commit": snapshot.head_commit,
                 "branch": snapshot.branch, "base": snapshot.base_ref,
             }));
-            if let Err(error) = hub.say_to_annotated(&agent_id, &authorization, vec![], true, &detail, "").await {
+            if let Err(error) = hub.say_to_annotated(agent_id, &authorization, vec![], true, &detail, "").await {
                 hub.store.replace_value(&key, &after, &before)?;
-                return Err(error.into());
+                return Err(error);
             }
         }
     }
-    Ok(Json(review_response(review_record(&hub, &agent_id, &id, false)?.0, false).await?))
+    review_response(review_record(hub, agent_id, id, false)?.0, false).await
 }
 
 async fn say(State(hub): Hubs, Json(body): Json<SayBody>) -> Result<Json<serde_json::Value>, Failed> {
@@ -1914,6 +1929,13 @@ fn attachment_type(name: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    async fn post_decision(client: &reqwest::Client, endpoint: &str, body: serde_json::Value) -> reqwest::Response {
+        client.post(format!("{endpoint}/decision")).multipart(reqwest::multipart::Form::new().text("decision", body.to_string())).send().await.unwrap()
+    }
+    async fn decide(client: &reqwest::Client, endpoint: &str, status: &str, revision: &str) -> reqwest::Response {
+        post_decision(client, endpoint, json!({ "status": status, "requestId": oxroute_core::model::new_id("decision"), "revision": revision, "text": if status == "approved" { "" } else { "Needs work" } })).await
+    }
+
     use super::*;
     use oxroute_core::{Backend, TaskItem, TaskStatus};
 
@@ -1928,7 +1950,7 @@ mod tests {
         }
         assert_eq!(operations.len(), operations.iter().collect::<std::collections::HashSet<_>>().len());
         assert!(schema["paths"].get("/api/tasks/{id}/approve-all").is_none());
-        assert!(schema["paths"].get("/api/agents/{id}/reviews/{review}/approve").is_none(), "Human approval stays outside the agent command interface; its HTTP workflow is preserved");
+        assert!(schema["paths"].get("/api/agents/{id}/reviews/{review}/decision").is_none(), "Human approval stays outside the agent command interface; its HTTP workflow is preserved");
         let fields = &schema["components"]["schemas"]["UpdateTaskBody"]["properties"];
         assert!(fields.get("parentTaskId").is_some() && fields.get("agentId").is_some());
         assert!(fields.get("approved").is_none(), "Human sign-off is not an agent flag");
@@ -2137,7 +2159,7 @@ mod tests {
             .route("/api/agents/{id}/reviews/{review}/image", get(review_image))
             .route("/api/agents/{id}/reviews/{review}/context", get(review_context))
             .route("/api/say", post(say)).route("/api/say-attachments", post(say_attachments))
-            .route("/api/agents/{id}/reviews/{review}/approve", post(approve_review)).with_state(hub.clone());
+            .route("/api/agents/{id}/reviews/{review}/decision", post(decide_review)).with_state(hub.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -2207,7 +2229,7 @@ mod tests {
         assert_eq!(inherited["subject"], review["subject"]);
         assert_eq!(inherited["agentId"], agent_id);
         assert_eq!(client.get(format!("http://{address}/api/agents/{}/reviews/{id}/image", fork.id)).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
-        assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
+        assert!(!decide(&client, &format!("http://{address}/api/agents/{}/reviews/{id}", fork.id), "approved", review["subject"]["headCommit"].as_str().unwrap()).await.status().is_success());
 
         // Reading saved snapshots never schedules work, including inherited cards.
         tokio::fs::write(root.join("settings.txt"), "unreviewed work\n").await.unwrap();
@@ -2230,14 +2252,25 @@ mod tests {
         assert!(!saved.stale_notified, "Reads do not mutate notification state");
         tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
 
+        // Feedback binds to the saved revision, retries by request id are idempotent, and the latest decision decides the status.
+        let head = review["subject"]["headCommit"].as_str().unwrap();
+        let change = |request: &str, revision: &str, text: &str| json!({ "status": "changes_requested", "requestId": request, "revision": revision, "text": text });
+        assert!(!post_decision(&client, &endpoint, change("r1", "another-revision", "Fix it")).await.status().is_success());
+        assert!(!post_decision(&client, &endpoint, change("r1", head, "  ")).await.status().is_success(), "Feedback must describe the change");
         for _ in 0..2 {
-            let approved = client.post(format!("{endpoint}/approve")).send().await.unwrap();
+            let saved: serde_json::Value = post_decision(&client, &endpoint, change("r1", head, "Fix it")).await.json().await.unwrap();
+            assert_eq!(saved["status"], "changes_requested");
+            assert_eq!(saved["feedback"].as_array().unwrap().len(), 1);
+        }
+        assert!(!post_decision(&client, &endpoint, change("r1", head, "Different text")).await.status().is_success(), "A request id belongs to one piece of feedback");
+        for _ in 0..2 {
+            let approved = decide(&client, &endpoint, "approved", review["subject"]["headCommit"].as_str().unwrap()).await;
             assert!(approved.status().is_success(), "{}", approved.text().await.unwrap());
             assert_eq!(approved.json::<serde_json::Value>().await.unwrap()["status"], "approved");
         }
-        assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::You).count(), 1);
+        assert_eq!(hub.store.timeline(agent_id, 10).unwrap().iter().filter(|entry| entry.kind == oxroute_core::model::EntryKind::You && entry.detail.starts_with("review-approval:")).count(), 1, "Approving twice sends one authorization");
         let timeline = reopened.timeline(agent_id, 10).unwrap();
-        let approval = timeline.iter().find(|entry| entry.kind == oxroute_core::model::EntryKind::You).unwrap();
+        let approval = timeline.iter().find(|entry| entry.kind == oxroute_core::model::EntryKind::You && entry.detail.starts_with("review-approval:")).unwrap();
         let metadata: serde_json::Value = serde_json::from_str(approval.detail.strip_prefix("review-approval:").unwrap()).unwrap();
         assert_eq!(metadata["id"], id);
         assert_eq!(metadata["commit"], review["subject"]["headCommit"]);
@@ -2252,7 +2285,7 @@ mod tests {
         assert_eq!(stale["status"], "stale");
         assert_eq!(stale["subject"], review["subject"]);
         assert_eq!(client.get(format!("{endpoint}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
-        assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        assert!(!decide(&client, &endpoint, "approved", review["subject"]["headCommit"].as_str().unwrap()).await.status().is_success());
         let requested: serde_json::Value = client.get(&endpoint).send().await.unwrap().json().await.unwrap();
         assert_eq!(requested["staleNotified"], true, "Explicit stale approval still requests an updated review");
         let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
@@ -2302,7 +2335,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(harness.inputs.lock().unwrap().len(), starts_before_missing, "Failed reads never schedule work");
         assert_eq!(reopened.get(&format!("review:{id}")).unwrap(), saved_before_missing);
-        assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
+        assert!(!decide(&client, &endpoint, "approved", review["subject"]["headCommit"].as_str().unwrap()).await.status().is_success());
         server.abort();
     }
 
