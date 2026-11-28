@@ -10,7 +10,7 @@ import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, 
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
 import { FileReviewProvider, ReviewFileButton, ReviewImage } from "./FileReview";
-import { GitReview } from "./GitReview";
+import { ReviewView } from "./ReviewView";
 import { preloadReview, reviewEndpoint } from "../lib/reviews";
 import { Code } from "./Code";
 import { Copyable } from "./Copyable";
@@ -914,7 +914,7 @@ export function AgentPanel({
         </span>
       </div>
 
-      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><GitReview key={reviewId} agentId={agent.id} reviewId={reviewId} onRevised={setReviewId} active={reviewingGit === true} onClose={closeReview} onQuote={quote => {
+      {reviewId && <div hidden={!reviewingGit} className="flex min-h-0 flex-1 flex-col"><ReviewView key={reviewId} agentId={agent.id} reviewId={reviewId} onRevised={setReviewId} active={reviewingGit === true} onClose={closeReview} onQuote={quote => {
         setDiffs(current => [...current, quote]);
         setMode("type");
         closeReview();

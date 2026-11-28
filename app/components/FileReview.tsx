@@ -56,6 +56,13 @@ export function DraftImageReview({file, url, close, apply}: LocalImage & {url: s
   return createPortal(<FileReview agent="" url={url} close={close} local={{file, apply}} />, document.body);
 }
 
+/** A file review in a shared review slot: it opens the full-screen markup view on demand. */
+export function FileReviewEntry({agentId, reviewId}: {agentId: string; reviewId: string}) {
+  const [open, setOpen] = useState(false);
+  return <div className="p-5"><button type="button" className="cursor-pointer text-sm underline" onClick={() => setOpen(true)}>Open file review</button>
+    {open && createPortal(<FileReview agent={agentId} url={`/api/agents/${encodeURIComponent(agentId)}/reviews/${encodeURIComponent(reviewId)}`} close={() => setOpen(false)} />, document.body)}</div>;
+}
+
 function FileReview({agent, url, close, local}: {agent: string; url: string; close: () => void; local?: LocalImage}) {
   const [review, setReview] = useState<Review | null>(() => local ? {agentId:"",id:crypto.randomUUID(),status:"pending",subject:{name:local.file.name,extension:"png",sha256:"",pages:1,text:null},feedback:[]} : null), [error, setError] = useState("");
   const [page, setPage] = useState(1), [tool, setTool] = useState<MarkupTool | "select">("select"), [busy, setBusy] = useState(false);

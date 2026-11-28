@@ -1,7 +1,7 @@
 export type Review = {
   id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale" | "changes_requested"; staleNotified?: boolean;
   feedback?: {requestId:string;at:number;text:string;revision:string}[];
-  decision?: {status:string;at:number;requestId:string}|null; kind: "git";
+  decision?: {status:string;at:number;requestId:string}|null; kind: "git" | "file";
   full: boolean;
   subject: { repository: string; remote: string; remoteUrl: string; branch: string;
     baseRef: string; baseCommit: string; headCommit: string; reviewBaseCommit?: string; files: { path: string; patch: string; image?: { before: boolean; after: boolean } }[] };
@@ -111,6 +111,7 @@ export function preloadReview(endpoint: string, created = false) {
         try {
           const review = await requestReview(next, false, "low");
           warmed.add(next);
+          if (review.kind !== "git") continue;
           if (review.subject.reviewBaseCommit && !next.includes("?full=true")) preloadReview(`${next}?full=true`);
           for (const file of review.subject.files) for (const side of ["before", "after"] as const) {
             if (file.image?.[side]) await loadReviewImage(`${next.split("?")[0]}/image?${new URLSearchParams({ path: file.path, side, ...(review.full ? { full: "true" } : {}) })}`, "low").catch(() => {});
