@@ -309,6 +309,20 @@ WHERE json_extract(f.data,'$.state') IN ('resolved','no_response_needed') AND
     conn.execute("UPDATE kv SET value = json_remove(value, '$.snapshot.files')
         WHERE key GLOB 'review:*' AND json_valid(value)
         AND json_type(value, '$.snapshot.files') IS NOT NULL", [])?;
+    // Every review is one common record whose subject depends on its kind.
+    conn.execute("UPDATE kv SET value = json_object(
+            'id', json_extract(value, '$.id'), 'agentId', json_extract(value, '$.agentId'),
+            'title', json_extract(value, '$.title'), 'description', json_extract(value, '$.description'),
+            'kind', 'git', 'subject', json(json_extract(value, '$.snapshot')),
+            'decision', json(CASE
+                WHEN json_extract(value, '$.approvedAt') IS NOT NULL THEN json_object('status', 'approved', 'at', json_extract(value, '$.approvedAt'), 'requestId', '')
+                WHEN json_array_length(COALESCE(json_extract(value, '$.feedback'), '[]')) > 0 THEN json_object('status', 'changes_requested', 'at', json_extract(value, '$.feedback[#-1].at'), 'requestId', json_extract(value, '$.feedback[#-1].requestId'))
+                END),
+            'staleNotified', json(CASE WHEN COALESCE(json_extract(value, '$.staleNotified'), 0) THEN 'true' ELSE 'false' END),
+            'feedback', json((SELECT json_group_array(json_object('requestId', json_extract(f.value, '$.requestId'), 'at', json_extract(f.value, '$.at'), 'revision', json_extract(f.value, '$.headCommit'), 'text', json_extract(f.value, '$.reason'), 'annotations', json('[]'))) FROM json_each(kv.value, '$.feedback') f)))
+        WHERE key GLOB 'review:*' AND json_valid(value) AND json_type(value, '$.snapshot') IS NOT NULL", [])?;
+    conn.execute("UPDATE kv SET value = json_object('subject', json(json_extract(value, '$.snapshot')), 'status', json_extract(value, '$.status'))
+        WHERE key GLOB 'review-status:*' AND json_valid(value) AND json_type(value, '$.snapshot') IS NOT NULL", [])?;
     let focus_columns=conn.prepare("PRAGMA table_info(focus_messages)")?.query_map([],|r|r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
     if !focus_columns.iter().any(|column|column=="urgent") {conn.execute("ALTER TABLE focus_messages ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0",[])?;}
     if !focus_columns.iter().any(|column|column=="title") {conn.execute("ALTER TABLE focus_messages ADD COLUMN title TEXT",[])?;}
@@ -2166,12 +2180,13 @@ impl Store {
     pub fn last_approved_review(&self, repository: &str, remote: &str, branch: &str, base: &str) -> Result<Option<String>> {
         self.read(|c| Ok(c.query_row(
             "SELECT value FROM kv WHERE key GLOB 'review:*'
-             AND json_extract(value, '$.approvedAt') IS NOT NULL
-             AND json_extract(value, '$.snapshot.repository') = ?1
-             AND json_extract(value, '$.snapshot.remoteUrl') = ?2
-             AND json_extract(value, '$.snapshot.branch') = ?3
-             AND json_extract(value, '$.snapshot.baseRef') = ?4
-             ORDER BY json_extract(value, '$.approvedAt') DESC LIMIT 1",
+             AND json_extract(value, '$.kind') = 'git'
+             AND json_extract(value, '$.decision.status') = 'approved'
+             AND json_extract(value, '$.subject.repository') = ?1
+             AND json_extract(value, '$.subject.remoteUrl') = ?2
+             AND json_extract(value, '$.subject.branch') = ?3
+             AND json_extract(value, '$.subject.baseRef') = ?4
+             ORDER BY json_extract(value, '$.decision.at') DESC LIMIT 1",
             params![repository, remote, branch, base], |row| row.get(0),
         ).optional()?))
     }
@@ -2418,19 +2433,40 @@ mod tests {
     fn review_migration_removes_patch_content_and_preserves_metadata() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        let review = serde_json::json!({ "approvedAt": 1, "snapshot": {
+        let review = serde_json::json!({ "id": "example", "agentId": "agent", "title": "t", "description": "d", "approvedAt": 1, "snapshot": {
             "headCommit": "revision", "files": [{ "path": "example", "patch": "content" }]
         }});
         conn.execute("INSERT INTO kv VALUES ('review:example', ?1)", [review.to_string()]).unwrap();
         conn.execute("INSERT INTO kv VALUES ('unrelated', ?1)", [review.to_string()]).unwrap();
         migrate(&conn).unwrap();
         let saved: String = conn.query_row("SELECT value FROM kv WHERE key = 'review:example'", [], |r| r.get(0)).unwrap();
-        let mut expected = review.clone();
-        expected["snapshot"].as_object_mut().unwrap().remove("files");
+        let expected = serde_json::json!({ "id": "example", "agentId": "agent", "title": "t", "description": "d", "kind": "git",
+            "subject": { "headCommit": "revision" }, "decision": { "status": "approved", "at": 1, "requestId": "" },
+            "staleNotified": false, "feedback": [] });
         assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap(), expected);
         let untouched: String = conn.query_row("SELECT value FROM kv WHERE key = 'unrelated'", [], |r| r.get(0)).unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&untouched).unwrap(), review);
         migrate(&conn).unwrap();
+    }
+
+    #[test]
+    fn review_migration_keeps_the_latest_decision_and_every_feedback_entry() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let legacy = serde_json::json!({ "id": "r", "agentId": "a", "title": "t", "description": "d", "staleNotified": true,
+            "snapshot": { "headCommit": "h" },
+            "feedback": [{ "requestId": "one", "at": 1.0, "reason": "first", "headCommit": "h" }, { "requestId": "two", "at": 2.0, "reason": "second", "headCommit": "h" }] });
+        conn.execute("INSERT INTO kv VALUES ('review:r', ?1)", [legacy.to_string()]).unwrap();
+        conn.execute("INSERT INTO kv VALUES ('review-status:r', ?1)", [serde_json::json!({ "snapshot": { "headCommit": "h" }, "status": "pending" }).to_string()]).unwrap();
+        migrate(&conn).unwrap();
+        let read = |key: &str| serde_json::from_str::<serde_json::Value>(&conn.query_row("SELECT value FROM kv WHERE key = ?1", [key], |r| r.get::<_, String>(0)).unwrap()).unwrap();
+        let review = read("review:r");
+        assert_eq!(review["decision"], serde_json::json!({ "status": "changes_requested", "at": 2.0, "requestId": "two" }));
+        assert_eq!(review["staleNotified"], true);
+        assert_eq!(review["feedback"].as_array().unwrap().iter().map(|f| f["text"].as_str().unwrap()).collect::<Vec<_>>(), ["first", "second"]);
+        assert_eq!(read("review-status:r"), serde_json::json!({ "subject": { "headCommit": "h" }, "status": "pending" }));
+        migrate(&conn).unwrap();
+        assert_eq!(read("review:r"), review, "A second migration changes nothing");
     }
 
     #[test]

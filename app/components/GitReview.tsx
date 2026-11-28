@@ -82,7 +82,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
   const decision=useContext(DecisionReferences).get(reviewId);
   const [full, setFull] = useState(false);
   const [review, setReview] = useState<Review | null>(() => cachedReview(endpoint) ?? null);
-  const [file, setFile] = useState(() => cachedReview(endpoint)?.snapshot.files[0]?.path ?? "");
+  const [file, setFile] = useState(() => cachedReview(endpoint)?.subject.files[0]?.path ?? "");
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
@@ -116,7 +116,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
     document.addEventListener('selectionchange',rememberSelection);document.addEventListener('pointerdown',pointer,true);document.addEventListener('pointerup',release);document.addEventListener('keyup',finish);
     return()=>{document.removeEventListener('selectionchange',rememberSelection);document.removeEventListener('pointerdown',pointer,true);document.removeEventListener('pointerup',release);document.removeEventListener('keyup',finish);};
   },[rememberSelection]);
-  const snapshot = review?.snapshot;
+  const snapshot = review?.subject;
   const expanding = useRef(new Set<string>());
   const [expanded, setExpanded] = useState<Record<string, Expansion>>({});
   const files = useMemo(() => snapshot?.files.map(item => {
@@ -174,7 +174,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
       if (!live) return;
       readable = true;
       setReview(data);
-      setFile(current => data.snapshot.files.some(item => item.path === current) ? current : data.snapshot.files[0]?.path ?? "");
+      setFile(current => data.subject.files.some(item => item.path === current) ? current : data.subject.files[0]?.path ?? "");
       setError("");
     };
     const url = `${endpoint}${full ? "?full=true" : ""}`;
@@ -242,7 +242,7 @@ export function GitReview({ agentId, reviewId, active, onQuote, onClose, onRevis
           className="cursor-pointer p-2 hover:bg-band disabled:cursor-default disabled:opacity-40"><Icon name="tick" /></button>
       </>}
     </div>
-    {review&&<ReviewFeedback key={review.id} review={review} endpoint={endpoint} open={feedbackOpen} onClose={()=>setFeedbackOpen(false)} onSaved={value=>{cancelLoad.current?.();setReview(current=>current?{...value,full:current.full,snapshot:current.snapshot}:value);onClose();openConversation?.(value.agentId);}}/>}
+    {review&&<ReviewFeedback key={review.id} review={review} endpoint={endpoint} open={feedbackOpen} onClose={()=>setFeedbackOpen(false)} onSaved={value=>{cancelLoad.current?.();setReview(current=>current?{...value,full:current.full,snapshot:current.subject}:value);onClose();openConversation?.(value.agentId);}}/>}
     {review && snapshot && <details className="border-b border-rule px-4 py-2 text-[12px]">
       <summary className="cursor-pointer break-all"><span className="ml-2">{snapshot.branch} <span className="text-faint">into</span> {snapshot.baseRef.replace("refs/heads/", "").replace("refs/remotes/", "")}</span></summary>
       <div className="mt-2 break-all text-faint">{snapshot.repository}<br />Publish to {snapshot.remoteUrl}<br />Base {snapshot.baseCommit.slice(0, 8)} · Head {snapshot.headCommit.slice(0, 8)}</div>

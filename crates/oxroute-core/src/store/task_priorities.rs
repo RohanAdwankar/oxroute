@@ -72,14 +72,14 @@ pub(super) fn review_states(c:&Connection,all:bool)->Result<HashMap<String,Revie
         FROM kv r LEFT JOIN kv p ON p.key='focus-review-priority:'||json_extract(r.value,'$.id')
         LEFT JOIN kv o ON o.key='review-status:'||json_extract(r.value,'$.id')
         WHERE r.key GLOB 'review:*' AND json_type(r.value,'$.id')='text' AND json_type(r.value,'$.agentId')='text'
-        AND json_extract(r.value,'$.approvedAt') IS NULL AND COALESCE(json_extract(r.value,'$.staleNotified'),0)=0 {}",if all {""}else{"AND p.key IS NOT NULL"}))?;
+        AND COALESCE(json_extract(r.value,'$.decision.status'),'')!='approved' AND COALESCE(json_extract(r.value,'$.staleNotified'),0)=0 {}",if all {""}else{"AND p.key IS NOT NULL"}))?;
     let context:Option<String>=c.query_row("SELECT value FROM kv WHERE key='task-priority-focus-context'",[],|r|r.get(0)).optional()?;
     let advanced=context.as_deref()!=Some(focus_context(c)?.to_string().as_str());
     let rows=q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?)))?;
     rows.map(|row| {
         let (raw,saved,source,observed)=row?;let meta:Value=serde_json::from_str(&raw)?;
         let observed:Option<Value>=observed.map(|s|serde_json::from_str(&s)).transpose()?;
-        let status=observed.as_ref().filter(|o|o["snapshot"]==meta["snapshot"]).and_then(|o|o["status"].as_str()).unwrap_or("unverified").to_owned();
+        let status=observed.as_ref().filter(|o|o["subject"]==meta["subject"]).and_then(|o|o["status"].as_str()).unwrap_or("unverified").to_owned();
         let basis=format!("{}:{}",fingerprint(&raw),fingerprint(&(source,&status)));
         let saved:Option<Value>=saved.map(|s|serde_json::from_str(&s)).transpose()?;
         let stale=saved.as_ref().is_some_and(|s|status!="pending"||s["basis"].as_str().and_then(|b|b.split(':').next())!=basis.split(':').next());

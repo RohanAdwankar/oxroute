@@ -1,8 +1,9 @@
 export type Review = {
   id: string; agentId: string; title: string; description: string; status: "pending" | "approved" | "stale" | "changes_requested"; staleNotified?: boolean;
-  feedback?: {requestId:string;at:number;reason:string;headCommit:string}[];
+  feedback?: {requestId:string;at:number;text:string;revision:string}[];
+  decision?: {status:string;at:number;requestId:string}|null; kind: "git";
   full: boolean;
-  snapshot: { repository: string; remote: string; remoteUrl: string; branch: string;
+  subject: { repository: string; remote: string; remoteUrl: string; branch: string;
     baseRef: string; baseCommit: string; headCommit: string; reviewBaseCommit?: string; files: { path: string; patch: string; image?: { before: boolean; after: boolean } }[] };
 };
 
@@ -72,7 +73,7 @@ function requestReview(endpoint: string, refresh: boolean, priority: RequestPrio
   const request = storedResponse(endpoint, refresh, priority).then(async response => {
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "Could not load review");
-    body.snapshot = ready.get(endpoint)?.snapshot ?? body.snapshot;
+    body.subject = ready.get(endpoint)?.subject ?? body.subject;
     ready.delete(endpoint);
     ready.set(endpoint, body);
     if (ready.size > 8) ready.delete(ready.keys().next().value!);
@@ -104,8 +105,8 @@ export function preloadReview(endpoint: string, created = false) {
         try {
           const review = await requestReview(next, false, "low");
           warmed.add(next);
-          if (review.snapshot.reviewBaseCommit && !next.includes("?full=true")) preloadReview(`${next}?full=true`);
-          for (const file of review.snapshot.files) for (const side of ["before", "after"] as const) {
+          if (review.subject.reviewBaseCommit && !next.includes("?full=true")) preloadReview(`${next}?full=true`);
+          for (const file of review.subject.files) for (const side of ["before", "after"] as const) {
             if (file.image?.[side]) await loadReviewImage(`${next.split("?")[0]}/image?${new URLSearchParams({ path: file.path, side, ...(review.full ? { full: "true" } : {}) })}`, "low").catch(() => {});
           }
         }

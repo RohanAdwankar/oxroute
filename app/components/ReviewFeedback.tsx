@@ -4,7 +4,7 @@ import type {Review} from "../lib/reviews";
 import {Icon} from "./Icon";
 
 export function ReviewFeedback({review,endpoint,open,onClose,onSaved}:{review:Review;endpoint:string;open:boolean;onClose:()=>void;onSaved:(review:Review)=>void}) {
-  const key=`oxroute.reviewFeedback.${review.id}.${review.snapshot.headCommit}`;
+  const key=`oxroute.reviewFeedback.${review.id}.${review.subject.headCommit}`;
   const [text,setText]=useState(()=>{try{return localStorage.getItem(key)??'';}catch{return '';}});
   const [busy,setBusy]=useState(false),[error,setError]=useState('');
   const request=useRef<{text:string;id:string}|null>(null);
@@ -16,14 +16,14 @@ export function ReviewFeedback({review,endpoint,open,onClose,onSaved}:{review:Re
     try{localStorage.setItem(key+'.request',JSON.stringify(request.current));}catch{/* Retain the retry identity in memory. */}
     setBusy(true);setError('');
     try{
-      const response=await fetch(endpoint+'/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:request.current.id,headCommit:review.snapshot.headCommit,reason})});
+      const response=await fetch(endpoint+'/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:request.current.id,headCommit:review.subject.headCommit,reason})});
       const body=await response.json();if(!response.ok)throw new Error(body.error??'Could not save feedback');
       onSaved(body);change('');request.current=null;try{localStorage.removeItem(key+'.request');}catch{/* The saved feedback remains authoritative. */}onClose();
     }catch(error){setError(error instanceof Error?error.message:String(error));}finally{setBusy(false);}
   };
   if(!open&&!review.feedback?.length)return null;
   return <section aria-label="Review feedback" className="shrink-0 border-b border-rule px-4 py-2 text-[12px]">
-    {!!review.feedback?.length&&<div className="quiet-scroll max-h-32 overflow-auto">{review.feedback.map(item=><div key={item.requestId} data-review-feedback={item.requestId} className="mb-2"><span className="text-faint">Changes requested</span><p className="whitespace-pre-wrap">{item.reason}</p></div>)}</div>}
+    {!!review.feedback?.length&&<div className="quiet-scroll max-h-32 overflow-auto">{review.feedback.map(item=><div key={item.requestId} data-review-feedback={item.requestId} className="mb-2"><span className="text-faint">Changes requested</span><p className="whitespace-pre-wrap">{item.text}</p></div>)}</div>}
     {open&&<form aria-label="Request changes" onSubmit={event=>{event.preventDefault();void send();}}>
       <textarea autoFocus aria-label="Requested changes" placeholder="Describe the requested changes…" rows={2} value={text} disabled={busy} onChange={event=>change(event.target.value)} onContextMenu={event=>event.stopPropagation()}
         onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();void send();}}} className="w-full resize-y bg-transparent py-1 outline-none disabled:opacity-50"/>

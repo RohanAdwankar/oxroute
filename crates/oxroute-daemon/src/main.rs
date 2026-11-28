@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 mod git;
 mod documents;
+mod review;
 mod merge_watch;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +37,7 @@ use oxroute_core::config::Mode;
 use oxroute_core::hub::Routing;
 use oxroute_core::source::slack::SlackSource;
 use oxroute_core::{Config, Hub, Store};
+use review::{Decision, Feedback, Review, Subject};
 
 mod diagram;
 mod terminal;
@@ -770,58 +772,38 @@ fn diff_detail(text: &str, diffs: &[DiffQuote]) -> anyhow::Result<String> {
 #[derive(Deserialize, utoipa::ToSchema)]
 struct ReviewBody { repository: String, base: String, remote: String, title: String, description: String }
 
-#[derive(Clone, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReviewFeedback { request_id:String, at:f64, reason:String, head_commit:String }
-
-#[derive(Clone, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ChangeReview {
-    id: String,
-    agent_id: String,
-    title: String,
-    description: String,
-    snapshot: git::Snapshot,
-    approved_at: Option<f64>,
-    #[serde(default)]
-    stale_notified: bool,
-    #[serde(default)]
-    feedback: Vec<ReviewFeedback>,
-}
-
-fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(ChangeReview, String)> {
+fn review_record(hub: &Hub, agent_id: &str, id: &str, inherited: bool) -> anyhow::Result<(Review, String)> {
     let data = hub.store.get(&format!("review:{id}"))?.context("no such review")?;
-    let review: ChangeReview = serde_json::from_str(&data)?;
+    let review: Review = serde_json::from_str(&data)?;
     anyhow::ensure!(review.agent_id == agent_id || (inherited && hub.store.has_review(agent_id, id)?), "Review belongs to another session");
     Ok((review, data))
 }
 
-async fn review_response(review: ChangeReview, full: bool) -> anyhow::Result<serde_json::Value> {
+async fn review_response(review: Review, full: bool) -> anyhow::Result<serde_json::Value> {
     let started = std::time::Instant::now();
-    let mut comparison = review.snapshot.clone();
+    let mut comparison = review.git()?.clone();
     if full { comparison.review_base_commit = None; }
     let ((files, diff_ms), (current, check_ms)) = tokio::join!(
         async { let start = std::time::Instant::now(); (git::files(&comparison).await, start.elapsed().as_secs_f64() * 1000.0) },
-        async { let start = std::time::Instant::now(); (git::current(&review.snapshot).await, start.elapsed().as_secs_f64() * 1000.0) },
+        async { let start = std::time::Instant::now(); (review.is_current().await, start.elapsed().as_secs_f64() * 1000.0) },
     );
     tracing::info!(review = %review.id, diff_ms, check_ms, total_ms = started.elapsed().as_secs_f64() * 1000.0, "review prepared");
     let files = files?;
-    let status = if !current.unwrap_or(false) { "stale" }
-        else if review.approved_at.is_some() { "approved" } else if !review.feedback.is_empty() { "changes_requested" } else { "pending" };
+    let status = review.status(current.unwrap_or(false)).to_owned();
     let mut response = serde_json::to_value(review).expect("review is serializable");
     response["status"] = json!(status);
     response["full"] = json!(full);
-    response["snapshot"]["files"] = serde_json::to_value(files)?;
+    response["subject"]["files"] = serde_json::to_value(files)?;
     Ok(response)
 }
 
 // Observations ground queue eligibility; they never approve or replace a review.
-async fn observed_review(hub:&Hub,review:ChangeReview,full:bool)->anyhow::Result<serde_json::Value> {
+async fn observed_review(hub:&Hub,review:Review,full:bool)->anyhow::Result<serde_json::Value> {
     let key=format!("review-status:{}",review.id);
-    let snapshot=serde_json::to_value(&review.snapshot)?;
+    let subject=serde_json::to_value(review.git()?)?;
     let result=review_response(review,full).await;
     let status=result.as_ref().ok().and_then(|body|body["status"].as_str()).unwrap_or("unavailable");
-    let observation=json!({"snapshot":snapshot,"status":status}).to_string();
+    let observation=json!({"subject":subject,"status":status}).to_string();
     if hub.store.get(&key)?.as_deref()!=Some(observation.as_str()) {hub.store.set(&key,&observation)?;hub.emit(oxroute_core::model::Event::Sync);}
     result
 }
@@ -834,10 +816,10 @@ async fn create_review(State(hub): Hubs, Path(agent_id): Path<String>, Json(body
     }
     let mut snapshot = git::capture(std::path::Path::new(&hub.config.workspace), &body.repository, &body.base, &body.remote).await?;
     if let Some(previous) = hub.store.last_approved_review(&snapshot.repository, &snapshot.remote_url, &snapshot.branch, &snapshot.base_ref)? {
-        let previous: ChangeReview = serde_json::from_str(&previous)?;
-        git::since_approval(&mut snapshot, &previous.snapshot.head_commit).await;
+        let previous: Review = serde_json::from_str(&previous)?;
+        git::since_approval(&mut snapshot, &previous.git()?.head_commit).await;
     }
-    let review = ChangeReview { id: oxroute_core::model::new_id("review"), agent_id, title: body.title, description: body.description, snapshot, approved_at: None, stale_notified: false, feedback:vec![] };
+    let review = Review::new(oxroute_core::model::new_id("review"), agent_id, body.title, body.description, Subject::Git(snapshot));
     let entry = hub.store.add_review(&review.agent_id, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
     let (agent, id, title) = (review.agent_id.clone(), review.id.clone(), review.title.clone());
@@ -870,7 +852,7 @@ async fn notify_stale_review(hub: &Arc<Hub>, agent_id: &str, id: &str) -> anyhow
     if !hub.store.replace_value(&key, &before, &after)? {
         return Ok(review_record(hub, agent_id, id, true)?.0.stale_notified);
     }
-    let request = format!("Review {id} ({}) no longer matches the repository or publication target. The user can read the saved snapshot but cannot approve it. Inspect {} on branch {} and prepare an updated review of the current committed change, preserving unrelated work. If a newer review already exists, direct the user to it. This update request grants no publication, merge, or deployment approval.", review.title, review.snapshot.repository, review.snapshot.branch);
+    let request = format!("Review {id} ({}) no longer matches the repository or publication target. The user can read the saved snapshot but cannot approve it. Inspect {} on branch {} and prepare an updated review of the current committed change, preserving unrelated work. If a newer review already exists, direct the user to it. This update request grants no publication, merge, or deployment approval.", review.title, review.git()?.repository, review.git()?.branch);
     if let Err(error) = hub.ask_quietly(&review.agent_id, &request, &format!("Update requested for changed review: {}", review.title)).await {
         hub.store.replace_value(&key, &after, &before)?;
         return Err(error);
@@ -890,8 +872,8 @@ struct ReviewContextQuery { path: String, side: ImageSide, start: usize, count: 
 
 async fn review_context(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewContextQuery>) -> Result<Json<git::FileContext>, Failed> {
     let mut review = review_record(&hub, &agent_id, &id, true)?.0;
-    if query.full { review.snapshot.review_base_commit = None; }
-    Ok(Json(git::context(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before), query.start, query.count).await?))
+    if query.full { review.git_mut()?.review_base_commit = None; }
+    Ok(Json(git::context(review.git()?, &query.path, matches!(query.side, ImageSide::Before), query.start, query.count).await?))
 }
 
 #[derive(Deserialize)]
@@ -899,7 +881,7 @@ struct ReviewEditQuery { path: String }
 
 async fn review_edit_text(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, Query(query): Query<ReviewEditQuery>) -> Result<Json<serde_json::Value>, Failed> {
     let review = review_record(&hub, &agent, &id, false)?.0;
-    Ok(Json(json!({"text": git::editable(&review.snapshot, &query.path).await?})))
+    Ok(Json(json!({"text": git::editable(review.git()?, &query.path).await?})))
 }
 
 #[derive(Deserialize)]
@@ -908,10 +890,11 @@ struct ReviewEditBody { path: String, text: String, head_commit: String }
 
 async fn edit_review(State(hub): Hubs, Path((agent, id)): Path<(String, String)>, Json(body): Json<ReviewEditBody>) -> Result<Json<serde_json::Value>, Failed> {
     let mut review = review_record(&hub, &agent, &id, false)?.0;
-    if body.head_commit != review.snapshot.head_commit { return Err(anyhow::anyhow!("Review revision changed").into()); }
-    review.snapshot = git::edit(&review.snapshot, std::path::Path::new(&hub.config.workspace), &body.path, &body.text).await?;
+    if body.head_commit != review.revision() { return Err(anyhow::anyhow!("Review revision changed").into()); }
+    let edited = git::edit(review.git()?, std::path::Path::new(&hub.config.workspace), &body.path, &body.text).await?;
+    *review.git_mut()? = edited;
     review.id = oxroute_core::model::new_id("review");
-    review.approved_at = None;
+    review.decision = None;
     review.stale_notified = false;
     let entry = hub.store.add_review(&agent, &review.id, &review.title, &serde_json::to_string(&review)?)?;
     hub.emit(oxroute_core::model::Event::Timeline { entry: Box::new(entry) });
@@ -920,8 +903,8 @@ async fn edit_review(State(hub): Hubs, Path((agent, id)): Path<(String, String)>
 
 async fn review_image(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>, Query(query): Query<ReviewImageQuery>) -> Result<Response, Failed> {
     let mut review = review_record(&hub, &agent_id, &id, true)?.0;
-    if query.full { review.snapshot.review_base_commit = None; }
-    let (mut child, mime) = git::image(&review.snapshot, &query.path, matches!(query.side, ImageSide::Before)).await?;
+    if query.full { review.git_mut()?.review_base_commit = None; }
+    let (mut child, mime) = git::image(review.git()?, &query.path, matches!(query.side, ImageSide::Before)).await?;
     let stdout = child.stdout.take().expect("Git image stdout is piped");
     let stream = futures_util::stream::try_unfold((stdout, child), |(mut stdout, mut child)| async move {
         let mut bytes = vec![0; 64 * 1024];
@@ -948,14 +931,15 @@ struct ReviewFeedbackBody { request_id:String, head_commit:String, reason:String
 async fn review_feedback(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,Json(body):Json<ReviewFeedbackBody>)->Result<Json<serde_json::Value>,Failed> {
     if body.request_id.is_empty()||body.request_id.len()>100||body.reason.trim().is_empty()||body.reason.len()>32000 {return Err(anyhow::anyhow!("Describe the requested changes").into());}
     let (mut review,before)=review_record(&hub,&agent,&id,false)?;
-    if body.head_commit!=review.snapshot.head_commit {return Err(anyhow::anyhow!("Feedback must match this saved review snapshot").into());}
+    if body.head_commit!=review.revision() {return Err(anyhow::anyhow!("Feedback must match this saved review snapshot").into());}
     if let Some(saved)=review.feedback.iter().find(|saved|saved.request_id==body.request_id) {
-        if saved.reason!=body.reason||saved.head_commit!=body.head_commit {return Err(anyhow::anyhow!("requestId already belongs to different feedback").into());}
+        if saved.text!=body.reason||saved.revision!=body.head_commit {return Err(anyhow::anyhow!("requestId already belongs to different feedback").into());}
     } else {
-        let text=format!("Changes requested for review {id}: {}\nSnapshot: {} (base {})\n\n{}\n\nThis feedback applies to this saved review snapshot. Publication is not approved; revise the change and present its updated review. No merge, deployment or external communication is authorized.",review.title,review.snapshot.head_commit,review.snapshot.base_commit,body.reason);
-        let detail=format!("review-feedback:{}",json!({"id":id,"title":review.title,"headCommit":body.head_commit,"baseCommit":review.snapshot.base_commit,"requestId":body.request_id}));
-        review.approved_at=None;
-        review.feedback.push(ReviewFeedback{request_id:body.request_id.clone(),at:oxroute_core::model::now(),reason:body.reason,head_commit:body.head_commit});
+        let text=format!("Changes requested for review {id}: {}\nSnapshot: {} (base {})\n\n{}\n\nThis feedback applies to this saved review snapshot. Publication is not approved; revise the change and present its updated review. No merge, deployment or external communication is authorized.",review.title,review.revision(),review.git()?.base_commit,body.reason);
+        let detail=format!("review-feedback:{}",json!({"id":id,"title":review.title,"headCommit":body.head_commit,"baseCommit":review.git()?.base_commit,"requestId":body.request_id}));
+        let at=oxroute_core::model::now();
+        review.decision=Some(Decision{status:"changes_requested".into(),at,request_id:body.request_id.clone()});
+        review.feedback.push(Feedback{request_id:body.request_id.clone(),at,revision:body.head_commit,text:body.reason,annotations:vec![]});
         let request=format!("review-feedback:{id}:{}",body.request_id);
         if let Some(entry)=hub.store.record_review_feedback(&id,&before,&serde_json::to_string(&review)?,&agent,&request,(&text,&detail))? {
             hub.emit(oxroute_core::model::Event::Timeline{entry:Box::new(entry)});
@@ -968,16 +952,16 @@ async fn review_feedback(State(hub):Hubs,Path((agent,id)):Path<(String,String)>,
 
 async fn approve_review(State(hub): Hubs, Path((agent_id, id)): Path<(String, String)>) -> Result<Json<serde_json::Value>, Failed> {
     let (mut review, before) = review_record(&hub, &agent_id, &id, false)?;
-    if !git::current(&review.snapshot).await? {
+    if !review.is_current().await? {
         notify_stale_review(&hub, &agent_id, &id).await?;
         return Err(anyhow::anyhow!("This revision changed. The agent has been asked to prepare an updated review before publishing.").into());
     }
-    if review.approved_at.is_none() {
-        review.approved_at = Some(oxroute_core::model::now());
+    if review.decision.as_ref().map(|decision| decision.status.as_str()) != Some("approved") {
+        review.decision = Some(Decision { status: "approved".into(), at: oxroute_core::model::now(), request_id: String::new() });
         let after = serde_json::to_string(&review)?;
         let key = format!("review:{id}");
         if hub.store.replace_value(&key, &before, &after)? {
-            let snapshot = &review.snapshot;
+            let snapshot = review.git()?;
             let authorization = format!("I approve local review {id}: {}. You may publish commit {} from {} to remote {} ({}) as branch {}, against base {} at {}. Recheck this review's status immediately before pushing, and use the review's stored title and description for the PR. No merge or deployment is authorized.",
                 review.title, snapshot.head_commit, snapshot.repository, snapshot.remote, snapshot.remote_url, snapshot.branch, snapshot.base_ref, snapshot.base_commit);
             let detail = format!("review-approval:{}", json!({
@@ -2175,12 +2159,12 @@ mod tests {
         command(vec!["checkout", "proposal"]);
         let refreshed: serde_json::Value = client.get(&endpoint).header("x-oxroute-prefetch", "1").send().await.unwrap().json().await.unwrap();
         assert_eq!(refreshed["status"], "pending", "An unchanged reviewed comparison remains approvable after upstream advances");
-        assert_eq!(refreshed["snapshot"], review["snapshot"], "Eligibility checks never rewrite the saved review");
+        assert_eq!(refreshed["subject"], review["subject"], "Eligibility checks never rewrite the saved review");
         let context = client.get(format!("{endpoint}/context")).query(&[("path","diagram.svg"),("side","after"),("start","1"),("count","20")]).send().await.unwrap();
         assert!(context.status().is_success());
         assert!(context.json::<serde_json::Value>().await.unwrap()["lines"][0].as_str().unwrap().contains("svg"));
         assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}/context")).query(&[("path","diagram.svg"),("side","after"),("start","1"),("count","20")]).send().await.unwrap().status().is_success());
-        let image_files = review["snapshot"]["files"].as_array().unwrap();
+        let image_files = review["subject"]["files"].as_array().unwrap();
         let diagram = image_files.iter().find(|file| file["path"] == "diagram.svg").unwrap();
         assert_eq!(diagram["image"], json!({"before":true,"after":true}));
         assert!(diagram["patch"].as_str().unwrap().contains("<svg"));
@@ -2207,9 +2191,9 @@ mod tests {
         // SQLite keeps identity and consent, not duplicated Git content.
         let reopened = Store::open(hub.store.path()).unwrap();
         let saved: serde_json::Value = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
-        assert!(saved["snapshot"].get("files").is_none());
-        assert_eq!(saved["snapshot"]["headCommit"], review["snapshot"]["headCommit"]);
-        assert_eq!(client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap()["snapshot"], review["snapshot"]);
+        assert!(saved["subject"].get("files").is_none());
+        assert_eq!(saved["subject"]["headCommit"], review["subject"]["headCommit"]);
+        assert_eq!(client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap()["subject"], review["subject"]);
         assert!(!client.get(format!("http://{address}/api/agents/other/reviews/{id}")).send().await.unwrap().status().is_success());
         // Inherited cards remain readable, while publication consent belongs to the source review.
         let mut fork = hub.store.agent(agent_id).unwrap().unwrap();
@@ -2220,7 +2204,7 @@ mod tests {
         assert!(inherited.status().is_success());
         assert!(inherited.headers().get("server-timing").unwrap().to_str().unwrap().starts_with("review;dur="));
         let inherited: serde_json::Value = inherited.json().await.unwrap();
-        assert_eq!(inherited["snapshot"], review["snapshot"]);
+        assert_eq!(inherited["subject"], review["subject"]);
         assert_eq!(inherited["agentId"], agent_id);
         assert_eq!(client.get(format!("http://{address}/api/agents/{}/reviews/{id}/image", fork.id)).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("http://{address}/api/agents/{}/reviews/{id}/approve", fork.id)).send().await.unwrap().status().is_success());
@@ -2237,12 +2221,12 @@ mod tests {
             let response: serde_json::Value = response.unwrap().json().await.unwrap();
             assert_eq!(response["status"], "stale");
             assert_eq!(response["staleNotified"], false);
-            assert_eq!(response["snapshot"], review["snapshot"]);
+            assert_eq!(response["subject"], review["subject"]);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(harness.inputs.lock().unwrap().is_empty(), "Reading stale cards never starts an agent");
         assert_eq!(hub.store.timeline(agent_id, 20).unwrap().len(), card.len());
-        let saved: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        let saved: Review = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
         assert!(!saved.stale_notified, "Reads do not mutate notification state");
         tokio::fs::write(root.join("settings.txt"), "proposed\n").await.unwrap();
 
@@ -2256,37 +2240,37 @@ mod tests {
         let approval = timeline.iter().find(|entry| entry.kind == oxroute_core::model::EntryKind::You).unwrap();
         let metadata: serde_json::Value = serde_json::from_str(approval.detail.strip_prefix("review-approval:").unwrap()).unwrap();
         assert_eq!(metadata["id"], id);
-        assert_eq!(metadata["commit"], review["snapshot"]["headCommit"]);
-        assert!(approval.text.contains(review["snapshot"]["headCommit"].as_str().unwrap()));
+        assert_eq!(metadata["commit"], review["subject"]["headCommit"]);
+        assert!(approval.text.contains(review["subject"]["headCommit"].as_str().unwrap()));
         assert!(approval.text.contains("No merge or deployment is authorized."));
-        let stored: ChangeReview = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
-        assert!(stored.approved_at.is_some());
+        let stored: Review = serde_json::from_str(&reopened.get(&format!("review:{id}")).unwrap().unwrap()).unwrap();
+        assert_eq!(stored.decision.as_ref().map(|decision| decision.status.as_str()), Some("approved"));
         tokio::fs::write(root.join("settings.txt"), "revised\n").await.unwrap();
         tokio::fs::write(root.join("diagram.svg"), "changed after review").await.unwrap();
         command(vec!["commit", "-am", "Revise"]);
         let stale = client.get(&endpoint).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
         assert_eq!(stale["status"], "stale");
-        assert_eq!(stale["snapshot"], review["snapshot"]);
+        assert_eq!(stale["subject"], review["subject"]);
         assert_eq!(client.get(format!("{endpoint}/image")).query(&[("path","diagram.svg"),("side","after")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert!(!client.post(format!("{endpoint}/approve")).send().await.unwrap().status().is_success());
         let requested: serde_json::Value = client.get(&endpoint).send().await.unwrap().json().await.unwrap();
         assert_eq!(requested["staleNotified"], true, "Explicit stale approval still requests an updated review");
         let revision: serde_json::Value = client.post(&url).json(&json!({ "repository": root, "base": "main", "remote": "origin", "title": "Follow-up change", "description": "Review this revision" }))
             .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
-        assert_eq!(revision["snapshot"]["reviewBaseCommit"], review["snapshot"]["headCommit"]);
-        assert_eq!(revision["snapshot"]["baseCommit"], advanced_base, "A new snapshot captures the current target without rewriting its predecessor");
-        let changed = revision["snapshot"]["files"].as_array().unwrap();
+        assert_eq!(revision["subject"]["reviewBaseCommit"], review["subject"]["headCommit"]);
+        assert_eq!(revision["subject"]["baseCommit"], advanced_base, "A new snapshot captures the current target without rewriting its predecessor");
+        let changed = revision["subject"]["files"].as_array().unwrap();
         assert_eq!(changed.len(), 2, "Unchanged earlier PR files are omitted from the follow-up view");
         let settings = changed.iter().find(|file| file["path"] == "settings.txt").unwrap()["patch"].as_str().unwrap();
         assert!(settings.contains("-proposed") && settings.contains("+revised") && !settings.contains("-original"));
         let revision_url = format!("{url}/{}", revision["id"].as_str().unwrap());
         let full: serde_json::Value = client.get(&revision_url).query(&[("full", "true")]).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
-        assert!(full["snapshot"]["files"].as_array().unwrap().len() > changed.len());
-        assert_eq!(full["snapshot"]["headCommit"], revision["snapshot"]["headCommit"]);
+        assert!(full["subject"]["files"].as_array().unwrap().len() > changed.len());
+        assert_eq!(full["subject"]["headCommit"], revision["subject"]["headCommit"]);
         assert_eq!(full["status"], "pending");
         assert_eq!(client.get(format!("{revision_url}/image")).query(&[("path","diagram.svg"),("side","before")]).send().await.unwrap().text().await.unwrap(), proposed_image);
         assert_eq!(client.get(format!("{revision_url}/image")).query(&[("path","diagram.svg"),("side","before"),("full","true")]).send().await.unwrap().text().await.unwrap(), original_image);
-        let accepted = &stored.snapshot;
+        let accepted = stored.git().unwrap();
         assert!(hub.store.last_approved_review("/another/repository", &accepted.remote_url, &accepted.branch, &accepted.base_ref).unwrap().is_none());
         assert!(hub.store.last_approved_review(&accepted.repository, "https://example.invalid/another.git", &accepted.branch, &accepted.base_ref).unwrap().is_none());
         assert!(hub.store.last_approved_review(&accepted.repository, &accepted.remote_url, "another-branch", &accepted.base_ref).unwrap().is_none());
