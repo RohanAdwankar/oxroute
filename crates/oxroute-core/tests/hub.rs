@@ -4570,3 +4570,48 @@ async fn direct_focus_request_keeps_its_turn_when_background_start_is_pending() 
     assert!(!w.hub.store.pending_focus_events(&focus.id).unwrap(),"Deferred background evidence is accepted after the direct response");
     assert!(!w.hub.store.timeline(&focus.id,100).unwrap().iter().any(|entry|entry.text=="Focus checked the fleet"),"Event intake is not a scheduled fleet scan");
 }
+
+fn started_text(w: &World) -> String {
+    w.calls.lock().unwrap().started.iter().flat_map(|(_, inputs)| inputs.iter().filter_map(TurnInput::as_text).map(str::to_string)).collect::<Vec<_>>().join("\n")
+}
+
+async fn idle_owner_with_task(w: &World) -> (String, TaskItem) {
+    w.hub.accept(signal("100.0", "100.0", "original work")).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    let agent = w.hub.store.agents(10).unwrap()[0].id.clone();
+    let task = w.hub.create_task("finished work", &agent, vec![], "").await.unwrap();
+    w.hub.update_task(&task.id, &task.text, TaskStatus::Done, "", &agent, Some("finished"), false, None).await.unwrap();
+    assert!(settle(|| w.hub.store.agents(10).unwrap()[0].status == AgentStatus::Complete).await);
+    (agent, task)
+}
+
+#[tokio::test]
+async fn a_queued_correction_reaches_an_idle_owner_without_entering_the_chat() {
+    let w = world(Mode::Auto, false).await;
+    let (agent, task) = idle_owner_with_task(&w).await;
+    w.hub.correct_task(&task.id, "marker-queued-feedback", vec![], true).await.unwrap();
+    assert!(settle(|| started_text(&w).contains("marker-queued-feedback")).await, "the owner never heard the feedback");
+    assert!(!w.hub.timeline(&agent, 100).unwrap().iter().any(|entry| entry.kind == EntryKind::You && entry.text.contains("marker-queued-feedback")));
+}
+
+#[tokio::test]
+async fn a_note_written_by_a_person_reaches_the_task_owner() {
+    let w = world(Mode::Auto, false).await;
+    let (agent, task) = idle_owner_with_task(&w).await;
+    w.hub.note_from_person(&task.id, "marker-person-note").await.unwrap();
+    assert!(settle(|| started_text(&w).contains("marker-person-note")).await, "the owner never heard the note");
+    assert!(!w.hub.timeline(&agent, 100).unwrap().iter().any(|entry| entry.kind == EntryKind::You && entry.text.contains("marker-person-note")));
+    assert!(w.hub.task_notes().unwrap().iter().any(|note| note.task_id == task.id && note.text == "marker-person-note"));
+}
+
+#[tokio::test]
+async fn a_note_written_by_an_agent_wakes_no_one() {
+    let w = world(Mode::Auto, false).await;
+    let (agent, task) = idle_owner_with_task(&w).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let turns = w.calls.lock().unwrap().started.len();
+    w.hub.add_task_note(&task.id, "marker-agent-note", &agent).unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(w.calls.lock().unwrap().started.len(), turns);
+    assert!(w.hub.task_notes().unwrap().iter().any(|note| note.text == "marker-agent-note" && note.agent_id == agent));
+}

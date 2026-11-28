@@ -1321,7 +1321,7 @@ async fn add_task_note(
     Path(id): Path<String>,
     Json(body): Json<NoteBody>,
 ) -> Result<Json<oxroute_core::TaskNote>, Failed> {
-    Ok(Json(hub.add_task_note(&id, &body.text, &body.agent_id)?))
+    Ok(Json(if body.agent_id.is_empty() { hub.note_from_person(&id, &body.text).await? } else { hub.add_task_note(&id, &body.text, &body.agent_id)? }))
 }
 
 #[derive(Deserialize)]

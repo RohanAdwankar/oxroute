@@ -2656,7 +2656,9 @@ impl Hub {
         let receipt = format!("task-result:{child}:{}", answer.id);
         if self.store.get(&receipt)?.is_some() { return Ok(()); }
         let notes = self.store.task_notes()?;
-        let note = notes.iter().rev().find(|note| note.task_id == task_id).map(|note| note.text.as_str()).unwrap_or("");
+        let mut recent = notes.iter().rev().filter(|note| note.task_id == task_id).take(5).map(|note| note.text.as_str()).collect::<Vec<_>>();
+        recent.reverse();
+        let note = recent.join("\n- ");
         let subtasks = tasks.iter().filter(|task| task.agent_id == child && task.id != task_id).map(|task| {
             let note = notes.iter().rev().find(|note| note.task_id == task.id).map(|note| note.text.as_str()).unwrap_or("");
             format!("{}: {} ({}), dependency: {}. {note}", task.id, task.text, task.status.as_str(), task.blocked_by_task_id)
@@ -2666,7 +2668,7 @@ impl Hub {
              specific revision instructions. You are authorized to review this delegated task, \
              but done still means awaiting human approval; never approve it yourself. \
              Preserve explicit human and task dependencies. Do not redo work running in other \
-             children or dispatch this task again.\n\nTask: {} ({task_id})\nWorker: {child}\nStatus: {}\nNote: {note}\nOther worker tasks:\n{subtasks}\n\nResult:\n{}\n\n\
+             children or dispatch this task again.\n\nTask: {} ({task_id})\nWorker: {child}\nStatus: {}\nRecent notes, oldest first, including any the user wrote after the result:\n- {note}\nOther worker tasks:\n{subtasks}\n\nResult:\n{}\n\n\
              To request revisions, POST http://{}/api/tasks/{task_id}/correction as multipart \
              fields text=your specific instructions and queued=false. This reopens the same \
              task, saves feedback and delivers it to the worker. \
@@ -3790,6 +3792,7 @@ impl Hub {
         };
         self.store.save_task(&back)?;
         if queued {
+            self.tell_task_owner(&task, text).await?;
             for input in self.upload_inputs(&self.store.agent(&task.agent_id)?.context("no such agent")?, &images).await? {
                 let reference = match input {
                     TurnInput::LocalImage { path } => format!("Attached image: {path}"),
@@ -3820,6 +3823,25 @@ impl Hub {
             }
         }
         Ok(())
+    }
+
+    /// A person's note on a task goes to whoever has the task, as their own
+    /// words, behind any turn already running and off the chat.
+    pub async fn note_from_person(self: &Arc<Self>, task_id: &str, text: &str) -> Result<TaskNote> {
+        let note = self.add_task_note(task_id, text, "")?;
+        if let Some(task) = self.store.tasks()?.iter().find(|task| task.id == task_id) {
+            self.tell_task_owner(task, &note.text).await?;
+        }
+        Ok(note)
+    }
+
+    async fn tell_task_owner(self: &Arc<Self>, task: &TaskItem, text: &str) -> Result<()> {
+        if self.store.agent(&task.agent_id)?.is_none() || self.store.agent_archived(&task.agent_id)? { return Ok(()); }
+        self.ask_quietly(
+            &task.agent_id,
+            &format!("The user wrote on your task \"{}\" ({}):\n\n{text}", task.text, task.id),
+            &format!("Task note from the user: {}", task.id),
+        ).await
     }
 
     /// Write down why a task is where it is.
