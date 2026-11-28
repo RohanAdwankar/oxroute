@@ -21,6 +21,12 @@ export function reviewable(url: string) {
   return !!location && (location.parsed.pathname === "/api/artifacts" || location.parsed.pathname.startsWith("/api/attachments/")) &&
     extensions.has(location.file.split(".").at(-1)?.toLowerCase() ?? "");
 }
+/** Whatever the user pointed at is the path; the daemon decides whether it is a readable file. */
+export function OpenPathButton({path, done}: {path: string; done: () => void}) {
+  const open = useContext(FileReviews);
+  return open ? <button type="button" aria-label="Open as review" title="Open as review" className="flex h-9 w-9 cursor-pointer items-center justify-center hover:bg-wash"
+    onClick={() => {open(`/api/artifacts?path=${encodeURIComponent(path)}`); done();}}><Icon name="diff" /></button> : null;
+}
 export function ReviewFileButton({url}: {url: string}) {
   const open = useContext(FileReviews);
   return open && reviewable(url) ? <button type="button" onClick={event => {event.stopPropagation(); open(url);}} className="cursor-pointer px-2 text-xs text-mid hover:text-ink" title="Review submitted file">Review</button> : null;
@@ -43,7 +49,10 @@ const isMark = (note: Annotation) => note.quote === "Drawing" && (note.region !=
 type Review = {agentId: string; id: string; status: string; subject: {name: string; extension: string; sha256: string; pages: number; text: string | null}; feedback: {text: string; annotations: Annotation[]}[]};
 async function response<T>(request: Promise<Response>): Promise<T> {
   const result = await request;
-  if (!result.ok) throw new Error(await result.text());
+  if (!result.ok) {
+    const body = await result.text();
+    throw new Error((() => { try { return JSON.parse(body).error ?? body; } catch { return body; } })());
+  }
   return result.json();
 }
 export function FileReviewProvider({agent, children}: {agent: string; children: ReactNode}) {
@@ -100,7 +109,7 @@ function FileReview({agent, url, close, local}: {agent: string; url: string; clo
       let draft: {notes: Annotation[]; text: string} | null = null;
       try {draft = JSON.parse(sessionStorage.getItem(`oxroute.fileReview.${value.id}`) ?? "null");} catch {}
       setReview(value); const latest = value.feedback.at(-1); setNotes(draft?.notes ?? latest?.annotations ?? []); setText(draft?.text ?? latest?.text ?? "");
-    }).catch(reason => {if (!controller.signal.aborted) setError(String(reason));});
+    }).catch(reason => {if (!controller.signal.aborted) setError(reason.message);});
     return () => controller.abort();
   }, [agent, url, setNotes, local]);
   useEffect(() => {if (review && !local) sessionStorage.setItem(`oxroute.fileReview.${review.id}`, JSON.stringify({notes, text}));}, [review, notes, text, local]);

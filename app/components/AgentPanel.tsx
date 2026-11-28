@@ -9,7 +9,7 @@ import { isTyping } from "../lib/keys";
 import type { AgentView, BackendInfo, DiagramEdit, Entry, EntryKind, ModelInfo, TaskItem, QuoteAnchor, QuoteThread } from "../lib/types";
 import { DiagramComposer } from "./composer/DiagramComposer";
 import { Attachments } from "./composer/Attachments";
-import { FileReviewProvider, ReviewFileButton, ReviewImage } from "./FileReview";
+import { FileReviewProvider, OpenPathButton, ReviewFileButton, ReviewImage } from "./FileReview";
 import { ReviewView } from "./ReviewView";
 import { preloadReview, reviewEndpoint } from "../lib/reviews";
 import { Code } from "./Code";
@@ -69,7 +69,7 @@ function splitAttached(text: string): { body: string; names: string[] } {
   };
 }
 /// Quote the selection or the clicked message, and react to that message.
-type LineMenu = { text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null; diff?:ReviewQuoteAction };
+type LineMenu = { path: string; text: string; entry: number | null; reaction: string; slackUrl: string; x: number; y: number; anchor: QuoteAnchor | null; diff?:ReviewQuoteAction };
 type SelectedQuote = Pick<LineMenu, "text" | "anchor">;
 
 function quoteAnchor(row: Element | null, entryId: number | null): QuoteAnchor | null {
@@ -681,7 +681,8 @@ export function AgentPanel({
     const text=diff?diff.quote.rows.map(row=>row.text).join('\n'):selected?.text||selectedText(timeline.current)||line?.text.trim()||"";
     if(!text&&entry===null)return;
     event.preventDefault();
-    setQuoteMenu({diff,anchor:selected?selected.anchor:quoteAnchor(row,entry),text,entry,reaction:line?.reaction??"",slackUrl:line?.slackUrl??"",
+    const pointed=(selected?.text||selectedText(timeline.current)||(event.target as Element).closest("code:not(pre code)")?.textContent||"").trim();
+    setQuoteMenu({path:diff||pointed.includes("\n")?"":pointed,diff,anchor:selected?selected.anchor:quoteAnchor(row,entry),text,entry,reaction:line?.reaction??"",slackUrl:line?.slackUrl??"",
       x:Math.max(8,Math.min(event.clientX,window.innerWidth-(entry===null?38:190)-8)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-46))});
   },[view.timeline]);
 
@@ -1000,6 +1001,7 @@ export function AgentPanel({
           style={{ left: quoteMenu.x, top: quoteMenu.y }}
           className="fixed z-40 flex border border-edge bg-card text-ink shadow-[0_8px_24px_rgba(33,29,25,0.16)] outline-none"
         >
+          {quoteMenu.path && <OpenPathButton path={quoteMenu.path} done={() => setQuoteMenu(null)} />}
           {quoteMenu.text && (
             <button
               type="button"
